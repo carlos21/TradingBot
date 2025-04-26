@@ -1,0 +1,4 @@
+^IXIC
+^GSPC
+^DJI
+EURUSD

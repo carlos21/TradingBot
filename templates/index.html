@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TradingView Chart with Yahoo Finance Data</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .watchlist {
+      width: 200px;
+      border-left: 1px solid #ccc;
+      transition: background-color 0.3s, color 0.3s;
+    }
+    .watchlist-item {
+      padding: 10px;
+      cursor: pointer;
+      transition: background-color 0.3s;
+    }
+    .watchlist-item:hover {
+      background-color: #f0f0f0;
+    }
+  </style>
+</head>
+<body class="bg-white text-black">
+  <div class="flex h-screen">
+    <div class="flex-grow flex flex-col">
+      <header class="p-4 bg-gray-800 text-white">
+        <div class="flex justify-between items-center mt-4">
+          <div id="controls" class="flex justify-between items-center mt-4 space-x-16">
+            <!-- Group 1: Timeframe buttons -->
+            <div id="timeframe-buttons" class="flex space-x-2">
+              <button data-timeframe="5m" class="px-2 py-1 rounded border bg-gray-900 text-white">5m</button>
+              <button data-timeframe="15m" class="px-2 py-1 rounded border bg-gray-900 text-white">15m</button>
+              <button data-timeframe="60m" class="px-2 py-1 rounded border bg-gray-900 text-white">1h</button>
+            </div>
+          
+            <!-- Group 2: Stop Loss adjustment -->
+            <div id="stop-loss-group" class="flex items-center space-x-2">
+              <label class="text-white">
+                Stop Loss: <span id="stop-loss-value">100.00</span>
+              </label>
+              <button id="decrease-stop-loss" class="px-2 py-1 rounded border bg-gray-900 text-white">-</button>
+              <button id="increase-stop-loss" class="px-2 py-1 rounded border bg-gray-900 text-white">+</button>
+            </div>
+          
+            <!-- Group 3: Trade Actions -->
+            <div id="trade-actions-group" class="flex items-center space-x-2">
+              <button id="buy-button" class="px-4 py-2 rounded border bg-gray-500 text-white">BUY</button>
+              <button id="sell-button" class="px-4 py-2 rounded border bg-gray-500 text-white">SELL</button>
+            </div>
+          </div>
+        </div>
+      </header>
+      <main class="flex-grow">
+        <div id="chart" class="w-full h-2/3"></div>
+        <div id="rsiChart" class="w-full h-1/3"></div>
+      </main>
+    </div>
+    <div id="watchlist" class="watchlist p-4 bg-gray-100 text-black">
+      <h3 class="font-bold text-lg mb-4">Watchlist</h3>
+      <div id="watchlistItems" class="flex flex-col"></div>
+    </div>
+  </div>
+  <!-- <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script> -->
+  <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+  <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+/* /static/css/styles.css */
+
+[data-timeframe].active {
+    /* Tailwind’s bg‑blue‑500 is #3b82f6 */
+    background-color: #3b82f6;
+    color: white;
+}
+
+[data-timeframe].active:hover {
+    background-color: #3b82f6;
+}
