@@ -160,38 +160,31 @@ class BarsLoader:
 
     def stream_5m_bars(self, pair: str):
         """Continuously stream 5m bars, drive strategy, and emit grouped TF bars."""
-        # print(f"[BarsLoader] ▶▶ START stream_5m_bars for {pair}, starting idx={self.current_5m_index[pair]}")
         self.streaming_5m[pair] = True
 
         while self.streaming_5m[pair] and self.current_5m_index[pair] < len(self.agg_5m[pair]):
             with self.stream_lock:
                 bar5 = self.agg_5m[pair][self.current_5m_index[pair]]
-                idx_before = self.current_5m_index[pair]
                 self.current_5m_index[pair] += 1
 
-            # print(f"[BarsLoader] processing 5m bar idx={idx_before}, time={bar5['time']}")
-
-            # strategy logic on true 5m
+            # feed the raw 5m bar into your strategy
             if self.strategy:
                 try:
-                    # print(f"[BarsLoader] passing bar to strategy: {{'time':{bar5['time']}}}")
                     self.strategy.on_new_bar(bar5)
-                except Exception as e:
-                    # print(f"[BarsLoader] ERROR in strategy.on_new_bar: {e}", flush=True)
+                except Exception:
                     import traceback; traceback.print_exc()
 
-            # accumulate for tf grouping
+            # buffer up for the user-selected timeframe
             buf = self.tf_buffer[pair]
             buf.append(bar5)
-            # print(f"[BarsLoader] buffer size now {len(buf)}/{self.tf_group}")
+
+            # once we have exactly tf_group bars, emit one grouped bar
             if len(buf) == self.tf_group:
-                # print(f"[BarsLoader] buffer full, aggregating {len(buf)} bars into tf_bar")
                 tf_bar = self.aggregate_bars(buf, group_size=len(buf))[0]
-                # print(f"[BarsLoader] emitting tf_bar: {tf_bar}")
                 self.socketio.emit('bar', tf_bar)
                 buf.clear()
 
-            self.socketio.sleep(0.1)
+                # only now sleep, so it's always 0.1s per emitted bar
+                self.socketio.sleep(0.1)
 
-        # print(f"[BarsLoader] ◼ END stream_5m_bars for {pair}, final idx={self.current_5m_index[pair]}")
         self.streaming_5m[pair] = False
