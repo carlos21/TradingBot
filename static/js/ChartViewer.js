@@ -24,6 +24,7 @@ export class ChartViewer {
     this.winCounter   = document.getElementById('winCount');
     this.lossCounter  = document.getElementById('lossCount');
     this.pnlCounter   = document.getElementById('pnlCounter');
+    this.totalPnL    = 0;
     if (this.pnlCounter) this.pnlCounter.textContent = '0%';
 
     // SL/TP/Entry line handles
@@ -116,6 +117,13 @@ export class ChartViewer {
 
     this.socket.on('trade_open', trade => this._drawTradeLines(trade));
     this.socket.on('trade_close', trade => this._drawResultMarker(trade));
+    this.socket.on('line_removed', ({ id }) => {
+      console.log('[ChartViewer] line_removed for id=', id);
+      const found = this.pinnedLines.find(o => o.id === id);
+      if (!found) return;
+      this.series.removePriceLine(found.line);
+      this.pinnedLines = this.pinnedLines.filter(o => o.id !== id);
+    });
   }
 
   _shadeBar(bar) {
@@ -183,17 +191,34 @@ export class ChartViewer {
   }
 
   _drawResultMarker(trade) {
-    [this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine].forEach(h => h && this.series.removePriceLine(h));
+    // remove entry/SL/TP lines
+    [ this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine ]
+      .forEach(h => h && this.series.removePriceLine(h));
+
+    // draw the exit‐marker
     const exitTime = trade.exit_time || trade.exitTime || trade.entryTime;
-    const marker = { time: exitTime, position: trade.type === 'long' ? 'belowBar' : 'aboveBar', shape: 'text', text: trade.result > 0 ? `+${trade.result}` : `${trade.result}` };
+    const marker   = {
+      time:     exitTime,
+      position: trade.type === 'long' ? 'belowBar' : 'aboveBar',
+      shape:    'text',
+      text:     trade.result > 0 ? `+${trade.result}` : `${trade.result}`,
+    };
     this.tradeMarkers.push(marker);
     this.series.setMarkers(this.tradeMarkers);
+
+    // update win/loss counters
     if (trade.result > 0) {
       this.winCount++;
       if (this.winCounter) this.winCounter.textContent = this.winCount;
     } else {
       this.lossCount++;
       if (this.lossCounter) this.lossCounter.textContent = this.lossCount;
+    }
+
+    // **update the total PnL display**
+    this.totalPnL += trade.result;
+    if (this.pnlCounter) {
+      this.pnlCounter.textContent = `Total PnL: ${this.totalPnL}%`;
     }
   }
 

@@ -20,7 +20,8 @@ PAIR     = 'EURUSD'
 tstrategy = LiquidityStrategy(
     min_stop_loss=BarsConfig.STOP_LOSS_CONFIG[PAIR],
     max_bounce=   BarsConfig.MAX_BOUNCE_CONFIG[PAIR],
-    socketio=     socketio
+    socketio=     socketio,
+    line_repository = line_repository
 )
 tloader = BarsLoader(
     config=     BarsConfig,
@@ -36,7 +37,7 @@ for l in line_repository.list_lines():
 
     # use the stored direction
     direction = l.direction
-    print(f"[Boot] restoring line {l.line_id} @ {l.price} as {direction}")
+    # print(f"[Boot] restoring line {l.line_id} @ {l.price} as {direction}")
     tstrategy.add_strategy_line(l.line_id, l.price, direction)
 
 # ───────── HTTP Endpoints ─────────
