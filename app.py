@@ -7,10 +7,12 @@ from src.dbexception import DBNotFoundException
 from src.lines_repository import SQLLineRepository
 from src.strategies.liquidity_strategy import LiquidityStrategy
 from src.database import database
+from src.trades_repository import SQLTradeRepository
 
 # ───────── Setup ─────────
 database.setup_database()
 line_repository = SQLLineRepository()
+trade_repository = SQLTradeRepository()
 
 app      = Flask(__name__)
 CORS(app)
@@ -28,6 +30,7 @@ tstrategy = LiquidityStrategy(
     max_bounce=   BarsConfig.MAX_BOUNCE_CONFIG[PAIR],
     socketio=     socketio,
     line_repository = line_repository,
+    trade_repository = trade_repository,
     extra_sl_space=extra_space
 )
 tloader = BarsLoader(

@@ -31,7 +31,6 @@ class LineData:
 @dataclass
 class TradeData:
     trade_id: str
-    line_id: str
     pair: str
     trade_type: str        # "long" or "short"
     entry_price: float
@@ -48,7 +47,6 @@ class TradeData:
     def __hash__(self):
         return hash((
             self.trade_id,
-            self.line_id,
             self.pair,
             self.trade_type,
             self.entry_price,
@@ -68,7 +66,6 @@ class TradeData:
             return NotImplemented
         return (
             self.trade_id     == other.trade_id and
-            self.line_id      == other.line_id and
             self.pair         == other.pair and
             self.trade_type   == other.trade_type and
             self.entry_price  == other.entry_price and
