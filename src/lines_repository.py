@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional, List
 from src.database.database import Line, get_db_session
+from src.dbexception import DBException
 from src.models import LineData
 from datetime import datetime, timezone
 
@@ -83,15 +84,3 @@ class SQLLineRepository(LineRepository):
                 raise DBException(message=str(e))
             finally:
                 db.close()
-        
-class DBException(Exception):
-
-    def __init__(self, message="Operation failed"):
-        self.message = message
-        super().__init__(self.message)
-
-class DBNotFoundException(Exception):
-
-    def __init__(self, message):
-        self.message = message
-        super().__init__(self.message)

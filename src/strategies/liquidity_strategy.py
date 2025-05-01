@@ -1,18 +1,20 @@
 # src/strategy.py
 from threading import RLock
 
-from src.lines_repository import DBNotFoundException, LineRepository
+from src.dbexception import DBNotFoundException
+from src.lines_repository import LineRepository
 
 class LiquidityStrategy:
     """
     Server-side version of your JS strategy.
     Emits 'trade_open' and 'trade_close' via Socket.IO.
     """
-    def __init__(self, min_stop_loss, max_bounce, socketio, line_repository: LineRepository):
+    def __init__(self, min_stop_loss, max_bounce, socketio, line_repository: LineRepository, extra_sl_space: dict[str, float]):
         self.min_stop_loss = min_stop_loss
         self.max_bounce    = max_bounce
         self.socketio      = socketio
         self.line_repository = line_repository
+        self.extra_sl_space = extra_sl_space
 
         self.strategy_lines = {}   # id -> { level, direction, has_crossed, extreme }
         self.open_trades    = []   # list of open trade dicts
@@ -45,37 +47,28 @@ class LiquidityStrategy:
         then scans strategy_lines for new entries.
         """
         with self.lock:
-            # print(f"[Strategy] 🔔 on_new_bar: time={bar['time']} close={bar['close']} low={bar['low']} high={bar['high']}")
-            # for sid, s in self.strategy_lines.items():
-                # print(f"  • line {sid}: lvl={s['level']} dir={s['direction']} crossed={s['has_crossed']} extreme={s['extreme']}")
-
             self._check_open_trades(bar)
 
-            # 2) don’t open new entries if one is still open
+            # don't open if there's already an open trade
             if any(t['status'] == 'open' for t in self.open_trades):
-                # print("  ⚠︎ skipping new entries: open trade exists")
                 return
 
-            # 3) scan each level for a new entry
             for sid, s in list(self.strategy_lines.items()):
                 lvl, dir_ = s['level'], s['direction']
                 close, low, high = bar['close'], bar['low'], bar['high']
-                # print(f"    → eval line {sid} ({dir_}@{lvl}): close={close}")
+
+                extra = self.extra_sl_space.get(bar['pair'], 0)
 
                 if dir_ == 'long':
-                    # LONG: dip below → set has_crossed/extreme, then close back above
                     if close < lvl:
-                        # print("       – price dipped below level")
                         s['has_crossed'] = True
-                        s['extreme']     = min(s['extreme'], low)
+                        s['extreme'] = min(s['extreme'], low)
                     if s['has_crossed'] and close >= lvl:
                         depth = lvl - s['extreme']
-                        # print(f"       – crossed back above, depth={depth}")
                         if depth <= self.max_bounce:
                             entry = close
                             risk  = max(entry - s['extreme'], self.min_stop_loss)
-                            # print(f"         → risk={risk} (min_stop_loss={self.min_stop_loss})")
-                            sl    = entry - risk
+                            sl    = entry - risk - extra
                             tp    = entry + 4 * risk
                             trade = {
                                 'pair':        bar['pair'],
@@ -88,27 +81,19 @@ class LiquidityStrategy:
                                 'entry_time':  bar['time']
                             }
                             self.open_trades.append(trade)
-
-                            # ← THIS is what *sends* the “enter trade” event
                             self.socketio.emit('trade_open', trade)
-
-                        # once dealt with (open or skipped), remove that line
                         self.remove_strategy_line(sid)
                         break
-
-                else:  # SHORT
+                else:
                     if close > lvl:
-                        # print("       – price spiked above level")
                         s['has_crossed'] = True
-                        s['extreme']     = max(s['extreme'], high)
+                        s['extreme'] = max(s['extreme'], high)
                     if s['has_crossed'] and close <= lvl:
                         depth = s['extreme'] - lvl
-                        # print(f"       – crossed back below, depth={depth}")
                         if depth <= self.max_bounce:
                             entry = close
                             risk  = max(s['extreme'] - entry, self.min_stop_loss)
-                            # print(f"         → risk={risk} (min_stop_loss={self.min_stop_loss})")
-                            sl    = entry + risk
+                            sl    = entry + risk + extra
                             tp    = entry - 4 * risk
                             trade = {
                                 'pair':        bar['pair'],
@@ -122,7 +107,6 @@ class LiquidityStrategy:
                             }
                             self.open_trades.append(trade)
                             self.socketio.emit('trade_open', trade)
-
                         self.remove_strategy_line(sid)
                         break
 

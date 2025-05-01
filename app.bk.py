@@ -81,7 +81,7 @@ def get_symbols():
 def on_connect():
     print("Client connected")
 
-def load_csv_data(filename, last_rows=None):
+def load_csv_data(filename):
     data = []
     with open(filename, 'r') as csvfile:
         # CSV file uses semicolon delimiters
@@ -102,9 +102,6 @@ def load_csv_data(filename, last_rows=None):
             data.append(bar)
     # Sort by time (ascending)
     data.sort(key=lambda x: x['time'])
-    # If last_rows is specified, pick only the last X rows
-    if last_rows is not None:
-        data = data[-last_rows:]
     return data
 
 def background_thread():

@@ -20,11 +20,11 @@ class BarsConfig:
         'NQ':      'America/Chicago',
     }
     CSV_FILES           = {
-        'EURUSD': 'csvs/EURUSD_2024.csv',
+        'EURUSD': 'csvs/EURUSD_2019.csv',
         'NQ':      'csvs/NQ_2024.csv',
     }
-    INITIAL_START       = parser.parse("2024-09-01T00:00:00Z")
-    INITIAL_END         = parser.parse("2024-10-02T02:20:59Z")
+    INITIAL_START       = parser.parse("2019-01-01T00:00:00Z")
+    INITIAL_END         = parser.parse("2019-01-31T23:59:59Z")  # extend to end of January
 
     # strategy parameters
     STOP_LOSS_CONFIG    = {
@@ -36,14 +36,13 @@ class BarsConfig:
         'NQ':      50       # 50 points
     }
 
-
 class BarsLoader:
     """
     Loads, aggregates, and streams bars for different trading pairs.
     Always drives the 5m-based strategy and emits a single 'bar' stream for the user-selected timeframe,
     by re-aggregating 5m bars on the fly.
     """
-    def __init__(self, config: BarsConfig, socketio, strategy=None, last_rows: int = None):
+    def __init__(self, config: BarsConfig, socketio, strategy=None):
         self.config      = config
         self.socketio    = socketio
         self.strategy    = strategy
@@ -51,7 +50,7 @@ class BarsLoader:
 
         # load raw 1m data
         self.all_1m_data = {
-            pair: self.load_csv_data(filename, last_rows)
+            pair: self.load_csv_data(filename)
             for pair, filename in self.config.CSV_FILES.items()
         }
         # build 5m base aggregates
@@ -79,28 +78,50 @@ class BarsLoader:
         for pair in self.tf_buffer:
             self.tf_buffer[pair].clear()
 
-    def load_csv_data(self, filename: str, last_rows: int = None, time_format: str = None):
-        pair     = os.path.splitext(os.path.basename(filename))[0].split('_')[0]
+    def load_csv_data(self, filename: str, time_format: str = None):
+        pair = os.path.splitext(os.path.basename(filename))[0].split('_')[0]
+        print(f"[DEBUG] → loading {pair} from file: {filename}")
+
         fmt      = time_format or self.config.TIME_FORMATS.get(pair, self.config.DEFAULT_TIME_FMT)
         local_tz = ZoneInfo(self.config.PAIR_TIMEZONES.get(pair, self.config.DEFAULT_TIMEZONE))
         utc_tz   = ZoneInfo('UTC')
+
         data = []
-        with open(filename, 'r') as f:
-            reader = csv.DictReader(f, delimiter=';')
+        with open(filename, 'r', newline='') as f:
+            sample  = f.read(2048)
+            f.seek(0)
+            dialect = csv.Sniffer().sniff(sample, delimiters=";," )
+            reader  = csv.DictReader(f, dialect=dialect)
+
             for row in reader:
-                dt = datetime.strptime(f"{row['Date']} {row['Time']}", fmt)
+                ts_str = f"{row.get('Date','')} {row.get('Time','')}".strip()
+                try:
+                    dt = datetime.strptime(ts_str, fmt)
+                except Exception:
+                    dt = parser.parse(ts_str)
                 dt = dt.replace(tzinfo=local_tz).astimezone(utc_tz)
+
                 data.append({
-                    'time':  int(dt.timestamp()),
-                    'open':  float(row['Open']),
-                    'high':  float(row['High']),
-                    'low':   float(row['Low']),
-                    'close': float(row['Close']),
-                    'volume':int(row['Volume']),
-                    'pair':  pair
+                    'time':   int(dt.timestamp()),
+                    'open':   float(row['Open']),
+                    'high':   float(row['High']),
+                    'low':    float(row['Low']),
+                    'close':  float(row['Close']),
+                    'volume': int(row.get('Volume', 0)),
+                    'pair':   pair
                 })
+
         data.sort(key=lambda b: b['time'])
-        return data[-last_rows:] if last_rows else data
+
+        if data:
+            first_dt = datetime.fromtimestamp(data[0]['time'], tz=utc_tz).isoformat()
+            last_dt  = datetime.fromtimestamp(data[-1]['time'], tz=utc_tz).isoformat()
+        else:
+            first_dt = last_dt = "—no data—"
+
+        print(f"[DEBUG]   • {pair}: {len(data)} rows  |  first={first_dt}  last={last_dt}")
+
+        return data
 
     def aggregate_bars(self, bars: list, group_size: int = 5):
         """
@@ -138,24 +159,53 @@ class BarsLoader:
             })
         return agg
 
+    
     def prepare_agg_bars(self, pair: str, tf: str, start_time: int = None):
         # re-aggregate 5m into tf bars for history requests
         self.set_timeframe(tf)
-        base = self.agg_5m.get(pair)
-        if base is None:
+        base_5m = self.agg_5m.get(pair)
+        if base_5m is None:
             abort(400, f"Unknown pair '{pair}'")
-        # reuse aggregate_bars on the base array
-        group  = self.tf_group
-        agg_tf = self.aggregate_bars(base, group_size=group)
+
+        print(f"[DEBUG] prepare_agg_bars for {pair}:")
+        print(f"  - requested TF: {tf}  (tf_group={self.tf_group})")
+        print(f"  - raw 5m bars count: {len(base_5m)}")
+
+        # re-aggregate 5m bars into tf bars
+        agg_tf = self.aggregate_bars(base_5m, group_size=self.tf_group)
+        print(f"  - total {tf} bars after re-agg: {len(agg_tf)}")
+
+        # dump first few timestamps
+        utc = ZoneInfo("UTC")
+        print("  - sample agg_tf[0..4]:")
+        for i, b in enumerate(agg_tf[:5]):
+            dt = datetime.fromtimestamp(b['time'], tz=utc)
+            print(f"      [{i}] epoch={b['time']}  → {dt.isoformat()}")
+
+        # determine slic ing window
         if start_time is None:
             start_ts = int(self.config.INITIAL_START.timestamp())
             end_ts   = int(self.config.INITIAL_END.timestamp())
         else:
             start_ts, end_ts = 0, start_time
+
+        # show window bounds
+        start_dt = datetime.fromtimestamp(start_ts, tz=utc)
+        end_dt   = datetime.fromtimestamp(end_ts, tz=utc)
+        print(f"  - window start: {start_ts} ({start_dt.isoformat()})")
+        print(f"  - window   end: {end_ts} ({end_dt.isoformat()})")
+
+        # filter
         initial = [b for b in agg_tf if start_ts <= b['time'] <= end_ts]
-        # reset streaming pointer
+        print(f"  - bars in window: {len(initial)}")
+
+        # reset pointers
         self.current_agg_bars = agg_tf
-        self.current_index    = next((i for i,b in enumerate(agg_tf) if b['time'] > end_ts), len(agg_tf))
+        
+        raw = self.agg_5m[pair]
+        raw_idx = next((i for i,b in enumerate(raw) if b['time'] > end_ts), len(raw))
+        self.current_5m_index[pair] = raw_idx
+
         return initial
 
     def stream_5m_bars(self, pair: str):

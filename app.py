@@ -3,7 +3,8 @@ from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 
 from src.bars_loader import BarsConfig, BarsLoader
-from src.lines_repository import SQLLineRepository, DBNotFoundException
+from src.dbexception import DBNotFoundException
+from src.lines_repository import SQLLineRepository
 from src.strategies.liquidity_strategy import LiquidityStrategy
 from src.database import database
 
@@ -17,17 +18,22 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 # ───────── Strategy + Loader ─────────
 PAIR     = 'EURUSD'
+extra_space = {
+    'EURUSD': 0.0002,   # 2 pips
+    'NQ':      2.0      # 2 points
+}
+
 tstrategy = LiquidityStrategy(
     min_stop_loss=BarsConfig.STOP_LOSS_CONFIG[PAIR],
     max_bounce=   BarsConfig.MAX_BOUNCE_CONFIG[PAIR],
     socketio=     socketio,
-    line_repository = line_repository
+    line_repository = line_repository,
+    extra_sl_space=extra_space
 )
 tloader = BarsLoader(
     config=     BarsConfig,
     socketio=   socketio,
-    strategy=   tstrategy,
-    last_rows=  100_000
+    strategy=   tstrategy
 )
 
 # ───────── Bootstrapping existing lines ─────────
@@ -81,8 +87,7 @@ def add_line():
     direction  = 'short' if last_close < price else 'long'
 
     line = line_repository.insert_line(pair=pair, price=price, direction=direction)
-    if line.pair == 'EURUSD':
-        tstrategy.add_strategy_line(line.line_id, line.price, line.direction)
+    tstrategy.add_strategy_line(line.line_id, line.price, line.direction)
 
     return jsonify({
         'id':            line.line_id,
