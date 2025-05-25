@@ -24,23 +24,41 @@ class LinesController:
         } for l in lines])
     
     def add_line(self, pair: str, price: float):
-        idx = self.bars_loader.current_1m_index.get(pair, 0)
-        last_close = None
-        if idx > 0 and pair in self.bars_loader.all_1m_data:
-            last_close = self.bars_loader.all_1m_data[pair][idx - 1]['close']
-        direction = 'long'
-        if last_close is not None:
-            direction = 'short' if last_close < price else 'long'
+        # ensure we only handle the one supported pair
+        if pair != self.bars_loader.pair:
+            abort(400, f"Only pair '{self.bars_loader.pair}' is supported")
 
-        line = self.line_repository.insert_line(pair=pair, price=price, direction=direction)
-        self.liquidity_strategy.add_strategy_line(line.line_id, line.price, line.direction)
+        idx = self.bars_loader.current_1m_index
+        last_close = None
+
+        # grab the most recent close from raw_1m
+        if idx > 0 and idx <= len(self.bars_loader.raw_1m):
+            last_close = self.bars_loader.raw_1m[idx - 1]['close']
+
+        # decide direction
+        if last_close is not None and last_close < price:
+            direction = 'short'
+        else:
+            direction = 'long'
+
+        # persist & wire into strategy
+        line = self.line_repository.insert_line(
+            pair=pair,
+            price=price,
+            direction=direction
+        )
+        self.liquidity_strategy.add_strategy_line(
+            line.line_id,
+            line.price,
+            line.direction
+        )
 
         return jsonify({
             'id':            line.line_id,
             'pair':          line.pair,
             'price':         line.price,
             'direction':     line.direction,
-            'creation_date': line.creation_date
+            'creation_date': line.creation_date.isoformat()
         }), 201
     
     def delete_line(self, line_id):

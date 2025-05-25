@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from src.bars_loader import BarsConfig, BarsLoader
 from src.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
+from src.data_sources.csv_datasource import CSVDataSource
 from src.repositories.lines_repository import SQLLineRepository
 from src.strategies.liquidity_strategy import LiquidityStrategy
 from src.database import database
@@ -37,12 +38,20 @@ tstrategy = LiquidityStrategy(
 )
 trade_manager = TradeManager(
     trade_repository = trade_repository,
-    socketio         = socketio
+    socketio = socketio
+)
+# single CSV data source for the chosen PAIR
+csv_source = CSVDataSource(
+    pair        = PAIR,
+    filename    = BarsConfig.CSV_FILES[PAIR],
+    time_format = BarsConfig.TIME_FORMATS.get(PAIR, BarsConfig.DEFAULT_TIME_FMT),
+    timezone    = BarsConfig.PAIR_TIMEZONES.get(PAIR, BarsConfig.DEFAULT_TIMEZONE)
 )
 tloader = BarsLoader(
-    config=     BarsConfig,
-    socketio=   socketio,
-    strategy=   tstrategy,
+    config=BarsConfig,
+    data_source=csv_source,
+    socketio=socketio,
+    strategy=tstrategy,
     bar_callback=trade_manager.handle_new_1m_bar
 )
 lines_controller = LinesController(line_repository, tloader, tstrategy)
@@ -52,11 +61,7 @@ trades_controller = TradesController(tloader, trade_manager)
 for l in line_repository.list_lines():
     if l.pair != PAIR:
         continue
-
-    # use the stored direction
-    direction = l.direction
-    # print(f"[Boot] restoring line {l.line_id} @ {l.price} as {direction}")
-    tstrategy.add_strategy_line(l.line_id, l.price, direction)
+    tstrategy.add_strategy_line(l.line_id, l.price, l.direction)
 
 
 # ───────── HTTP Endpoints ─────────
@@ -67,10 +72,9 @@ def index():
 
 @app.route('/api/bars')
 def get_bars():
-    pair = request.args.get('pair', PAIR)
     tf   = request.args.get('tf', '5m')
     st   = request.args.get('start_time', type=int)
-    data = tloader.prepare_agg_bars(pair, tf, start_time=st)
+    data = tloader.prepare_agg_bars(tf, start_time=st)
     return jsonify(data)
 
 
@@ -125,35 +129,34 @@ def close_trade(trade_id):
 # ───────── Socket.IO Events ─────────
 @socketio.on('connect')
 def on_connect(auth):
-    # report whether the 5m‐based stream is currently running
-    playing = tloader.streaming_1m.get(PAIR, False)
-    emit('stream_status', {'playing': playing})
+    # single boolean instead of dict
+    emit('stream_status', {'playing': tloader.streaming_1m})
 
 @socketio.on('start_stream')
 def on_start_stream(payload):
-    tf   = payload.get('timeframe', '1m')
-    pair = payload.get('pair', PAIR)
+    tf = payload.get('timeframe', '1m')
     tloader.set_timeframe(tf)
 
-    # align raw 1m pointer
+    # align raw-1m pointer
     from_time = payload.get('fromTime', int(BarsConfig.INITIAL_END.timestamp()))
-    idx = next((i for i,b in enumerate(tloader.all_1m_data[pair]) if b['time'] > from_time),
-               len(tloader.all_1m_data[pair]))
-    tloader.current_1m_index[pair] = idx
+    idx = next(
+        (i for i, b in enumerate(tloader.raw_1m) if b['time'] > from_time),
+        len(tloader.raw_1m)
+    )
+    tloader.current_1m_index = idx
 
-    # drop any partial aggregates before starting fresh
-    tloader._5m_buffer[pair].clear()
-    tloader.tf_buffer[pair].clear()
+    # clear any partial aggregates
+    tloader._5m_buffer.clear()
+    tloader.tf_buffer.clear()
 
-    # start single 1m loop
-    tloader.streaming_1m[pair] = True
-    socketio.start_background_task(tloader.stream_1m_bars, pair)
+    # kick off the loop
+    tloader.streaming_1m = True
+    socketio.start_background_task(tloader.stream_1m_bars)
     emit('stream_status', {'playing': True})
 
 @socketio.on('pause_stream')
 def on_pause_stream():
-    print("[Server] 🔴 pause_stream received — stopping stream_1m_bars")
-    tloader.streaming_1m[PAIR] = False
+    tloader.streaming_1m = False
     emit('stream_status', {'playing': False})
 
 if __name__ == '__main__':
