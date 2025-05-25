@@ -3,8 +3,8 @@ from threading import RLock
 from datetime import datetime, timezone
 
 from src.dbexception import DBNotFoundException
-from src.lines_repository import LineRepository
-from src.trades_repository import TradeRepository
+from src.repositories.lines_repository import LineRepository
+from src.repositories.trades_repository import TradeRepository
 
 class LiquidityStrategy:
     """

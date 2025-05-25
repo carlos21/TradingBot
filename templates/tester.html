@@ -15,18 +15,43 @@
 <body class="flex h-screen">
   <!-- Main chart column -->
   <div class="flex-1 flex flex-col">
-    <!-- Header with timeframe buttons -->
+    <!-- Header with timeframe buttons, stop-loss controls, and trade actions -->
     <header class="p-4 bg-gray-800 text-white">
       <div class="flex justify-between items-center">
-        <!-- Timeframe buttons -->
-        <div class="flex space-x-2">
-          <button data-timeframe="5m"  class="px-2 py-1 rounded bg-gray-900 text-white">5m</button>
-          <button data-timeframe="15m" class="px-2 py-1 rounded bg-gray-900 text-white">15m</button>
-          <button data-timeframe="1h"  class="px-2 py-1 rounded bg-gray-900 text-white">1h</button>
-          <button data-timeframe="4h"  class="px-2 py-1 rounded bg-gray-900 text-white">4h</button>
+        <!-- Left group: timeframes + stop-loss + trade actions -->
+        <div class="flex items-center space-x-4">
+          <!-- Timeframe buttons -->
+          <div class="flex space-x-2">
+            <button data-timeframe="1m"  class="px-2 py-1 rounded bg-gray-900 text-white">1m</button>
+            <button data-timeframe="5m"  class="px-2 py-1 rounded bg-gray-900 text-white">5m</button>
+            <button data-timeframe="15m" class="px-2 py-1 rounded bg-gray-900 text-white">15m</button>
+            <button data-timeframe="1h"  class="px-2 py-1 rounded bg-gray-900 text-white">1h</button>
+            <button data-timeframe="4h"  class="px-2 py-1 rounded bg-gray-900 text-white">4h</button>
+          </div>
+          
+          <!-- Stop-Loss controls -->
+          <div id="stop-loss-group" class="flex items-center space-x-2">
+            <label class="text-white">
+              Stop Loss: <span id="stop-loss-value">100.00</span>
+            </label>
+            <button id="decrease-stop-loss" class="px-2 py-1 rounded border bg-gray-900 text-white">-</button>
+            <button id="increase-stop-loss" class="px-2 py-1 rounded border bg-gray-900 text-white">+</button>
+          </div>
+          
+          <!-- Trade Actions -->
+          <div id="trade-actions-group" class="flex items-center space-x-2">
+            <button id="buy-button" class="px-4 py-2 rounded border bg-gray-500 text-white">BUY</button>
+            <button id="sell-button" class="px-4 py-2 rounded border bg-gray-500 text-white">SELL</button>
+            <button id="open-trade-button" class="px-4 py-2 bg-blue-500 text-white rounded">
+              Open Trade
+            </button>
+            <button id="close-trade-button" class="px-4 py-2 bg-orange-500 text-white rounded" disabled>
+              Close Trade
+            </button>
+          </div>
         </div>
     
-        <!-- Play/Pause button moved here -->
+        <!-- Right group: PnL display + Play/Pause -->
         <div class="flex items-center space-x-4">
           <div>Wins: <span id="winCount">0</span></div>
           <div>Losses: <span id="lossCount">0</span></div>
@@ -47,7 +72,7 @@
     </main>
   </div>
 
-  <!-- Fixed‑width watchlist on the right -->
+  <!-- Fixed-width watchlist on the right -->
   <aside
     id="watchlist"
     class="w-64 p-4 bg-gray-100 overflow-y-auto border-l border-gray-300"

@@ -23,8 +23,8 @@ class BarsConfig:
         'EURUSD': 'csvs/EURUSD_2019.csv',
         'NQ':      'csvs/NQ_2024.csv',
     }
-    INITIAL_START       = parser.parse("2019-01-01T00:00:00Z")
-    INITIAL_END         = parser.parse("2019-01-31T23:59:59Z")  # extend to end of January
+    INITIAL_START       = parser.parse("2024-08-01T00:00:00Z")
+    INITIAL_END         = parser.parse("2024-08-30T23:59:59Z")  # extend to end of January
 
     # strategy parameters
     STOP_LOSS_CONFIG    = {
@@ -38,61 +38,62 @@ class BarsConfig:
 
 class BarsLoader:
     """
-    Loads, aggregates, and streams bars for different trading pairs.
-    Always drives the 5m-based strategy and emits a single 'bar' stream for the user-selected timeframe,
-    by re-aggregating 5m bars on the fly.
+    Drives everything off a single 1m loop:
+    - builds 5m bars for the strategy
+    - re-aggregates into user TF for emitting 'bar'
+    - checks every 1m bar for SL/TP and closes trades immediately
     """
-    def __init__(self, config: BarsConfig, socketio, strategy=None):
+    def __init__(self, config: BarsConfig, socketio, strategy=None, bar_callback: callable = None):
         self.config      = config
         self.socketio    = socketio
         self.strategy    = strategy
+        self.bar_callback = bar_callback
         self.stream_lock = threading.Lock()
 
-        # load raw 1m data
-        self.all_1m_data = {
-            pair: self.load_csv_data(filename)
-            for pair, filename in self.config.CSV_FILES.items()
-        }
-        # build 5m base aggregates
-        self.agg_5m = {}
-        for pair, raw in self.all_1m_data.items():
-            self.agg_5m[pair] = self.aggregate_bars(raw, group_size=5)
-        # pointers
-        self.current_5m_index = { pair: 0 for pair in self.agg_5m }
-        self.streaming_5m     = { pair: False for pair in self.agg_5m }
+        # raw 1m data
+        self.all_1m_data      = { pair: self._load_csv_data(path) for pair, path in self.config.CSV_FILES.items() }
+        # cache for REST (5m)
+        self._agg_5m_cache    = { pair: self._aggregate_bars(raw, 5) for pair, raw in self.all_1m_data.items() }
 
-        # dynamic timeframe settings
-        self.current_tf   = '5m'
-        self.tf_group     = 1        # number of 5m bars per emitted TF bar
-        self.tf_buffer    = { pair: [] for pair in self.agg_5m }
+        # streaming pointers
+        self.current_1m_index = { pair: 0 for pair in self.all_1m_data }
+        self.streaming_1m     = { pair: False for pair in self.all_1m_data }
+
+        # aggregation buffers
+        self._5m_buffer = { pair: [] for pair in self.all_1m_data }
+        self.tf_buffer  = { pair: [] for pair in self.all_1m_data }
+
+        # timeframe grouping (# of 5m bars per TF)
+        self.current_tf = '5m'
+        self.tf_group   = 1
 
     def set_timeframe(self, tf: str):
-        """
-        Set user-selected timeframe (multiple of 5m) and reset aggregation buffer.
-        """
+        """Set user TF like '1m','5m','15m','1h' and clear buffers."""
         self.current_tf = tf
-        unit   = tf[-1]
-        num    = int(tf[:-1])
+        unit = tf[-1]
+        num  = int(tf[:-1])
         minutes = num * (60 if unit == 'h' else 1)
-        self.tf_group = minutes // 5
-        for pair in self.tf_buffer:
+        # group of 5m bars per TF = minutes/5
+        grp = minutes // 5
+        self.tf_group = grp if grp > 0 else 1
+
+        # clear *both* the 5m‐ and TF‐aggregation buffers
+        for pair in self.all_1m_data:
+            self._5m_buffer[pair].clear()
             self.tf_buffer[pair].clear()
 
-    def load_csv_data(self, filename: str, time_format: str = None):
+    def _load_csv_data(self, filename: str, time_format: str = None):
+        """Read raw 1m CSV and return list of bars with UTC timestamps."""
         pair = os.path.splitext(os.path.basename(filename))[0].split('_')[0]
-        print(f"[DEBUG] → loading {pair} from file: {filename}")
-
         fmt      = time_format or self.config.TIME_FORMATS.get(pair, self.config.DEFAULT_TIME_FMT)
         local_tz = ZoneInfo(self.config.PAIR_TIMEZONES.get(pair, self.config.DEFAULT_TIMEZONE))
         utc_tz   = ZoneInfo('UTC')
 
         data = []
         with open(filename, 'r', newline='') as f:
-            sample  = f.read(2048)
-            f.seek(0)
-            dialect = csv.Sniffer().sniff(sample, delimiters=";," )
+            sample  = f.read(2048); f.seek(0)
+            dialect = csv.Sniffer().sniff(sample, delimiters=";,")
             reader  = csv.DictReader(f, dialect=dialect)
-
             for row in reader:
                 ts_str = f"{row.get('Date','')} {row.get('Time','')}".strip()
                 try:
@@ -100,7 +101,6 @@ class BarsLoader:
                 except Exception:
                     dt = parser.parse(ts_str)
                 dt = dt.replace(tzinfo=local_tz).astimezone(utc_tz)
-
                 data.append({
                     'time':   int(dt.timestamp()),
                     'open':   float(row['Open']),
@@ -110,29 +110,14 @@ class BarsLoader:
                     'volume': int(row.get('Volume', 0)),
                     'pair':   pair
                 })
-
         data.sort(key=lambda b: b['time'])
-
-        if data:
-            first_dt = datetime.fromtimestamp(data[0]['time'], tz=utc_tz).isoformat()
-            last_dt  = datetime.fromtimestamp(data[-1]['time'], tz=utc_tz).isoformat()
-        else:
-            first_dt = last_dt = "—no data—"
-
-        print(f"[DEBUG]   • {pair}: {len(data)} rows  |  first={first_dt}  last={last_dt}")
-
         return data
 
-    def aggregate_bars(self, bars: list, group_size: int = 5):
-        """
-        Aggregate consecutive bars into larger intervals.
-        Dynamically infers the base interval from the first two bars (in seconds)
-        so that raw 1m (60s) or 5m (300s) data can be correctly re-grouped.
-        """
+    def _aggregate_bars(self, bars: list, group_size: int = 5):
+        """Generic aggregator: used for 5m base and for TF grouping."""
         if len(bars) < 2:
             base_interval = 60
         else:
-            # time difference between first two bars
             base_interval = bars[1]['time'] - bars[0]['time']
         window = group_size * base_interval
         agg = []
@@ -140,7 +125,6 @@ class BarsLoader:
             chunk = bars[i:i+group_size]
             if len(chunk) < group_size:
                 break
-            pair    = chunk[0]['pair']
             high    = max(b['high']  for b in chunk)
             low     = min(b['low']   for b in chunk)
             open_   = chunk[0]['open']
@@ -155,86 +139,93 @@ class BarsLoader:
                 'low':    low,
                 'close':  close_,
                 'volume': volume,
-                'pair':   pair
+                'pair':   chunk[0]['pair']
             })
         return agg
 
-    
-    def prepare_agg_bars(self, pair: str, tf: str, start_time: int = None):
-        # re-aggregate 5m into tf bars for history requests
-        self.set_timeframe(tf)
-        base_5m = self.agg_5m.get(pair)
-        if base_5m is None:
+    def prepare_agg_bars(self, pair: str, tf: str, start_time: int=None):
+        """
+        REST GET /api/bars:
+        If 1m selected, return raw 1m bars; otherwise re-aggregate 5m cache into TF.
+        """
+        raw_1m = self.all_1m_data.get(pair)
+        if raw_1m is None:
             abort(400, f"Unknown pair '{pair}'")
 
-        print(f"[DEBUG] prepare_agg_bars for {pair}:")
-        print(f"  - requested TF: {tf}  (tf_group={self.tf_group})")
-        print(f"  - raw 5m bars count: {len(base_5m)}")
+        # 1m timeframe: return raw
+        if tf.endswith('m') and int(tf[:-1]) == 1:
+            if start_time is None:
+                start_ts = int(self.config.INITIAL_START.timestamp())
+                end_ts   = int(self.config.INITIAL_END.timestamp())
+            else:
+                start_ts, end_ts = 0, start_time
 
-        # re-aggregate 5m bars into tf bars
-        agg_tf = self.aggregate_bars(base_5m, group_size=self.tf_group)
-        print(f"  - total {tf} bars after re-agg: {len(agg_tf)}")
+            # advance pointer past window
+            idx = next((i for i,b in enumerate(raw_1m) if b['time'] > end_ts), len(raw_1m))
+            self.current_1m_index[pair] = idx
 
-        # dump first few timestamps
-        utc = ZoneInfo("UTC")
-        print("  - sample agg_tf[0..4]:")
-        for i, b in enumerate(agg_tf[:5]):
-            dt = datetime.fromtimestamp(b['time'], tz=utc)
-            print(f"      [{i}] epoch={b['time']}  → {dt.isoformat()}")
+            # slice raw data
+            return [b for b in raw_1m if start_ts <= b['time'] <= end_ts]
 
-        # determine slic ing window
+        # non-1m: use cached 5m and re-aggregate
+        base_5m = self._agg_5m_cache[pair]
+        num  = int(tf[:-1])
+        unit = tf[-1]
+        mins = num * (60 if unit == 'h' else 1)
+        grp  = mins // 5 or 1
+        agg_tf = self._aggregate_bars(base_5m, group_size=grp)
+
         if start_time is None:
             start_ts = int(self.config.INITIAL_START.timestamp())
             end_ts   = int(self.config.INITIAL_END.timestamp())
         else:
             start_ts, end_ts = 0, start_time
 
-        # show window bounds
-        start_dt = datetime.fromtimestamp(start_ts, tz=utc)
-        end_dt   = datetime.fromtimestamp(end_ts, tz=utc)
-        print(f"  - window start: {start_ts} ({start_dt.isoformat()})")
-        print(f"  - window   end: {end_ts} ({end_dt.isoformat()})")
+        # advance pointer on raw 1m based on end_ts
+        idx = next((i for i,b in enumerate(raw_1m) if b['time'] > end_ts), len(raw_1m))
+        self.current_1m_index[pair] = idx
 
-        # filter
-        initial = [b for b in agg_tf if start_ts <= b['time'] <= end_ts]
-        print(f"  - bars in window: {len(initial)}")
+        return [b for b in agg_tf if start_ts <= b['time'] <= end_ts]
 
-        # reset pointers
-        self.current_agg_bars = agg_tf
-        
-        raw = self.agg_5m[pair]
-        raw_idx = next((i for i,b in enumerate(raw) if b['time'] > end_ts), len(raw))
-        self.current_5m_index[pair] = raw_idx
+    def stream_1m_bars(self, pair: str):
+        """
+        Single 1m loop: builds 5m bars for strategy, re-aggregates into TF bars,
+        calls SL/TP callback on raw 1m, and emits TF bars.
+        """
+        raw   = self.all_1m_data[pair]
+        idx   = self.current_1m_index[pair]
+        self.streaming_1m[pair] = True
 
-        return initial
-
-    def stream_5m_bars(self, pair: str):
-        """Continuously stream 5m bars, drive strategy, and emit grouped TF bars."""
-        self.streaming_5m[pair] = True
-
-        while self.streaming_5m[pair] and self.current_5m_index[pair] < len(self.agg_5m[pair]):
+        while self.streaming_1m[pair] and idx < len(raw):
             with self.stream_lock:
-                bar5 = self.agg_5m[pair][self.current_5m_index[pair]]
-                self.current_5m_index[pair] += 1
+                bar1 = raw[idx]
+                idx += 1
+                self.current_1m_index[pair] = idx
 
-            # feed the raw 5m bar into your strategy
-            if self.strategy:
-                try:
-                    self.strategy.on_new_bar(bar5)
-                except Exception:
-                    import traceback; traceback.print_exc()
+            # SL/TP check
+            if self.bar_callback:
+                self.bar_callback(bar1)
 
-            # buffer up for the user-selected timeframe
-            buf = self.tf_buffer[pair]
-            buf.append(bar5)
+            # accumulate into 5m bars
+            buf5 = self._5m_buffer[pair]
+            buf5.append(bar1)
+            if len(buf5) == 5:
+                agg5 = self._aggregate_bars(buf5, 5)[0]
+                # feed strategy
+                if self.strategy:
+                    try: self.strategy.on_new_bar(agg5)
+                    except Exception: import traceback; traceback.print_exc()
+                buf5.clear()
 
-            # once we have exactly tf_group bars, emit one grouped bar
-            if len(buf) == self.tf_group:
-                tf_bar = self.aggregate_bars(buf, group_size=len(buf))[0]
-                self.socketio.emit('bar', tf_bar)
-                buf.clear()
+                # accumulate into TF bars
+                buftf = self.tf_buffer[pair]
+                buftf.append(agg5)
+                if len(buftf) == self.tf_group:
+                    tf_bar = self._aggregate_bars(buftf, len(buftf))[0]
+                    self.socketio.emit('bar', tf_bar)
+                    buftf.clear()
 
-                # only now sleep, so it's always 0.1s per emitted bar
-                self.socketio.sleep(0.1)
+                    # throttle replay speed
+                    self.socketio.sleep(0.1)
 
-        self.streaming_5m[pair] = False
+        self.streaming_1m[pair] = False

@@ -3,14 +3,19 @@ export class ChartViewer {
    * @param {HTMLElement} chartElement
    * @param {DataService} dataService
    */
-  constructor(chartElement, dataService) {
+  constructor(chartElement, dataService, socket, opts = {}) {
     this.chartElement = chartElement;
     this.dataService  = dataService;
+    this.socket = socket;
+    this.onDisplay = opts.onDisplay || (() => {});
     this.lastTime     = -Infinity;
     this.lastPrice    = null;
-    this.pair         = 'EURUSD';
+    this.pair         = 'NQ';
     this.currentTF    = '5m';
     this.isPlaying    = false;
+    this.activeTrade = null;
+    this.historicalBars = [];
+    this.tradeMarkers   = [];
 
     const formats = {
       NQ:     { precision: 2,    minMove: 0.01    },
@@ -32,6 +37,11 @@ export class ChartViewer {
     this.tradeSLLine    = null;
     this.tradeTPLine    = null;
 
+    // storage for preview lines
+    this.previewEntryLine = null;
+    this.previewSLLine    = null;
+    this.previewTPLine    = null;
+
     // block default context menu
     this.chartElement.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -40,16 +50,47 @@ export class ChartViewer {
       layout: { background: { type: 'solid', color: 'white' }, textColor: 'black' },
       grid:   { vertLines: { color: '#e1e1e1' }, horzLines: { color: '#e1e1e1' } },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-      timeScale: { visible: true, timeVisible: true },
-      width:  chartElement.clientWidth,
+      timeScale: {
+        visible: true,
+        timeVisible: true,
+        shiftVisibleRangeOnNewBar: true,
+      },
+      width: chartElement.clientWidth,
       height: chartElement.clientHeight
     };
     this.chart  = LightweightCharts.createChart(chartElement, this.chartOptions);
     this.series = this.chart.addCandlestickSeries();
     this.series.setData([]);
 
+    this.isRPressed = false;
+    window.addEventListener('keydown', (e) => {
+      if (e.key.toLowerCase() === 'r') this.isRPressed = true;
+    });
+    window.addEventListener('keyup', (e) => {
+      if (e.key.toLowerCase() === 'r') this.isRPressed = false;
+    });
+
+    this.chart.subscribeClick(param => {
+      if (!this.isRPressed) {
+        return;
+      }
+      if (param && param.time) {
+        this._onChartClick(param.time);
+      }
+    });
+
     const fmt = formats[this.pair] || { precision: 2, minMove: 1 };
-    this.series.applyOptions({ priceFormat: { type: 'price', precision: fmt.precision, minMove: fmt.minMove } });
+    this.series.applyOptions(
+      { 
+        priceFormat: { 
+          type: 'price', 
+          precision: fmt.precision, 
+          minMove: fmt.minMove 
+        },
+        lastValueVisible: false,
+        priceLineVisible: false
+      }
+    );
 
     // handle resize
     new ResizeObserver(() => {
@@ -80,6 +121,7 @@ export class ChartViewer {
 
   async _initBars() {
     const bars = await this.dataService.fetchBars(this.pair, this.currentTF);
+    this.historicalBars = bars;
     this.displayChart(bars);
     bars.forEach(bar => this._shadeBar(bar));
   }
@@ -100,7 +142,6 @@ export class ChartViewer {
   }
 
   _setupSocket() {
-    this.socket = io();
     this.socket.on('connect', () => console.log('[ChartViewer] socket connected, id=', this.socket.id));
     this.socket.on('disconnect', () => console.log('[ChartViewer] socket disconnected'));
     this.socket.on('connect_error', err => console.error('[ChartViewer] socket error', err));
@@ -115,8 +156,18 @@ export class ChartViewer {
       }
     });
 
-    this.socket.on('trade_open', trade => this._drawTradeLines(trade));
-    this.socket.on('trade_close', trade => this._drawResultMarker(trade));
+    // when server opens a trade, freeze our SL/TP
+    this.socket.on('trade_open', trade => {
+      this.activeTrade = trade;
+      // immediately draw the locked-in levels
+      this._drawTradeLines(trade);
+    });
+
+    this.socket.on('trade_close', (trade) => {
+      this.activeTrade = null;
+      this._drawResultMarker(trade)
+    });
+
     this.socket.on('line_removed', ({ id }) => {
       console.log('[ChartViewer] line_removed for id=', id);
       const found = this.pinnedLines.find(o => o.id === id);
@@ -142,6 +193,26 @@ export class ChartViewer {
     const price = this.series.coordinateToPrice(e.clientY - rect.top);
     if (e.button === 0) this._addLine(price);
     else                this._removeNearestLine(price);
+  }
+
+  _onChartClick(clickedTime) {
+    // pause and seek
+    this.pauseReplay();
+
+    // keep bars up to clickedTime
+    const idx = this.historicalBars.findIndex(b => b.time >= clickedTime);
+    if (idx === -1) return;
+    const slice = this.historicalBars.slice(0, idx + 1);
+
+    // redraw
+    this.displayChart(slice);
+    this.tradeMarkers = [];
+    this.series.setMarkers([]);
+    this.londonSeries.setData([]);
+    this.nySeries.setData([]);
+
+    this.lastTime  = clickedTime;
+    this.lastPrice = slice[slice.length - 1].close;
   }
 
   async _addLine(price) {
@@ -181,9 +252,57 @@ export class ChartViewer {
       this.lastTime  = last.time;
       this.lastPrice = last.close;
     }
+    this.onDisplay();
+  }
+
+  _drawPreviews({ entry, stop_loss, take_profit }) {
+    // remove old previews
+    [ this.previewEntryLine, this.previewSLLine, this.previewTPLine ].forEach(l => l && this.series.removePriceLine(l));
+
+    this.previewEntryLine = this.series.createPriceLine({
+      price: entry,
+      color: 'rgba(0, 128, 255, 0.8)',     // bright blue
+      lineWidth: 2,                         // thicker
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: 'Entry (preview)'
+    });
+    this.previewSLLine = this.series.createPriceLine({
+      price: stop_loss,
+      color: 'rgba(255, 64, 64, 0.8)',      // strong red
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: 'SL (preview)'
+    });
+    this.previewTPLine = this.series.createPriceLine({
+      price: take_profit,
+      color: 'rgba(64, 255, 64, 0.8)',      // bright green
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: 'TP (preview)'
+    });
+  }
+
+  // helper to clear previews once a trade is open
+  clearPreviews() {
+    [ this.previewEntryLine, this.previewSLLine, this.previewTPLine ]
+      .forEach(l => l && this.series.removePriceLine(l));
+    this.previewEntryLine =
+    this.previewSLLine    =
+    this.previewTPLine    = null;
   }
 
   _drawTradeLines(trade) {
+    this.clearPreviews();
+
+    // now draw the confirmed trade lines as before—
+    // but you can make them a bit bolder if you like:
+    [ this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine ]
+      .forEach(l => l && this.series.removePriceLine(l));
+
+    
     [this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine].forEach(h => h && this.series.removePriceLine(h));
     this.tradeEntryLine = this.series.createPriceLine({ price: trade.entry,      color: 'yellow', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Entry' });
     this.tradeSLLine    = this.series.createPriceLine({ price: trade.stop_loss || trade.stopLoss, color: 'red',   lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'SL'    });
@@ -223,13 +342,9 @@ export class ChartViewer {
   }
 
   // ───── Replay & Timeframe Controls ─────
-  startReplay(tf = this.currentTF) {
+  startReplay(tf = this.currentTF, fromTime = this.lastTime) {
     console.log('[ChartViewer] ▶️ startReplay — tf:', tf, 'pair:', this.pair);
-    if (this.isPlaying) return;
-    this.pauseReplay();
-    this.currentTF = tf;
-
-    this.socket.emit('start_stream', { timeframe: tf, pair: this.pair, fromTime: this.lastTime });
+    this.socket.emit('start_stream', { timeframe: this.currentTF, pair: this.pair, fromTime: fromTime });
     this.isPlaying = true;
   }
 
@@ -256,6 +371,7 @@ export class ChartViewer {
     this.nySeries.setData([]);
 
     const bars = await this.dataService.fetchBars(this.pair, tf, this.lastTime);
+    this.historicalBars = bars;
     this.displayChart(bars);
     bars.forEach(bar => this._shadeBar(bar));
   }
