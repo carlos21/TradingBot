@@ -7,6 +7,8 @@ import csv
 import threading
 
 from src.data_sources.bars_datasource import BarsDataSource
+from src.data_sources.combined_datasource import CombinedDataSource
+from src.data_sources.live.live_datasource import LiveDataSource
 
 
 class BarsConfig:
@@ -37,6 +39,7 @@ class BarsConfig:
         'EURUSD': 0.0020,   # 20 pips
         'NQ':      50       # 50 points
     }
+    USE_LIVE_TICKS = False
 
 class BarsLoader:
     """
@@ -48,7 +51,7 @@ class BarsLoader:
     def __init__(
         self, 
         config: BarsConfig,
-        data_source: BarsDataSource,
+        data_source: CombinedDataSource,
         socketio, 
         strategy=None, 
         bar_callback: callable = None
@@ -60,12 +63,8 @@ class BarsLoader:
         self.bar_callback = bar_callback
         self.stream_lock = threading.Lock()
 
-        # load raw 1m bars from your single data source
-        # data_source.load_1m_bars() must return List[bar_dict]
-        self.pair         = data_source.pair
-        self.raw_1m       = data_source.load_1m_bars()
-
-        # pre-aggregate the whole history into 5m
+        self.pair       = data_source.pair
+        self.raw_1m     = data_source.load_historical_bars()
         self._agg_5m_cache = self._aggregate_bars(self.raw_1m, 5)
 
         # streaming state
@@ -80,6 +79,86 @@ class BarsLoader:
         self.current_tf = '5m'
         self.tf_group   = 1
 
+        # don’t subscribe yet — wait until “play” is pressed
+        self._subscribed = False
+        self._from_time  = None
+
+         # start the single real-time feed of bars+ticks:
+        data_source.subscribe(self._handle_message)
+
+    def _handle_message(self, msg: dict):
+        # 0) drop anything before our from_time
+        if self._from_time and msg.get('time', 0) <= self._from_time:
+            return
+        
+        # 1) If it's a bar, process it just like stream_1m_bars used to…
+        if 'open' in msg and 'high' in msg:
+            # this is a 1m bar
+            self._process_bar(msg)
+            return
+
+        # 2) Otherwise assume it's a tick
+        if 'price' in msg:
+            self._process_tick(msg)
+            return
+
+        # unknown message shape
+        return
+    
+    def _process_bar(self, bar1m: dict):
+        """Handle an incoming 1 m bar (from CSV replay or WS historical)."""
+        # emit & SL/TP
+        if self.bar_callback:
+            self.bar_callback(bar1m)
+        self.socketio.emit('bar', bar1m)
+
+        # feed strategy
+        if self.strategy:
+            try:    self.strategy.on_new_bar(bar1m)
+            except Exception: import traceback; traceback.print_exc()
+
+        # buffer for TF‐aggregation
+        self.tf_buffer.append(bar1m)
+        if len(self.tf_buffer) == self.tf_group:
+            agg_tf = self._aggregate_bars(self.tf_buffer, len(self.tf_buffer))[0]
+            self.tf_buffer.clear()
+            self.socketio.emit('bar', agg_tf)
+
+    def _process_tick(self, tick: dict):
+        """Handle an incoming tick (price update)."""
+        # SL/TP on tick
+        if self.bar_callback:
+            self.bar_callback(tick)
+
+        # buffer ticks to build 1 m bars if you like…
+        # (optional — you could skip tick→bar here if you only
+        #  want raw‐tick streaming)
+        # e.g. self._1m_tick_buffer.append(tick) ...
+
+        # emit the raw tick
+        self.socketio.emit('tick', tick)
+
+    def start(self, from_time: int = None):
+        """
+        Begin streaming.  from_time is the UNIX ts to skip up to.
+        """
+        # remember where to start
+        self._from_time = from_time or 0
+
+        # clear any partial aggregates
+        self._5m_buffer.clear()
+        self.tf_buffer.clear()
+
+        # subscribe only once
+        if not self._subscribed:
+            self.data_source.subscribe(self._handle_message)
+            self._subscribed = True
+
+        self.streaming_1m = True
+    
+    def pause(self):
+        """Temporarily stop processing incoming messages."""
+        self.streaming_1m = False
 
     def set_timeframe(self, tf: str):
         """Set user TF like '1m','5m','15m','1h' and clear buffers."""

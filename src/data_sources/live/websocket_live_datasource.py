@@ -9,6 +9,9 @@ class WebsocketLiveDataSource(LiveDataSource):
         self.pair   = pair
         self.ws_url = ws_url
 
+    def load_historical_ticks(self):
+        return []
+
     def subscribe(self, callback):
         def _run():
             ws = websocket.create_connection(self.ws_url)

@@ -7,6 +7,7 @@ from src.bars_loader import BarsConfig, BarsLoader
 from src.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
 from src.data_sources.csv_datasource import CSVDataSource
+from src.data_sources.metatrader_datasource import MetaTraderDataSource
 from src.repositories.lines_repository import SQLLineRepository
 from src.strategies.liquidity_strategy import LiquidityStrategy
 from src.database import database
@@ -40,16 +41,25 @@ trade_manager = TradeManager(
     trade_repository = trade_repository,
     socketio = socketio
 )
-# single CSV data source for the chosen PAIR
-csv_source = CSVDataSource(
-    pair        = PAIR,
-    filename    = BarsConfig.CSV_FILES[PAIR],
-    time_format = BarsConfig.TIME_FORMATS.get(PAIR, BarsConfig.DEFAULT_TIME_FMT),
-    timezone    = BarsConfig.PAIR_TIMEZONES.get(PAIR, BarsConfig.DEFAULT_TIMEZONE)
-)
+
+if app.config.get('USE_MT5', False):
+    ds = MetaTraderDataSource(
+        pair   = PAIR,
+        creds  = {'login':123, 'password':'…'},
+        ws_url = "wss://mt5.ticks"
+    )
+else:
+    ds = CSVDataSource(
+        pair      = PAIR,
+        filename  = BarsConfig.CSV_FILES[PAIR],
+        time_fmt  = BarsConfig.TIME_FORMATS[PAIR],
+        tz        = BarsConfig.PAIR_TIMEZONES[PAIR],
+        speed     = app.config.get('REPLAY_SPEED', 1.0)
+    )
+
 tloader = BarsLoader(
     config=BarsConfig,
-    data_source=csv_source,
+    data_source=ds,
     socketio=socketio,
     strategy=tstrategy,
     bar_callback=trade_manager.handle_new_1m_bar

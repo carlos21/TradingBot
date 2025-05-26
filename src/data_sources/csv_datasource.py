@@ -1,48 +1,49 @@
-import csv
+import csv, threading, time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from dateutil import parser
-from src.data_sources.bars_datasource import BarsDataSource
+from typing import Callable, Dict, List
+from .combined_datasource import CombinedDataSource
 
-import os
+class CSVDataSource(CombinedDataSource):
+    def __init__(self, pair: str, filename: str, time_fmt: str, tz: str, speed: float = 1.0):
+        self.pair   = pair
+        self.file   = filename
+        self.fmt    = time_fmt
+        self.local  = ZoneInfo(tz)
+        self.utc    = ZoneInfo("UTC")
+        self.speed  = speed
 
-
-class CSVDataSource(BarsDataSource):
-    def __init__(
-        self,
-        pair: str,
-        filename: str,
-        time_format: str,
-        timezone: str,
-        default_fmt: str = '%d/%m/%Y %H:%M:%S'
-    ):
-        self.pair        = pair
-        self.filename    = filename
-        self.time_format = time_format
-        self.default_fmt = default_fmt
-        self.local_tz    = ZoneInfo(timezone)
-        self.utc_tz      = ZoneInfo('UTC')
-
-    def load_1m_bars(self):
-        data = []
-        with open(self.filename, 'r', newline='') as f:
+    def load_historical_bars(self) -> List[Dict]:
+        bars = []
+        with open(self.file, newline='') as f:
             sample  = f.read(2048); f.seek(0)
             dialect = csv.Sniffer().sniff(sample, delimiters=";,")
             reader  = csv.DictReader(f, dialect=dialect)
-            for row in reader:
-                ts_str = f"{row.get('Date','')} {row.get('Time','')}".strip()
+            for r in reader:
+                ts = f"{r['Date']} {r['Time']}"
                 try:
-                    dt = datetime.strptime(ts_str, self.time_format)
-                except Exception:
-                    dt = parser.parse(ts_str)
-                dt = dt.replace(tzinfo=self.local_tz).astimezone(self.utc_tz)
-                data.append({
-                    'time':   int(dt.timestamp()),
-                    'open':   float(row['Open']),
-                    'high':   float(row['High']),
-                    'low':    float(row['Low']),
-                    'close':  float(row['Close']),
-                    'volume': int(row.get('Volume', 0)),
-                    'pair':   self.pair,
+                    dt = datetime.strptime(ts, self.fmt)
+                except:
+                    dt = parser.parse(ts)
+                dt = dt.replace(tzinfo=self.local).astimezone(self.utc)
+                bars.append({
+                    "time":   int(dt.timestamp()),
+                    "open":   float(r["Open"]),
+                    "high":   float(r["High"]),
+                    "low":    float(r["Low"]),
+                    "close":  float(r["Close"]),
+                    "volume": int(r.get("Volume",0)),
+                    "pair":   self.pair
                 })
-        return sorted(data, key=lambda b: b['time'])
+        return bars
+
+    def subscribe(self, callback: Callable[[Dict], None]) -> None:
+        def _replay():
+            bars = self.load_historical_bars()
+            for i, bar in enumerate(bars):
+                if i>0:
+                    wait = (bar["time"] - bars[i-1]["time"]) / self.speed
+                    time.sleep(wait)
+                callback(bar)
+        threading.Thread(target=_replay, daemon=True).start()
