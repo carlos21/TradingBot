@@ -54,7 +54,7 @@ else:
         filename  = BarsConfig.CSV_FILES[PAIR],
         time_fmt  = BarsConfig.TIME_FORMATS[PAIR],
         tz        = BarsConfig.PAIR_TIMEZONES[PAIR],
-        speed     = app.config.get('REPLAY_SPEED', 1.0)
+        speed     = app.config.get('REPLAY_SPEED', 60.0)
     )
 
 tloader = BarsLoader(
@@ -144,29 +144,16 @@ def on_connect(auth):
 
 @socketio.on('start_stream')
 def on_start_stream(payload):
-    tf = payload.get('timeframe', '1m')
-    tloader.set_timeframe(tf)
-
-    # align raw-1m pointer
+    tf        = payload.get('timeframe', '1m')
     from_time = payload.get('fromTime', int(BarsConfig.INITIAL_END.timestamp()))
-    idx = next(
-        (i for i, b in enumerate(tloader.raw_1m) if b['time'] > from_time),
-        len(tloader.raw_1m)
-    )
-    tloader.current_1m_index = idx
 
-    # clear any partial aggregates
-    tloader._5m_buffer.clear()
-    tloader.tf_buffer.clear()
-
-    # kick off the loop
-    tloader.streaming_1m = True
-    socketio.start_background_task(tloader.stream_1m_bars)
+    tloader.set_timeframe(tf)
+    tloader.start(from_time)
     emit('stream_status', {'playing': True})
 
 @socketio.on('pause_stream')
 def on_pause_stream():
-    tloader.streaming_1m = False
+    tloader.pause()
     emit('stream_status', {'playing': False})
 
 if __name__ == '__main__':

@@ -42,8 +42,5 @@ class CSVDataSource(CombinedDataSource):
         def _replay():
             bars = self.load_historical_bars()
             for i, bar in enumerate(bars):
-                if i>0:
-                    wait = (bar["time"] - bars[i-1]["time"]) / self.speed
-                    time.sleep(wait)
                 callback(bar)
         threading.Thread(target=_replay, daemon=True).start()

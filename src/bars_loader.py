@@ -70,6 +70,8 @@ class BarsLoader:
         # streaming state
         self.current_1m_index = 0
         self.streaming_1m     = False
+        self._subscribed = False
+        self._from_time  = None
 
         # buffers for building aggregates
         self._5m_buffer = []
@@ -79,14 +81,11 @@ class BarsLoader:
         self.current_tf = '5m'
         self.tf_group   = 1
 
-        # don’t subscribe yet — wait until “play” is pressed
-        self._subscribed = False
-        self._from_time  = None
-
-         # start the single real-time feed of bars+ticks:
-        data_source.subscribe(self._handle_message)
-
     def _handle_message(self, msg: dict):
+        # only process once “play” has been pressed
+        if not self.streaming_1m:
+            return
+
         # 0) drop anything before our from_time
         if self._from_time and msg.get('time', 0) <= self._from_time:
             return
@@ -105,55 +104,57 @@ class BarsLoader:
         # unknown message shape
         return
     
-    def _process_bar(self, bar1m: dict):
-        """Handle an incoming 1 m bar (from CSV replay or WS historical)."""
-        # emit & SL/TP
+    def _process_bar(self, bar1):
+        """Replaces stream_1m_bars logic for each 1m bar."""
+        # SL/TP on raw 1m
         if self.bar_callback:
-            self.bar_callback(bar1m)
-        self.socketio.emit('bar', bar1m)
+            self.bar_callback(bar1)
 
-        # feed strategy
-        if self.strategy:
-            try:    self.strategy.on_new_bar(bar1m)
-            except Exception: import traceback; traceback.print_exc()
+        with self.stream_lock:
+            # accumulate 5 of them into a 5m bar
+            self._5m_buffer.append(bar1)
+            if len(self._5m_buffer) == 5:
+                agg5 = self._aggregate_bars(self._5m_buffer, 5)[0]
+                self._5m_buffer.clear()
 
-        # buffer for TF‐aggregation
-        self.tf_buffer.append(bar1m)
-        if len(self.tf_buffer) == self.tf_group:
-            agg_tf = self._aggregate_bars(self.tf_buffer, len(self.tf_buffer))[0]
-            self.tf_buffer.clear()
-            self.socketio.emit('bar', agg_tf)
+                # feed strategy on 5m
+                if self.strategy:
+                    try:    self.strategy.on_new_bar(agg5)
+                    except: import traceback; traceback.print_exc()
 
-    def _process_tick(self, tick: dict):
-        """Handle an incoming tick (price update)."""
-        # SL/TP on tick
+                # now group into TF
+                self.tf_buffer.append(agg5)
+                if len(self.tf_buffer) == self.tf_group:
+                    tf_bar = self._aggregate_bars(self.tf_buffer, len(self.tf_buffer))[0]
+                    self.tf_buffer.clear()
+
+                    # emit exactly one 'bar' per TF period
+                    self.socketio.emit('bar', tf_bar)
+                    # throttle if you're replaying historical
+                    self.socketio.sleep(0.1)
+
+    def _process_tick(self, tick):
+        """If you still want raw‐tick events."""
+        # SL/TP on ticks if desired
         if self.bar_callback:
             self.bar_callback(tick)
-
-        # buffer ticks to build 1 m bars if you like…
-        # (optional — you could skip tick→bar here if you only
-        #  want raw‐tick streaming)
-        # e.g. self._1m_tick_buffer.append(tick) ...
-
-        # emit the raw tick
         self.socketio.emit('tick', tick)
 
     def start(self, from_time: int = None):
         """
         Begin streaming.  from_time is the UNIX ts to skip up to.
         """
-        # remember where to start
+        # remember where to start (None → 0)
         self._from_time = from_time or 0
 
         # clear any partial aggregates
         self._5m_buffer.clear()
         self.tf_buffer.clear()
 
-        # subscribe only once
-        if not self._subscribed:
-            self.data_source.subscribe(self._handle_message)
-            self._subscribed = True
+        # ALWAYS re-subscribe so CSVReplay fires again
+        self.data_source.subscribe(self._handle_message)
 
+        # un‐pause
         self.streaming_1m = True
     
     def pause(self):
