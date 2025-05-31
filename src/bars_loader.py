@@ -151,11 +151,11 @@ class BarsLoader:
         self._5m_buffer.clear()
         self.tf_buffer.clear()
 
-        # ALWAYS re-subscribe so CSVReplay fires again
-        self.data_source.subscribe(self._handle_message)
-
         # un‐pause
         self.streaming_1m = True
+
+        # ALWAYS re-subscribe so CSVReplay fires again
+        self.data_source.subscribe(self._handle_message)
     
     def pause(self):
         """Temporarily stop processing incoming messages."""

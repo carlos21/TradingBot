@@ -13,8 +13,9 @@ class CSVDataSource(CombinedDataSource):
         self.local  = ZoneInfo(tz)
         self.utc    = ZoneInfo("UTC")
         self.speed  = speed
+        self._bars = self._load_historical_bars()
 
-    def load_historical_bars(self) -> List[Dict]:
+    def _load_historical_bars(self) -> List[Dict]:
         bars = []
         with open(self.file, newline='') as f:
             sample  = f.read(2048); f.seek(0)
@@ -33,14 +34,17 @@ class CSVDataSource(CombinedDataSource):
                     "high":   float(r["High"]),
                     "low":    float(r["Low"]),
                     "close":  float(r["Close"]),
-                    "volume": int(r.get("Volume",0)),
+                    "volume": int(r.get("Volume", 0)),
                     "pair":   self.pair
                 })
         return bars
+    
+    def load_historical_bars(self) -> List[Dict]:
+        return list(self._bars)
 
     def subscribe(self, callback: Callable[[Dict], None]) -> None:
         def _replay():
-            bars = self.load_historical_bars()
-            for i, bar in enumerate(bars):
+            # no re-parsing, just iterate the cached bars
+            for bar in self._bars:
                 callback(bar)
         threading.Thread(target=_replay, daemon=True).start()
