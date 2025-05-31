@@ -6,13 +6,12 @@ from typing import Callable, Dict, List
 from .combined_datasource import CombinedDataSource
 
 class CSVDataSource(CombinedDataSource):
-    def __init__(self, pair: str, filename: str, time_fmt: str, tz: str, speed: float = 1.0):
+    def __init__(self, pair: str, filename: str, time_fmt: str, tz: str):
         self.pair   = pair
         self.file   = filename
         self.fmt    = time_fmt
         self.local  = ZoneInfo(tz)
         self.utc    = ZoneInfo("UTC")
-        self.speed  = speed
         self._bars = self._load_historical_bars()
 
     def _load_historical_bars(self) -> List[Dict]:
@@ -42,9 +41,17 @@ class CSVDataSource(CombinedDataSource):
     def load_historical_bars(self) -> List[Dict]:
         return list(self._bars)
 
-    def subscribe(self, callback: Callable[[Dict], None]) -> None:
+    def subscribe(self, callback: Callable[[Dict], None], from_time: int = 0) -> None:
+        """
+        Replay all cached bars whose bar['time'] > from_time, sleeping between each
+        bar according to (time difference) / speed.  Larger `speed` → faster replay.
+        """
         def _replay():
-            # no re-parsing, just iterate the cached bars
             for bar in self._bars:
+                if bar["time"] <= from_time:
+                    continue
+
                 callback(bar)
+                time.sleep(0.1)
+
         threading.Thread(target=_replay, daemon=True).start()

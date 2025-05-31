@@ -53,8 +53,7 @@ else:
         pair      = PAIR,
         filename  = BarsConfig.CSV_FILES[PAIR],
         time_fmt  = BarsConfig.TIME_FORMATS[PAIR],
-        tz        = BarsConfig.PAIR_TIMEZONES[PAIR],
-        speed     = app.config.get('REPLAY_SPEED', 60.0)
+        tz        = BarsConfig.PAIR_TIMEZONES[PAIR]
     )
 
 tloader = BarsLoader(
@@ -145,7 +144,7 @@ def on_connect(auth):
 @socketio.on('start_stream')
 def on_start_stream(payload):
     tf        = payload.get('timeframe', '1m')
-    from_time = payload.get('fromTime', int(BarsConfig.INITIAL_END.timestamp()))
+    from_time = payload.get('fromTime', 0)
 
     tloader.set_timeframe(tf)
     tloader.start(from_time)
