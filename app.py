@@ -83,6 +83,8 @@ def index():
 def get_bars():
     tf   = request.args.get('tf', '5m')
     st   = request.args.get('start_time', type=int)
+    tloader.set_timeframe(tf)
+
     data = tloader.prepare_agg_bars(tf, start_time=st)
     return jsonify(data)
 
@@ -143,10 +145,7 @@ def on_connect(auth):
 
 @socketio.on('start_stream')
 def on_start_stream(payload):
-    tf        = payload.get('timeframe', '1m')
     from_time = payload.get('fromTime', 0)
-
-    tloader.set_timeframe(tf)
     tloader.start(from_time)
     emit('stream_status', {'playing': True})
 

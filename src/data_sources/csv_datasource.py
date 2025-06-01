@@ -50,8 +50,6 @@ class CSVDataSource(CombinedDataSource):
             for bar in self._bars:
                 if bar["time"] <= from_time:
                     continue
-
                 callback(bar)
-                time.sleep(0.1)
 
         threading.Thread(target=_replay, daemon=True).start()
