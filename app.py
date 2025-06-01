@@ -1,7 +1,6 @@
 from flask import Flask, jsonify, request, abort, render_template
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
-from datetime import datetime, timezone
 
 from src.bars_loader import BarsConfig, BarsLoader
 from src.controllers.lines_controller import LinesController

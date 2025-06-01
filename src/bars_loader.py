@@ -56,13 +56,16 @@ class BarsLoader:
         data_source: CombinedDataSource,
         socketio: SocketIO,
         strategy=None,
-        bar_callback: callable = None
+        bar_callback: callable = None,
+        bars_per_second: float = 10.0
     ):
         self.config       = config
         self.data_source  = data_source
         self.socketio     = socketio
         self.strategy     = strategy
         self.bar_callback = bar_callback
+        self.bars_per_second = bars_per_second
+        self._emit_delay     = 1.0 / self.bars_per_second
         self.stream_lock  = threading.Lock()
 
         # Load full 1m history for REST slicing and pointer tracking
@@ -243,7 +246,7 @@ class BarsLoader:
         # 2) Si TF == '1m', emite directamente:
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
             self.socketio.emit('bar', bar1)
-            time.sleep(0.1)
+            time.sleep(self._emit_delay)
             return
 
         # 3) Si es TF > 1m, agrupamos en buffer
@@ -269,7 +272,7 @@ class BarsLoader:
                         except Exception:
                             import traceback; traceback.print_exc()
                     self.socketio.emit('bar', tf_bar)
-                    time.sleep(0.1)
+                    time.sleep(self._emit_delay)
 
                 # Limpiar buffer y arrancar la nueva ventana
                 self._1m_buffer = [bar1]
