@@ -192,21 +192,12 @@ class BarsLoader:
             bar = self.raw_1m[i]
             ts  = bar['time']
 
-            # 1) Actualizar índice antes de procesar
             print(f"[DEBUG RUN] procesando raw_1m[{i}] → ts={ts} → next index será {i + 1}")
             self.current_1m_index = i + 1
 
-            # 2) Procesar la barra
             self._process_bar(bar)
 
             i += 1
-
-            # 3) Dormir 0.1s (10 bars/sec), pero chequeando bandera de pausa cada 0.01s
-            for _ in range(10):
-                if self._stop_replay.is_set():
-                    print(f"[DEBUG RUN] detected pause flag durante sleep, saliendo")
-                    return
-                time.sleep(0.01)
 
         print(f"[DEBUG RUN] all raw_1m bars processed, terminando _run_replay")
 
@@ -252,6 +243,7 @@ class BarsLoader:
         # 2) Si TF == '1m', emite directamente:
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
             self.socketio.emit('bar', bar1)
+            time.sleep(0.1)
             return
 
         # 3) Si es TF > 1m, agrupamos en buffer
@@ -277,6 +269,7 @@ class BarsLoader:
                         except Exception:
                             import traceback; traceback.print_exc()
                     self.socketio.emit('bar', tf_bar)
+                    time.sleep(0.1)
 
                 # Limpiar buffer y arrancar la nueva ventana
                 self._1m_buffer = [bar1]
