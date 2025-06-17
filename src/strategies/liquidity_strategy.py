@@ -43,7 +43,6 @@ class LiquidityStrategy:
             }
 
     def remove_strategy_line(self, id):
-        # self.strategy_lines.pop(id, None)
         with self.lock:
             self.strategy_lines.pop(id, None)
         try:
