@@ -173,23 +173,17 @@ class BarsLoader:
         print(f"[DEBUG PAUSE] Hilo detenido, current_1m_index={self.current_1m_index}")
 
     def seek(self, from_time: int):
-        """
-        Jump the loader’s cursor to just after `from_time`,
-        clear any partial aggregation buffer/window,
-        and be ready to resume replay from that point.
-        """
         with self.stream_lock:
-            # 1) update cutoff
             self._from_time = from_time
 
-            # 2) find the next raw_1m index
+            # pick up at the bar whose time is >= our from_time
             idx = next(
-                (i for i, b in enumerate(self.raw_1m) if b['time'] > from_time),
+                (i for i, b in enumerate(self.raw_1m) if b['time'] >= from_time),
                 len(self.raw_1m)
             )
             self.current_1m_index = idx
 
-            # 3) reset any in-flight group buffer
+            # clear any in-flight TF-bar buffer
             self._1m_buffer.clear()
             self._current_group_start = None
 

@@ -196,25 +196,33 @@ export class ChartViewer {
   }
 
   _onChartClick(clickedTime) {
-    // pause and seek
     this.pauseReplay();
 
-    // keep bars up to clickedTime
-    const idx = this.historicalBars.findIndex(b => b.time >= clickedTime);
-    if (idx === -1) return;
-    const slice = this.historicalBars.slice(0, idx + 1);
+    // 1) find the *exact* bar under the click
+    let idx = this.historicalBars.findIndex(b => b.time === clickedTime);
+    if (idx === -1) {
+      console.warn('No exact match for clickedTime, falling back to nearest earlier bar');
+      idx = this.historicalBars
+        .map((b, i) => ({ b, i }))
+        .filter(x => x.b.time < clickedTime)
+        .sort((a, b) => b.b.time - a.b.time)[0]?.i;
+      if (idx === undefined) return;
+    }
 
-    // redraw
+    // 2) redraw everything up to and including that bar
+    const slice = this.historicalBars.slice(0, idx + 1);
     this.displayChart(slice);
-    this.tradeMarkers = [];
     this.series.setMarkers([]);
     this.londonSeries.setData([]);
     this.nySeries.setData([]);
 
-    this.lastTime  = clickedTime;
-    this.lastPrice = slice[slice.length - 1].close;
+    // 3) use the bar’s own timestamp
+    const bar = slice[slice.length - 1];
+    this.lastTime  = bar.time;
+    this.lastPrice = bar.close;
 
-    this.socket.emit('seek', { fromTime: clickedTime });
+    // 4) tell the server to seek here
+    this.socket.emit('seek', { fromTime: this.lastTime });
   }
 
   async _addLine(price) {
@@ -346,7 +354,7 @@ export class ChartViewer {
   // ───── Replay & Timeframe Controls ─────
   startReplay(tf = this.currentTF, fromTime = this.lastTime) {
     console.log('[ChartViewer] ▶️ startReplay — tf:', tf, 'pair:', this.pair);
-    this.socket.emit('start_stream', { timeframe: this.currentTF, pair: this.pair, fromTime: fromTime });
+    this.socket.emit('start_stream', { timeframe: tf, pair: this.pair, fromTime: fromTime });
     this.isPlaying = true;
   }
 
