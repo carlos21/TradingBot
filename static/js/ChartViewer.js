@@ -213,6 +213,8 @@ export class ChartViewer {
 
     this.lastTime  = clickedTime;
     this.lastPrice = slice[slice.length - 1].close;
+
+    this.socket.emit('seek', { fromTime: clickedTime });
   }
 
   async _addLine(price) {
