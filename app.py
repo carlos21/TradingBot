@@ -55,12 +55,15 @@ else:
         tz        = BarsConfig.PAIR_TIMEZONES[PAIR]
     )
 
+def combined_bar_callback(bar):
+    trade_manager.handle_new_1m_bar(bar)
+    tstrategy.on_raw_bar(bar)
+
 tloader = BarsLoader(
     config=BarsConfig,
     data_source=ds,
     socketio=socketio,
-    strategy=tstrategy,
-    bar_callback=trade_manager.handle_new_1m_bar
+    bar_callback=combined_bar_callback
 )
 lines_controller = LinesController(line_repository, tloader, tstrategy)
 trades_controller = TradesController(tloader, trade_manager)

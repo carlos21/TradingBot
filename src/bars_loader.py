@@ -55,14 +55,12 @@ class BarsLoader:
         config: BarsConfig,
         data_source: CombinedDataSource,
         socketio: SocketIO,
-        strategy=None,
         bar_callback: callable = None,
         bars_per_second: float = 10.0
     ):
         self.config       = config
         self.data_source  = data_source
         self.socketio     = socketio
-        self.strategy     = strategy
         self.bar_callback = bar_callback
         self.bars_per_second = bars_per_second
         self._emit_delay     = 1.0 / self.bars_per_second
@@ -88,6 +86,17 @@ class BarsLoader:
         # Thread‐management flags
         self._replay_thread = None
         self._stop_replay   = threading.Event()
+
+        self.strategy_tfs = ['5m']
+        # per-TF state: group size, buffer, window start
+        self._strat_states = {
+            tf: {
+                'secs': (int(tf[:-1]) * (60 if tf.endswith('m') else 3600)),
+                'buf':   [],
+                'start': None
+            }
+            for tf in self.strategy_tfs
+        }
 
     def set_timeframe(self, tf: str):
         """
@@ -238,61 +247,40 @@ class BarsLoader:
             self._process_tick(msg)
 
     def _process_bar(self, bar1: dict):
-        """
-        Handle a single 1m bar:
-          1) SL/TP callback on raw 1m.
-          2) Si current_tf == '1m', emite inmediatamente.
-          3) Sino, la agrega a un buffer alineado por “clock window” de N minutos:
-             - window_secs = group_size * 60
-             - window_start = floor(bar['time'] / window_secs) * window_secs
-             - Si coincide con current_group_start, append a buffer.
-             - Si cambia, agrupa y emite la TF bar anterior, luego limpia buffer,
-               y arranca la nueva ventana.
-        """
         ts = bar1['time']
-        window_secs = self.group_size * 60
-        window_start = (ts // window_secs) * window_secs
 
-        # **Nueva línea para que imprimas el current_tf que realmente estás usando:**
-        print(f"[DEBUG] nueva barra 1m: ts={ts}  current_tf={self.current_tf}  window_secs={window_secs}  window_start={window_start}  current_group_start={self._current_group_start}")
-
-        # 1) SL/TP check
+        # ── 1) SL/TP on raw 1m
         if self.bar_callback:
             self.bar_callback(bar1)
 
-        # 2) Si TF == '1m', emite directamente:
+        # ── 2) chart-display TF == 1m?
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
             self.socketio.emit('bar', bar1)
             time.sleep(self._emit_delay)
             return
 
-        # 3) Si es TF > 1m, agrupamos en buffer
+        # ── 3) chart-display TF > 1m: group & emit
+        window_secs  = self.group_size * 60
+        window_start = (ts // window_secs) * window_secs
+
         with self.stream_lock:
             if self._current_group_start is None:
-                # Primera barra en la ventana actual
                 self._current_group_start = window_start
 
             if window_start == self._current_group_start:
-                # Sigue en la misma ventana
                 self._1m_buffer.append(bar1)
-                print(f"[DEBUG] → buffer mismo window ({window_start}): size={len(self._1m_buffer)}")
             else:
-                # Cambia el “clock window”: emitimos la ventana anterior
                 if self._1m_buffer:
-                    print(f"[DEBUG] ventana completada: group_start={self._current_group_start}  bars_in_buffer={len(self._1m_buffer)}  próximo window_start={window_start}")
-                    tf_bar = self._aggregate_time_window(self._1m_buffer, self._current_group_start, window_secs)
-                    print(f"[DEBUG] → emitiendo TF‐bar: time={tf_bar['time']}  open={tf_bar['open']}  high={tf_bar['high']}  low={tf_bar['low']}  close={tf_bar['close']}  volume={tf_bar['volume']}")
-
-                    if self.strategy:
-                        try:
-                            self.strategy.on_new_bar(tf_bar)
-                        except Exception:
-                            import traceback; traceback.print_exc()
+                    tf_bar = self._aggregate_time_window(
+                        self._1m_buffer,
+                        self._current_group_start,
+                        window_secs
+                    )
                     self.socketio.emit('bar', tf_bar)
                     time.sleep(self._emit_delay)
 
-                # Limpiar buffer y arrancar la nueva ventana
-                self._1m_buffer = [bar1]
+                # reset for next display-TF window
+                self._1m_buffer            = [bar1]
                 self._current_group_start = window_start
 
     def _process_tick(self, tick: dict):

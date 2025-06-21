@@ -18,7 +18,8 @@ class LiquidityStrategy:
         socketio, 
         line_repository: LineRepository,
         trade_repository: TradeRepository,
-        extra_sl_space: dict[str, float]
+        extra_sl_space: dict[str, float],
+        strategy_tf: str = '5m'
     ):
         self.min_stop_loss = min_stop_loss
         self.max_bounce    = max_bounce
@@ -31,6 +32,11 @@ class LiquidityStrategy:
         self.open_trades    = []   # list of open trade dicts
         self.total_pnl      = 0
         self.lock           = RLock()
+
+        num, unit = int(strategy_tf[:-1]), strategy_tf[-1]
+        self.strategy_window = num * (60 if unit=='m' else 3600)
+        self._buf = []
+        self._group_start = None
 
     def add_strategy_line(self, id, level, direction):
         print(f"[Strategy] ➕ add_strategy_line id={id} level={level} direction={direction}")
@@ -51,7 +57,38 @@ class LiquidityStrategy:
             pass
         self.socketio.emit('line_removed', {'id': id})
 
-    def on_new_bar(self, bar: dict):
+    def _aggregate_bars(self, bars: list[dict], window_start: int, window_secs: int) -> dict:
+        high    = max(b['high']   for b in bars)
+        low     = min(b['low']    for b in bars)
+        open_   = bars[0]['open']
+        close_  = bars[-1]['close']
+        volume  = sum(b['volume'] for b in bars)
+        pair    = bars[0]['pair']
+        return {
+            'time':       window_start + window_secs,
+            'open':       open_,
+            'high':       high,
+            'low':        low,
+            'close':      close_,
+            'volume':     volume,
+            'pair':       pair
+        }
+    
+    def on_raw_bar(self, bar):
+        # 1) aggregate into your chosen TF
+        ts = bar['time']
+        win = (ts // self.strategy_window) * self.strategy_window
+        if self._group_start is None:
+            self._group_start = win
+        if win == self._group_start:
+            self._buf.append(bar)
+        else:
+            agg = self._aggregate_bars(self._buf, self._group_start, self.strategy_window)
+            self._buf, self._group_start = [bar], win
+            # 2) now run your entry/exit logic on that agg bar
+            self._on_strategy_bar(agg)
+
+    def _on_strategy_bar(self, bar: dict):
         """
         Called on every 5m bar. Checks existing open trades for exit,
         then scans strategy_lines for new entries. Uses helper to store/emit.
