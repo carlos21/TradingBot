@@ -25,7 +25,7 @@ class BarsConfig:
         'NQ':      'csvs/NQ_2024.csv',
     }
     INITIAL_START       = parser.parse("2024-08-01T00:00:00Z")
-    INITIAL_END         = parser.parse("2024-08-30T23:59:59Z")
+    INITIAL_END         = parser.parse("2024-09-30T11:30:00Z")
 
     # strategy parameters
     STOP_LOSS_CONFIG    = {

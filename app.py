@@ -157,7 +157,6 @@ def on_pause_stream():
 def on_seek(payload):
     from_time = payload.get('fromTime', 0)
     tloader.seek(from_time)
-    # // probar seteando el timeframe ya que hay un gap de nuevo al ir back in time
 
 if __name__ == '__main__':
     socketio.run(app, debug=True)
