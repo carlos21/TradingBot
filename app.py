@@ -8,6 +8,7 @@ from src.controllers.trades_controller import TradesController
 from src.data_sources.csv_datasource import CSVDataSource
 from src.data_sources.metatrader_datasource import MetaTraderDataSource
 from src.repositories.lines_repository import SQLLineRepository
+from src.strategies.liquidity_m1dual_strategy import LiquidityDualM1Strategy
 from src.strategies.liquidity_strategy import LiquidityStrategy
 from src.database import database
 from src.services.trade_manager import TradeManager
@@ -28,10 +29,18 @@ extra_space = {
     'EURUSD': 0.0002,   # 2 pips
     'NQ':      2.0      # 2 points
 }
-tstrategy = LiquidityStrategy(
+# tstrategy = LiquidityStrategy(
+#     min_stop_loss=BarsConfig.STOP_LOSS_CONFIG[PAIR],
+#     max_bounce=BarsConfig.MAX_BOUNCE_CONFIG[PAIR],
+#     socketio=socketio,
+#     line_repository = line_repository,
+#     trade_repository = trade_repository,
+#     extra_sl_space=extra_space
+# )
+tstrategy = LiquidityDualM1Strategy(
     min_stop_loss=BarsConfig.STOP_LOSS_CONFIG[PAIR],
-    max_bounce=   BarsConfig.MAX_BOUNCE_CONFIG[PAIR],
-    socketio=     socketio,
+    max_bounce=BarsConfig.MAX_BOUNCE_CONFIG[PAIR],
+    socketio=socketio,
     line_repository = line_repository,
     trade_repository = trade_repository,
     extra_sl_space=extra_space

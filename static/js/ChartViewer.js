@@ -60,6 +60,14 @@ export class ChartViewer {
     };
     this.chart  = LightweightCharts.createChart(chartElement, this.chartOptions);
     this.series = this.chart.addCandlestickSeries();
+    this.series.applyOptions({
+        upColor:         'white',
+        borderUpColor:   'black',
+        wickUpColor:     'black',
+        downColor:       'black',
+        borderDownColor: 'black',
+        wickDownColor:   'black',
+      });
     this.series.setData([]);
 
     this.isRPressed = false;

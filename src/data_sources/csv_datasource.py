@@ -16,25 +16,31 @@ class CSVDataSource(CombinedDataSource):
 
     def _load_historical_bars(self) -> List[Dict]:
         bars = []
+        ny_tz = ZoneInfo("America/New_York")
         with open(self.file, newline='') as f:
-            sample  = f.read(2048); f.seek(0)
+            sample = f.read(2048)
+            f.seek(0)
             dialect = csv.Sniffer().sniff(sample, delimiters=";,")
-            reader  = csv.DictReader(f, dialect=dialect)
+            reader = csv.DictReader(f, dialect=dialect)
             for r in reader:
                 ts = f"{r['Date']} {r['Time']}"
                 try:
                     dt = datetime.strptime(ts, self.fmt)
-                except:
+                except ValueError:
                     dt = parser.parse(ts)
-                dt = dt.replace(tzinfo=self.local).astimezone(self.utc)
+
+                # Label as UTC, then convert to New York time
+                dt_utc = dt.replace(tzinfo=self.utc)
+                dt_ny = dt_utc.astimezone(ny_tz)
+
                 bars.append({
-                    "time":   int(dt.timestamp()),
+                    "time":   int(dt_ny.timestamp()),
                     "open":   float(r["Open"]),
                     "high":   float(r["High"]),
                     "low":    float(r["Low"]),
                     "close":  float(r["Close"]),
                     "volume": int(r.get("Volume", 0)),
-                    "pair":   self.pair
+                    "pair":   self.pair,
                 })
         return bars
     

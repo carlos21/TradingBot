@@ -19,6 +19,7 @@ export class ChartViewer {
       this.chart = LightweightCharts.createChart(chartElement, this.chartOptions);
       this.candlestickSeries = this.chart.addCandlestickSeries();
       this.candlestickSeries.setData([]);
+      
   
       // Price line placeholders
       this.currentPriceLine = null;

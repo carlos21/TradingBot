@@ -22,10 +22,10 @@ class BarsConfig:
     }
     CSV_FILES           = {
         'EURUSD': 'csvs/EURUSD_2019.csv',
-        'NQ':      'csvs/NQ_2024.csv',
+        'NQ':      'csvs/NQ_21-24.csv',
     }
-    INITIAL_START       = parser.parse("2024-08-01T00:00:00Z")
-    INITIAL_END         = parser.parse("2024-09-30T11:30:00Z")
+    INITIAL_START       = parser.parse("2021-01-14T00:00:00Z")
+    INITIAL_END         = parser.parse("2024-10-02T15:11:00Z")
 
     # strategy parameters
     STOP_LOSS_CONFIG    = {
@@ -34,7 +34,7 @@ class BarsConfig:
     }
     MAX_BOUNCE_CONFIG   = {
         'EURUSD': 0.0020,   # 20 pips
-        'NQ':      50       # 50 points
+        'NQ':      40       # 50 points
     }
 
 
@@ -210,25 +210,25 @@ class BarsLoader:
         """
         n = len(self.raw_1m)
         i = self.current_1m_index
-        print(f"[DEBUG RUN] iniciando _run_replay con current_1m_index={self.current_1m_index}")
+        # print(f"[DEBUG RUN] iniciando _run_replay con current_1m_index={self.current_1m_index}")
 
         while i < n:
-            print(f"[DEBUG RUN] iteración: i={i}, current_1m_index={self.current_1m_index}")
+            # print(f"[DEBUG RUN] iteración: i={i}, current_1m_index={self.current_1m_index}")
             if self._stop_replay.is_set():
-                print(f"[DEBUG RUN] detected pause flag, saliendo de _run_replay")
+                # print(f"[DEBUG RUN] detected pause flag, saliendo de _run_replay")
                 return
 
             bar = self.raw_1m[i]
             ts  = bar['time']
 
-            print(f"[DEBUG RUN] procesando raw_1m[{i}] → ts={ts} → next index será {i + 1}")
+            # print(f"[DEBUG RUN] procesando raw_1m[{i}] → ts={ts} → next index será {i + 1}")
             self.current_1m_index = i + 1
 
             self._process_bar(bar)
 
             i += 1
 
-        print(f"[DEBUG RUN] all raw_1m bars processed, terminando _run_replay")
+        # print(f"[DEBUG RUN] all raw_1m bars processed, terminando _run_replay")
 
     def _handle_message(self, msg: dict):
         """

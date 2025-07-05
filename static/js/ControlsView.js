@@ -162,11 +162,11 @@ export class ControlsView {
 
   updateView() {
     this.stopLossLabel.innerText = this.stopLossPoints;
-    this.chartViewer._drawPreviews({
-      entry:       this.currentPrice,
-      stop_loss:   this.stopLossPrice,
-      take_profit: this.takeProfit
-    });
+    // this.chartViewer._drawPreviews({
+    //   entry:       this.currentPrice,
+    //   stop_loss:   this.stopLossPrice,
+    //   take_profit: this.takeProfit
+    // });
   }
 
   updateTradeButtons() {
