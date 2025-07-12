@@ -2,17 +2,19 @@ from flask import Flask, jsonify, request, abort, render_template
 from flask_socketio import SocketIO, emit
 from flask_cors import CORS
 
-from src.bars_loader import BarsConfig, BarsLoader
+from src.bars_loader import BarsLoader, LoaderConfig
 from src.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
 from src.data_sources.csv_datasource import CSVDataSource
-from src.data_sources.metatrader_datasource import MetaTraderDataSource
+from src.data_sources.metatrader_datasource import MetaTraderConfig, MetaTraderDataSource
 from src.repositories.lines_repository import SQLLineRepository
 from src.strategies.liquidity_m1dual_strategy import LiquidityDualM1Strategy
 from src.strategies.liquidity_strategy import LiquidityStrategy
 from src.database import database
 from src.services.trade_manager import TradeManager
 from src.repositories.trades_repository import SQLTradeRepository
+from src.strategies.strategy_config import StrategyConfig
+from datetime import datetime
 
 # ───────── Setup ─────────
 database.setup_database()
@@ -25,51 +27,54 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 # ───────── Strategy + Loader ─────────
 PAIR     = 'NQ'
-extra_space = {
-    'EURUSD': 0.0002,   # 2 pips
-    'NQ':      2.0      # 2 points
-}
+strat_cfg = StrategyConfig(
+    stop_loss={ 'EURUSD': 0.0004, 'NQ': 10 },
+    max_bounce={ 'EURUSD': 0.0020, 'NQ': 40 },
+    extra_sl_space={ 'EURUSD': 0.0002, 'NQ': 2.0 }
+)
 # tstrategy = LiquidityStrategy(
-#     min_stop_loss=BarsConfig.STOP_LOSS_CONFIG[PAIR],
-#     max_bounce=BarsConfig.MAX_BOUNCE_CONFIG[PAIR],
+#     min_stop_loss=strat_cfg.stop_loss[PAIR],
+#     max_bounce=strat_cfg.max_bounce[PAIR],
+#     extra_sl_space= strat_cfg.extra_sl_space[PAIR],
 #     socketio=socketio,
 #     line_repository = line_repository,
-#     trade_repository = trade_repository,
-#     extra_sl_space=extra_space
+#     trade_repository = trade_repository
 # )
 tstrategy = LiquidityDualM1Strategy(
-    min_stop_loss=BarsConfig.STOP_LOSS_CONFIG[PAIR],
-    max_bounce=BarsConfig.MAX_BOUNCE_CONFIG[PAIR],
+    min_stop_loss=strat_cfg.stop_loss[PAIR],
+    max_bounce=strat_cfg.max_bounce[PAIR],
+    extra_sl_space= strat_cfg.extra_sl_space[PAIR],
     socketio=socketio,
     line_repository = line_repository,
-    trade_repository = trade_repository,
-    extra_sl_space=extra_space
+    trade_repository = trade_repository
 )
 trade_manager = TradeManager(
     trade_repository = trade_repository,
     socketio = socketio
 )
 
-if app.config.get('USE_MT5', False):
-    ds = MetaTraderDataSource(
-        pair   = PAIR,
-        creds  = {'login':123, 'password':'…'},
-        ws_url = "wss://mt5.ticks"
-    )
-else:
-    ds = CSVDataSource(
-        pair      = PAIR,
-        filename  = BarsConfig.CSV_FILES[PAIR],
-        time_fmt  = BarsConfig.TIME_FORMATS[PAIR],
-        tz        = BarsConfig.PAIR_TIMEZONES[PAIR]
-    )
+mt_cfg = MetaTraderConfig(
+    login=61371570,
+    password='MiPuchuxD21@',
+    server='Pepperstone-Demo',
+    history_days=50,     # if you want more than the default
+    host='127.0.0.1',
+    port=9999
+)
+ds = MetaTraderDataSource(symbol='NAS100', cfg=mt_cfg)
+# ds = CSVDataSource(pair= PAIR)
 
 def combined_bar_callback(bar):
     trade_manager.handle_new_1m_bar(bar)
     tstrategy.on_raw_bar(bar)
 
+loader_cfg = LoaderConfig(
+    initial_start = datetime.fromisoformat("2024-01-14T00:00:00+00:00"),
+    initial_end   = datetime.fromisoformat("2025-12-31T15:11:00+00:00"),
+)
+
 tloader = BarsLoader(
-    config=BarsConfig,
+    loader_config=loader_cfg,
     data_source=ds,
     socketio=socketio,
     bar_callback=combined_bar_callback

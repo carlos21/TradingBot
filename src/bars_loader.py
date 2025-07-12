@@ -1,41 +1,18 @@
 from datetime import datetime
 from dateutil import parser
 from zoneinfo import ZoneInfo
+from flask_socketio import SocketIO
+from src.data_sources.combined_datasource import CombinedDataSource
+from dataclasses import dataclass
+
 import threading
 import time
 
-from flask_socketio import SocketIO
-from src.data_sources.combined_datasource import CombinedDataSource
 
-
-class BarsConfig:
-    """Configuration for bar loading: time formats, timezones, CSV files, and initial date window."""
-    DEFAULT_TIME_FMT    = '%d/%m/%Y %H:%M:%S'
-    DEFAULT_TIMEZONE    = 'UTC'
-    TIME_FORMATS        = {
-        'EURUSD': '%Y.%m.%d %H:%M',
-        'NQ':      '%d/%m/%Y %H:%M:%S',
-    }
-    PAIR_TIMEZONES      = {
-        'EURUSD': 'Europe/London',
-        'NQ':      'America/Chicago',
-    }
-    CSV_FILES           = {
-        'EURUSD': 'csvs/EURUSD_2019.csv',
-        'NQ':      'csvs/NQ_21-24.csv',
-    }
-    INITIAL_START       = parser.parse("2021-01-14T00:00:00Z")
-    INITIAL_END         = parser.parse("2024-10-02T15:11:00Z")
-
-    # strategy parameters
-    STOP_LOSS_CONFIG    = {
-        'EURUSD': 0.0004,  # 4 pips
-        'NQ':      10       # 10 points
-    }
-    MAX_BOUNCE_CONFIG   = {
-        'EURUSD': 0.0020,   # 20 pips
-        'NQ':      40       # 50 points
-    }
+@dataclass
+class LoaderConfig:
+    initial_start: datetime
+    initial_end:   datetime
 
 
 class BarsLoader:
@@ -52,13 +29,13 @@ class BarsLoader:
 
     def __init__(
         self,
-        config: BarsConfig,
+        loader_config: LoaderConfig,
         data_source: CombinedDataSource,
         socketio: SocketIO,
         bar_callback: callable = None,
         bars_per_second: float = 10.0
     ):
-        self.config       = config
+        self.config       = loader_config
         self.data_source  = data_source
         self.socketio     = socketio
         self.bar_callback = bar_callback
@@ -67,7 +44,7 @@ class BarsLoader:
         self.stream_lock  = threading.Lock()
 
         # Load full 1m history for REST slicing and pointer tracking
-        self.pair      = data_source.pair
+        self.pair      = data_source.symbol
         self.raw_1m    = data_source.load_historical_bars()
 
         # Streaming / replay state
@@ -332,8 +309,8 @@ class BarsLoader:
         # 1m case: return raw slice
         if tf.endswith('m') and int(tf[:-1]) == 1:
             if start_time is None:
-                start_ts = int(self.config.INITIAL_START.timestamp())
-                end_ts   = int(self.config.INITIAL_END.timestamp())
+                start_ts = int(self.config.initial_start.timestamp())
+                end_ts   = int(self.config.initial_end.timestamp())
             else:
                 start_ts, end_ts = 0, start_time
 
@@ -350,8 +327,8 @@ class BarsLoader:
             window_secs = num * 60
 
         if start_time is None:
-            start_ts = int(self.config.INITIAL_START.timestamp())
-            end_ts   = int(self.config.INITIAL_END.timestamp())
+            start_ts = int(self.config.initial_start.timestamp())
+            end_ts   = int(self.config.initial_end.timestamp())
         else:
             start_ts, end_ts = 0, start_time
 

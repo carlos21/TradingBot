@@ -1,4 +1,4 @@
-import csv, threading, time
+import csv, threading
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from dateutil import parser
@@ -6,11 +6,32 @@ from typing import Callable, Dict, List
 from .combined_datasource import CombinedDataSource
 
 class CSVDataSource(CombinedDataSource):
-    def __init__(self, pair: str, filename: str, time_fmt: str, tz: str):
+
+    DEFAULT_FMT    = '%d/%m/%Y %H:%M:%S'
+    PAIR_FORMATS   = {
+        'EURUSD': '%Y.%m.%d %H:%M',
+        'NQ':      '%d/%m/%Y %H:%M:%S',
+    }
+    PAIR_TZS       = {
+        'EURUSD': 'Europe/London',
+        'NQ':      'America/Chicago',
+    }
+    PAIR_FILES     = {
+        'EURUSD': 'csvs/EURUSD_2019.csv',
+        'NQ':      'csvs/NQ_21-24.csv',
+    }
+
+    def __init__(
+        self,
+        pair: str,
+        filename: str = None,
+        time_fmt: str = None,
+        tz: str = None
+    ):
         self.pair   = pair
-        self.file   = filename
-        self.fmt    = time_fmt
-        self.local  = ZoneInfo(tz)
+        self.fmt    = time_fmt or self.PAIR_FORMATS.get(pair, self.DEFAULT_FMT)
+        self.local  = ZoneInfo(tz or self.PAIR_TZS.get(pair, 'UTC'))
+        self.file   = filename or self.PAIR_FILES[pair]
         self.utc    = ZoneInfo("UTC")
         self._bars = self._load_historical_bars()
 
