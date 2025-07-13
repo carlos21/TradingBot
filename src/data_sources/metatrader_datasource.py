@@ -1,14 +1,15 @@
-from typing import Callable, Dict, List
-from .combined_datasource import CombinedDataSource
+import socket
+import time
 from datetime import datetime, timedelta
 from dataclasses import dataclass
+from typing import Callable, Dict, List
 from zoneinfo import ZoneInfo
 
 import MetaTrader5 as mt5
-import socket
-import time
 
+from .combined_datasource import CombinedDataSource
 
+# Map of timeframe strings to MT5 constants
 TF_MAP = {
     '1m':  mt5.TIMEFRAME_M1,
     '5m':  mt5.TIMEFRAME_M5,
@@ -19,31 +20,32 @@ TF_MAP = {
 
 @dataclass
 class MetaTraderConfig:
-    login:     int
-    password:  str
-    server:    str
-    history_days: int
-    host:      str = "0.0.0.0"
-    port:      int = 8888
+    login:            int
+    password:         str
+    server:           str
+    history_days:     int
+    host:             str = "0.0.0.0"
+    port:             int = 8888
     server_timezone:   str = 'Etc/GMT-3'
     exchange_timezone: str = 'America/Chicago'
 
-
 class MetaTraderDataSource(CombinedDataSource):
     def __init__(self, symbol: str, cfg: MetaTraderConfig):
-        self.symbol      = symbol
-        self.creds     = dict(login=cfg.login, password=cfg.password, server=cfg.server)
+        self.symbol       = symbol
+        self.creds        = dict(login=cfg.login, password=cfg.password, server=cfg.server)
         self._history_days = cfg.history_days
-        self._host     = cfg.host
-        self._port     = cfg.port
+        self._host        = cfg.host
+        self._port        = cfg.port
         self._tz_server   = ZoneInfo(cfg.server_timezone)
         self._tz_exchange = ZoneInfo(cfg.exchange_timezone)
 
+        # compute offset between server and exchange TZs
         now_srv = datetime.now(self._tz_server)
         now_exc = now_srv.astimezone(self._tz_exchange)
         diff    = now_srv.utcoffset() - now_exc.utcoffset()
         self._offset_seconds = int(diff.total_seconds())
 
+        # initialize MT5
         if not mt5.initialize(**self.creds):
             raise RuntimeError(f"MT5 init failed: {mt5.last_error()}")
 
@@ -52,6 +54,7 @@ class MetaTraderDataSource(CombinedDataSource):
         if tf_const is None:
             raise ValueError(f"Unsupported timeframe: {timeframe}")
 
+        # ensure symbol is selected
         if not mt5.symbol_select(self.symbol, True):
             print(f"⚠️ symbol_select failed for {self.symbol}: {mt5.last_error()}")
             return []
@@ -67,12 +70,10 @@ class MetaTraderDataSource(CombinedDataSource):
         bars: List[Dict] = []
         for r in rates:
             t_server = int(r["time"])
-            dt_srv = datetime.fromtimestamp(t_server, tz=self._tz_server)
-            dt_exc = dt_srv.astimezone(self._tz_exchange)
-            offset_seconds = int(
-                (dt_srv.utcoffset() - dt_exc.utcoffset()).total_seconds()
-            )
-            t_exc = t_server - offset_seconds
+            dt_srv   = datetime.fromtimestamp(t_server, tz=self._tz_server)
+            dt_exc   = dt_srv.astimezone(self._tz_exchange)
+            offset   = int((dt_srv.utcoffset() - dt_exc.utcoffset()).total_seconds())
+            t_exc    = t_server - offset
 
             bars.append({
                 "time":   t_exc,
@@ -86,15 +87,32 @@ class MetaTraderDataSource(CombinedDataSource):
 
         return bars
 
-    def subscribe(self, callback: Callable[[Dict], None], from_time: int = 0) -> None:
+    def subscribe(self,
+                  callback: Callable[[Dict], None],
+                  from_time: int = 0) -> None:
+        """
+        1) Replay all historical 1m bars whose 'time' > from_time via callback(bar).
+        2) Then open a TCP socket on (host,port), accept one EA connection,
+           and stream every incoming tick line "<SYMBOL> <PRICE>\\n" as callback(tick).
+        """
+        # --- 1) replay history ---
+        try:
+            history = self.load_historical_bars('1m')
+            for bar in history:
+                if bar["time"] > from_time:
+                    callback(bar)
+        except Exception as e:
+            print(f"[MTDataSrc] error replaying history: {e}")
+
+        # --- 2) live ticks over TCP ---
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind((self._host, self._port))
         srv.listen(1)
-        print(f"[MTDataSrc] Listening on {self._host}:{self._port} for MQL5 ticks")
+        print(f"[MTDataSrc] Listening for ticks on {self._host}:{self._port}…")
 
         conn, addr = srv.accept()
-        print(f"[MTDataSrc] MQL5 EA connected from {addr}")
+        print(f"[MTDataSrc] EA connected from {addr}")
         buf = b""
         try:
             while True:
@@ -102,18 +120,20 @@ class MetaTraderDataSource(CombinedDataSource):
                 if not chunk:
                     break
                 buf += chunk
-                # split on newline
                 while b"\n" in buf:
                     line, buf = buf.split(b"\n", 1)
                     text = line.decode(errors="ignore").strip()
                     if not text:
                         continue
                     parts = text.split()
+                    if len(parts) != 2:
+                        print(f"[MTDataSrc] malformed tick: '{text}'")
+                        continue
+                    symbol, price_str = parts
                     try:
-                        symbol = parts[0]
-                        price  = float(parts[1])
-                    except Exception as e:
-                        print("[MTDataSrc] parse error:", e, "line:", text)
+                        price = float(price_str)
+                    except ValueError:
+                        print(f"[MTDataSrc] invalid price in tick: '{text}'")
                         continue
 
                     tick = {
@@ -126,4 +146,4 @@ class MetaTraderDataSource(CombinedDataSource):
         finally:
             conn.close()
             srv.close()
-            print("[MTDataSrc] MQL5 EA disconnected, server closed")
+            print("[MTDataSrc] Tick stream closed, server shutdown")
