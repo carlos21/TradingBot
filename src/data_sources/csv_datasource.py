@@ -35,7 +35,7 @@ class CSVDataSource(CombinedDataSource):
         self.utc    = ZoneInfo("UTC")
         self._bars = self._load_historical_bars()
 
-    def _load_historical_bars(self) -> List[Dict]:
+    def _load_historical_bars(self, timeframe: str = '1m') -> List[Dict]:
         bars = []
         ny_tz = ZoneInfo("America/New_York")
         with open(self.file, newline='') as f:
@@ -65,8 +65,8 @@ class CSVDataSource(CombinedDataSource):
                 })
         return bars
     
-    def load_historical_bars(self) -> List[Dict]:
-        return list(self._bars)
+    def load_historical_bars(self, timeframe: str = '1m') -> List[Dict]:
+        return list(self._bars, timeframe)
 
     def subscribe(self, callback: Callable[[Dict], None], from_time: int = 0) -> None:
         """

@@ -3,7 +3,7 @@ from typing import Callable, Dict, List
 
 class CombinedDataSource(ABC):
     @abstractmethod
-    def load_historical_bars(self) -> List[Dict]:
+    def load_historical_bars(self, timeframe: str = '1m') -> List[Dict]:
         """
         Return a list of 1 m bar‐dicts:
           { time, open, high, low, close, volume, pair }
@@ -11,7 +11,7 @@ class CombinedDataSource(ABC):
         ...
 
     @abstractmethod
-    def subscribe(self, callback: Callable[[Dict], None]) -> None:
+    def subscribe(self, callback: Callable[[Dict], None], from_time: int = 0) -> None:
         """
         Call `callback(msg)` for:
           - each historical bar (as bar‐dict)

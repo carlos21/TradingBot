@@ -112,8 +112,8 @@ export class ChartViewer {
     this.londonSeries = this.chart.addHistogramSeries({ priceScaleId: '', scaleMargins: { top:0, bottom:0 }, lineWidth:0, overlay:true, color:'rgba(0,255,0,0.1)' });
     this.nySeries     = this.chart.addHistogramSeries({ priceScaleId: '', scaleMargins: { top:0, bottom:0 }, lineWidth:0, overlay:true, color:'rgba(255,0,0,0.1)' });
     this.sessions = [
-      { series: this.londonSeries, from: { h:4,  m:0 },  to: { h:12, m:30 } },
-      { series: this.nySeries,     from: { h:9,  m:30 }, to: { h:16, m:0  } }
+      //{ series: this.londonSeries, from: { h:4,  m:0 },  to: { h:12, m:30 } },
+       { series: this.nySeries,     from: { h:8,  m:30 }, to: { h:16, m:0  } }
     ];
 
     // user-drawn levels

@@ -59,12 +59,14 @@ mt_cfg = MetaTraderConfig(
     server='Pepperstone-Demo',
     history_days=50,     # if you want more than the default
     host='127.0.0.1',
-    port=9999
+    port=9999,
+    server_timezone = 'Etc/GMT-3',        # ← your broker’s TZ
+    exchange_timezone = 'America/Chicago'    # ← the exchange TZ you want to align to
 )
 ds = MetaTraderDataSource(symbol='NAS100', cfg=mt_cfg)
 # ds = CSVDataSource(pair= PAIR)
 
-def combined_bar_callback(bar):
+def combined_bar_callback(bar): 
     trade_manager.handle_new_1m_bar(bar)
     tstrategy.on_raw_bar(bar)
 
@@ -97,11 +99,18 @@ def index():
 
 @app.route('/api/bars')
 def get_bars():
-    tf   = request.args.get('tf', '5m')
-    st   = request.args.get('start_time', type=int)
-    tloader.set_timeframe(tf)
+    tf = request.args.get('tf', '5m')
+    start_ts = request.args.get('start_time', type=int)
 
-    data = tloader.prepare_agg_bars(tf, start_time=st)
+    # for higher-timeframes, bypass the 1m+aggregator:
+    if tf != '1m':
+        bars = ds.load_historical_bars(tf)
+        if start_ts:
+            bars = [b for b in bars if b['time'] >= start_ts]
+        return jsonify(bars)
+    
+    tloader.set_timeframe(tf)
+    data = tloader.prepare_agg_bars(tf, start_time=start_ts)
     return jsonify(data)
 
 

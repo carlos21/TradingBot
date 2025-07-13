@@ -2,12 +2,20 @@ from typing import Callable, Dict, List
 from .combined_datasource import CombinedDataSource
 from datetime import datetime, timedelta
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo
 
 import MetaTrader5 as mt5
-import json
 import socket
-import threading
+import time
 
+
+TF_MAP = {
+    '1m':  mt5.TIMEFRAME_M1,
+    '5m':  mt5.TIMEFRAME_M5,
+    '15m': mt5.TIMEFRAME_M15,
+    '1h':  mt5.TIMEFRAME_H1,
+    '4h':  mt5.TIMEFRAME_H4,
+}
 
 @dataclass
 class MetaTraderConfig:
@@ -17,6 +25,8 @@ class MetaTraderConfig:
     history_days: int
     host:      str = "0.0.0.0"
     port:      int = 8888
+    server_timezone:   str = 'Etc/GMT-3'
+    exchange_timezone: str = 'America/Chicago'
 
 
 class MetaTraderDataSource(CombinedDataSource):
@@ -26,33 +36,46 @@ class MetaTraderDataSource(CombinedDataSource):
         self._history_days = cfg.history_days
         self._host     = cfg.host
         self._port     = cfg.port
+        self._tz_server   = ZoneInfo(cfg.server_timezone)
+        self._tz_exchange = ZoneInfo(cfg.exchange_timezone)
+
+        now_srv = datetime.now(self._tz_server)
+        now_exc = now_srv.astimezone(self._tz_exchange)
+        diff    = now_srv.utcoffset() - now_exc.utcoffset()
+        self._offset_seconds = int(diff.total_seconds())
 
         if not mt5.initialize(**self.creds):
             raise RuntimeError(f"MT5 init failed: {mt5.last_error()}")
 
-    def load_historical_bars(self) -> List[Dict]:
-        # ensure the symbol is in Market Watch
+    def load_historical_bars(self, timeframe: str = '1m') -> List[Dict]:
+        tf_const = TF_MAP.get(timeframe)
+        if tf_const is None:
+            raise ValueError(f"Unsupported timeframe: {timeframe}")
+
         if not mt5.symbol_select(self.symbol, True):
             print(f"⚠️ symbol_select failed for {self.symbol}: {mt5.last_error()}")
             return []
 
-        utc_to = datetime.utcnow()
+        utc_to   = datetime.utcnow()
         utc_from = utc_to - timedelta(days=self._history_days)
-        rates = mt5.copy_rates_range(
-            self.symbol,
-            mt5.TIMEFRAME_M1,
-            utc_from,
-            utc_to
-        )
+        rates    = mt5.copy_rates_range(self.symbol, tf_const, utc_from, utc_to)
 
         if rates is None or len(rates) == 0:
-            print(f"⚠️ no history for {self.symbol}, error={mt5.last_error()}")
+            print(f"⚠️ no history for {self.symbol}@{timeframe}, error={mt5.last_error()}")
             return []
 
-        bars = []
+        bars: List[Dict] = []
         for r in rates:
+            t_server = int(r["time"])
+            dt_srv = datetime.fromtimestamp(t_server, tz=self._tz_server)
+            dt_exc = dt_srv.astimezone(self._tz_exchange)
+            offset_seconds = int(
+                (dt_srv.utcoffset() - dt_exc.utcoffset()).total_seconds()
+            )
+            t_exc = t_server - offset_seconds
+
             bars.append({
-                "time":   int(r["time"]),
+                "time":   t_exc,
                 "open":   float(r["open"]),
                 "high":   float(r["high"]),
                 "low":    float(r["low"]),
@@ -60,6 +83,7 @@ class MetaTraderDataSource(CombinedDataSource):
                 "volume": int(r["tick_volume"]),
                 "pair":   self.symbol
             })
+
         return bars
 
     def subscribe(self, callback: Callable[[Dict], None], from_time: int = 0) -> None:
