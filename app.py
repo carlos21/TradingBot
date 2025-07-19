@@ -6,7 +6,7 @@ from src.bars_loader import BarsLoader, LoaderConfig
 from src.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
 from src.data_sources.csv_datasource import CSVDataSource
-from src.data_sources.metatrader_datasource import MetaTraderConfig, MetaTraderDataSource
+# from src.data_sources.metatrader_datasource import MetaTraderConfig, MetaTraderDataSource
 from src.repositories.lines_repository import SQLLineRepository
 from src.strategies.liquidity_m1dual_strategy import LiquidityDualM1Strategy
 from src.strategies.liquidity_strategy import LiquidityStrategy
@@ -53,18 +53,23 @@ trade_manager = TradeManager(
     socketio = socketio
 )
 
-mt_cfg = MetaTraderConfig(
-    login=61371570,
-    password='MiPuchuxD21@',
-    server='Pepperstone-Demo',
-    history_days=50,     # if you want more than the default
-    host='127.0.0.1',
-    port=9999,
-    server_timezone = 'Etc/GMT-3',        # ← your broker’s TZ
-    exchange_timezone = 'America/Chicago'    # ← the exchange TZ you want to align to
+# mt_cfg = MetaTraderConfig(
+#     login=61371570,
+#     password='MiPuchuxD21@',
+#     server='Pepperstone-Demo',
+#     history_days=50,     # if you want more than the default
+#     host='127.0.0.1',
+#     port=9999,
+#     server_timezone = 'Etc/GMT-3',        # ← your broker’s TZ
+#     exchange_timezone = 'America/Chicago'    # ← the exchange TZ you want to align to
+# )
+# ds = MetaTraderDataSource(symbol='NAS100', cfg=mt_cfg)
+ds = CSVDataSource(
+    pair= PAIR,
+    initial_start_time=datetime.fromisoformat("2024-01-14T00:00:00+00:00"),
+    initial_end_time=datetime.fromisoformat("2024-05-01T15:11:00+00:00"),
+    bars_per_second=10.0
 )
-ds = MetaTraderDataSource(symbol='NAS100', cfg=mt_cfg)
-# ds = CSVDataSource(pair= PAIR)
 
 def combined_bar_callback(bar): 
     trade_manager.handle_new_1m_bar(bar)
@@ -72,11 +77,11 @@ def combined_bar_callback(bar):
 
 loader_cfg = LoaderConfig(
     initial_start = datetime.fromisoformat("2024-01-14T00:00:00+00:00"),
-    initial_end   = datetime.fromisoformat("2025-12-31T15:11:00+00:00"),
+    initial_end   = datetime.fromisoformat("2024-05-01T15:11:00+00:00"),
+    # initial_end   = datetime.fromisoformat("2025-12-31T15:11:00+00:00"),
 )
 
 tloader = BarsLoader(
-    loader_config=loader_cfg,
     data_source=ds,
     socketio=socketio,
     bar_callback=combined_bar_callback
@@ -99,19 +104,20 @@ def index():
 
 @app.route('/api/bars')
 def get_bars():
-    tf = request.args.get('tf', '5m')
+    tf       = request.args.get('tf', '5m')
     start_ts = request.args.get('start_time', type=int)
 
-    # for higher-timeframes, bypass the 1m+aggregator:
-    if tf != '1m':
-        bars = ds.load_historical_bars(tf)
-        if start_ts:
-            bars = [b for b in bars if b['time'] >= start_ts]
-        return jsonify(bars)
-    
+    # make sure future replay uses the right TF
     tloader.set_timeframe(tf)
-    data = tloader.prepare_agg_bars(tf, start_time=start_ts)
-    return jsonify(data)
+
+    if tf == '1m':
+        # full 1m history (ignore start_ts)
+        bars = ds.load_historical_bars('1m')
+    else:
+        # aggregated history; load_historical_bars will ignore start_ts for non-1m TFs
+        bars = ds.load_historical_bars(tf, start_time=start_ts)
+
+    return jsonify(bars)
 
 
 @app.route('/api/lines', methods=['GET'])
@@ -166,13 +172,14 @@ def close_trade(trade_id):
 @socketio.on('connect')
 def on_connect(auth):
     # single boolean instead of dict
-    emit('stream_status', {'playing': tloader.streaming_1m})
+    emit('stream_status', {'playing': tloader.streaming})
 
 @socketio.on('start_stream')
 def on_start_stream(payload):
     from_time = payload.get('fromTime', 0)
     tloader.start(from_time)
     emit('stream_status', {'playing': True})
+
 
 @socketio.on('pause_stream')
 def on_pause_stream():

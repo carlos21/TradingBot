@@ -362,6 +362,7 @@ export class ChartViewer {
   // ───── Replay & Timeframe Controls ─────
   startReplay(tf = this.currentTF, fromTime = this.lastTime) {
     console.log('[ChartViewer] ▶️ startReplay — tf:', tf, 'pair:', this.pair);
+    this.lastTime = fromTime - 1;
     this.socket.emit('start_stream', { timeframe: tf, pair: this.pair, fromTime: fromTime });
     this.isPlaying = true;
   }

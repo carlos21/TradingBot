@@ -24,24 +24,23 @@ class LinesController:
         } for l in lines])
     
     def add_line(self, pair: str, price: float):
-        # ensure we only handle the one supported pair
-        if pair != self.bars_loader.pair:
-            abort(400, f"Only pair '{self.bars_loader.pair}' is supported")
+        # ensure only the configured pair is supported
+        ds = self.bars_loader.data_source
+        supported_pair = getattr(ds, 'pair', None)
+        if pair != supported_pair:
+            abort(400, f"Only pair '{supported_pair}' is supported")
 
-        idx = self.bars_loader.current_1m_index
-        last_close = None
+        # use in-memory played bars to get the last close price
+        played = getattr(ds, '_played_bars', None)
+        if not played or len(played) == 0:
+            abort(400, "No bars have been replayed yet to determine last close price")
 
-        # grab the most recent close from raw_1m
-        if idx > 0 and idx <= len(self.bars_loader.raw_1m):
-            last_close = self.bars_loader.raw_1m[idx - 1]['close']
+        last_close = played[-1]['close']
 
-        # decide direction
-        if last_close is not None and last_close < price:
-            direction = 'short'
-        else:
-            direction = 'long'
+        # decide direction based on last_close vs. new line price
+        direction = 'short' if last_close < price else 'long'
 
-        # persist & wire into strategy
+        # persist the line and register it with the strategy
         line = self.line_repository.insert_line(
             pair=pair,
             price=price,
@@ -60,7 +59,7 @@ class LinesController:
             'direction':     line.direction,
             'creation_date': line.creation_date.isoformat()
         }), 201
-    
+
     def delete_line(self, line_id):
         try:
             self.line_repository.delete_line(line_id)
