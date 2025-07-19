@@ -67,19 +67,13 @@ trade_manager = TradeManager(
 ds = CSVDataSource(
     pair= PAIR,
     initial_start_time=datetime.fromisoformat("2024-01-14T00:00:00+00:00"),
-    initial_end_time=datetime.fromisoformat("2024-05-01T15:11:00+00:00"),
+    initial_end_time=datetime.fromisoformat("2024-05-01T13:45:00+00:00"),
     bars_per_second=10.0
 )
 
 def combined_bar_callback(bar): 
     trade_manager.handle_new_1m_bar(bar)
     tstrategy.on_raw_bar(bar)
-
-loader_cfg = LoaderConfig(
-    initial_start = datetime.fromisoformat("2024-01-14T00:00:00+00:00"),
-    initial_end   = datetime.fromisoformat("2024-05-01T15:11:00+00:00"),
-    # initial_end   = datetime.fromisoformat("2025-12-31T15:11:00+00:00"),
-)
 
 tloader = BarsLoader(
     data_source=ds,
@@ -106,17 +100,9 @@ def index():
 def get_bars():
     tf       = request.args.get('tf', '5m')
     start_ts = request.args.get('start_time', type=int)
-
-    # make sure future replay uses the right TF
-    tloader.set_timeframe(tf)
-
-    if tf == '1m':
-        # full 1m history (ignore start_ts)
-        bars = ds.load_historical_bars('1m')
-    else:
-        # aggregated history; load_historical_bars will ignore start_ts for non-1m TFs
-        bars = ds.load_historical_bars(tf, start_time=start_ts)
-
+    print(f"[HTTP] /api/bars called → tf={tf!r}, start_time={start_ts!r}, _played_bars_len={len(ds._played_bars)}")
+    bars = ds.load_historical_bars(tf, start_ts)
+    print(f"[HTTP] → returning {len(bars)} bars for tf={tf!r}")
     return jsonify(bars)
 
 
@@ -176,6 +162,12 @@ def on_connect(auth):
 
 @socketio.on('start_stream')
 def on_start_stream(payload):
+    tf = payload.get('timeframe', '1m')
+    try:
+        tloader.set_timeframe(tf)
+    except ValueError:
+        tloader.set_timeframe('1m')
+
     from_time = payload.get('fromTime', 0)
     tloader.start(from_time)
     emit('stream_status', {'playing': True})

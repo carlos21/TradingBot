@@ -49,10 +49,15 @@ class BarsLoader:
         self._current_group_start = None     # epoch-sec start of current window
 
     def set_timeframe(self, tf: str):
-        """Change aggregation timeframe (e.g. '1m','5m','1h')."""
-        # stop running loop
-        if self.streaming:
+        print(f"[SET_TF] called with tf={tf}")
+
+        # 1) stop existing replay thread
+        if self._thread and self._thread.is_alive():
+            print("[SET_TF] stopping existing thread")
             self._stop_event.set()
+            self._thread.join()
+
+        # 2) parse the new TF
         unit = tf[-1]
         num  = int(tf[:-1])
         if unit == 'm':
@@ -61,10 +66,25 @@ class BarsLoader:
             self.group_size = max(1, num * 60)
         else:
             raise ValueError(f"Unsupported timeframe '{tf}'")
-        self.current_tf           = tf
-        self._1m_buffer           = []
-        self._current_group_start = None
+
+        self.current_tf = tf
+        print(f"[SET_TF] new group_size={self.group_size} ({tf})")
+
+        # 3) compute the start of the current window
+        window_secs = self.group_size * 60
+        win_start   = (self._from_time // window_secs) * window_secs
+        print(f"[SET_TF] current from_time={self._from_time}, window_start={win_start}")
+
+        # 4) reseed the buffer with already-played bars in that window
+        played = self.data_source._played_bars
+        buf = [b for b in played if win_start <= b['time'] <= self._from_time]
+        self._1m_buffer = buf
+        self._current_group_start = win_start
+        print(f"[SET_TF] seeded _1m_buffer with {len(buf)} bars from data_source._played_bars")
+
+        # 5) clear stop flag so start() can resume
         self._stop_event.clear()
+        print("[SET_TF] ready to start() with new timeframe")
 
     def start(self, from_time: int = None):
         """
@@ -130,9 +150,10 @@ class BarsLoader:
             self._process_tick(msg)
 
     def _process_bar(self, bar: dict):
-        """Emit or group a 1m bar into the configured TF."""
-        # 1m: emit directly
-        if self.current_tf == '1m':
+        """Handle one raw 1m bar: either emit immediately or buffer+aggregate."""
+        # 1m: just emit
+        if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
+            print(f"[PROCESS_BAR] 🔹 1m — emitting raw bar time={bar['time']}")
             self.socketio.emit('bar', bar)
             time.sleep(self._emit_delay)
             return
@@ -141,24 +162,33 @@ class BarsLoader:
         window_secs  = self.group_size * 60
         window_start = (bar['time'] // window_secs) * window_secs
 
+        # first bar ever
         if self._current_group_start is None:
             self._current_group_start = window_start
+            print(f"[PROCESS_BAR] 🎬 starting new window at {window_start}")
 
+        # same window → buffer it
         if window_start == self._current_group_start:
             self._1m_buffer.append(bar)
+            print(f"[PROCESS_BAR] ➕ buffering bar time={bar['time']} (buffer size={len(self._1m_buffer)})")
         else:
-            # window closed: aggregate and emit
-            tf_bar = self._aggregate_time_window(
-                self._1m_buffer,
-                self._current_group_start,
-                window_secs
-            )
-            self.socketio.emit('bar', tf_bar)
-            time.sleep(self._emit_delay)
+            # window closed → aggregate and emit (only if we have data)
+            if self._1m_buffer:
+                agg = self._aggregate_time_window(
+                    self._1m_buffer,
+                    self._current_group_start,
+                    window_secs
+                )
+                print(f"[PROCESS_BAR] 🔄 emitting aggregated bar for window {self._current_group_start}: {agg}")
+                self.socketio.emit('bar', agg)
+                time.sleep(self._emit_delay)
+            else:
+                print(f"[PROCESS_BAR] ⚠️ warning: buffer empty for window {self._current_group_start}, skipping aggregate")
 
-            # reset buffer
-            self._1m_buffer           = [bar]
+            # reset for next window
+            self._1m_buffer = [bar]
             self._current_group_start = window_start
+            print(f"[PROCESS_BAR] 🎬 new window at {window_start}, seeded with bar time={bar['time']}")    
 
     def _process_tick(self, tick: dict):
         """Emit a live tick immediately."""
