@@ -39,7 +39,7 @@ class CSVDataSource(CombinedDataSource):
         'NQ':      'America/Chicago',
     }
     PAIR_FILES   = {
-        'EURUSD': 'csvs/EURUSD_2019.csv',
+        'EURUSD': 'csvs/EURUSD_2024.csv',
         'NQ':      'csvs/NQ_21-24.csv',
     }
 
@@ -134,22 +134,23 @@ class CSVDataSource(CombinedDataSource):
         t_logger.debug(f"Aggregating {len(bars)} bars into {timeframe}")
         return self._aggregate_whole_history_from_list(bars, timeframe)
 
-    def subscribe(self, callback: Callable[[Dict], None], from_time: int = 0):
-        t_logger.debug(f"subscribe() start → from_time={from_time}, total_bars={len(self._bars)}")
+    def subscribe(self, callback, from_time=0):
+        print(f"[CSV_DS] subscribe() start → from_time={from_time}, total_bars={len(self._bars)}")
+        start_idx = next((i for i,b in enumerate(self._bars) if b['time'] > from_time), None)
+        if start_idx is not None:
+            print(f"[CSV_DS] first to play idx={start_idx}, ts={self._bars[start_idx]['time']}")
+        else:
+            print("[CSV_DS] no bars to play after from_time")
+
         for idx, bar in enumerate(self._bars):
             if self._stop_event.is_set():
-                t_logger.debug("subscribe() saw stop_event, exiting loop")
+                print("[CSV_DS] saw stop_event, breaking")
                 break
-
-            ts = bar['time']
-            if ts <= from_time:
+            if bar['time'] <= from_time:
                 continue
-
             self._played_bars.append(bar)
-            t_logger.debug(f"subscribe → playing bar idx={idx} time={ts}")
+            print(f"[CSV_DS] → playing idx={idx}, ts={bar['time']}")
             callback(bar)
-
-        t_logger.debug("subscribe() finished replay loop")
 
     def set_timeframe(self, tf: str):
         t_logger.debug(f"set_timeframe called → tf={tf}")

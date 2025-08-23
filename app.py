@@ -26,7 +26,7 @@ CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # ───────── Strategy + Loader ─────────
-PAIR     = 'NQ'
+PAIR     = 'EURUSD'
 strat_cfg = StrategyConfig(
     stop_loss={ 'EURUSD': 0.0004, 'NQ': 10 },
     max_bounce={ 'EURUSD': 0.0020, 'NQ': 40 },
@@ -67,7 +67,7 @@ trade_manager = TradeManager(
 ds = CSVDataSource(
     pair= PAIR,
     initial_start_time=datetime.fromisoformat("2024-01-14T00:00:00+00:00"),
-    initial_end_time=datetime.fromisoformat("2024-05-01T13:45:00+00:00"),
+    initial_end_time=datetime.fromisoformat("2024-05-02T13:45:00+00:00"),
     bars_per_second=10.0
 )
 
@@ -100,9 +100,14 @@ def index():
 def get_bars():
     tf       = request.args.get('tf', '5m')
     start_ts = request.args.get('start_time', type=int)
-    print(f"[HTTP] /api/bars called → tf={tf!r}, start_time={start_ts!r}, _played_bars_len={len(ds._played_bars)}")
-    bars = ds.load_historical_bars(tf, start_ts)
-    print(f"[HTTP] → returning {len(bars)} bars for tf={tf!r}")
+    bars     = ds.load_historical_bars(tf, start_ts)
+
+    print(f"[HTTP] /api/bars → tf={tf!r}, start_time={start_ts!r},")
+    if bars:
+        print(f"           first={bars[0]['time']}, last={bars[-1]['time']}")
+    else:
+        print("           (no bars!)")
+
     return jsonify(bars)
 
 
@@ -114,6 +119,8 @@ def list_lines():
 @app.route('/api/lines', methods=['POST'])
 def add_line():
     data = request.get_json() or {}
+    print(f"Received JSON payload: {data!r}")
+    
     if 'pair' not in data or 'price' not in data:
         abort(400, 'Must provide {"pair":..., "price":...}')
     try:

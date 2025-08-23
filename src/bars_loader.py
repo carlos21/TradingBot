@@ -86,6 +86,15 @@ class BarsLoader:
         self._stop_event.clear()
         print("[SET_TF] ready to start() with new timeframe")
 
+        if buf:
+            times = [b['time'] for b in buf]
+            print(f"[SET_TF] seeded buffer: count={len(buf)}, "
+                f"min={min(times)}, max={max(times)}, window_start={win_start}")
+        else:
+            print(f"[SET_TF] seeded buffer is EMPTY for window_start={win_start}")
+
+        print("[SET_TF] ready to start() with new timeframe")
+
     def start(self, from_time: int = None):
         """
         Begin or resume streaming.   
@@ -158,14 +167,15 @@ class BarsLoader:
             time.sleep(self._emit_delay)
             return
 
-        # higher TF: group into fixed windows
         window_secs  = self.group_size * 60
         window_start = (bar['time'] // window_secs) * window_secs
 
-        # first bar ever
+        print(f"[PROCESS_BAR] raw_time={bar['time']}, "
+            f"window_start={window_start}, buf_len={len(self._1m_buffer)}")
+
         if self._current_group_start is None:
             self._current_group_start = window_start
-            print(f"[PROCESS_BAR] 🎬 starting new window at {window_start}")
+            print(f"[PROCESS_BAR] 🎬 new window at {window_start}")
 
         # same window → buffer it
         if window_start == self._current_group_start:
@@ -179,7 +189,8 @@ class BarsLoader:
                     self._current_group_start,
                     window_secs
                 )
-                print(f"[PROCESS_BAR] 🔄 emitting aggregated bar for window {self._current_group_start}: {agg}")
+                print(f"[PROCESS_BAR] 🔄 emitting aggregate for window {self._current_group_start}: "
+                  f"count={len(self._1m_buffer)}, agg_time={agg['time']}")
                 self.socketio.emit('bar', agg)
                 time.sleep(self._emit_delay)
             else:
@@ -188,7 +199,7 @@ class BarsLoader:
             # reset for next window
             self._1m_buffer = [bar]
             self._current_group_start = window_start
-            print(f"[PROCESS_BAR] 🎬 new window at {window_start}, seeded with bar time={bar['time']}")    
+            print(f"[PROCESS_BAR] 🎬 started new window at {window_start}")    
 
     def _process_tick(self, tick: dict):
         """Emit a live tick immediately."""

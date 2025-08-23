@@ -10,7 +10,7 @@ export class ChartViewer {
     this.onDisplay = opts.onDisplay || (() => {});
     this.lastTime     = -Infinity;
     this.lastPrice    = null;
-    this.pair         = 'NQ';
+    this.pair         = 'EURUSD';
     this.currentTF    = '5m';
     this.isPlaying    = false;
     this.activeTrade = null;
