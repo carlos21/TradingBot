@@ -1,10 +1,47 @@
 # src/strategy.py
 from threading import RLock
 from datetime import datetime, timezone
-
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
+from dataclasses import dataclass
+from enum import Enum
+from typing import Callable, Optional, Tuple, List, Dict, Any
+
+
+# A function that receives the entry "context" and decides if we should open.
+EntryFilter = Callable[['EntryContext'], Tuple[bool, str]]
+
+class LineRemovalMode(str, Enum):
+    ON_EVALUATE = "on_evaluate"   # remove line after we evaluated it (old behavior)
+    ON_ENTER    = "on_enter"      # remove only if we actually opened a trade
+    NEVER       = "never"         # never remove (we'll reset its state for future triggers)
+
+@dataclass
+class StrategyOptions:
+    allow_multiple_open: bool = False
+    line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE
+    entry_filters: Optional[List[EntryFilter]] = None  # plug-ins you can add/remove
+
+@dataclass
+class EntryContext:
+    """Everything a filter might want to see."""
+    strategy: 'LiquidityStrategy'
+    bar: dict
+    sid: Any
+    line: Dict[str, Any]     # {'level', 'direction', 'has_crossed', 'extreme'}
+    level: float
+    direction: str           # 'long' | 'short'
+    close: float
+    low: float
+    high: float
+    extreme: float
+    depth: float             # how far price went beyond the level before re-cross
+    pair: str
+    proposed_entry: float
+    proposed_risk: float
+    proposed_sl: float
+    proposed_tp: float
 
 class LiquidityStrategy:
     """

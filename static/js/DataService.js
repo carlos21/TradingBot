@@ -12,6 +12,13 @@ export class DataService {
     });
   }
 
+  async getPair() {
+    const resp = await fetch(`${this.baseUrl}/api/pair`);
+    if (!resp.ok) throw new Error(`Error fetching pair: ${resp.statusText}`);
+    const data = await resp.json();
+    return data.pair;
+  }
+
   // List all pinned lines
   async fetchLines() {
     const resp = await fetch(`${this.baseUrl}/api/lines`);

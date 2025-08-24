@@ -10,14 +10,14 @@ export class ChartViewer {
     this.onDisplay = opts.onDisplay || (() => {});
     this.lastTime     = -Infinity;
     this.lastPrice    = null;
-    this.pair         = 'EURUSD';
+    this.pair         = null;
     this.currentTF    = '5m';
     this.isPlaying    = false;
     this.activeTrade = null;
     this.historicalBars = [];
     this.tradeMarkers   = [];
 
-    const formats = {
+    this.formats = {
       NQ:     { precision: 2,    minMove: 0.01    },
       EURUSD: { precision: 5,    minMove: 0.00001 }
     };
@@ -87,18 +87,12 @@ export class ChartViewer {
       }
     });
 
-    const fmt = formats[this.pair] || { precision: 2, minMove: 1 };
-    this.series.applyOptions(
-      { 
-        priceFormat: { 
-          type: 'price', 
-          precision: fmt.precision, 
-          minMove: fmt.minMove 
-        },
-        lastValueVisible: false,
-        priceLineVisible: false
-      }
-    );
+    // temporary neutral price format until pair is known
+    this.series.applyOptions({
+      priceFormat: { type: 'price', precision: 2, minMove: 1 },
+      lastValueVisible: false,
+      priceLineVisible: false
+    });
 
     // handle resize
     new ResizeObserver(() => {
@@ -120,11 +114,24 @@ export class ChartViewer {
     this.pinnedLines = [];
     this.chartElement.addEventListener('mousedown', this._onMouseDown.bind(this));
 
-    // initialize data and socket
-    this._initBars()
+    // initialize: fetch server PAIR first
+    this._initPair()
+      .then(() => this._initBars())
       .then(() => this._initLines())
       .then(() => this._setupSocket())
       .catch(console.error);
+  }
+
+  async _initPair() {
+    this.pair = await this.dataService.getPair();
+    this._applyPriceFormat();
+  }
+
+  _applyPriceFormat() {
+    const f = this.formats[this.pair] || { precision: 2, minMove: 1 };
+    this.series.applyOptions({
+      priceFormat: { type: 'price', precision: f.precision, minMove: f.minMove }
+    });
   }
 
   async _initBars() {

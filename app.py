@@ -32,15 +32,7 @@ strat_cfg = StrategyConfig(
     max_bounce={ 'EURUSD': 0.0020, 'NQ': 40 },
     extra_sl_space={ 'EURUSD': 0.0002, 'NQ': 2.0 }
 )
-# tstrategy = LiquidityStrategy(
-#     min_stop_loss=strat_cfg.stop_loss[PAIR],
-#     max_bounce=strat_cfg.max_bounce[PAIR],
-#     extra_sl_space= strat_cfg.extra_sl_space[PAIR],
-#     socketio=socketio,
-#     line_repository = line_repository,
-#     trade_repository = trade_repository
-# )
-tstrategy = LiquidityDualM1Strategy(
+tstrategy = LiquidityStrategy(
     min_stop_loss=strat_cfg.stop_loss[PAIR],
     max_bounce=strat_cfg.max_bounce[PAIR],
     extra_sl_space= strat_cfg.extra_sl_space[PAIR],
@@ -48,6 +40,14 @@ tstrategy = LiquidityDualM1Strategy(
     line_repository = line_repository,
     trade_repository = trade_repository
 )
+# tstrategy = LiquidityDualM1Strategy(
+#     min_stop_loss=strat_cfg.stop_loss[PAIR],
+#     max_bounce=strat_cfg.max_bounce[PAIR],
+#     extra_sl_space= strat_cfg.extra_sl_space[PAIR],
+#     socketio=socketio,
+#     line_repository = line_repository,
+#     trade_repository = trade_repository
+# )
 trade_manager = TradeManager(
     trade_repository = trade_repository,
     socketio = socketio
@@ -94,6 +94,11 @@ for l in line_repository.list_lines():
 @app.route('/')
 def index():
     return render_template('tester.html')
+
+
+@app.route('/api/pair')
+def get_pair():
+    return jsonify({'pair': PAIR})
 
 
 @app.route('/api/bars')
@@ -191,4 +196,4 @@ def on_seek(payload):
     tloader.seek(from_time)
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True)
+    socketio.run(app, debug=True, port=5001)
