@@ -7,10 +7,9 @@ from src.repositories.trades_repository import TradeRepository
 from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional, Tuple, List, Dict, Any
+from src.strategies.entry_context import *
 
 
-# A function that receives the entry "context" and decides if we should open.
-EntryFilter = Callable[['EntryContext'], Tuple[bool, str]]
 
 class LineRemovalMode(str, Enum):
     ON_EVALUATE = "on_evaluate"   # remove line after we evaluated it (old behavior)
@@ -19,29 +18,9 @@ class LineRemovalMode(str, Enum):
 
 @dataclass
 class StrategyOptions:
-    allow_multiple_open: bool = False
     line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE
-    entry_filters: Optional[List[EntryFilter]] = None  # plug-ins you can add/remove
-
-@dataclass
-class EntryContext:
-    """Everything a filter might want to see."""
-    strategy: 'LiquidityStrategy'
-    bar: dict
-    sid: Any
-    line: Dict[str, Any]     # {'level', 'direction', 'has_crossed', 'extreme'}
-    level: float
-    direction: str           # 'long' | 'short'
-    close: float
-    low: float
-    high: float
-    extreme: float
-    depth: float             # how far price went beyond the level before re-cross
-    pair: str
-    proposed_entry: float
-    proposed_risk: float
-    proposed_sl: float
-    proposed_tp: float
+    entry_filters: Optional[List[EntryFilter]] = None
+    triggers: Optional[List[EntryTrigger]] = None
 
 class LiquidityStrategy:
     """
@@ -56,7 +35,9 @@ class LiquidityStrategy:
         line_repository: LineRepository,
         trade_repository: TradeRepository,
         extra_sl_space: dict[str, float],
-        strategy_tf: str = '5m'
+        strategy_tf: str = '5m',
+        options: Optional[StrategyOptions] = None,
+        htf_fetcher: Optional[Callable[[str, int, str], Optional[dict]]] = None,
     ):
         self.min_stop_loss = min_stop_loss
         self.max_bounce    = max_bounce
@@ -74,6 +55,19 @@ class LiquidityStrategy:
         self.strategy_window = num * (60 if unit=='m' else 3600)
         self._buf = []
         self._group_start = None
+
+        self.options = options or StrategyOptions()
+        self.entry_filters = list(self.options.entry_filters or [])
+        self.triggers = list(self.options.triggers or [retest_cross_trigger])
+
+        # optional dependency for multi-TF checks (15m/1h, etc.)
+        self.htf_fetcher = htf_fetcher
+
+    # Convenience if you want to tweak filters at runtime:
+    def set_entry_filters(self, filters: List[EntryFilter]):
+        with self.lock:
+            self.entry_filters = list(filters)
+            self.entry_filters.insert(0, open_trades_limit_filter(self.options.max_open_trades))
 
     def add_strategy_line(self, id, level, direction):
         print(f"[Strategy] ➕ add_strategy_line id={id} level={level} direction={direction}")
@@ -127,54 +121,80 @@ class LiquidityStrategy:
 
     def _on_strategy_bar(self, bar: dict):
         """
-        Called on every 5m bar. Checks existing open trades for exit,
-        then scans strategy_lines for new entries. Uses helper to store/emit.
+        1) check exits on open trades
+        2) for each strategy line, run triggers → may propose an EntryContext
+        3) if proposed, run filters; if allowed, open trade and maybe remove the line
         """
         with self.lock:
+            # 1) exits first
             self._check_open_trades(bar)
 
-            # don't open if there's already an open trade
-            if any(t['status'] == 'open' for t in self.open_trades):
-                return
+            # 2) evaluate lines via triggers
+            for sid, line in list(self.strategy_lines.items()):
+                opened = False
+                proposed_ctx: Optional[EntryContext] = None
 
-            for sid, s in list(self.strategy_lines.items()):
-                lvl       = s['level']
-                dir_      = s['direction']
-                close     = bar['close']
-                low, high = bar['low'], bar['high']
-                extra     = self.extra_sl_space.get(bar['pair'], 0)
+                # run triggers in order until one proposes
+                for trig in self.triggers:
+                    proposed_ctx = trig(self, sid, line, bar)
+                    if proposed_ctx is not None:
+                        break
 
-                # detect entry
-                if dir_ == 'long':
-                    if close < lvl:
-                        s['has_crossed'] = True
-                        s['extreme']     = min(s['extreme'], low)
-                    if s['has_crossed'] and close >= lvl:
-                        depth = lvl - s['extreme']
-                        if depth <= self.max_bounce:
-                            entry   = close
-                            risk    = max(entry - s['extreme'], self.min_stop_loss)
-                            sl      = entry - risk - extra
-                            tp      = entry + 4 * risk
-                            trade   = self._make_trade_dict(bar, 'long', entry, sl, tp, risk)
-                            self._store_and_emit_open(trade)
-                        self.remove_strategy_line(sid)
-                        break
-                else:
-                    if close > lvl:
-                        s['has_crossed'] = True
-                        s['extreme']     = max(s['extreme'], high)
-                    if s['has_crossed'] and close <= lvl:
-                        depth = s['extreme'] - lvl
-                        if depth <= self.max_bounce:
-                            entry   = close
-                            risk    = max(s['extreme'] - entry, self.min_stop_loss)
-                            sl      = entry + risk + extra
-                            tp      = entry - 4 * risk
-                            trade   = self._make_trade_dict(bar, 'short', entry, sl, tp, risk)
-                            self._store_and_emit_open(trade)
-                        self.remove_strategy_line(sid)
-                        break
+                if proposed_ctx is None:
+                    # nothing to evaluate / no retest yet
+                    continue
+
+                # 3) run filters
+                allow, reason = self._filters_allow_entry(proposed_ctx)
+                if allow:
+                    extra = self.extra_sl_space
+                    if proposed_ctx.direction == 'long':
+                        entry    = proposed_ctx.close
+                        raw_risk = max(entry - proposed_ctx.extreme, self.min_stop_loss)
+                        eff_risk = raw_risk + extra
+                        sl       = entry - eff_risk
+                        tp       = entry + 4 * eff_risk
+                        trade    = self._make_trade_dict(bar, 'long', entry, sl, tp, eff_risk)
+                    else:
+                        entry    = proposed_ctx.close
+                        raw_risk = max(proposed_ctx.extreme - entry, self.min_stop_loss)
+                        eff_risk = raw_risk + extra
+                        sl       = entry + eff_risk
+                        tp       = entry - 4 * eff_risk
+                        trade    = self._make_trade_dict(bar, 'short', entry, sl, tp, eff_risk)
+
+                    self._store_and_emit_open(trade)
+                    opened = True
+
+                # line removal policy (evaluate vs trade)
+                self._maybe_remove_line(sid, opened)
+
+    def _reset_line_state(self, line_state: Dict[str, Any]):
+        """If we keep the line, reset it so it can trigger again in future."""
+        line_state['has_crossed'] = False
+        line_state['extreme'] = float('inf') if line_state['direction'] == 'long' else float('-inf')
+
+    def _filters_allow_entry(self, ctx: EntryContext) -> Tuple[bool, str]:
+        """
+        Run all pluggable entry filters. If any returns (False, reason), block the entry.
+        """
+        for f in self.entry_filters:
+            ok, reason = f(ctx)
+            if not ok:
+                return False, reason
+        return True, "ok"
+
+    def _maybe_remove_line(self, line_id: Any, opened: bool):
+        """
+        Remove the evaluated strategy line depending on removal mode.
+        """
+        mode = self.options.line_removal_mode
+        if mode == LineRemovalMode.NEVER:
+            return
+        if mode == LineRemovalMode.ON_EVALUATE:
+            self.remove_strategy_line(line_id)
+        elif mode == LineRemovalMode.ON_TRADE and opened:
+            self.remove_strategy_line(line_id)
 
     def _check_open_trades(self, bar):
         remaining = []

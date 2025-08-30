@@ -8,8 +8,9 @@ from src.controllers.trades_controller import TradesController
 from src.data_sources.csv_datasource import CSVDataSource
 # from src.data_sources.metatrader_datasource import MetaTraderConfig, MetaTraderDataSource
 from src.repositories.lines_repository import SQLLineRepository
+from src.strategies.entry_context import *
 from src.strategies.liquidity_m1dual_strategy import LiquidityDualM1Strategy
-from src.strategies.liquidity_strategy import LiquidityStrategy
+from src.strategies.liquidity_strategy import LineRemovalMode, LiquidityStrategy, StrategyOptions
 from src.database import database
 from src.services.trade_manager import TradeManager
 from src.repositories.trades_repository import SQLTradeRepository
@@ -30,7 +31,17 @@ PAIR     = 'EURUSD'
 strat_cfg = StrategyConfig(
     stop_loss={ 'EURUSD': 0.0004, 'NQ': 10 },
     max_bounce={ 'EURUSD': 0.0020, 'NQ': 40 },
-    extra_sl_space={ 'EURUSD': 0.0002, 'NQ': 2.0 }
+    extra_sl_space={ 'EURUSD': 0.0000, 'NQ': 0 }
+)
+options = StrategyOptions(
+    line_removal_mode=LineRemovalMode.NEVER, # ON_ENTER or NEVER
+    triggers=[retest_cross_trigger],
+    entry_filters=[
+        open_trades_limit_filter(1),
+        max_bounce_filter(strat_cfg.max_bounce.get(PAIR)), # keep or remove
+        # htf_big_body_exception_filter(tf="15m", min_body_fraction=0.75),
+        # htf_big_body_exception_filter(tf="1h",  min_body_fraction=0.55),
+    ]
 )
 tstrategy = LiquidityStrategy(
     min_stop_loss=strat_cfg.stop_loss[PAIR],
@@ -38,7 +49,8 @@ tstrategy = LiquidityStrategy(
     extra_sl_space= strat_cfg.extra_sl_space[PAIR],
     socketio=socketio,
     line_repository = line_repository,
-    trade_repository = trade_repository
+    trade_repository = trade_repository,
+    options=options
 )
 # tstrategy = LiquidityDualM1Strategy(
 #     min_stop_loss=strat_cfg.stop_loss[PAIR],
