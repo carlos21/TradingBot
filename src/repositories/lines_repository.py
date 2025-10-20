@@ -20,7 +20,7 @@ class LineRepository(ABC):
         pass
 
     @abstractmethod
-    def list_lines(self) -> List[LineData]:
+    def list_lines(self, pair: str) -> List[LineData]:
         pass
 
     @abstractmethod
@@ -58,9 +58,13 @@ class SQLLineRepository(LineRepository):
                 creation_date=new_line.creation_date
             )
 
-    def list_lines(self) -> List[LineData]:
+    def list_lines(self, pair: str) -> List[LineData]:
          with get_db_session() as db:
-            rows = db.query(Line).all()
+            rows = (
+                db.query(Line)
+                  .filter(Line.pair == pair)
+                  .all()
+            )
             return [
                 LineData(
                     line_id=row.line_id,

@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Optional, Tuple, List, Dict, Any
+from typing import Callable, Sequence, Optional, Tuple, Dict, Any, List
 
 
 @dataclass
@@ -131,3 +131,81 @@ def retest_cross_trigger(strategy, line_id, line, bar) -> Optional[EntryContext]
                 cross_depth=depth
             )
         return None
+    
+
+def candle_pattern_near_line_filter(
+    fetch_htf_bars: Callable[[str, str, int, Optional[int]], List[Dict[str, Any]]],
+    tfs: Sequence[str] = ('5m', '15m', '1h'),
+    proximity_abs: Optional[float] = None,     # if None → falls back to strategy.min_stop_loss
+    strong_body_min_ratio: float = 0.75,       # candle1: body/range ≥ this
+    small_body_max_ratio: float  = 0.25,       # candle2: body/range ≤ this
+    wick_ratio: float            = 0.25,       # candle2: "small" wick / range ≤ this
+) -> 'EntryFilter':
+    """
+    Two-candle pattern near the line, simplified:
+
+      SHORT:
+        C1 strong bullish body; C2 tiny body; C2 *upper* wick <= wick_ratio (body at top)
+
+      LONG:
+        C1 strong bearish body; C2 tiny body; C2 *lower* wick <= wick_ratio (body at bottom)
+
+    Pattern must appear on any TF in `tfs`, and the second candle must be within `proximity_abs`
+    of the line level (distance to any of O/H/L/C). `fetch_htf_bars(pair, tf, n=2, upto)`
+    returns last 2 bars up to `upto` inclusive.
+    """
+    def _body(o, c): return abs(c - o)
+    def _range(h, l): return max(h - l, 0.0)
+    def _upper_wick(o, h, c): return h - max(o, c)
+    def _lower_wick(o, l, c): return min(o, c) - l
+
+    def _near(level: float, b: Dict[str, Any], prox: float) -> float:
+        # min distance from level to any candle print
+        return min(abs(level - b[k]) for k in ('open', 'high', 'low', 'close'))
+
+    def _strong_c1(direction: str, b: Dict[str, Any]) -> bool:
+        o, h, l, c = b['open'], b['high'], b['low'], b['close']
+        rng = _range(h, l)
+        if rng <= 0: return False
+        bod_ratio = _body(o, c) / rng
+        if direction == 'short':   # want strong bullish first candle
+            return c > o and bod_ratio >= strong_body_min_ratio
+        else:                      # 'long': want strong bearish first candle
+            return c < o and bod_ratio >= strong_body_min_ratio
+
+    def _tiny_c2_with_small_wick(direction: str, b: Dict[str, Any]) -> bool:
+        o, h, l, c = b['open'], b['high'], b['low'], b['close']
+        rng = _range(h, l)
+        if rng <= 0: return False
+        bod_ratio = _body(o, c) / rng
+        if bod_ratio > small_body_max_ratio:
+            return False
+        if direction == 'short':
+            uw_ratio = _upper_wick(o, h, c) / rng
+            return uw_ratio <= wick_ratio
+        else:  # long
+            lw_ratio = _lower_wick(o, l, c) / rng
+            return lw_ratio <= wick_ratio
+
+    def _f(ctx: 'EntryContext') -> Tuple[bool, str]:
+        pair   = ctx.bar['pair']
+        now_ts = ctx.bar['time']
+        level  = ctx.level
+        prox   = proximity_abs if proximity_abs is not None else getattr(ctx.strategy, 'min_stop_loss', 0.0)
+
+        for tf in tfs:
+            bars = fetch_htf_bars(pair, tf, n=2, upto=now_ts) or []
+            if len(bars) < 2:
+                continue
+            c1, c2 = bars[-2], bars[-1]
+
+            if not _strong_c1(ctx.direction, c1):
+                continue
+            if not _tiny_c2_with_small_wick(ctx.direction, c2):
+                continue
+
+            if _near(level, c2, prox) <= prox:
+                return True, f"pattern ok on {tf} within {prox}"
+        return False, "no simple two-candle pattern near line"
+
+    return _f

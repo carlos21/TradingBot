@@ -34,7 +34,7 @@ class LiquidityStrategy:
         socketio, 
         line_repository: LineRepository,
         trade_repository: TradeRepository,
-        extra_sl_space: dict[str, float],
+        extra_sl_space: float,
         strategy_tf: str = '5m',
         options: Optional[StrategyOptions] = None,
         htf_fetcher: Optional[Callable[[str, int, str], Optional[dict]]] = None,
@@ -67,7 +67,6 @@ class LiquidityStrategy:
     def set_entry_filters(self, filters: List[EntryFilter]):
         with self.lock:
             self.entry_filters = list(filters)
-            self.entry_filters.insert(0, open_trades_limit_filter(self.options.max_open_trades))
 
     def add_strategy_line(self, id, level, direction):
         print(f"[Strategy] ➕ add_strategy_line id={id} level={level} direction={direction}")
@@ -193,7 +192,7 @@ class LiquidityStrategy:
             return
         if mode == LineRemovalMode.ON_EVALUATE:
             self.remove_strategy_line(line_id)
-        elif mode == LineRemovalMode.ON_TRADE and opened:
+        elif mode == LineRemovalMode.ON_ENTER and opened:
             self.remove_strategy_line(line_id)
 
     def _check_open_trades(self, bar):

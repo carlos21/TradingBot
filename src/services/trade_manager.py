@@ -29,16 +29,19 @@ class TradeManager:
         for trade in list(self.open_trades):
             if trade['pair'] != bar['pair']:
                 continue
+            
+            ttype = trade['type']
+            is_buy  = ttype in ('buy', 'long')
+            is_sell = ttype in ('sell', 'short')
 
-            if trade['type'] == 'buy':
+            if is_buy:
                 hit_sl = bar['low']  <= trade['stop_loss']
                 hit_tp = bar['high'] >= trade['take_profit']
-            else: # sell
+            elif is_sell: 
                 # for sells, SL is above entry and TP is below entry
                 hit_sl = bar['high'] >= trade['stop_loss']
                 hit_tp = bar['low']  <= trade['take_profit']
-            
-            if not (hit_sl or hit_tp):
+            else:
                 continue
 
             # determine exit
@@ -46,7 +49,7 @@ class TradeManager:
             exit_time  = datetime.fromtimestamp(bar['time'], tz=ZoneInfo('UTC'))
 
             # calculate P&L
-            if trade['type'] == 'buy':
+            if is_buy:
                 result = exit_price - trade['entry']
             else:
                 result = trade['entry'] - exit_price

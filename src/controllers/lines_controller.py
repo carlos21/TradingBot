@@ -13,8 +13,8 @@ class LinesController:
         self.bars_loader = bars_loader
         self.liquidity_strategy = liquidity_strategy
 
-    def list_lines(self):
-        lines = self.line_repository.list_lines()
+    def list_lines(self, pair: str):
+        lines = self.line_repository.list_lines(pair)
         return jsonify([{
             'id':            l.line_id,
             'pair':          l.pair,

@@ -1,0 +1,2861 @@
+===== BEGIN FILE: lines_controller.py =====
+(path: src/controllers/lines_controller.py)
+```python
+from src.bars_loader import BarsLoader
+from src.dbexception import DBNotFoundException
+from src.repositories.lines_repository import LineRepository
+from flask import jsonify, abort
+
+from src.strategies.liquidity_strategy import LiquidityStrategy
+
+
+class LinesController:
+
+    def __init__(self, line_repository: LineRepository, bars_loader: BarsLoader, liquidity_strategy: LiquidityStrategy):
+        self.line_repository = line_repository
+        self.bars_loader = bars_loader
+        self.liquidity_strategy = liquidity_strategy
+
+    def list_lines(self, pair: str):
+        lines = self.line_repository.list_lines(pair)
+        return jsonify([{
+            'id':            l.line_id,
+            'pair':          l.pair,
+            'price':         l.price,
+            'direction':     l.direction,
+            'creation_date': l.creation_date.isoformat()
+        } for l in lines])
+    
+    def add_line(self, pair: str, price: float):
+        # ensure only the configured pair is supported
+        ds = self.bars_loader.data_source
+        supported_pair = getattr(ds, 'pair', None)
+        if pair != supported_pair:
+            abort(400, f"Only pair '{supported_pair}' is supported")
+
+        # use in-memory played bars to get the last close price
+        played = getattr(ds, '_played_bars', None)
+        if not played or len(played) == 0:
+            abort(400, "No bars have been replayed yet to determine last close price")
+
+        last_close = played[-1]['close']
+
+        # decide direction based on last_close vs. new line price
+        direction = 'short' if last_close < price else 'long'
+
+        # persist the line and register it with the strategy
+        line = self.line_repository.insert_line(
+            pair=pair,
+            price=price,
+            direction=direction
+        )
+        self.liquidity_strategy.add_strategy_line(
+            line.line_id,
+            line.price,
+            line.direction
+        )
+
+        return jsonify({
+            'id':            line.line_id,
+            'pair':          line.pair,
+            'price':         line.price,
+            'direction':     line.direction,
+            'creation_date': line.creation_date.isoformat()
+        }), 201
+
+    def delete_line(self, line_id):
+        try:
+            self.line_repository.delete_line(line_id)
+            self.liquidity_strategy.remove_strategy_line(line_id)
+        except DBNotFoundException:
+            abort(404, f"Line id={line_id} not found")
+        return '', 204
+```
+===== END FILE: lines_controller.py =====
+
+===== BEGIN FILE: trades_controller.py =====
+(path: src/controllers/trades_controller.py)
+```python
+from flask import abort, jsonify
+from src.bars_loader import BarsLoader
+from src.services.trade_manager import TradeManager
+from datetime import datetime, timezone
+
+
+class TradesController:
+
+    def __init__(self, bars_loader: BarsLoader, trade_manager: TradeManager):
+        self.bars_loader = bars_loader
+        self.trade_manager = trade_manager
+
+    def open_trade(self, pair, stop_loss, trade_type):
+        # compute entry & risk based on last 1m
+        idx = self.bars_loader.current_1m_index.get(pair, 0)
+        if idx == 0:
+            abort(400, f"No price data for pair {pair}")
+        entry_price = self.bars_loader.all_1m_data[pair][idx-1]['close']
+        risk = abs(entry_price - stop_loss)
+        if risk <= 0:
+            abort(400, 'Invalid stop loss; must be different from entry')
+        take_profit = (
+            entry_price + 4 * risk if trade_type == 'buy'
+            else entry_price - 4 * risk
+        )
+        entry_time = datetime.now(timezone.utc).timestamp()
+        trade = self.trade_manager.open_trade(
+            pair, trade_type, entry_price,
+            stop_loss, take_profit, risk, entry_time
+        )
+        return jsonify(trade), 201
+    
+    def close_trade(self, trade_id):
+        # validate exists
+        if not any(t['trade_id'] == trade_id for t in self.trade_manager.open_trades):
+            abort(404, f"Trade id={trade_id} not found or already closed")
+        # compute exit params
+        trade = next(t for t in self.trade_manager.open_trades if t['trade_id'] == trade_id)
+        pair = trade['pair']
+        idx  = self.bars_loader.current_1m_index.get(pair, 0)
+        if idx == 0:
+            abort(400, f"No price data for pair {pair}")
+        exit_price = self.bars_loader.all_1m_data[pair][idx-1]['close']
+        exit_time  = datetime.now(timezone.utc).timestamp()
+
+        payload = self.trade_manager.close_trade(trade_id, exit_price, exit_time)
+
+        return jsonify(payload), 200
+```
+===== END FILE: trades_controller.py =====
+
+===== BEGIN FILE: bars_datasource.py =====
+(path: src/data_sources/bars_datasource.py)
+```python
+from abc import ABC, abstractmethod
+from typing import List, Dict
+
+class BarsDataSource(ABC):
+    """Generic interface for anything that can produce 1-minute bars."""
+    @abstractmethod
+    def load_1m_bars(self) -> List[Dict]:
+        """
+        Return a list of bars in the form:
+        { 'time': int, 'open': float, 'high': float, 'low': float,
+          'close': float, 'volume': int, 'pair': str }
+        """
+        pass
+```
+===== END FILE: bars_datasource.py =====
+
+===== BEGIN FILE: csv_datasource.py =====
+(path: src/data_sources/csv_datasource.py)
+```python
+import csv
+import threading
+import time
+import logging
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from dateutil import parser
+from typing import Callable, Dict, List, Optional
+
+from .combined_datasource import CombinedDataSource
+
+# Configure module-level logger
+t_logger = logging.getLogger(__name__)
+t_logger.setLevel(logging.DEBUG)
+if not t_logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setLevel(logging.DEBUG)
+    fmt = logging.Formatter('[%(asctime)s] %(levelname)s %(message)s')
+    handler.setFormatter(fmt)
+    t_logger.addHandler(handler)
+
+class CSVDataSource(CombinedDataSource):
+    """
+    A CombinedDataSource that:
+      - Loads 1m bars from a CSV on init
+      - Can replay those bars at configurable speed
+      - Supports pause(), seek(), and changing timeframe on the fly
+      - Aggregates raw 1m bars into higher‐TF bars
+    """
+
+    DEFAULT_FMT  = '%d/%m/%Y %H:%M:%S'
+    PAIR_FORMATS = {
+        'EURUSD': '%Y.%m.%d %H:%M',
+        'NQ':      '%d/%m/%Y %H:%M:%S',
+    }
+    PAIR_TZS     = {
+        'EURUSD': 'Europe/London',
+        'NQ':      'America/Chicago',
+    }
+    PAIR_FILES   = {
+        'EURUSD': 'csvs/EURUSD_2024.csv',
+        'NQ':      'csvs/NQ_21-24.csv',
+    }
+
+    def __init__(
+        self,
+        pair: str,
+        filename:       str   = None,
+        time_fmt:       str   = None,
+        tz:             str   = None,
+        initial_start_time:     int   = None,
+        initial_end_time:       int   = None,
+        bars_per_second: float = 10.0,
+        fileobj=None
+    ):
+        # normalize datetime inputs to epoch ints
+        if isinstance(initial_start_time, datetime):
+            initial_start_time = int(initial_start_time.timestamp())
+        if isinstance(initial_end_time, datetime):
+            initial_end_time = int(initial_end_time.timestamp())
+
+        self.initial_start_time = initial_start_time
+        self.initial_end_time   = initial_end_time
+        self.pair               = pair
+        self.fmt                = time_fmt or self.PAIR_FORMATS.get(pair, self.DEFAULT_FMT)
+        self.local_tz           = ZoneInfo(tz or self.PAIR_TZS.get(pair, 'UTC'))
+        self.file               = filename or self.PAIR_FILES[pair]
+        self._fileobj           = fileobj
+        self.utc                = ZoneInfo("UTC")
+        self.bars_per_second    = bars_per_second
+        self._emit_delay        = 1.0 / bars_per_second
+
+        # 1) Load all raw 1m bars
+        self._bars = self._load_historical_bars()
+        t_logger.debug(f"Loaded {len(self._bars)} bars from CSV: {self.file}")
+
+        # seed the "played" buffer with initial window
+        self._played_bars = [
+            b for b in self._bars
+            if (self.initial_start_time is None or b['time'] >= self.initial_start_time)
+            and (self.initial_end_time   is None or b['time'] <= self.initial_end_time)
+        ]
+        print(f"[CSV_DS] loaded {len(self._bars)} raw, seeded _played_bars with {len(self._played_bars)}")
+
+        # Replay state
+        self.current_1m_index     = 0
+        self._from_time           = 0
+        self.streaming            = False
+        self._stop_event          = threading.Event()
+        self._thread              = None
+
+        # Aggregation state
+        self.current_tf           = '1m'
+        self.group_size           = 1
+        self._1m_buffer           = []
+        self._current_group_start = None
+
+    def _load_historical_bars(self) -> List[Dict]:
+        bars: List[Dict] = []
+        ny_tz = ZoneInfo("America/New_York")
+        f = self._fileobj or open(self.file, newline='')
+        with f:
+            sample  = f.read(2048); f.seek(0)
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;")
+            reader  = csv.DictReader(f, dialect=dialect)
+
+            for row in reader:
+                ts = f"{row['Date']} {row['Time']}"
+                try:
+                    dt = datetime.strptime(ts, self.fmt)
+                except ValueError:
+                    dt = parser.parse(ts)
+                dt_utc = dt.replace(tzinfo=self.utc)
+                dt_ny  = dt_utc.astimezone(ny_tz)
+
+                bars.append({
+                    'time':   int(dt_ny.timestamp()),
+                    'open':   float(row['Open']),
+                    'high':   float(row['High']),
+                    'low':    float(row['Low']),
+                    'close':  float(row['Close']),
+                    'volume': int(row.get('Volume', 0)),
+                    'pair':   self.pair
+                })
+        return bars
+
+    def load_historical_bars(self, timeframe='1m', start_time=None):
+        print(f"[CSV_DS] load_historical_bars → tf={timeframe!r}, start_time={start_time!r}, "
+            f"_played_bars_len={len(self._played_bars)}")
+        if timeframe == '1m':
+            print(f"[CSV_DS] → returning full _played_bars ({len(self._played_bars)})")
+            return list(self._played_bars)
+
+        # ─── Higher TFs: aggregate the *entire* buffer, ignore start_time ───
+        bars = self._played_bars
+        t_logger.debug(f"Aggregating {len(bars)} bars into {timeframe}")
+        return self._aggregate_whole_history_from_list(bars, timeframe)
+
+    def subscribe(self, callback, from_time=0):
+        print(f"[CSV_DS] subscribe() start → from_time={from_time}, total_bars={len(self._bars)}")
+        start_idx = next((i for i,b in enumerate(self._bars) if b['time'] > from_time), None)
+        if start_idx is not None:
+            print(f"[CSV_DS] first to play idx={start_idx}, ts={self._bars[start_idx]['time']}")
+        else:
+            print("[CSV_DS] no bars to play after from_time")
+
+        for idx, bar in enumerate(self._bars):
+            if self._stop_event.is_set():
+                print("[CSV_DS] saw stop_event, breaking")
+                break
+            if bar['time'] <= from_time:
+                continue
+            self._played_bars.append(bar)
+            print(f"[CSV_DS] → playing idx={idx}, ts={bar['time']}")
+            callback(bar)
+        
+        try:
+            callback({'_end': True})
+        except Exception:
+            pass
+
+    def set_timeframe(self, tf: str):
+        t_logger.debug(f"set_timeframe called → tf={tf}")
+        if self._thread and self._thread.is_alive():
+            self._stop_event.set()
+            self._thread.join()
+
+        unit = tf[-1]
+        num  = int(tf[:-1])
+        if unit == 'm':        self.group_size = max(1, num)
+        elif unit == 'h':      self.group_size = max(1, num * 60)
+        else:                  raise ValueError(f"Unsupported timeframe '{tf}'")
+
+        self.current_tf           = tf
+        self.current_1m_index     = 0
+        self._from_time           = 0
+        self._1m_buffer           = []
+        self._current_group_start = None
+        self._stop_event.clear()
+        t_logger.debug(f"Frame set: group_size={self.group_size}, current_tf={self.current_tf}")
+
+    def start(self, from_time: int = None):
+        if from_time is not None:
+            self._from_time = from_time
+        if self.current_1m_index == 0:
+            idx = next(
+                (i for i, b in enumerate(self._bars) if b['time'] > self._from_time),
+                len(self._bars)
+            )
+            self.current_1m_index = idx
+        self.streaming = True
+        self._stop_event.clear()
+        t_logger.debug(f"start() → from_time={self._from_time}, starting idx={self.current_1m_index}")
+        self._thread = threading.Thread(target=self._run_replay, daemon=True)
+        self._thread.start()
+
+    def pause(self):
+        t_logger.debug("pause() called")
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join()
+        self.streaming = False
+
+    def seek(self, from_time: int):
+        self._from_time = from_time
+        idx = next(
+            (i for i, b in enumerate(self._bars) if b['time'] >= from_time),
+            len(self._bars)
+        )
+        self.current_1m_index     = idx
+        self._1m_buffer           = []
+        self._current_group_start = None
+        t_logger.debug(f"seek() → new from_time={from_time}, new index={idx}")
+
+    def _run_replay(self):
+        total = len(self._bars)
+        i     = self.current_1m_index
+        t_logger.debug(f"_run_replay() enter loop → i={i}, total={total}")
+
+        while i < total and not self._stop_event.is_set():
+            bar = self._bars[i]
+            ts  = bar['time']
+            if ts > self._from_time:
+                self.current_1m_index = i + 1
+                self._process_bar(bar)
+            i += 1
+            time.sleep(self._emit_delay)
+
+        self.streaming = False
+        t_logger.debug("_run_replay() exiting loop, streaming=False")
+
+    def _process_bar(self, bar: Dict):
+        if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
+            t_logger.debug(f"_process_bar → emitting raw 1m bar time={bar['time']}")
+            self.callback(bar)
+            return
+
+        window_secs = self.group_size * 60
+        ts          = bar['time']
+        start       = (ts // window_secs) * window_secs
+        if self._current_group_start is None:
+            self._current_group_start = start
+        if start == self._current_group_start:
+            self._1m_buffer.append(bar)
+            t_logger.debug(f"_process_bar → buffering bar time={ts} to window {start}")
+        else:
+            agg = self._aggregate_time_window(
+                self._1m_buffer, self._current_group_start, window_secs
+            )
+            t_logger.debug(f"_process_bar → emitting aggregated bar for window {self._current_group_start}: {agg}")
+            self.callback(agg)
+            self._1m_buffer           = [bar]
+            self._current_group_start = start
+
+    def _aggregate_whole_history_from_list(self, bars: List[Dict], tf: str) -> List[Dict]:
+        unit = tf[-1]
+        num  = int(tf[:-1])
+        if unit == 'm':        window_secs = num * 60
+        elif unit == 'h':      window_secs = num * 3600
+        else:                  raise ValueError(f"Unsupported timeframe '{tf}'")
+
+        from collections import defaultdict
+        buckets: Dict[int, List[Dict]] = defaultdict(list)
+        for bar in bars:
+            win = (bar['time'] // window_secs) * window_secs
+            buckets[win].append(bar)
+
+        agg_bars = []
+        for win in sorted(buckets):
+            group = buckets[win]
+            if group:
+                agg_bars.append(
+                    self._aggregate_time_window(group, win, window_secs)
+                )
+        return agg_bars
+
+    def _aggregate_time_window(
+        self, bars: List[Dict], window_start: int, window_secs: int
+    ) -> Dict:
+        open_  = bars[0]['open']
+        close_ = bars[-1]['close']
+        high   = max(b['high'] for b in bars)
+        low    = min(b['low']  for b in bars)
+        volume = sum(b['volume'] for b in bars)
+        return {
+            'time':   window_start + window_secs,
+            'open':   open_,
+            'high':   high,
+            'low':    low,
+            'close':  close_,
+            'volume': volume,
+            'pair':   bars[0]['pair']
+        }
+```
+===== END FILE: csv_datasource.py =====
+
+===== MISSING FILE: lines_repository.py =====
+===== MISSING FILE: trades_repository.py =====
+===== BEGIN FILE: trade_manager.py =====
+(path: src/services/trade_manager.py)
+```python
+# src/trade_manager.py
+
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+from src.repositories.trades_repository import TradeRepository
+
+
+class TradeManager:
+    """
+    Handles closing open trades when a raw 1m bar touches SL or TP.
+    """
+
+    def __init__(self, trade_repository: TradeRepository, socketio):
+        """
+        :param strategy:        your LiquidityStrategy instance (must have `open_trades` list)
+        :param trade_repository:SQLTradeRepository instance (must have close_trade)
+        :param socketio:        flask_socketio.SocketIO instance
+        """
+        self.open_trades = []
+        self.trade_repository = trade_repository
+        self.socketio         = socketio
+
+    def handle_new_1m_bar(self, bar: dict):
+        """
+        Call this on every 1m bar:
+        - scans strategy.open_trades
+        - when SL/TP is hit, closes & emits a 'trade_close'
+        """
+        for trade in list(self.open_trades):
+            if trade['pair'] != bar['pair']:
+                continue
+            
+            ttype = trade['type']
+            is_buy  = ttype in ('buy', 'long')
+            is_sell = ttype in ('sell', 'short')
+
+            if is_buy:
+                hit_sl = bar['low']  <= trade['stop_loss']
+                hit_tp = bar['high'] >= trade['take_profit']
+            elif is_sell: 
+                # for sells, SL is above entry and TP is below entry
+                hit_sl = bar['high'] >= trade['stop_loss']
+                hit_tp = bar['low']  <= trade['take_profit']
+            else:
+                continue
+
+            # determine exit
+            exit_price = trade['stop_loss'] if hit_sl else trade['take_profit']
+            exit_time  = datetime.fromtimestamp(bar['time'], tz=ZoneInfo('UTC'))
+
+            # calculate P&L
+            if is_buy:
+                result = exit_price - trade['entry']
+            else:
+                result = trade['entry'] - exit_price
+
+            # persist the close
+            self.trade_repository.close_trade(
+                trade_id   = trade['trade_id'],
+                exit_price = exit_price,
+                exit_time  = exit_time,
+                result     = result
+            )
+
+            # remove from live list
+            self.open_trades.remove(trade)
+
+            # emit to clients
+            self.socketio.emit('trade_close', {
+                'trade_id':   trade['trade_id'],
+                'pair':       trade['pair'],
+                'type':       trade['type'],
+                'exit_price': exit_price,
+                'exit_time':  bar['time'],
+                'result':     result
+            })
+
+    def open_trade(self, pair: str, trade_type: str, entry_price: float,
+                   stop_loss: float, take_profit: float,
+                   risk: float, entry_time: float):
+        """
+        Open a new trade with precomputed parameters.
+        """
+        # persist open trade
+        td = self.trade_repository.insert_trade(
+            pair=pair,
+            trade_type=trade_type,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            risk=risk,
+            entry_time=datetime.fromtimestamp(entry_time, tz=timezone.utc),
+            params={}
+        )
+        trade = {
+            'trade_id':   td.trade_id,
+            'pair':       pair,
+            'type':       trade_type,
+            'entry':      entry_price,
+            'stop_loss':  stop_loss,
+            'take_profit':take_profit,
+            'risk':       risk,
+            'entry_time': entry_time
+        }
+        # track in-memory
+        self.open_trades.append(trade)
+        # notify clients
+        self.socketio.emit('trade_open', trade)
+
+        return trade
+
+    def close_trade(self, trade_id: str, exit_price: float, exit_time: float):
+        """
+        Close an existing trade by ID with provided exit parameters.
+        """
+        # find the trade
+        trade = next(
+            t for t in self.open_trades
+            if t['trade_id'] == trade_id
+        )
+        # calculate P&L
+        result = (
+            exit_price - trade['entry']
+            if trade['type'] == 'buy'
+            else trade['entry'] - exit_price
+        )
+        # persist close
+        self.trade_repository.close_trade(
+            trade_id=trade_id,
+            exit_price=exit_price,
+            exit_time=datetime.fromtimestamp(exit_time, tz=timezone.utc),
+            result=result
+        )
+        # remove from in-memory
+        self.open_trades.remove(trade)
+        # emit close event
+        payload = {
+            'trade_id':  trade_id,
+            'pair':      trade['pair'],
+            'type':      trade['type'],
+            'exit_price':exit_price,
+            'exit_time': exit_time,
+            'result':    result
+        }
+        self.socketio.emit('trade_close', payload)
+
+        return payload
+```
+===== END FILE: trade_manager.py =====
+
+===== BEGIN FILE: entry_context.py =====
+(path: src/strategies/entry_context.py)
+```python
+from dataclasses import dataclass
+from enum import Enum
+from typing import Callable, Sequence, Optional, Tuple, Dict, Any, List
+
+
+@dataclass
+class EntryContext:
+    strategy: 'LiquidityStrategy'
+    line_id: Any
+    direction: str            # 'long' or 'short'
+    level: float
+    bar: Dict[str, Any]       # aggregated bar dict
+    close: float
+    low: float
+    high: float
+    extreme: float            # lowest (long) / highest (short) seen during cross
+    cross_depth: float        # bounce depth used by filters like max_bounce
+    
+# A function that receives the entry "context" and decides if we should open.
+EntryFilter = Callable[['EntryContext'], Tuple[bool, str]]
+
+EntryTrigger = Callable[
+    ['LiquidityStrategy', Any, Dict[str, Any], Dict[str, Any]],
+    Optional['EntryContext']
+]
+
+# ---------- Filters you can plug/unplug ----------
+
+def open_trades_limit_filter(limit: Optional[int] = 1) -> EntryFilter:
+    """Blocks entries when total 'open' trades >= limit. None = unlimited."""
+    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+        if limit is None:
+            return True, "limit: unlimited"
+        count = sum(1 for t in ctx.strategy.open_trades if t['status'] == 'open')
+        return (count < limit, f"open-trades {count} >= limit {limit}")
+    return _f
+
+
+def max_bounce_filter(max_bounce: float) -> EntryFilter:
+    """Blocks entries if the cross depth exceeded a maximum bounce."""
+    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+        ok = ctx.cross_depth <= max_bounce
+        return ok, f"depth {ctx.cross_depth:.5f} > max_bounce {max_bounce}"
+    return _f
+
+
+def htf_big_body_exception_filter(
+    fetch_htf_bar,      # Callable(pair: str, tf: str) -> Optional[dict]
+    tf: str = '15m',
+    body_ratio: float = 0.7  # body / range threshold to call it “big body”
+) -> EntryFilter:
+    """
+    Blocks longs on strongly bearish HTF bars and blocks shorts on strongly bullish HTF bars.
+    You supply `fetch_htf_bar(pair, tf)` that returns {'open','high','low','close'} or None.
+    """
+    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+        h = fetch_htf_bar(ctx.bar['pair'], tf)
+        if not h:
+            return True, "no-htf"
+
+        rng = (h['high'] - h['low'])
+        if rng <= 0:
+            return True, "zero-range-htf"
+
+        body = abs(h['close'] - h['open'])
+        ratio = body / rng
+
+        # classify bar direction
+        bull = h['close'] > h['open']
+        bear = h['close'] < h['open']
+
+        if ratio >= body_ratio:
+            if ctx.direction == 'long' and bear:
+                return False, f"HTF({tf}) big bearish body ratio={ratio:.2f}"
+            if ctx.direction == 'short' and bull:
+                return False, f"HTF({tf}) big bullish body ratio={ratio:.2f}"
+        return True, "ok"
+    return _f
+
+def retest_cross_trigger(strategy, line_id, line, bar) -> Optional[EntryContext]:
+    """
+    Stateful trigger that:
+      - tracks cross against the level
+      - records the extreme (min for long, max for short) while across the level
+      - proposes an entry when price returns through the level
+    Mirrors existing behavior.
+    """
+    lvl       = line['level']
+    dir_      = line['direction']  # 'long' | 'short'
+    close     = bar['close']
+    low, high = bar['low'], bar['high']
+
+    if dir_ == 'long':
+        # Track cross + extreme
+        if close < lvl:
+            line['has_crossed'] = True
+            line['extreme']     = min(line['extreme'], low)
+        # Propose when retests back above
+        if line.get('has_crossed') and close >= lvl:
+            depth = lvl - line['extreme']  # how deep below the level
+            return EntryContext(
+                strategy=strategy,
+                line_id=line_id,
+                direction='long',
+                level=lvl,
+                bar=bar,
+                close=close,
+                low=low,
+                high=high,
+                extreme=line['extreme'],
+                cross_depth=depth
+            )
+        return None
+
+    else:  # short
+        if close > lvl:
+            line['has_crossed'] = True
+            line['extreme']     = max(line['extreme'], high)
+        if line.get('has_crossed') and close <= lvl:
+            depth = line['extreme'] - lvl  # how deep above the level
+            return EntryContext(
+                strategy=strategy,
+                line_id=line_id,
+                direction='short',
+                level=lvl,
+                bar=bar,
+                close=close,
+                low=low,
+                high=high,
+                extreme=line['extreme'],
+                cross_depth=depth
+            )
+        return None
+    
+
+def candle_pattern_near_line_filter(
+    fetch_htf_bars: Callable[[str, str, int, Optional[int]], List[Dict[str, Any]]],
+    tfs: Sequence[str] = ('5m', '15m', '1h'),
+    proximity_abs: Optional[float] = None,     # if None → falls back to strategy.min_stop_loss
+    strong_body_min_ratio: float = 0.75,       # candle1: body/range ≥ this
+    small_body_max_ratio: float  = 0.25,       # candle2: body/range ≤ this
+    wick_ratio: float            = 0.25,       # candle2: "small" wick / range ≤ this
+) -> 'EntryFilter':
+    """
+    Two-candle pattern near the line, simplified:
+
+      SHORT:
+        C1 strong bullish body; C2 tiny body; C2 *upper* wick <= wick_ratio (body at top)
+
+      LONG:
+        C1 strong bearish body; C2 tiny body; C2 *lower* wick <= wick_ratio (body at bottom)
+
+    Pattern must appear on any TF in `tfs`, and the second candle must be within `proximity_abs`
+    of the line level (distance to any of O/H/L/C). `fetch_htf_bars(pair, tf, n=2, upto)`
+    returns last 2 bars up to `upto` inclusive.
+    """
+    def _body(o, c): return abs(c - o)
+    def _range(h, l): return max(h - l, 0.0)
+    def _upper_wick(o, h, c): return h - max(o, c)
+    def _lower_wick(o, l, c): return min(o, c) - l
+
+    def _near(level: float, b: Dict[str, Any], prox: float) -> float:
+        # min distance from level to any candle print
+        return min(abs(level - b[k]) for k in ('open', 'high', 'low', 'close'))
+
+    def _strong_c1(direction: str, b: Dict[str, Any]) -> bool:
+        o, h, l, c = b['open'], b['high'], b['low'], b['close']
+        rng = _range(h, l)
+        if rng <= 0: return False
+        bod_ratio = _body(o, c) / rng
+        if direction == 'short':   # want strong bullish first candle
+            return c > o and bod_ratio >= strong_body_min_ratio
+        else:                      # 'long': want strong bearish first candle
+            return c < o and bod_ratio >= strong_body_min_ratio
+
+    def _tiny_c2_with_small_wick(direction: str, b: Dict[str, Any]) -> bool:
+        o, h, l, c = b['open'], b['high'], b['low'], b['close']
+        rng = _range(h, l)
+        if rng <= 0: return False
+        bod_ratio = _body(o, c) / rng
+        if bod_ratio > small_body_max_ratio:
+            return False
+        if direction == 'short':
+            uw_ratio = _upper_wick(o, h, c) / rng
+            return uw_ratio <= wick_ratio
+        else:  # long
+            lw_ratio = _lower_wick(o, l, c) / rng
+            return lw_ratio <= wick_ratio
+
+    def _f(ctx: 'EntryContext') -> Tuple[bool, str]:
+        pair   = ctx.bar['pair']
+        now_ts = ctx.bar['time']
+        level  = ctx.level
+        prox   = proximity_abs if proximity_abs is not None else getattr(ctx.strategy, 'min_stop_loss', 0.0)
+
+        for tf in tfs:
+            bars = fetch_htf_bars(pair, tf, n=2, upto=now_ts) or []
+            if len(bars) < 2:
+                continue
+            c1, c2 = bars[-2], bars[-1]
+
+            if not _strong_c1(ctx.direction, c1):
+                continue
+            if not _tiny_c2_with_small_wick(ctx.direction, c2):
+                continue
+
+            if _near(level, c2, prox) <= prox:
+                return True, f"pattern ok on {tf} within {prox}"
+        return False, "no simple two-candle pattern near line"
+
+    return _f
+```
+===== END FILE: entry_context.py =====
+
+===== BEGIN FILE: liquidity_strategy.py =====
+(path: src/strategies/liquidity_strategy.py)
+```python
+# src/strategy.py
+from threading import RLock
+from datetime import datetime, timezone
+from src.dbexception import DBNotFoundException
+from src.repositories.lines_repository import LineRepository
+from src.repositories.trades_repository import TradeRepository
+from dataclasses import dataclass
+from enum import Enum
+from typing import Callable, Optional, Tuple, List, Dict, Any
+from src.strategies.entry_context import *
+
+
+
+class LineRemovalMode(str, Enum):
+    ON_EVALUATE = "on_evaluate"   # remove line after we evaluated it (old behavior)
+    ON_ENTER    = "on_enter"      # remove only if we actually opened a trade
+    NEVER       = "never"         # never remove (we'll reset its state for future triggers)
+
+@dataclass
+class StrategyOptions:
+    line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE
+    entry_filters: Optional[List[EntryFilter]] = None
+    triggers: Optional[List[EntryTrigger]] = None
+
+class LiquidityStrategy:
+    """
+    Server-side version of your JS strategy.
+    Emits 'trade_open' and 'trade_close' via Socket.IO.
+    """
+    def __init__(
+        self, 
+        min_stop_loss, 
+        max_bounce, 
+        socketio, 
+        line_repository: LineRepository,
+        trade_repository: TradeRepository,
+        extra_sl_space: float,
+        strategy_tf: str = '5m',
+        options: Optional[StrategyOptions] = None,
+        htf_fetcher: Optional[Callable[[str, int, str], Optional[dict]]] = None,
+    ):
+        self.min_stop_loss = min_stop_loss
+        self.max_bounce    = max_bounce
+        self.socketio      = socketio
+        self.line_repository = line_repository
+        self.trade_repository = trade_repository
+        self.extra_sl_space = extra_sl_space
+
+        self.strategy_lines = {}   # id -> { level, direction, has_crossed, extreme }
+        self.open_trades    = []   # list of open trade dicts
+        self.total_pnl      = 0
+        self.lock           = RLock()
+
+        num, unit = int(strategy_tf[:-1]), strategy_tf[-1]
+        self.strategy_window = num * (60 if unit=='m' else 3600)
+        self._buf = []
+        self._group_start = None
+
+        self.options = options or StrategyOptions()
+        self.entry_filters = list(self.options.entry_filters or [])
+        self.triggers = list(self.options.triggers or [retest_cross_trigger])
+
+        # optional dependency for multi-TF checks (15m/1h, etc.)
+        self.htf_fetcher = htf_fetcher
+
+    # Convenience if you want to tweak filters at runtime:
+    def set_entry_filters(self, filters: List[EntryFilter]):
+        with self.lock:
+            self.entry_filters = list(filters)
+
+    def add_strategy_line(self, id, level, direction):
+        print(f"[Strategy] ➕ add_strategy_line id={id} level={level} direction={direction}")
+        with self.lock:
+            self.strategy_lines[id] = {
+                'level':       level,
+                'direction':   direction,
+                'has_crossed': False,
+                'extreme':     float('inf') if direction == 'long' else float('-inf')
+            }
+
+    def remove_strategy_line(self, id):
+        with self.lock:
+            self.strategy_lines.pop(id, None)
+        try:
+            self.line_repository.delete_line(id)
+        except DBNotFoundException:
+            pass
+        self.socketio.emit('line_removed', {'id': id})
+
+    def _aggregate_bars(self, bars: list[dict], window_start: int, window_secs: int) -> dict:
+        high    = max(b['high']   for b in bars)
+        low     = min(b['low']    for b in bars)
+        open_   = bars[0]['open']
+        close_  = bars[-1]['close']
+        volume  = sum(b['volume'] for b in bars)
+        pair    = bars[0]['pair']
+        return {
+            'time':       window_start + window_secs,
+            'open':       open_,
+            'high':       high,
+            'low':        low,
+            'close':      close_,
+            'volume':     volume,
+            'pair':       pair
+        }
+    
+    def on_raw_bar(self, bar):
+        # 1) aggregate into your chosen TF
+        ts = bar['time']
+        win = (ts // self.strategy_window) * self.strategy_window
+        if self._group_start is None:
+            self._group_start = win
+        if win == self._group_start:
+            self._buf.append(bar)
+        else:
+            agg = self._aggregate_bars(self._buf, self._group_start, self.strategy_window)
+            self._buf, self._group_start = [bar], win
+            # 2) now run your entry/exit logic on that agg bar
+            self._on_strategy_bar(agg)
+
+    def _on_strategy_bar(self, bar: dict):
+        """
+        1) check exits on open trades
+        2) for each strategy line, run triggers → may propose an EntryContext
+        3) if proposed, run filters; if allowed, open trade and maybe remove the line
+        """
+        with self.lock:
+            # 1) exits first
+            self._check_open_trades(bar)
+
+            # 2) evaluate lines via triggers
+            for sid, line in list(self.strategy_lines.items()):
+                opened = False
+                proposed_ctx: Optional[EntryContext] = None
+
+                # run triggers in order until one proposes
+                for trig in self.triggers:
+                    proposed_ctx = trig(self, sid, line, bar)
+                    if proposed_ctx is not None:
+                        break
+
+                if proposed_ctx is None:
+                    # nothing to evaluate / no retest yet
+                    continue
+
+                # 3) run filters
+                allow, reason = self._filters_allow_entry(proposed_ctx)
+                if allow:
+                    extra = self.extra_sl_space
+                    if proposed_ctx.direction == 'long':
+                        entry    = proposed_ctx.close
+                        raw_risk = max(entry - proposed_ctx.extreme, self.min_stop_loss)
+                        eff_risk = raw_risk + extra
+                        sl       = entry - eff_risk
+                        tp       = entry + 4 * eff_risk
+                        trade    = self._make_trade_dict(bar, 'long', entry, sl, tp, eff_risk)
+                    else:
+                        entry    = proposed_ctx.close
+                        raw_risk = max(proposed_ctx.extreme - entry, self.min_stop_loss)
+                        eff_risk = raw_risk + extra
+                        sl       = entry + eff_risk
+                        tp       = entry - 4 * eff_risk
+                        trade    = self._make_trade_dict(bar, 'short', entry, sl, tp, eff_risk)
+
+                    self._store_and_emit_open(trade)
+                    opened = True
+
+                # line removal policy (evaluate vs trade)
+                self._maybe_remove_line(sid, opened)
+
+    def _reset_line_state(self, line_state: Dict[str, Any]):
+        """If we keep the line, reset it so it can trigger again in future."""
+        line_state['has_crossed'] = False
+        line_state['extreme'] = float('inf') if line_state['direction'] == 'long' else float('-inf')
+
+    def _filters_allow_entry(self, ctx: EntryContext) -> Tuple[bool, str]:
+        """
+        Run all pluggable entry filters. If any returns (False, reason), block the entry.
+        """
+        for f in self.entry_filters:
+            ok, reason = f(ctx)
+            if not ok:
+                return False, reason
+        return True, "ok"
+
+    def _maybe_remove_line(self, line_id: Any, opened: bool):
+        """
+        Remove the evaluated strategy line depending on removal mode.
+        """
+        mode = self.options.line_removal_mode
+        if mode == LineRemovalMode.NEVER:
+            return
+        if mode == LineRemovalMode.ON_EVALUATE:
+            self.remove_strategy_line(line_id)
+        elif mode == LineRemovalMode.ON_ENTER and opened:
+            self.remove_strategy_line(line_id)
+
+    def _check_open_trades(self, bar):
+        remaining = []
+        for t in self.open_trades:
+            if t['status'] != 'open':
+                continue
+            low, high = bar['low'], bar['high']
+
+            if t['type'] == 'long':
+                if low <= t['stop_loss']:
+                    t.update(status='closed', result=-1,
+                             exit_time=bar['time'], exit_price=low)
+                    # ← this emits the “exit trade” event
+                    self.socketio.emit('trade_close', t)
+
+                elif high >= t['take_profit']:
+                    t.update(status='closed', result=4,
+                             exit_time=bar['time'], exit_price=high)
+                    self.socketio.emit('trade_close', t)
+                else:
+                    remaining.append(t)
+
+            else:  # short
+                if high >= t['stop_loss']:
+                    t.update(status='closed', result=-1,
+                             exit_time=bar['time'], exit_price=high)
+                    self.socketio.emit('trade_close', t)
+
+                elif low <= t['take_profit']:
+                    t.update(status='closed', result=4,
+                             exit_time=bar['time'], exit_price=low)
+                    self.socketio.emit('trade_close', t)
+                else:
+                    remaining.append(t)
+
+        self.open_trades = remaining
+
+    def _make_trade_dict(
+        self,
+        bar: dict,
+        trade_type: str,
+        entry: float,
+        stop_loss: float,
+        take_profit: float,
+        risk: float
+    ) -> dict:
+        return {
+            'pair':       bar['pair'],
+            'type':       trade_type,
+            'entry':      entry,
+            'stop_loss':  stop_loss,
+            'take_profit':take_profit,
+            'risk':       risk,
+            'status':     'open',
+            'entry_time': bar['time']
+        }
+
+    def _store_and_emit_open(self, trade: dict):
+        """
+        Persist a newly opened trade and emit the open event.
+        """
+        td = self.trade_repository.insert_trade(
+            pair=trade['pair'],
+            trade_type=trade['type'],
+            entry_price=trade['entry'],
+            stop_loss=trade['stop_loss'],
+            take_profit=trade['take_profit'],
+            risk=trade['risk'],
+            entry_time=datetime.fromtimestamp(trade['entry_time'], tz=timezone.utc),
+            params={}
+        )
+        trade['trade_id'] = td.trade_id
+        self.open_trades.append(trade)
+        self.socketio.emit('trade_open', trade)
+
+    def _store_and_emit_close(self, trade: dict):
+        """
+        Persist a closed trade and emit the close event.
+        """
+        # emit first so clients see status update
+        self.socketio.emit('trade_close', trade)
+        self.trade_repository.close_trade(
+            trade_id=trade['trade_id'],
+            exit_price=trade['exit_price'],
+            exit_time=datetime.fromtimestamp(trade['exit_time'], tz=timezone.utc),
+            result=trade['result']
+        )
+```
+===== END FILE: liquidity_strategy.py =====
+
+===== BEGIN FILE: strategy_config.py =====
+(path: src/strategies/strategy_config.py)
+```python
+from dataclasses import dataclass
+from typing import Dict
+
+@dataclass
+class StrategyConfig:
+    stop_loss:      Dict[str, float]
+    max_bounce:     Dict[str, float]
+    extra_sl_space: Dict[str, float]
+```
+===== END FILE: strategy_config.py =====
+
+===== BEGIN FILE: bars_loader.py =====
+(path: src/bars_loader.py)
+```python
+from typing import Callable, List
+from dataclasses import dataclass
+from flask_socketio import SocketIO
+import threading
+import time
+
+from src.data_sources.combined_datasource import CombinedDataSource
+
+@dataclass
+class LoaderConfig:
+    # initial_start and initial_end are applied in the data source, not here
+    initial_start: int  # UNIX timestamp
+    initial_end:   int  # UNIX timestamp
+
+class BarsLoader:
+    """
+    Drives everything off a CombinedDataSource.subscribe push model:
+    - Receives raw 1m bars and live ticks via the subscribe callback
+    - Builds TF bars by grouping exactly `group_size` consecutive 1m bars aligned to real clock windows
+    - Emits 1m bars immediately when TF='1m'; otherwise groups and emits larger bars
+    - Checks each incoming bar/tick for SL/TP via `bar_callback`
+    - Supports pause(), seek(), and changing timeframe on the fly
+    """
+
+    def __init__(
+        self,
+        data_source: CombinedDataSource,
+        socketio: SocketIO,
+        bar_callback: Callable[[dict], None] = None,
+        bars_per_second: float = 10.0
+    ):
+        # config
+        self.data_source     = data_source
+        self.socketio        = socketio
+        self.bar_callback    = bar_callback
+        self.bars_per_second = bars_per_second
+        self._emit_delay     = 1.0 / bars_per_second
+
+        # replay state
+        self._from_time    = 0
+        self.streaming     = False
+        self._stop_event   = threading.Event()
+        self._thread       = None
+
+        # grouping state
+        self.current_tf           = '1m'
+        self.group_size           = 1        # minutes for aggregation
+        self._1m_buffer           = []
+        self._current_group_start = None     # epoch-sec start of current window
+
+    def set_timeframe(self, tf: str):
+        print(f"[SET_TF] called with tf={tf}")
+
+        # 1) stop existing replay thread
+        if self._thread and self._thread.is_alive():
+            print("[SET_TF] stopping existing thread")
+            self._stop_event.set()
+            self._thread.join()
+
+        # 2) parse the new TF
+        unit = tf[-1]
+        num  = int(tf[:-1])
+        if unit == 'm':
+            self.group_size = max(1, num)
+        elif unit == 'h':
+            self.group_size = max(1, num * 60)
+        else:
+            raise ValueError(f"Unsupported timeframe '{tf}'")
+
+        self.current_tf = tf
+        print(f"[SET_TF] new group_size={self.group_size} ({tf})")
+
+        # 3) compute the start of the current window
+        window_secs = self.group_size * 60
+        win_start   = (self._from_time // window_secs) * window_secs
+        print(f"[SET_TF] current from_time={self._from_time}, window_start={win_start}")
+
+        # 4) reseed the buffer with already-played bars in that window
+        played = self.data_source._played_bars
+        buf = [b for b in played if win_start <= b['time'] <= self._from_time]
+        self._1m_buffer = buf
+        self._current_group_start = win_start
+        print(f"[SET_TF] seeded _1m_buffer with {len(buf)} bars from data_source._played_bars")
+
+        # 5) clear stop flag so start() can resume
+        self._stop_event.clear()
+        print("[SET_TF] ready to start() with new timeframe")
+
+        if buf:
+            times = [b['time'] for b in buf]
+            print(f"[SET_TF] seeded buffer: count={len(buf)}, "
+                f"min={min(times)}, max={max(times)}, window_start={win_start}")
+        else:
+            print(f"[SET_TF] seeded buffer is EMPTY for window_start={win_start}")
+
+        print("[SET_TF] ready to start() with new timeframe")
+
+    def start(self, from_time: int = None):
+        """
+        Begin or resume streaming.
+        `from_time` is passed to the data-source.subscribe via our wrapper.
+        """
+        if from_time is not None:
+            self._from_time = from_time
+
+        self.streaming = True
+        self._stop_event.clear()
+
+        if hasattr(self.data_source, "_stop_event"):
+            self.data_source._stop_event.clear()
+
+        # ⬇️ use our wrapper so we can flush + emit stream_end on completion
+        self.socketio.start_background_task(self._run_subscription, self._from_time)
+
+    def pause(self):
+        """
+        Pause streaming.  
+        - Signals our own loop to stop  
+        - If the data source supports pause(), stop it too
+        """
+        # 1) stop our grouping & dispatch loop
+        self._stop_event.set()
+
+        # 2) if the data source has a pause() method, call it
+        if hasattr(self.data_source, 'pause'):
+            try:
+                self.data_source.pause()
+            except Exception:
+                # swallow any errors so pause() is idempotent
+                pass
+
+        # 3) reflect paused state
+        self.streaming = False
+
+    def seek(self, from_time: int):
+        """Prepare to replay from a new timestamp on next start()."""
+        self._from_time           = from_time
+        self._1m_buffer           = []
+        self._current_group_start = None
+
+    def _handle_message(self, msg: dict):
+        # 🔚 handle end-of-stream sentinel FIRST so we never miss it
+        if isinstance(msg, dict) and msg.get('_end'):
+            self.streaming = False
+            self.socketio.emit('stream_status', {'playing': False})
+            self.socketio.emit('stream_end', {'ok': True})
+            return
+    
+        """Callback for each bar or tick pushed by the data source."""
+        if self._stop_event.is_set():
+            return
+
+        # 🔚 end sentinel
+        if isinstance(msg, dict) and msg.get('_end'):
+            self.streaming = False
+            self.socketio.emit('stream_status', {'playing': False})
+            self.socketio.emit('stream_end', {'ok': True})
+            return
+
+        # SL/TP callback
+        if self.bar_callback:
+            self.bar_callback(msg)
+
+        # dispatch to bar or tick processing
+        if 'open' in msg and 'high' in msg:
+            self._process_bar(msg)
+        elif 'price' in msg:
+            self._process_tick(msg)
+
+    def _process_bar(self, bar: dict):
+        """Handle one raw 1m bar: either emit immediately or buffer+aggregate."""
+        # 1m: just emit
+        if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
+            print(f"[PROCESS_BAR] 🔹 1m — emitting raw bar time={bar['time']}")
+            self.socketio.emit('bar', bar)
+            time.sleep(self._emit_delay)
+            return
+
+        window_secs  = self.group_size * 60
+        window_start = (bar['time'] // window_secs) * window_secs
+
+        print(f"[PROCESS_BAR] raw_time={bar['time']}, "
+            f"window_start={window_start}, buf_len={len(self._1m_buffer)}")
+
+        if self._current_group_start is None:
+            self._current_group_start = window_start
+            print(f"[PROCESS_BAR] 🎬 new window at {window_start}")
+
+        # same window → buffer it
+        if window_start == self._current_group_start:
+            self._1m_buffer.append(bar)
+            print(f"[PROCESS_BAR] ➕ buffering bar time={bar['time']} (buffer size={len(self._1m_buffer)})")
+        else:
+            # window closed → aggregate and emit (only if we have data)
+            if self._1m_buffer:
+                agg = self._aggregate_time_window(
+                    self._1m_buffer,
+                    self._current_group_start,
+                    window_secs
+                )
+                print(f"[PROCESS_BAR] 🔄 emitting aggregate for window {self._current_group_start}: "
+                  f"count={len(self._1m_buffer)}, agg_time={agg['time']}")
+                self.socketio.emit('bar', agg)
+                time.sleep(self._emit_delay)
+            else:
+                print(f"[PROCESS_BAR] ⚠️ warning: buffer empty for window {self._current_group_start}, skipping aggregate")
+
+            # reset for next window
+            self._1m_buffer = [bar]
+            self._current_group_start = window_start
+            print(f"[PROCESS_BAR] 🎬 started new window at {window_start}")    
+
+    def _process_tick(self, tick: dict):
+        """Emit a live tick immediately."""
+        self.socketio.emit('tick', tick)
+
+    @staticmethod
+    def _aggregate_time_window(
+        bars: List[dict],
+        window_start: int,
+        window_secs: int
+    ) -> dict:
+        """Combine a list of 1m bars into one TF bar."""
+        open_  = bars[0]['open']
+        close_ = bars[-1]['close']
+        high   = max(b['high'] for b in bars)
+        low    = min(b['low']  for b in bars)
+        volume = sum(b['volume'] for b in bars)
+        pair   = bars[0]['pair']
+
+        return {
+            'time':   window_start + window_secs,
+            'open':   open_,
+            'high':   high,
+            'low':    low,
+            'close':  close_,
+            'volume': volume,
+            'pair':   pair
+        }
+    
+    def _run_subscription(self, from_time: int):
+        """
+        Wrapper executed in the Socket.IO background task:
+        - Runs the data source subscription (pushes bars into _handle_message)
+        - Flushes the last aggregated TF bar (if any)
+        - Emits 'stream_end' so external automation can know we're done
+        """
+        try:
+            # blocks until data_source.subscribe finishes
+            self.data_source.subscribe(self._handle_message, from_time)
+        finally:
+            # flush final aggregate if TF > 1m and we still have buffered bars
+            try:
+                if not (self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1):
+                    if self._1m_buffer:
+                        window_secs = self.group_size * 60
+                        agg = self._aggregate_time_window(self._1m_buffer, self._current_group_start, window_secs)
+                        self.socketio.emit('bar', agg)
+                        # small pacing so UI can render before end signal
+                        time.sleep(self._emit_delay)
+            except Exception:
+                # don't let flush errors block end signal
+                pass
+
+            self.streaming = False
+            reason = 'paused' if self._stop_event.is_set() else 'eof'
+            self.socketio.emit('stream_end', {'reason': reason})
+```
+===== END FILE: bars_loader.py =====
+
+===== BEGIN FILE: app.py =====
+(path: app.py)
+```python
+from datetime import datetime
+from app_factory import create_app, Repositories, StrategyNumbers
+from src.repositories.lines_repository import SQLLineRepository
+from src.repositories.trades_repository import SQLTradeRepository
+from src.data_sources.csv_datasource import CSVDataSource
+from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
+from src.strategies.entry_context import retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
+from src.database import database
+
+PAIR = "NQ"
+
+def build_prod():
+    # DB
+    database.setup_database()
+    repos = Repositories(
+        lines = SQLLineRepository(),
+        trades= SQLTradeRepository(),
+    )
+
+    # Data Source (pick your real source)
+    ds = CSVDataSource(
+        pair=PAIR,
+        initial_start_time=datetime.fromisoformat("2024-01-14T00:00:00+00:00"),
+        initial_end_time  =datetime.fromisoformat("2024-05-02T13:45:00+00:00"),
+        bars_per_second=10.0,
+    )
+
+    numbers = StrategyNumbers(
+        min_stop_loss=10.0,
+        max_bounce=40.0,
+        extra_sl_space=0.0,
+    )
+
+    options = StrategyOptions(
+        line_removal_mode=LineRemovalMode.NEVER,
+        triggers=[retest_cross_trigger],
+        entry_filters=[
+            open_trades_limit_filter(1), 
+            max_bounce_filter(numbers.max_bounce)
+        ]
+    )
+
+    return create_app(
+        pair=PAIR,
+        data_source=ds,
+        repos=repos,
+        numbers=numbers,
+        options=options,
+        strategy_tf="5m",
+        bootstrap_existing_lines=True,   # prod may want it
+    )
+
+if __name__ == "__main__":
+    wiring = build_prod()
+    wiring.socketio.run(wiring.app, debug=True, port=5001)
+```
+===== END FILE: app.py =====
+
+===== BEGIN FILE: app_factory.py =====
+(path: app_factory.py)
+```python
+# src/app_factory.py
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Optional, Callable
+
+from flask import Flask, jsonify, request, abort, render_template
+from flask_cors import CORS
+from flask_socketio import SocketIO, emit
+from datetime import datetime, timezone
+
+from src.bars_loader import BarsLoader
+from src.controllers.lines_controller import LinesController
+from src.controllers.trades_controller import TradesController
+from src.data_sources.combined_datasource import CombinedDataSource
+from src.services.trade_manager import TradeManager
+from src.strategies.liquidity_strategy import LiquidityStrategy, StrategyOptions
+from src.strategies.entry_context import (
+    retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
+)
+from src.repositories.lines_repository import LineRepository
+from src.repositories.trades_repository import TradeRepository
+
+
+@dataclass
+class Repositories:
+    lines: LineRepository
+    trades: TradeRepository
+
+@dataclass
+class StrategyNumbers:
+    min_stop_loss: float
+    max_bounce: float
+    extra_sl_space: float
+
+@dataclass
+class AppWiring:
+    app: Flask
+    socketio: SocketIO
+    loader: BarsLoader
+    strategy: LiquidityStrategy
+    trade_manager: TradeManager
+    lines_controller: LinesController
+    trades_controller: TradesController
+    data_source: CombinedDataSource
+    pair: str
+
+
+def create_app(
+    *,
+    pair: str,
+    data_source: CombinedDataSource,
+    repos: Repositories,
+    numbers: StrategyNumbers,
+    options: Optional[StrategyOptions] = None,
+    strategy_tf: str = "5m",
+    bootstrap_existing_lines: bool = True,
+) -> AppWiring:
+    """
+    Build the whole application with injected dependencies.
+    No env vars; no global singletons.
+    """
+    app = Flask(__name__)
+    CORS(app)
+    socketio = SocketIO(app, cors_allowed_origins="*")
+
+    # Strategy & managers
+    tstrategy = LiquidityStrategy(
+        min_stop_loss   = numbers.min_stop_loss,
+        max_bounce      = numbers.max_bounce,
+        extra_sl_space  = numbers.extra_sl_space,
+        socketio        = socketio,
+        line_repository = repos.lines,
+        trade_repository= repos.trades,
+        options         = options or StrategyOptions(
+            triggers=[retest_cross_trigger],
+            entry_filters=[
+                open_trades_limit_filter(1),
+                max_bounce_filter(numbers.max_bounce)
+            ]
+        ),
+        strategy_tf     = strategy_tf,
+    )
+    trade_manager = TradeManager(trade_repository=repos.trades, socketio=socketio)
+
+    # Combined callback
+    def combined_bar_callback(bar):
+        trade_manager.handle_new_1m_bar(bar)
+        tstrategy.on_raw_bar(bar)
+
+    loader = BarsLoader(
+        data_source=data_source,
+        socketio=socketio,
+        bar_callback=combined_bar_callback
+    )
+
+    lines_controller  = LinesController(repos.lines, loader, tstrategy)
+    trades_controller = TradesController(loader, trade_manager)
+
+    # Optionally load any preexisting lines from repo into the in-memory strategy
+    if bootstrap_existing_lines:
+        for l in repos.lines.list_lines(pair):
+            tstrategy.add_strategy_line(l.line_id, l.price, l.direction)
+
+    # ---------------- HTTP endpoints (capturing the injected deps) ----------------
+
+    @app.route('/')
+    def index():
+        return render_template('tester.html')
+
+    @app.route('/api/pair')
+    def get_pair():
+        return jsonify({'pair': pair})
+
+    @app.route('/api/bars')
+    def get_bars():
+        tf       = request.args.get('tf', '5m')
+        start_ts = request.args.get('start_time', type=int)
+        bars     = data_source.load_historical_bars(tf, start_ts)
+        return jsonify(bars)
+
+    @app.route('/api/lines', methods=['GET'])
+    def list_lines():
+        pair = request.args.get('pair')
+        if not pair:
+            abort(400, "Query param 'pair' is required, e.g. /api/lines?pair=NQ")
+        return lines_controller.list_lines(pair)
+
+    @app.route('/api/lines', methods=['POST'])
+    def add_line():
+        data = request.get_json() or {}
+        if 'pair' not in data or 'price' not in data:
+            abort(400, 'Must provide {"pair":..., "price":...}')
+        try:
+            price = float(data['price'])
+        except ValueError:
+            abort(400, "Field 'price' must be a number")
+        return lines_controller.add_line(data['pair'], price)
+
+    @app.route('/api/lines/<string:line_id>', methods=['DELETE'])
+    def delete_line(line_id):
+        return lines_controller.delete_line(line_id)
+
+    @app.route('/api/trades', methods=['POST'])
+    def open_trade():
+        data = request.get_json() or {}
+        pair       = data.get('pair')
+        trade_type = data.get('type', '').lower()
+        stop_loss  = data.get('stop_loss')
+        if not isinstance(pair, str) or trade_type not in ('buy', 'sell'):
+            abort(400, '"pair" must be a string and "type" must be "buy" or "sell"')
+        try:
+            stop_loss = float(stop_loss)
+        except Exception:
+            abort(400, '"stop_loss" must be a number')
+        return trades_controller.open_trade(pair, stop_loss, trade_type)
+
+    @app.route('/api/trades/<string:trade_id>/close', methods=['POST'])
+    def close_trade(trade_id):
+        return trades_controller.close_trade(trade_id)
+
+    # Socket.IO events
+    @socketio.on('connect')
+    def on_connect(auth):
+        emit('stream_status', {'playing': loader.streaming})
+
+    @socketio.on('start_stream')
+    def on_start_stream(payload):
+        tf = payload.get('timeframe', '1m')
+        try:
+            loader.set_timeframe(tf)
+        except ValueError:
+            loader.set_timeframe('1m')
+        from_time = payload.get('fromTime', 0)
+        loader.start(from_time)
+        emit('stream_status', {'playing': True})
+
+    @socketio.on('pause_stream')
+    def on_pause_stream():
+        loader.pause()
+        emit('stream_status', {'playing': False})
+
+    @socketio.on('seek')
+    def on_seek(payload):
+        loader.seek(payload.get('fromTime', 0))
+
+    return AppWiring(
+        app=app,
+        socketio=socketio,
+        loader=loader,
+        strategy=tstrategy,
+        trade_manager=trade_manager,
+        lines_controller=lines_controller,
+        trades_controller=trades_controller,
+        data_source=data_source,
+        pair=pair,
+    )
+```
+===== END FILE: app_factory.py =====
+
+===== BEGIN FILE: nq_sample.py =====
+(path: tests/scenarios/2025_09_02/nq_sample.py)
+```python
+from pathlib import Path
+from tests.scenario import Scenario
+
+SCENARIO = Scenario(
+    name="NQ — retest + wick reversal",
+    csv_path=Path(__file__).with_name("data.csv"),
+    strategy_tf="5m",  # optional; defaults to 5m
+    lines=[
+        ["L1", "short",  18258.25, "2024-05-07 07:05:00"]
+    ],
+)
+```
+===== END FILE: nq_sample.py =====
+
+===== BEGIN FILE: fakes.py =====
+(path: tests/fakes.py)
+```python
+
+from dataclasses import dataclass
+from datetime import datetime
+
+
+class DummySocketIO:
+    def __init__(self):
+        self.events = []  # list[(event, payload)]
+
+    def emit(self, event, payload):
+        self.events.append((event, payload))
+
+    # In tests, call the target immediately (no threads).
+    def start_background_task(self, target, *args, **kwargs):
+        return target(*args, **kwargs)
+    
+@dataclass
+class _Line:
+    line_id: str
+    pair: str
+    price: float
+    direction: str
+    creation_date: datetime
+
+class FakeLineRepository:
+    def __init__(self):
+        self._seq = 0
+        self._store = {}
+
+    def list_lines(self, pair: str):
+        return [obj for obj in self._store.values() if obj.pair == pair]
+
+    def insert_line(self, pair, price, direction):
+        self._seq += 1
+        lid = f"L{self._seq}"
+        obj = _Line(lid, pair, price, direction, datetime.utcnow())
+        self._store[lid] = obj
+        return obj
+
+    def delete_line(self, line_id):
+        if line_id not in self._store:
+            from src.dbexception import DBNotFoundException
+            raise DBNotFoundException()
+        del self._store[line_id]
+
+@dataclass
+class _Trade:
+    trade_id: str
+
+class FakeTradeRepository:
+    def __init__(self):
+        self._seq = 0
+        self.inserted = []  # dicts of fields
+        self.closed   = []  # dicts of fields
+
+    def insert_trade(self, **kwargs):
+        self._seq += 1
+        self.inserted.append(kwargs | {"trade_id": f"T{self._seq}"})
+        return _Trade(trade_id=f"T{self._seq}")
+
+    def close_trade(self, **kwargs):
+        self.closed.append(kwargs)
+```
+===== END FILE: fakes.py =====
+
+===== BEGIN FILE: scenario_utils.py =====
+(path: tests/scenario_utils.py)
+```python
+import io
+from src.strategies.liquidity_strategy import LiquidityStrategy, StrategyOptions, LineRemovalMode
+from src.strategies.entry_context import retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
+from src.strategies.strategy_config import StrategyConfig
+from src.bars_loader import BarsLoader
+from src.services.trade_manager import TradeManager
+from src.data_sources.csv_datasource import CSVDataSource
+from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository
+
+
+def build_system(csv_text: str,
+                 pair='NQ',
+                 strategy_tf='1m',
+                 min_sl=10.0,
+                 max_bounce=40.0,
+                 extra_sl=0.0,
+                 line_removal=LineRemovalMode.NEVER,
+                 filters=None,
+                 triggers=None):
+    sock   = DummySocketIO()
+    lines  = FakeLineRepository()
+    trades = FakeTradeRepository()
+
+    options = StrategyOptions(
+        line_removal_mode=line_removal,
+        triggers=triggers or [retest_cross_trigger],
+        entry_filters=filters or [open_trades_limit_filter(1), max_bounce_filter(max_bounce)]
+    )
+
+    strat = LiquidityStrategy(
+        min_stop_loss=min_sl,
+        max_bounce=max_bounce,
+        extra_sl_space=extra_sl,
+        socketio=sock,
+        line_repository=lines,
+        trade_repository=trades,
+        options=options,
+        strategy_tf=strategy_tf
+    )
+
+    tm = TradeManager(trade_repository=trades, socketio=sock)
+
+    ds = CSVDataSource(
+        pair=pair,
+        time_fmt='%d/%m/%Y %H:%M:%S',
+        tz='America/Chicago', # NQ
+        bars_per_second=10.0,
+        fileobj=io.StringIO(csv_text)
+    )
+
+    def combined_bar_callback(bar):
+        tm.handle_new_1m_bar(bar) # closes by 1m extremes
+        strat.on_raw_bar(bar) # opens by strategy TF, closes by TF extremes
+
+    loader = BarsLoader(
+        data_source=ds,
+        socketio=sock,
+        bar_callback=combined_bar_callback
+    )
+    return strat, tm, lines, trades, loader, sock
+
+
+def seed_lines(strat, lines):
+    """
+    lines = [
+        {"id": "L1", "level": 19560.0, "direction": "short"},
+        {"id": "L2", "level": 19540.0, "direction": "short"},
+    ]
+    """
+    for L in lines:
+        strat.add_strategy_line(L["id"], L["level"], L["direction"])
+```
+===== END FILE: scenario_utils.py =====
+
+===== BEGIN FILE: scenario.py =====
+(path: tests/scenario.py)
+```python
+# tests/scenario_model.py
+from __future__ import annotations
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import List, Literal, Tuple, Dict, Any, Optional
+from zoneinfo import ZoneInfo
+
+from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository
+from src.bars_loader import BarsLoader
+from src.data_sources.csv_datasource import CSVDataSource
+from src.services.trade_manager import TradeManager
+from src.strategies.liquidity_strategy import LiquidityStrategy, StrategyOptions, LineRemovalMode
+from src.strategies.entry_context import (
+    EntryFilter, retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
+)
+from dateutil import parser as dtparser
+
+Direction = Literal["long", "short", "buy", "sell"]
+
+@dataclass
+class Scenario:
+    name: str
+    csv_path: Path
+    pair: str = "NQ"
+    strategy_tf: str = "1m"
+    min_sl: float = 10.0
+    max_bounce: float = 40.0
+    extra_sl: float = 0.0
+    line_removal: LineRemovalMode = LineRemovalMode.NEVER
+    lines: List[List[Any]] = field(default_factory=list)
+    extra_filters: Optional[List[EntryFilter]] = None
+
+    # optional: override CSV parsing format/TZ if needed
+    time_fmt: Optional[str] = None
+    tz: Optional[str] = None  # if None, CSVDataSource default is used
+
+    def _parse_line_row(self, row: List[Any], idx: int) -> Dict[str, Any]:
+        """
+        Accept any of:
+          ["short", 19560.0]
+          ["L1", "short", 19560.0]
+          ["short", 19560.0, "2024-07-31T11:12:00-04:00"]
+          ["L2", "short", 19560.0, "row:3"]
+          ["short", 19560.0, "L3", "row:3"]
+
+        Returns a dict: {id, level, direction, at_time (int|None), at_row (int|None)}
+        """
+        lid, direction, level, at = None, None, None, None
+
+        # Flatten flexible shapes
+        flat = list(row)
+
+        # try to extract an ISO/epoch/row:* token if present
+        row_match_idx = next((i for i, x in enumerate(flat)
+                              if isinstance(x, str) and (x.startswith("row:") or re.fullmatch(r"\d{4}-\d{2}-\d{2}.*", x))), None)
+        if row_match_idx is not None:
+            at = flat.pop(row_match_idx)
+
+        # pull out id if present (L…)
+        id_idx = next((i for i, x in enumerate(flat)
+                       if isinstance(x, str) and x.upper().startswith("L")), None)
+        if id_idx is not None:
+            lid = flat.pop(id_idx)
+
+        # remaining must be [direction, level] (any order was already handled)
+        if len(flat) != 2:
+            raise ValueError(f"Invalid line spec {row!r}. Expected 2 of (direction, level) after id/at extraction.")
+        a, b = flat
+        if isinstance(a, str):
+            direction, level = a, float(b)
+        else:
+            direction, level = b, float(a)
+
+        direction = direction.lower()
+        if direction == "buy":  direction = "long"
+        if direction == "sell": direction = "short"
+        if lid is None: lid = f"L{idx+1}"
+
+        # convert 'at' later (needs ds._bars for row:N), keep raw for now
+        return {"id": lid, "direction": direction, "level": level, "at_raw": at}
+
+    @staticmethod
+    def _parse_at_to_epoch(at_raw: Any, ds: CSVDataSource) -> Optional[int]:
+        """
+        Convert at_raw into epoch seconds aligned with the datasource's bar timestamps.
+        Supports:
+          - "row:N" (1-based row index in CSV)
+          - ISO 8601 with/without tz (naive = America/New_York)
+          - integer/float epoch seconds
+        """
+        if at_raw is None:
+            return None
+
+        # row:N shortcut
+        if isinstance(at_raw, str) and at_raw.startswith("row:"):
+            n = int(at_raw.split(":", 1)[1])
+            if n <= 0 or n > len(ds._bars):
+                raise ValueError(f"row:{n} is out of range (1..{len(ds._bars)})")
+            return int(ds._bars[n-1]['time'])
+
+        # epoch
+        if isinstance(at_raw, (int, float)):
+            return int(at_raw)
+
+        if isinstance(at_raw, str):
+            if dtparser is None:
+                raise RuntimeError("python-dateutil not installed; cannot parse datetime strings")
+            dt = dtparser.parse(at_raw)
+            ny = ZoneInfo("America/New_York")
+            if dt.tzinfo is None:
+                # Interpret naive strings in New York to match CSVDataSource’s NY output.
+                dt = dt.replace(tzinfo=ny)
+            else:
+                # Normalize to New York (bars are NY-based)
+                dt = dt.astimezone(ny)
+            return int(dt.timestamp())
+
+        raise ValueError(f"Unsupported 'at' value: {at_raw!r}")
+
+    def build(self):
+        """Construct the full in-memory system using fakes and return all parts (including ds)."""
+        sock   = DummySocketIO()
+        lines_repo  = FakeLineRepository()
+        trades_repo = FakeTradeRepository()
+
+        filters = [
+            open_trades_limit_filter(1),
+            max_bounce_filter(self.max_bounce),
+        ]
+        if self.extra_filters:
+            filters.extend(self.extra_filters)
+
+        options = StrategyOptions(
+            line_removal_mode=self.line_removal,
+            triggers=[retest_cross_trigger],
+            entry_filters=filters
+        )
+
+        strat = LiquidityStrategy(
+            min_stop_loss=self.min_sl,
+            max_bounce=self.max_bounce,
+            extra_sl_space=self.extra_sl,
+            socketio=sock,
+            line_repository=lines_repo,
+            trade_repository=trades_repo,
+            options=options,
+            strategy_tf=self.strategy_tf,
+        )
+
+        tm = TradeManager(trade_repository=trades_repo, socketio=sock)
+
+        ds = CSVDataSource(
+            pair=self.pair,
+            filename=str(self.csv_path),
+            time_fmt=self.time_fmt,
+            tz=self.tz,
+            bars_per_second=1000.0
+        )
+
+        # Prepare scheduled lines: convert 'at' into epoch using the loaded ds
+        parsed = [self._parse_line_row(r, i) for i, r in enumerate(self.lines)]
+        scheduled, immediate = [], []
+        for p in parsed:
+            at_ts = self._parse_at_to_epoch(p["at_raw"], ds)
+            rec = {"id": p["id"], "level": p["level"], "direction": p["direction"], "at_time": at_ts, "added": False}
+            (scheduled if at_ts is not None else immediate).append(rec)
+
+        def combined_bar_callback(bar):
+            # add any scheduled lines whose time has arrived BEFORE evaluating
+            for item in scheduled:
+                if not item["added"] and bar['time'] >= item["at_time"]:
+                    strat.add_strategy_line(item["id"], item["level"], item["direction"])
+                    item["added"] = True
+
+            # 1m SL/TP checks
+            tm.handle_new_1m_bar(bar)
+            # strategy aggregation/evaluation
+            strat.on_raw_bar(bar)
+
+        loader = BarsLoader(
+            data_source=ds,
+            socketio=sock,
+            bar_callback=combined_bar_callback
+        )
+
+        # seed immediate lines before streaming
+        for item in immediate:
+            strat.add_strategy_line(item["id"], item["level"], item["direction"])
+
+        # expose scheduled list so tests can inspect if needed
+        return strat, tm, lines_repo, trades_repo, loader, sock, ds
+
+
+@dataclass
+class ScenarioResult:
+    trade_opens: List[Dict[str, Any]]
+    trade_closes: List[Dict[str, Any]]
+    inserted_trades: List[Dict[str, Any]]
+    closed_trades: List[Dict[str, Any]]
+    
+
+def run_scenario(s: Scenario) -> ScenarioResult:
+    strat, tm, lines_repo, trades_repo, loader, sock = s.build()
+
+    # seed lines directly into strategy (mirrors what /api/lines does eventually)
+    parsed = [s._parse_line_row(row, i) for i, row in enumerate(s.lines)]
+    for lid, level, direction in parsed:
+        strat.add_strategy_line(lid, level, direction)
+
+    # synchronous in DummySocketIO
+    loader.start(from_time=0)
+
+    opens  = [p for (evt, p) in sock.events if evt == "trade_open"]
+    closes = [p for (evt, p) in sock.events if evt == "trade_close"]
+
+    return ScenarioResult(
+        trade_opens=opens,
+        trade_closes=closes,
+        inserted_trades=list(trades_repo.inserted),
+        closed_trades=list(trades_repo.closed),
+    )
+```
+===== END FILE: scenario.py =====
+
+===== SKIPPED (extension not allowed): scenarios.yaml =====
+===== BEGIN FILE: snapshot_all_scenarios.py =====
+(path: scripts/snapshot_all_scenarios.py)
+```python
+#!/usr/bin/env python3
+"""
+snapshot_all_scenarios.py
+
+Discovers Scenario objects and renders a screenshot for each by:
+- launching your Flask/Socket.IO app with the scenario's CSV and time window
+- adding scenario lines (immediate + scheduled) via /api/lines
+- starting the stream at the scenario's timeframe (default 5m)
+- waiting for 'stream_end' and taking a screenshot of the chart container
+
+Assumptions:
+- Your app reads env vars CSV_FILE, START_ISO, END_ISO, BARS_PER_SECOND (patch shown earlier)
+- Your app emits 'stream_end' on Socket.IO when playback finishes (tiny patch shown earlier)
+- Frontend chart container selector is '#chart-root' (override with --chart-selector)
+- Scenario class lives in tests/scenario_model.py, and scenario files live under tests/scenarios/
+
+Discovery rules for each Python file that matches --glob (default: tests/scenarios/**/*.py):
+- SCENARIO: a Scenario object or a zero-arg callable returning one
+- SCENARIOS: an iterable of Scenario objects or zero-arg callables
+- Any zero-arg top-level function whose name starts with 'scenario' returning a Scenario
+
+Usage:
+  python scripts/snapshot_all_scenarios.py --outdir snapshots
+  python scripts/snapshot_all_scenarios.py --glob "tests/scenarios/**/*.py" --outdir snapshots --file-dtformat auto
+"""
+
+import argparse
+import asyncio
+import csv
+import importlib.util
+import os
+import runpy
+import signal
+import subprocess
+import sys
+import threading
+import time
+import inspect
+from dataclasses import is_dataclass
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+import requests
+
+try:
+    from dateutil import parser as dtparser
+    from dateutil.tz import gettz
+except Exception:
+    dtparser = None
+    gettz = None
+
+from playwright.async_api import async_playwright
+
+APP_URL = "http://127.0.0.1:5001"
+DEFAULT_FILE_DTFORMAT = "%d/%m/%Y %H:%M:%S"  # "31/07/2024 15:12:00"
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent  # repo root (one up from scripts/)
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# ---------- tiny CSV helpers ----------
+
+def parse_any_dt(s: str) -> datetime:
+    if s is None:
+        raise ValueError("datetime string is None")
+    if dtparser is not None:
+        return dtparser.parse(s)
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y %H:%M:%S", "%m/%d/%Y %H:%M:%S"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            pass
+    raise ValueError(f"Install python-dateutil or pass a supported datetime format: {s!r}")
+
+def load_csv_times(csv_path: Path, file_dtformat: Optional[str]) -> List[datetime]:
+    dts: List[datetime] = []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        rdr = csv.DictReader(f, delimiter=";")
+        for row in rdr:
+            dt = (datetime.strptime(f"{row['Date']} {row['Time']}", file_dtformat)
+                  if file_dtformat else parse_any_dt(f"{row['Date']} {row['Time']}"))
+            dts.append(dt)
+    return dts
+
+def map_unix_to_index(dts: List[datetime]) -> Dict[int, int]:
+    m: Dict[int, int] = {}
+    for i, dt in enumerate(dts):
+        ts = int(dt.timestamp())
+        if ts not in m:
+            m[ts] = i
+    return m
+
+# ---------- HTTP + app helpers ----------
+
+def wait_for_http(url: str, timeout=30):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            r = requests.get(url, timeout=2)
+            if r.ok:
+                return
+        except Exception:
+            pass
+        time.sleep(0.25)
+    raise SystemExit(f"App not reachable at {url} within {timeout}s")
+
+def add_line(pair: str, price: float):
+    r = requests.post(f"{APP_URL}/api/lines", json={"pair": pair, "price": float(price)}, timeout=10)
+    if not r.ok:
+        raise SystemExit(f"POST /api/lines failed: {r.status_code} {r.text}")
+
+# ---------- scenario parsing ----------
+
+def is_scenario_instance(x: Any) -> bool:
+    # Loose duck-typing: must have csv_path and lines
+    return hasattr(x, "csv_path") and hasattr(x, "lines")
+
+def discover_scenarios(pyfile: Path) -> List[Any]:
+    """
+    Execute `pyfile` and return a list of Scenario *instances* discovered inside.
+    Discovery rules (in this order):
+      1) SCENARIO = Scenario(...)        # instance
+         SCENARIO = scenario_factory()   # zero-arg function returning instance
+      2) SCENARIOS = [Scenario(...), ...] or a zero-arg function returning an iterable
+      3) Any zero-arg top-level function whose name starts with 'scenario' returning an instance
+
+    Safety:
+      - Only zero-arg *functions* are auto-called. Classes are never called.
+      - If SCENARIO/SCENARIOS contains the class (not an instance), a TypeError is raised
+        so the caller can show a clear "Did you mean SCENARIO = Scenario(...)" message.
+    """
+    # duck-typing: what *looks* like a Scenario instance?
+    def looks_like_scenario(x: Any) -> bool:
+        return hasattr(x, "csv_path") and hasattr(x, "lines")
+
+    def normalize(obj: Any) -> Any:
+        """Return a Scenario instance if possible; never call classes."""
+        # Already an instance?
+        if looks_like_scenario(obj):
+            return obj
+
+        # Call only zero-arg FUNCTIONS (not classes)
+        if inspect.isfunction(obj):
+            sig = inspect.signature(obj)
+            req = [
+                p for p in sig.parameters.values()
+                if p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+            ]
+            if not req:  # zero required positional params
+                res = obj()
+                if looks_like_scenario(res):
+                    return res
+                return res  # caller will validate and potentially error
+
+        # Do not call classes; return as-is
+        return obj
+
+    ns = runpy.run_path(str(pyfile))
+    found: List[Any] = []
+
+    # 1) SCENARIO
+    if "SCENARIO" in ns:
+        s = normalize(ns["SCENARIO"])
+        if inspect.isclass(s):
+            raise TypeError(
+                f"{pyfile} exports the Scenario class in SCENARIO. "
+                f"Did you mean 'SCENARIO = Scenario(...)'?"
+            )
+        if looks_like_scenario(s):
+            found.append(s)
+        elif s is not None:
+            raise TypeError(
+                f"{pyfile} SCENARIO is not a Scenario instance (got {type(s).__name__})."
+            )
+
+    # 2) SCENARIOS
+    if "SCENARIOS" in ns:
+        seq = ns["SCENARIOS"]
+        if inspect.isfunction(seq):
+            # zero-arg factory returning iterable
+            sig = inspect.signature(seq)
+            req = [
+                p for p in sig.parameters.values()
+                if p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+            ]
+            if not req:
+                seq = seq()
+        if isinstance(seq, Iterable) and not isinstance(seq, (str, bytes, dict)):
+            for item in seq:
+                s = normalize(item)
+                if inspect.isclass(s):
+                    raise TypeError(
+                        f"{pyfile} SCENARIOS contains the Scenario class. "
+                        f"Use Scenario(...) instances."
+                    )
+                if looks_like_scenario(s):
+                    found.append(s)
+                else:
+                    raise TypeError(
+                        f"{pyfile} SCENARIOS element is not a Scenario instance (got {type(s).__name__})."
+                    )
+        else:
+            raise TypeError(f"{pyfile} SCENARIOS is not an iterable of scenarios.")
+
+    # 3) Any zero-arg function named scenario*
+    for name, val in ns.items():
+        if name.lower().startswith("scenario") and inspect.isfunction(val):
+            sig = inspect.signature(val)
+            req = [
+                p for p in sig.parameters.values()
+                if p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+            ]
+            if req:
+                continue  # needs args; skip
+            res = val()
+            if looks_like_scenario(res):
+                found.append(res)
+            elif inspect.isclass(res):
+                raise TypeError(
+                    f"{pyfile} function {name} returned the Scenario class; return an instance instead."
+                )
+            else:
+                raise TypeError(
+                    f"{pyfile} function {name} did not return a Scenario instance (got {type(res).__name__})."
+                )
+
+    return found
+
+# ---------- line scheduling (parse like Scenario’s flexible format) ----------
+
+def parse_line_spec(line_row: List[Any]) -> Dict[str, Any]:
+    lid, at_raw = None, None
+    flat = list(line_row)
+    # time token
+    for i, x in enumerate(list(flat)):
+        if isinstance(x, str) and (x.startswith("row:") or x[:4].isdigit()):
+            at_raw = flat.pop(i); break
+    # id token
+    for i, x in enumerate(list(flat)):
+        if isinstance(x, str) and x.upper().startswith("L"):
+            lid = flat.pop(i); break
+    if len(flat) != 2:
+        raise ValueError(f"Bad line spec: {line_row!r}. Expect [dir, level] (+optional id/at)")
+    a, b = flat
+    if isinstance(a, str):
+        direction, level = a, float(b)
+    else:
+        direction, level = b, float(a)
+    direction = {"buy":"long","sell":"short"}.get(direction.lower(), direction.lower())
+    return {"id": lid, "direction": direction, "level": level, "at_raw": at_raw}
+
+def resolve_at_to_epoch(at_raw: Optional[str], all_dts: List[datetime]) -> Optional[int]:
+    if at_raw is None: return None
+    if at_raw.startswith("row:"):
+        n = int(at_raw.split(":",1)[1])
+        if n <= 0 or n > len(all_dts):
+            raise ValueError(f"{at_raw} out of range 1..{len(all_dts)}")
+        return int(all_dts[n-1].timestamp())
+    dt = parse_any_dt(at_raw)
+    if dt.tzinfo is None and gettz is not None:
+        dt = dt.replace(tzinfo=gettz("America/New_York"))
+    return int(dt.timestamp())
+
+# ---------- Playwright screenshot ----------
+
+async def shoot(output_png: Path, timeframe: str, from_epoch: int, selector: str):
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
+        page = await ctx.new_page()
+        await page.goto(APP_URL + "/", wait_until="domcontentloaded")
+
+        # Install our hooks inside the page and wait for the socket to connect
+        await page.expose_function("__py_log", lambda *args: print("[page]", *args))
+
+        # Create or reuse the socket, wait for 'connect', set completion conditions
+        await page.evaluate("""
+            (function () {
+                window.__done = false;
+
+                // Prefer existing socket created by the page (if any)
+                let sock = window.socket || (window.io ? window.io() : null);
+                if (!sock) throw new Error("Socket.IO client not found on the page");
+
+                window.socket = sock;
+
+                // If not connected yet, we'll wait for 'connect' below
+                sock.on('stream_end', () => { window.__done = true; });
+                sock.on('stream_status', (p) => {
+                    if (p && p.playing === false) window.__done = true;
+                });
+
+                // Stash a helper promise we can await from Python
+                window.__waitConnected = new Promise((resolve) => {
+                    if (sock.connected) return resolve(true);
+                    sock.once('connect', () => resolve(true));
+                });
+            })();
+        """)
+
+        # Wait for the socket to actually connect
+        await page.evaluate("() => window.__waitConnected")
+
+        # Start the stream (object-arg form for Playwright)
+        await page.evaluate(
+            """(args) => {
+                window.socket.emit('start_stream', { timeframe: args.tf, fromTime: args.fromTs });
+            }""",
+            {"tf": timeframe, "fromTs": int(from_epoch)}
+        )
+
+        # Ensure the chart is visible
+        locator = page.locator(selector)
+        await locator.wait_for(state="visible", timeout=25000)
+
+        # Wait until the backend signals EOF via either event
+        await page.wait_for_function("() => window.__done === true", timeout=180000)
+
+        # Small settle so the last bar/lines render
+        await page.wait_for_timeout(400)
+
+        # Try element screenshot; fall back to full-page
+        try:
+            await locator.screenshot(path=str(output_png))
+        except Exception:
+            await page.screenshot(path=str(output_png), full_page=True)
+
+        await ctx.close()
+        await browser.close()
+
+# ---------- per-scenario run ----------
+
+def sanitize(name: str) -> str:
+    return "".join(c if c.isalnum() or c in ("-","_") else "_" for c in name)[:120]
+
+def run_one_scenario(
+    scenario: Any,
+    outdir: Path,
+    chart_selector: str,
+    file_dtformat: Optional[str],
+    bars_per_second: int,
+    app_path: Path,
+    port: str,
+):
+    name = getattr(scenario, "name", sanitize(Path(getattr(scenario, "csv_path")).stem))
+    tf   = getattr(scenario, "strategy_tf", None) or "5m"  # default to 5m
+    csv_path: Path = Path(scenario.csv_path)
+    lines_spec: List[List[Any]] = list(getattr(scenario, "lines", []) or [])
+
+    # Load CSV and set full window if not provided
+    fdt = None if (file_dtformat or "").lower() == "auto" else file_dtformat
+    all_dts = load_csv_times(csv_path, file_dtformat=fdt)
+    if not all_dts:
+        print(f"[skip] {name}: CSV is empty: {csv_path}")
+        return
+    start_dt, end_dt = all_dts[0], all_dts[-1]
+    start_epoch = int(start_dt.timestamp())
+
+    # Launch app with env overrides
+    env = os.environ.copy()
+    env["CSV_FILE"] = str(csv_path.resolve())
+    env["START_ISO"] = start_dt.isoformat()
+    env["END_ISO"]   = end_dt.isoformat()
+    env["BARS_PER_SECOND"] = str(bars_per_second)
+    env["FLASK_RUN_PORT"] = port
+
+    print(f"[run] {name}  tf={tf}  rows={len(all_dts)}")
+    proc = subprocess.Popen([sys.executable, str(app_path)], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    try:
+        wait_for_http(APP_URL + "/api/pair", timeout=30)
+        pair = requests.get(APP_URL + "/api/pair", timeout=5).json()["pair"]
+
+        # Build line schedule
+        idx_map = map_unix_to_index(all_dts)
+        start_idx = idx_map.get(start_epoch, 0)
+        emit_delay = 1.0 / float(bars_per_second)
+
+        immediate: List[float] = []
+        scheduled: List[Tuple[int, float]] = []
+        for spec in lines_spec:
+            p = parse_line_spec(spec)
+            price = p["level"]
+            at_ts = resolve_at_to_epoch(p["at_raw"], all_dts) if p["at_raw"] else None
+            if at_ts is None:
+                immediate.append(price)
+            else:
+                scheduled.append((at_ts, price))
+
+        # Post immediate lines now
+        for price in immediate:
+            add_line(pair, price)
+
+        # Scheduler for timed lines
+        def scheduler():
+            for at_ts, price in sorted(scheduled):
+                # map at_ts → index
+                sec = int(at_ts)
+                if sec in idx_map:
+                    at_idx = idx_map[sec]
+                else:
+                    at_idx = min(range(len(all_dts)),
+                                 key=lambda i: abs(int(all_dts[i].timestamp()) - sec))
+                if at_idx <= start_idx:
+                    delay = 0.0
+                else:
+                    delay = (at_idx - start_idx) * emit_delay
+                time.sleep(delay)
+                try:
+                    add_line(pair, price)
+                except Exception as e:
+                    print(f"[{name}] warn: add_line failed: {e}", file=sys.stderr)
+
+        if scheduled:
+            threading.Thread(target=scheduler, daemon=True).start()
+
+        # Shoot
+        out_png = outdir / f"{sanitize(name)}_{tf}.png"
+        asyncio.run(shoot(out_png, tf, start_epoch, chart_selector))
+        print(f"[ok]  {name} → {out_png}")
+
+    finally:
+        try:
+            proc.send_signal(signal.SIGINT)
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+
+# ---------- main ----------
+
+def main():
+    ap = argparse.ArgumentParser(description="Discover and snapshot ALL scenarios.")
+    ap.add_argument("--glob", default="tests/scenarios/**/*.py",
+                    help="Glob pattern to find scenario files (default: tests/scenarios/**/*.py).")
+    ap.add_argument("--outdir", required=True, help="Directory to write PNG snapshots.")
+    ap.add_argument("--chart-selector", default="#chartContainer",
+                    help="CSS selector for the chart container (default '#chart-root').")
+    ap.add_argument("--file-dtformat", default=DEFAULT_FILE_DTFORMAT,
+                    help="Datetime format for CSV Date+Time; use 'auto' to autodetect.")
+    ap.add_argument("--bars-per-second", type=int, default=2000,
+                    help="Playback speed (default 2000 bars/sec).")
+    ap.add_argument("--app-path", default="app.py", help="Path to your app entry (default app.py).")
+    ap.add_argument("--port", default="5001", help="App port (must match frontend).")
+    args = ap.parse_args()
+
+    outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
+    app_path = Path(args.app_path)
+
+    # Find scenario files
+    files = sorted(Path().glob(args.glob))
+    if not files:
+        raise SystemExit(f"No scenario files found for glob: {args.glob}")
+
+    # Discover scenarios across files
+    scenarios: List[Any] = []
+    for f in files:
+        try:
+            scenarios.extend(discover_scenarios(f))
+        except Exception as e:
+            print(f"[warn] skipping {f}: {e}", file=sys.stderr)
+
+    if not scenarios:
+        raise SystemExit("Found 0 scenarios.")
+
+    print(f"Discovered {len(scenarios)} scenarios\n")
+
+    # Run sequentially (avoid port collisions)
+    for s in scenarios:
+        try:
+            run_one_scenario(
+                scenario=s,
+                outdir=outdir,
+                chart_selector=args.chart_selector,
+                file_dtformat=args.file_dtformat,
+                bars_per_second=args.bars_per_second,
+                app_path=app_path,
+                port=args.port,
+            )
+        except Exception as e:
+            name = getattr(s, "name", "<unnamed>")
+            print(f"[fail] {name}: {e}", file=sys.stderr)
+
+if __name__ == "__main__":
+    main()
+```
+===== END FILE: snapshot_all_scenarios.py =====
+
+===== BEGIN FILE: run_scenarios.py =====
+(path: scripts/run_scenarios.py)
+```python
+#!/usr/bin/env python3
+"""
+Run YAML scenarios (no line direction in YAML).
+
+YAML schema example (no CSV path, no line direction):
+
+scenarios:
+  - name: "NQ — retest + wick reversal"
+    pair: "NQ"              # optional (default: NQ)
+    tf: "5m"                # optional (default: 5m)
+    start: "2024-07-31 15:10:00"
+    end:   "2024-07-31 15:18:00"
+    lines:
+      - { price: 19560.00 }                           # immediate
+      - { price: 19545.00, at: "row:3" }              # at row 3 (of sliced CSV)
+      - { price: 19538.50, at: "2024-07-31 15:14:00"} # at timestamp
+    expect:
+      entry: 19546.00
+      sl:    19553.00
+      tp:    19530.00
+      tolerance: 0.25          # optional abs tolerance (default 1e-6)
+    snapshot: true             # optional (default true)
+
+What it does, per scenario:
+- Slice --source-csv in [start,end] → <outdir>/<scenario-name>/data.csv
+- Validate quickly in-process (no Flask) against your LiquidityStrategy
+  * Lines have NO direction; direction is inferred at add time:
+      direction = 'short' if last_close < price else 'long'
+- Launch your app with that data.csv, add lines via POST /api/lines (no direction),
+  start stream, and save <outdir>/<scenario-name>/snapshot_<tf>.png
+"""
+
+import argparse, csv, os, sys, time, io, signal, subprocess, asyncio, threading
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import yaml, requests
+from dateutil import parser as dtparser
+from dateutil.tz import gettz
+from playwright.async_api import async_playwright
+
+# repo root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+APP_URL = "http://127.0.0.1:5001"
+
+# --- imports from your codebase ---
+from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository
+from src.bars_loader import BarsLoader
+from src.data_sources.csv_datasource import CSVDataSource
+from src.services.trade_manager import TradeManager
+from src.strategies.liquidity_strategy import LiquidityStrategy, StrategyOptions, LineRemovalMode
+from src.strategies.entry_context import open_trades_limit_filter, max_bounce_filter, retest_cross_trigger
+
+
+# ---------- helpers ----------
+
+def sanitize(name: str) -> str:
+    return "".join(c if c.isalnum() or c in ("-","_"," ") else "_" for c in name).strip().replace(" ", "_")
+
+def parse_any_dt(s: str):
+    dt = dtparser.parse(s)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=gettz("America/New_York"))
+    return dt
+
+def slice_csv(source_csv: Path, out_csv: Path, start: str, end: str):
+    """Read semicolon CSV, write rows between [start,end] inclusive to out_csv (keep header)."""
+    start_dt = parse_any_dt(start); end_dt = parse_any_dt(end)
+    if end_dt < start_dt:
+        raise ValueError("end < start")
+
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    with open(source_csv, newline="", encoding="utf-8") as fin, \
+         open(out_csv, "w", newline="", encoding="utf-8") as fout:
+        rdr = csv.DictReader(fin, delimiter=";")
+        fieldnames = rdr.fieldnames or ["Date","Time","Open","High","Low","Close","Volume"]
+        w = csv.DictWriter(fout, fieldnames=fieldnames, delimiter=";")
+        w.writeheader()
+        for row in rdr:
+            dt = parse_any_dt(f"{row['Date']} {row['Time']}")
+            if start_dt <= dt <= end_dt:
+                w.writerow(row)
+
+def wait_http_ok(url: str, timeout: int = 30):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        try:
+            r = requests.get(url, timeout=2)
+            if r.ok:
+                return
+        except Exception:
+            pass
+        time.sleep(0.2)
+    raise TimeoutError(f"Timed out waiting for {url}")
+
+async def shoot_png(output_png: Path, timeframe: str, selector: str = "#chartContainer"):
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
+        page = await ctx.new_page()
+        await page.goto(APP_URL + "/", wait_until="domcontentloaded")
+
+        await page.evaluate("""
+            window.__done = false;
+            const sock = (window.io && window.io()) || window.socket;
+            if (!sock) throw new Error("Socket.IO client not found");
+            window.socket = sock;
+            sock.on('stream_end', () => { window.__done = true; });
+        """)
+
+        # start from beginning of sliced file (fromTime=0)
+        await page.evaluate("""(args) => {
+            window.socket.emit('start_stream', { timeframe: args.tf, fromTime: 0 });
+        }""", {"tf": timeframe})
+
+        locator = page.locator(selector)
+        await locator.wait_for(state="visible", timeout=25000)
+        await page.wait_for_function("() => window.__done === true", timeout=180000)
+        await page.wait_for_timeout(400)
+        try:
+            await locator.screenshot(path=str(output_png))
+        except Exception:
+            await page.screenshot(path=str(output_png), full_page=True)
+        await ctx.close()
+        await browser.close()
+
+def add_line_http(pair: str, price: float):
+    # no direction → the server infers: short if last_close < price else long
+    r = requests.post(f"{APP_URL}/api/lines",
+                      json={"pair": pair, "price": float(price)},
+                      timeout=10)
+    if not r.ok:
+        raise RuntimeError(f"POST /api/lines failed: {r.status_code} {r.text}")
+
+
+# ---------- in-process validation (fast; mimics server direction inference) ----------
+
+def validate_inproc(csv_path: Path, pair: str, tf: str,
+                    lines: List[Dict[str, Any]],
+                    expect: Optional[Dict[str, Any]]) -> Tuple[bool, str, Optional[Dict[str,Any]]]:
+    """
+    - plays the sliced CSV fully
+    - adds lines on schedule (no direction in YAML); direction is inferred at *add* time:
+        last_close = ds._played_bars[-1]['close']           (CSVDataSource appends before callback)
+        direction  = 'short' if last_close < price else 'long'
+    - returns (ok, reason, first_open_trade_payload_or_None)
+    """
+    sock   = DummySocketIO()
+    lines_repo  = FakeLineRepository()
+    trades_repo = FakeTradeRepository()
+    options = StrategyOptions(
+        line_removal_mode=LineRemovalMode.NEVER,
+        triggers=[retest_cross_trigger],
+        entry_filters=[open_trades_limit_filter(1), max_bounce_filter(40.0)]
+    )
+    strat = LiquidityStrategy(
+        min_stop_loss=10.0, max_bounce=40.0, extra_sl_space=0.0,
+        socketio=sock, line_repository=lines_repo, trade_repository=trades_repo,
+        options=options, strategy_tf=tf
+    )
+    tm = TradeManager(trade_repository=trades_repo, socketio=sock)
+
+    ds = CSVDataSource(pair=pair, filename=str(csv_path), bars_per_second=10000.0)
+
+    # schedule: convert at → epoch; if absent, schedule at first bar time
+    def to_epoch(at_raw: Optional[str]) -> int:
+        if not at_raw:
+            return int(ds._bars[0]['time'])
+        if str(at_raw).startswith("row:"):
+            n = int(str(at_raw).split(":",1)[1])
+            return int(ds._bars[n-1]['time'])
+        return int(parse_any_dt(str(at_raw)).timestamp())
+
+    sched = [{"price": float(li["price"]),
+              "at": to_epoch(li.get("at")),
+              "added": False}
+             for li in lines]
+
+    def cb(bar):
+        # add due lines (infer direction from last_close like the API)
+        for item in sched:
+            if not item["added"] and bar.get('time', 0) >= item["at"]:
+                last_close = ds._played_bars[-1]['close'] if ds._played_bars else bar['close']
+                direction  = 'short' if last_close < item["price"] else 'long'
+                strat.add_strategy_line(f"L{len(strat.strategy_lines)+1}", item["price"], direction)
+                item["added"] = True
+        tm.handle_new_1m_bar(bar)
+        strat.on_raw_bar(bar)
+
+    loader = BarsLoader(ds, sock, cb, bars_per_second=10000.0)
+    loader.start(0)
+
+    opened = next((p for (e,p) in sock.events if e=="trade_open"), None)
+    if not expect:
+        return True, "OK", opened
+    if not opened:
+        return False, "No trade_open", None
+
+    tol = float(expect.get("tolerance", 1e-6))
+    def ok(a,b): return abs(float(a)-float(b)) <= tol
+    checks = []
+    if "entry" in expect: checks.append(("entry", opened["entry"], expect["entry"]))
+    if "sl"    in expect: checks.append(("stop_loss", opened["stop_loss"], expect["sl"]))
+    if "tp"    in expect: checks.append(("take_profit", opened["take_profit"], expect["tp"]))
+    for field, got, want in checks:
+        if not ok(got, want):
+            return False, f"{field} mismatch: got {got} want {want} tol={tol}", opened
+    return True, "OK", opened
+
+
+# ---------- main orchestration ----------
+
+def main():
+    ap = argparse.ArgumentParser(description="Run YAML scenarios: slice CSV, validate, snapshot (no line direction).")
+    ap.add_argument("--yaml", required=True, help="YAML file with scenarios.")
+    ap.add_argument("--source-csv", required=True, help="Big 1m CSV to slice from.")
+    ap.add_argument("--base-dir", default=".",  # <- NEW: where to create per-scenario folders
+                    help="Parent dir to create <scenario-name>/ in (default: current dir).")
+    ap.add_argument("--app-path", default="app.py", ...)
+    ap.add_argument("--bars-per-second", type=int, default=2000, ...)
+    ap.add_argument("--chart-selector", default="#chartContainer", ...)
+    args = ap.parse_args()
+
+    ydoc = yaml.safe_load(Path(args.yaml).read_text())
+    scenarios = ydoc.get("scenarios") or []
+    if not scenarios:
+        raise SystemExit("No scenarios defined.")
+
+    source_csv = Path(args.source_csv)
+    outroot = Path(args.outdir); outroot.mkdir(parents=True, exist_ok=True)
+    app_path = Path(args.app_path)
+
+    print(f"Found {len(scenarios)} scenarios\n")
+
+    for sc in scenarios:
+        name  = sc.get("name") or "scenario"
+        pair  = sc.get("pair", "NQ")
+        tf    = sc.get("tf", "5m")
+        start = sc["start"]
+        end   = sc["end"]
+        lines = sc.get("lines", [])
+        expect = sc.get("expect")
+        snapshot = sc.get("snapshot", True)
+
+        # 1) per-scenario folder + data.csv
+        sdir   = outroot / sanitize(name)
+        csv_out = sdir / "data.csv"
+        sdir.mkdir(parents=True, exist_ok=True)
+        slice_csv(source_csv, csv_out, start, end)
+
+        # 2) validate in-process (fast)
+        ok, reason, opened = validate_inproc(csv_out, pair, tf, lines, expect)
+        status = "OK" if ok else f"FAIL: {reason}"
+        print(f"[check] {name}: {status}")
+        if opened:
+            print(f"        entry={opened['entry']} sl={opened['stop_loss']} tp={opened['take_profit']} type={opened['type']}")
+
+        # 3) Snapshot via real app (if enabled)
+        if snapshot:
+            env = os.environ.copy()
+            env["CSV_FILE"] = str(csv_out.resolve())
+            env["BARS_PER_SECOND"] = str(args.bars_per_second)
+            # (We let the app stream the entire sliced file; START/END env not needed.)
+
+            proc = subprocess.Popen([sys.executable, str(app_path)], env=env,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            try:
+                wait_http_ok(APP_URL + "/api/pair", timeout=30)
+
+                # post lines (NO direction)
+                # immediate ones now:
+                immediate = [li for li in lines if not li.get("at")]
+                for li in immediate:
+                    add_line_http(pair, li["price"])
+
+                # scheduled ones (basic row-based timing, datetime posts immediately; extend if needed)
+                timed = [li for li in lines if li.get("at")]
+                if timed:
+                    # read row count to map row:N to delays
+                    with open(csv_out, newline="", encoding="utf-8") as f:
+                        rdr = list(csv.DictReader(f, delimiter=";"))
+
+                    def post_timed():
+                        for li in timed:
+                            at = str(li["at"])
+                            delay = 0.0
+                            if at.startswith("row:"):
+                                n = int(at.split(":",1)[1])
+                                delay = max(0, n-1) / float(args.bars_per_second)
+                            # (for datetime strings we don't know 1:1 playback mapping here → post right away)
+                            time.sleep(delay)
+                            try:
+                                add_line_http(pair, li["price"])
+                            except Exception as e:
+                                print(f"[sched] add_line failed: {e}", file=sys.stderr)
+
+                    threading.Thread(target=post_timed, daemon=True).start()
+
+                # run & shoot
+                png = sdir / f"snapshot_{tf}.png"
+                asyncio.run(shoot_png(png, tf, selector=args.chart_selector))
+                print(f"[snap] {name} → {png}")
+            finally:
+                try:
+                    proc.send_signal(signal.SIGINT)
+                    proc.wait(timeout=5)
+                except Exception:
+                    proc.kill()
+
+
+if __name__ == "__main__":
+    main()
+```
+===== END FILE: run_scenarios.py =====

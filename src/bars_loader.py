@@ -97,25 +97,20 @@ class BarsLoader:
 
     def start(self, from_time: int = None):
         """
-        Begin or resume streaming.   
-        `from_time` is passed directly to the data-source.subscribe.
+        Begin or resume streaming.
+        `from_time` is passed to the data-source.subscribe via our wrapper.
         """
-        # optionally update from_time for next subscribe call
         if from_time is not None:
             self._from_time = from_time
 
-        self.streaming     = True
+        self.streaming = True
         self._stop_event.clear()
 
         if hasattr(self.data_source, "_stop_event"):
             self.data_source._stop_event.clear()
 
-        # run the subscribe loop in SocketIO’s context so emits work
-        self.socketio.start_background_task(
-            self.data_source.subscribe,
-            self._handle_message,
-            self._from_time
-        )
+        # ⬇️ use our wrapper so we can flush + emit stream_end on completion
+        self.socketio.start_background_task(self._run_subscription, self._from_time)
 
     def pause(self):
         """
@@ -144,8 +139,22 @@ class BarsLoader:
         self._current_group_start = None
 
     def _handle_message(self, msg: dict):
+        # 🔚 handle end-of-stream sentinel FIRST so we never miss it
+        if isinstance(msg, dict) and msg.get('_end'):
+            self.streaming = False
+            self.socketio.emit('stream_status', {'playing': False})
+            self.socketio.emit('stream_end', {'ok': True})
+            return
+    
         """Callback for each bar or tick pushed by the data source."""
         if self._stop_event.is_set():
+            return
+
+        # 🔚 end sentinel
+        if isinstance(msg, dict) and msg.get('_end'):
+            self.streaming = False
+            self.socketio.emit('stream_status', {'playing': False})
+            self.socketio.emit('stream_end', {'ok': True})
             return
 
         # SL/TP callback
@@ -228,3 +237,31 @@ class BarsLoader:
             'volume': volume,
             'pair':   pair
         }
+    
+    def _run_subscription(self, from_time: int):
+        """
+        Wrapper executed in the Socket.IO background task:
+        - Runs the data source subscription (pushes bars into _handle_message)
+        - Flushes the last aggregated TF bar (if any)
+        - Emits 'stream_end' so external automation can know we're done
+        """
+        try:
+            # blocks until data_source.subscribe finishes
+            self.data_source.subscribe(self._handle_message, from_time)
+        finally:
+            # flush final aggregate if TF > 1m and we still have buffered bars
+            try:
+                if not (self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1):
+                    if self._1m_buffer:
+                        window_secs = self.group_size * 60
+                        agg = self._aggregate_time_window(self._1m_buffer, self._current_group_start, window_secs)
+                        self.socketio.emit('bar', agg)
+                        # small pacing so UI can render before end signal
+                        time.sleep(self._emit_delay)
+            except Exception:
+                # don't let flush errors block end signal
+                pass
+
+            self.streaming = False
+            reason = 'paused' if self._stop_event.is_set() else 'eof'
+            self.socketio.emit('stream_end', {'reason': reason})

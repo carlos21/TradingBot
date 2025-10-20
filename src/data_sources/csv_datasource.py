@@ -51,7 +51,8 @@ class CSVDataSource(CombinedDataSource):
         tz:             str   = None,
         initial_start_time:     int   = None,
         initial_end_time:       int   = None,
-        bars_per_second: float = 10.0
+        bars_per_second: float = 10.0,
+        fileobj=None
     ):
         # normalize datetime inputs to epoch ints
         if isinstance(initial_start_time, datetime):
@@ -65,6 +66,7 @@ class CSVDataSource(CombinedDataSource):
         self.fmt                = time_fmt or self.PAIR_FORMATS.get(pair, self.DEFAULT_FMT)
         self.local_tz           = ZoneInfo(tz or self.PAIR_TZS.get(pair, 'UTC'))
         self.file               = filename or self.PAIR_FILES[pair]
+        self._fileobj           = fileobj
         self.utc                = ZoneInfo("UTC")
         self.bars_per_second    = bars_per_second
         self._emit_delay        = 1.0 / bars_per_second
@@ -97,7 +99,8 @@ class CSVDataSource(CombinedDataSource):
     def _load_historical_bars(self) -> List[Dict]:
         bars: List[Dict] = []
         ny_tz = ZoneInfo("America/New_York")
-        with open(self.file, newline='') as f:
+        f = self._fileobj or open(self.file, newline='')
+        with f:
             sample  = f.read(2048); f.seek(0)
             dialect = csv.Sniffer().sniff(sample, delimiters=",;")
             reader  = csv.DictReader(f, dialect=dialect)
@@ -151,6 +154,11 @@ class CSVDataSource(CombinedDataSource):
             self._played_bars.append(bar)
             print(f"[CSV_DS] → playing idx={idx}, ts={bar['time']}")
             callback(bar)
+        
+        try:
+            callback({'_end': True})
+        except Exception:
+            pass
 
     def set_timeframe(self, tf: str):
         t_logger.debug(f"set_timeframe called → tf={tf}")

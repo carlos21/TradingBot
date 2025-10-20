@@ -20,11 +20,10 @@ export class DataService {
   }
 
   // List all pinned lines
-  async fetchLines() {
-    const resp = await fetch(`${this.baseUrl}/api/lines`);
-    if (!resp.ok) throw new Error(`Error fetching lines: ${resp.statusText}`);
-    // returns [{ id, pair, price, creation_date }, …]
-    return resp.json();
+  async fetchLines(pair) {
+    if (!pair) throw new Error("listLines(pair): 'pair' is required.");
+    const res = await fetch(`${this.baseUrl}/api/lines?pair=${pair}`);
+    return res.json();
   }
 
   // Add a new line with `pair` and `price`

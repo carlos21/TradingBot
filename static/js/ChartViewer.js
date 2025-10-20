@@ -142,7 +142,7 @@ export class ChartViewer {
   }
 
   async _initLines() {
-    const lines = await this.dataService.fetchLines();
+    const lines = await this.dataService.fetchLines(this.pair);
     lines.forEach(ld => {
       const line = this.series.createPriceLine({
         price: ld.price,
@@ -190,6 +190,8 @@ export class ChartViewer {
       this.series.removePriceLine(found.line);
       this.pinnedLines = this.pinnedLines.filter(o => o.id !== id);
     });
+
+    this.socket.on('stream_end', () => { window.__done = true; });
   }
 
   _shadeBar(bar) {
