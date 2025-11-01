@@ -15,6 +15,8 @@ from src.strategies.entry_context import (
 )
 from dateutil import parser as dtparser
 
+import re
+
 Direction = Literal["long", "short", "buy", "sell"]
 
 @dataclass

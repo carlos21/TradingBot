@@ -8,6 +8,8 @@ FILE_PATHS = [
     "app.py",                  # individual files still work
     "app_factory.py",
     "scripts",
+    "static",
+    "templates"
 ]
 
 # Optional knobs
@@ -132,9 +134,6 @@ if __name__ == "__main__":
         print(f"{i:3}. {fp}")
 
     print("\n" + "-" * 60 + "\n")
-
-    # Then print the merged content
-    print(merged_text)
 
     out_path = "merged_context.txt"
     with open(out_path, "w", encoding="utf-8") as out:
