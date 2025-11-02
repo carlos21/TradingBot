@@ -53,6 +53,11 @@ def read_text(path: Path) -> str:
 
 def build_block(path_str: str) -> str:
     p = Path(path_str)
+
+    # skip package markers
+    if p.name == "__init__.py":
+        return f"===== SKIPPED (__init__.py): {p} ====="
+
     ext = p.suffix.lower()
     if ext not in ALLOWED_EXTS:
         label = p.name if USE_BASENAME else str(p)
@@ -77,12 +82,14 @@ def build_block(path_str: str) -> str:
     )
 
 def iter_allowed_files_in_dir(root: Path):
-    """Yield allowed files under 'root' recursively, skipping EXCLUDE_DIRS."""
+    """Yield allowed files under 'root' recursively, skipping EXCLUDE_DIRS and __init__.py."""
     files = []
     for dirpath, dirnames, filenames in os.walk(root):
         # prune excluded dirs in-place for efficiency
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
         for fn in filenames:
+            if fn == "__init__.py":
+                continue
             fp = Path(dirpath) / fn
             if fp.suffix.lower() in ALLOWED_EXTS:
                 files.append(fp)
@@ -105,11 +112,18 @@ def merge_files(paths):
                 blocks.append(f"===== EMPTY FOLDER (no allowed files): {label} =====")
                 continue
             for fp in files:
+                # we already filtered __init__.py above, but guard again
+                if fp.name == "__init__.py":
+                    blocks.append(f"===== SKIPPED (__init__.py): {fp} =====")
+                    continue
                 included_files.append(fp)
                 blocks.append(build_block(str(fp)))
             continue
 
         if p.is_file():
+            if p.name == "__init__.py":
+                blocks.append(f"===== SKIPPED (__init__.py): {p} =====")
+                continue
             if p.suffix.lower() in ALLOWED_EXTS:
                 included_files.append(p)
             blocks.append(build_block(str(p)))
