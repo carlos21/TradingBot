@@ -1,10 +1,3 @@
-===== BEGIN FILE: __init__.py =====
-(path: src/__init__.py)
-```python
-
-```
-===== END FILE: __init__.py =====
-
 ===== BEGIN FILE: bars_loader.py =====
 (path: src/bars_loader.py)
 ```python
@@ -51,12 +44,17 @@ class BarsLoader:
         self.streaming     = False
         self._stop_event   = threading.Event()
         self._thread       = None
+        self._stop_at = None
 
         # grouping state
         self.current_tf           = '1m'
         self.group_size           = 1        # minutes for aggregation
         self._1m_buffer           = []
         self._current_group_start = None     # epoch-sec start of current window
+
+        self._default_emit_delay = self._emit_delay   # ← remember normal speed
+        self._fast_jump_mode  = False                 # ← when True we restore at end
+        self._last_played_ts  = 0 # ← updated on every bar/tick
 
     def set_timeframe(self, tf: str):
         print(f"[SET_TF] called with tf={tf}")
@@ -105,13 +103,15 @@ class BarsLoader:
 
         print("[SET_TF] ready to start() with new timeframe")
 
-    def start(self, from_time: int = None):
+    def start(self, from_time: int = None, stop_at: int = None):
         """
         Begin or resume streaming.
         `from_time` is passed to the data-source.subscribe via our wrapper.
         """
         if from_time is not None:
             self._from_time = from_time
+
+        self._stop_at = stop_at
 
         self.streaming = True
         self._stop_event.clear()
@@ -130,6 +130,8 @@ class BarsLoader:
         """
         # 1) stop our grouping & dispatch loop
         self._stop_event.set()
+
+        self._stop_at = None
 
         # 2) if the data source has a pause() method, call it
         if hasattr(self.data_source, 'pause'):
@@ -159,13 +161,8 @@ class BarsLoader:
         """Callback for each bar or tick pushed by the data source."""
         if self._stop_event.is_set():
             return
-
-        # 🔚 end sentinel
-        if isinstance(msg, dict) and msg.get('_end'):
-            self.streaming = False
-            self.socketio.emit('stream_status', {'playing': False})
-            self.socketio.emit('stream_end', {'ok': True})
-            return
+        
+        stop_at = self._stop_at
 
         # SL/TP callback
         if self.bar_callback:
@@ -173,9 +170,24 @@ class BarsLoader:
 
         # dispatch to bar or tick processing
         if 'open' in msg and 'high' in msg:
+            self._last_played_ts = msg['time']
             self._process_bar(msg)
         elif 'price' in msg:
+            self._last_played_ts = msg['time']
             self._process_tick(msg)
+
+        # check if we reached the end
+        if stop_at is not None and 'time' in msg and msg['time'] >= stop_at:
+            # avisar a la datasource que pare
+            self._stop_event.set()
+            if hasattr(self.data_source, '_stop_event'):
+                self.data_source._stop_event.set()
+
+            self.streaming = False
+            self.socketio.emit('stream_status', {'playing': False})
+            # razón especial para que el front sepa que fue “navegación de día”
+            self.socketio.emit('stream_end', {'reason': 'day_end', 'stop_at': stop_at})
+            return
 
     def _process_bar(self, bar: dict):
         """Handle one raw 1m bar: either emit immediately or buffer+aggregate."""
@@ -275,6 +287,78 @@ class BarsLoader:
             self.streaming = False
             reason = 'paused' if self._stop_event.is_set() else 'eof'
             self.socketio.emit('stream_end', {'reason': reason})
+
+            if self._fast_jump_mode:
+                self._emit_delay = self._default_emit_delay
+                self._fast_jump_mode = False
+
+    # navigate to next day
+
+    def _get_all_bars(self):
+        """Return the full raw list from the underlying CSVDataSource/CombinedDataSource."""
+        return getattr(self.data_source, "_bars", None)
+
+    def _find_next_same_time_next_day(self, current_ts: int, days: int) -> int:
+        """
+        Given a current unix ts and a day offset (+1 or -1), find the bar in the CSV
+        that is >= (current_ts + days*86400) (for +1) or <= (current_ts - 1) for -1.
+        If not found, return the last/first bar available.
+        """
+        bars = self._get_all_bars()
+        if not bars:
+            # nothing better, just shift the timestamp
+            return current_ts + days * 86400
+
+        if days > 0:
+            target = current_ts + days * 86400
+            for b in bars:
+                if b["time"] >= target:
+                    return b["time"]
+            # no bar after → stay at last
+            return bars[-1]["time"]
+        else:
+            # days < 0 → go backwards
+            target = current_ts + days * 86400
+            prev = bars[0]["time"]
+            for b in bars:
+                if b["time"] > target:
+                    return prev
+                prev = b["time"]
+            return prev
+        
+    def jump_day(self, direction: int = 1, fast: bool = True) -> int:
+        """
+        Jump +1 or -1 day from the last played bar and replay from there.
+        - direction: +1 = next day, -1 = previous day
+        - fast=True: replay with no delays, then restore normal speed
+        Returns the unix timestamp we actually jumped to.
+        """
+        # 1) decide base time (prefer DS _played_bars, fall back to self._last_played_ts)
+        base_ts = 0
+        played = getattr(self.data_source, "_played_bars", None)
+        if played:
+            base_ts = played[-1]["time"]
+        elif self._last_played_ts:
+            base_ts = self._last_played_ts
+        else:
+            # no bars played yet → use current _from_time
+            base_ts = self._from_time
+
+        target_ts = self._find_next_same_time_next_day(base_ts, direction)
+
+        # 2) prepare fast mode
+        if fast:
+            self._fast_jump_mode = True
+            self._emit_delay = 0.0
+        else:
+            self._fast_jump_mode = False
+            self._emit_delay = self._default_emit_delay
+
+        # 3) reset and start from that point
+        self.seek(target_ts)
+        self.start(target_ts)
+
+        return target_ts
 ```
 ===== END FILE: bars_loader.py =====
 
@@ -1002,13 +1086,6 @@ class MetaTraderDataSource(CombinedDataSource):
 ```
 ===== END FILE: metatrader_datasource.py =====
 
-===== BEGIN FILE: __init__.py =====
-(path: src/database/__init__.py)
-```python
-
-```
-===== END FILE: __init__.py =====
-
 ===== BEGIN FILE: database.py =====
 (path: src/database/database.py)
 ```python
@@ -1212,13 +1289,6 @@ class TradeData:
         )
 ```
 ===== END FILE: models.py =====
-
-===== BEGIN FILE: __init__.py =====
-(path: src/repositories/__init__.py)
-```python
-
-```
-===== END FILE: __init__.py =====
 
 ===== BEGIN FILE: lines_repository.py =====
 (path: src/repositories/lines_repository.py)
@@ -1671,13 +1741,6 @@ class TradeManager:
         return payload
 ```
 ===== END FILE: trade_manager.py =====
-
-===== BEGIN FILE: __init__.py =====
-(path: src/strategies/__init__.py)
-```python
-
-```
-===== END FILE: __init__.py =====
 
 ===== BEGIN FILE: entry_context.py =====
 (path: src/strategies/entry_context.py)
@@ -2415,13 +2478,6 @@ class StrategyConfig:
 ```
 ===== END FILE: strategy_config.py =====
 
-===== BEGIN FILE: __init__.py =====
-(path: tests/__init__.py)
-```python
-
-```
-===== END FILE: __init__.py =====
-
 ===== BEGIN FILE: fakes.py =====
 (path: tests/fakes.py)
 ```python
@@ -2509,6 +2565,8 @@ from src.strategies.entry_context import (
     EntryFilter, retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
 )
 from dateutil import parser as dtparser
+
+import re
 
 Direction = Literal["long", "short", "buy", "sell"]
 
@@ -2811,13 +2869,6 @@ SCENARIO = Scenario(
 ```
 ===== END FILE: nq_sample.py =====
 
-===== BEGIN FILE: __init__.py =====
-(path: tests/scenarios/__init__.py)
-```python
-
-```
-===== END FILE: __init__.py =====
-
 ===== BEGIN FILE: test_scenarios.py =====
 (path: tests/test_scenarios.py)
 ```python
@@ -3083,12 +3134,14 @@ def create_app(
     @socketio.on('start_stream')
     def on_start_stream(payload):
         tf = payload.get('timeframe', '1m')
+        print(f">> start_stream; {tf}")
         try:
             loader.set_timeframe(tf)
         except ValueError:
             loader.set_timeframe('1m')
         from_time = payload.get('fromTime', 0)
-        loader.start(from_time)
+        stop_at   = payload.get('stopAt')
+        loader.start(from_time, stop_at)
         emit('stream_status', {'playing': True})
 
     @socketio.on('pause_stream')
@@ -3099,6 +3152,14 @@ def create_app(
     @socketio.on('seek')
     def on_seek(payload):
         loader.seek(payload.get('fromTime', 0))
+
+    @socketio.on('jump_day')
+    def on_jump_day(payload):
+        # payload: {direction: 1|-1, fast: true|false}
+        direction = int(payload.get('direction', 1))
+        fast      = bool(payload.get('fast', True))
+        ts = loader.jump_day(direction=direction, fast=fast)
+        emit('jump_result', {'to': ts})
 
     return AppWiring(
         app=app,
@@ -3172,6 +3233,11 @@ def read_text(path: Path) -> str:
 
 def build_block(path_str: str) -> str:
     p = Path(path_str)
+
+    # skip package markers
+    if p.name == "__init__.py":
+        return f"===== SKIPPED (__init__.py): {p} ====="
+
     ext = p.suffix.lower()
     if ext not in ALLOWED_EXTS:
         label = p.name if USE_BASENAME else str(p)
@@ -3196,12 +3262,14 @@ def build_block(path_str: str) -> str:
     )
 
 def iter_allowed_files_in_dir(root: Path):
-    """Yield allowed files under 'root' recursively, skipping EXCLUDE_DIRS."""
+    """Yield allowed files under 'root' recursively, skipping EXCLUDE_DIRS and __init__.py."""
     files = []
     for dirpath, dirnames, filenames in os.walk(root):
         # prune excluded dirs in-place for efficiency
         dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
         for fn in filenames:
+            if fn == "__init__.py":
+                continue
             fp = Path(dirpath) / fn
             if fp.suffix.lower() in ALLOWED_EXTS:
                 files.append(fp)
@@ -3224,11 +3292,18 @@ def merge_files(paths):
                 blocks.append(f"===== EMPTY FOLDER (no allowed files): {label} =====")
                 continue
             for fp in files:
+                # we already filtered __init__.py above, but guard again
+                if fp.name == "__init__.py":
+                    blocks.append(f"===== SKIPPED (__init__.py): {fp} =====")
+                    continue
                 included_files.append(fp)
                 blocks.append(build_block(str(fp)))
             continue
 
         if p.is_file():
+            if p.name == "__init__.py":
+                blocks.append(f"===== SKIPPED (__init__.py): {p} =====")
+                continue
             if p.suffix.lower() in ALLOWED_EXTS:
                 included_files.append(p)
             blocks.append(build_block(str(p)))
@@ -4798,6 +4873,7 @@ export class ChartViewer {
     this.activeTrade = null;
     this.historicalBars = [];
     this.tradeMarkers   = [];
+    this.lastBarTs = null;
 
     this.formats = {
       NQ:     { precision: 2,    minMove: 0.01    },
@@ -4974,6 +5050,12 @@ export class ChartViewer {
     });
 
     this.socket.on('stream_end', () => { window.__done = true; });
+
+    this.socket.on('jump_result', (payload) => {
+      if (payload && payload.to) {
+        label.textContent = 'Current day: ' + tsToIso(payload.to).slice(0, 10) + ' ... ' + tsToIso(payload.to).slice(11, 16);
+      }
+    });
   }
 
   _shadeBar(bar) {
@@ -5185,6 +5267,28 @@ export class ChartViewer {
     this.displayChart(bars);
     bars.forEach(bar => this._shadeBar(bar));
   }
+
+  jumpToDay(direction = 1) {
+    if (!this.lastTime) return; // guard
+
+    const ONE_DAY = 86400;
+    const fromTime = direction === 1
+      ? this.lastTime + ONE_DAY
+      : Math.max(0, this.lastTime - ONE_DAY);
+
+    this.startDayReplay(fromTime);
+  }
+
+  startDayReplay(fromTime) {
+    const ONE_DAY = 86400;
+    const stopAt = fromTime + ONE_DAY;
+
+    this.socket.emit('start_stream', {
+      timeframe: this.currentTF || '5m',
+      fromTime,
+      stopAt
+    });
+  }
 }
 
 ```
@@ -5226,6 +5330,10 @@ export class ControlsView {
     this.openButton             = document.getElementById('open-trade-button');
     this.closeButton            = document.getElementById('close-trade-button');
     this.toggleBtn              = document.getElementById('toggleReplayBtn');
+    this.prevBtn = document.getElementById('prevDayBtn');
+    this.nextBtn = document.getElementById('nextDayBtn');
+    this.currentDayLabel   = document.getElementById('currentDayLabel');
+
     this.tfButtons              = Array.from(document.querySelectorAll('[data-timeframe]'));
 
     this.stopLossLabel.innerText = this.stopLossPoints;
@@ -5290,6 +5398,14 @@ export class ControlsView {
     this.toggleBtn.addEventListener('click', () => {
       this.chartViewer.toggleReplay();
       this.toggleBtn.textContent = this.chartViewer.isPlaying ? 'Pause' : 'Play';
+    });
+
+    this.prevBtn.addEventListener('click', () => {
+      this.chartViewer.jumpToDay(-1);
+    });
+
+    this.nextBtn.addEventListener('click', () => {
+      this.chartViewer.jumpToDay(1);
     });
   }
 
@@ -5812,6 +5928,12 @@ export class WebSocketService {
               Close Trade
             </button>
           </div>
+        </div>
+
+        <div class="flex items-center space-x-4">
+          <button id="prevDayBtn">◀ Prev day</button>
+          <button id="nextDayBtn">Next day ▶</button>
+          <span id="currentDayLabel"></span>
         </div>
     
         <!-- Right group: PnL display + Play/Pause -->

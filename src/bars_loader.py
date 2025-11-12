@@ -41,12 +41,17 @@ class BarsLoader:
         self.streaming     = False
         self._stop_event   = threading.Event()
         self._thread       = None
+        self._stop_at = None
 
         # grouping state
         self.current_tf           = '1m'
         self.group_size           = 1        # minutes for aggregation
         self._1m_buffer           = []
         self._current_group_start = None     # epoch-sec start of current window
+
+        self._default_emit_delay = self._emit_delay   # ← remember normal speed
+        self._fast_jump_mode  = False                 # ← when True we restore at end
+        self._last_played_ts  = 0 # ← updated on every bar/tick
 
     def set_timeframe(self, tf: str):
         print(f"[SET_TF] called with tf={tf}")
@@ -95,13 +100,23 @@ class BarsLoader:
 
         print("[SET_TF] ready to start() with new timeframe")
 
-    def start(self, from_time: int = None):
+    def start(self, from_time: int = None, stop_at: int = None):
         """
         Begin or resume streaming.
         `from_time` is passed to the data-source.subscribe via our wrapper.
         """
         if from_time is not None:
             self._from_time = from_time
+
+        self._stop_at = stop_at
+
+        # 🔹 If we're doing a bounded replay (stop_at provided), run with no pacing
+        if stop_at is not None:
+            self._fast_jump_mode = True
+            self._emit_delay = 0.0
+        else:
+            self._fast_jump_mode = False
+            self._emit_delay = self._default_emit_delay
 
         self.streaming = True
         self._stop_event.clear()
@@ -120,6 +135,8 @@ class BarsLoader:
         """
         # 1) stop our grouping & dispatch loop
         self._stop_event.set()
+
+        self._stop_at = None
 
         # 2) if the data source has a pause() method, call it
         if hasattr(self.data_source, 'pause'):
@@ -149,13 +166,8 @@ class BarsLoader:
         """Callback for each bar or tick pushed by the data source."""
         if self._stop_event.is_set():
             return
-
-        # 🔚 end sentinel
-        if isinstance(msg, dict) and msg.get('_end'):
-            self.streaming = False
-            self.socketio.emit('stream_status', {'playing': False})
-            self.socketio.emit('stream_end', {'ok': True})
-            return
+        
+        stop_at = self._stop_at
 
         # SL/TP callback
         if self.bar_callback:
@@ -163,9 +175,24 @@ class BarsLoader:
 
         # dispatch to bar or tick processing
         if 'open' in msg and 'high' in msg:
+            self._last_played_ts = msg['time']
             self._process_bar(msg)
         elif 'price' in msg:
+            self._last_played_ts = msg['time']
             self._process_tick(msg)
+
+        # check if we reached the end
+        if stop_at is not None and 'time' in msg and msg['time'] >= stop_at:
+            # avisar a la datasource que pare
+            self._stop_event.set()
+            if hasattr(self.data_source, '_stop_event'):
+                self.data_source._stop_event.set()
+
+            self.streaming = False
+            self.socketio.emit('stream_status', {'playing': False})
+            # razón especial para que el front sepa que fue “navegación de día”
+            self.socketio.emit('stream_end', {'reason': 'day_end', 'stop_at': stop_at})
+            return
 
     def _process_bar(self, bar: dict):
         """Handle one raw 1m bar: either emit immediately or buffer+aggregate."""
@@ -188,6 +215,9 @@ class BarsLoader:
 
         # same window → buffer it
         if window_start == self._current_group_start:
+            if self._1m_buffer and self._1m_buffer[-1]['time'] == bar['time']:
+                # ignore the duplicate pushed by subscribe right after seeding
+                return
             self._1m_buffer.append(bar)
             print(f"[PROCESS_BAR] ➕ buffering bar time={bar['time']} (buffer size={len(self._1m_buffer)})")
         else:
@@ -265,3 +295,75 @@ class BarsLoader:
             self.streaming = False
             reason = 'paused' if self._stop_event.is_set() else 'eof'
             self.socketio.emit('stream_end', {'reason': reason})
+
+            if self._fast_jump_mode:
+                self._emit_delay = self._default_emit_delay
+                self._fast_jump_mode = False
+
+    # navigate to next day
+
+    def _get_all_bars(self):
+        """Return the full raw list from the underlying CSVDataSource/CombinedDataSource."""
+        return getattr(self.data_source, "_bars", None)
+
+    def _find_next_same_time_next_day(self, current_ts: int, days: int) -> int:
+        """
+        Given a current unix ts and a day offset (+1 or -1), find the bar in the CSV
+        that is >= (current_ts + days*86400) (for +1) or <= (current_ts - 1) for -1.
+        If not found, return the last/first bar available.
+        """
+        bars = self._get_all_bars()
+        if not bars:
+            # nothing better, just shift the timestamp
+            return current_ts + days * 86400
+
+        if days > 0:
+            target = current_ts + days * 86400
+            for b in bars:
+                if b["time"] >= target:
+                    return b["time"]
+            # no bar after → stay at last
+            return bars[-1]["time"]
+        else:
+            # days < 0 → go backwards
+            target = current_ts + days * 86400
+            prev = bars[0]["time"]
+            for b in bars:
+                if b["time"] > target:
+                    return prev
+                prev = b["time"]
+            return prev
+        
+    def jump_day(self, direction: int = 1, fast: bool = True) -> int:
+        """
+        Jump +1 or -1 day from the last played bar and replay from there.
+        - direction: +1 = next day, -1 = previous day
+        - fast=True: replay with no delays, then restore normal speed
+        Returns the unix timestamp we actually jumped to.
+        """
+        # 1) decide base time (prefer DS _played_bars, fall back to self._last_played_ts)
+        base_ts = 0
+        played = getattr(self.data_source, "_played_bars", None)
+        if played:
+            base_ts = played[-1]["time"]
+        elif self._last_played_ts:
+            base_ts = self._last_played_ts
+        else:
+            # no bars played yet → use current _from_time
+            base_ts = self._from_time
+
+        target_ts = self._find_next_same_time_next_day(base_ts, direction)
+
+        # 2) prepare fast mode
+        if fast:
+            self._fast_jump_mode = True
+            self._emit_delay = 0.0
+        else:
+            self._fast_jump_mode = False
+            self._emit_delay = self._default_emit_delay
+
+        # 3) reset and start from that point
+        self.seek(target_ts)
+        self.start(target_ts)
+
+        return target_ts

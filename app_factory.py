@@ -166,12 +166,13 @@ def create_app(
     @socketio.on('start_stream')
     def on_start_stream(payload):
         tf = payload.get('timeframe', '1m')
-        try:
-            loader.set_timeframe(tf)
-        except ValueError:
-            loader.set_timeframe('1m')
         from_time = payload.get('fromTime', 0)
-        loader.start(from_time)
+        stop_at   = payload.get('stopAt')
+
+        # Set base time first so set_timeframe uses the right window
+        loader.seek(from_time)
+        loader.set_timeframe(tf)
+        loader.start(from_time, stop_at)
         emit('stream_status', {'playing': True})
 
     @socketio.on('pause_stream')
@@ -182,6 +183,14 @@ def create_app(
     @socketio.on('seek')
     def on_seek(payload):
         loader.seek(payload.get('fromTime', 0))
+
+    @socketio.on('jump_day')
+    def on_jump_day(payload):
+        # payload: {direction: 1|-1, fast: true|false}
+        direction = int(payload.get('direction', 1))
+        fast      = bool(payload.get('fast', True))
+        ts = loader.jump_day(direction=direction, fast=fast)
+        emit('jump_result', {'to': ts})
 
     return AppWiring(
         app=app,

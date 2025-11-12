@@ -27,12 +27,12 @@ def build_prod():
 
     numbers = StrategyNumbers(
         min_stop_loss=10.0,
-        max_bounce=40.0,
+        max_bounce=60.0,
         extra_sl_space=0.0,
     )
 
     options = StrategyOptions(
-        line_removal_mode=LineRemovalMode.NEVER,
+        line_removal_mode=LineRemovalMode.ON_ENTER,
         triggers=[retest_cross_trigger],
         entry_filters=[
             open_trades_limit_filter(1), 

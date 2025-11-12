@@ -31,6 +31,10 @@ export class ControlsView {
     this.openButton             = document.getElementById('open-trade-button');
     this.closeButton            = document.getElementById('close-trade-button');
     this.toggleBtn              = document.getElementById('toggleReplayBtn');
+    this.prevBtn = document.getElementById('prevDayBtn');
+    this.nextBtn = document.getElementById('nextDayBtn');
+    this.currentDayLabel   = document.getElementById('currentDayLabel');
+
     this.tfButtons              = Array.from(document.querySelectorAll('[data-timeframe]'));
 
     this.stopLossLabel.innerText = this.stopLossPoints;
@@ -95,6 +99,14 @@ export class ControlsView {
     this.toggleBtn.addEventListener('click', () => {
       this.chartViewer.toggleReplay();
       this.toggleBtn.textContent = this.chartViewer.isPlaying ? 'Pause' : 'Play';
+    });
+
+    this.prevBtn.addEventListener('click', () => {
+      this.chartViewer.jumpToDay(-1);
+    });
+
+    this.nextBtn.addEventListener('click', () => {
+      this.chartViewer.jumpToDay(1);
     });
   }
 

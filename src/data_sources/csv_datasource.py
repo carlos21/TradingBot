@@ -98,9 +98,8 @@ class CSVDataSource(CombinedDataSource):
 
     def _load_historical_bars(self) -> List[Dict]:
         bars: List[Dict] = []
-        ny_tz = ZoneInfo("America/New_York")
-        f = self._fileobj or open(self.file, newline='')
-        with f:
+        local_tz = self.local_tz             # e.g., America/Chicago for NQ
+        with (self._fileobj or open(self.file, newline='')) as f:
             sample  = f.read(2048); f.seek(0)
             dialect = csv.Sniffer().sniff(sample, delimiters=",;")
             reader  = csv.DictReader(f, dialect=dialect)
@@ -108,14 +107,16 @@ class CSVDataSource(CombinedDataSource):
             for row in reader:
                 ts = f"{row['Date']} {row['Time']}"
                 try:
-                    dt = datetime.strptime(ts, self.fmt)
+                    dt = datetime.strptime(ts, self.fmt)   # naive
                 except ValueError:
-                    dt = parser.parse(ts)
-                dt_utc = dt.replace(tzinfo=self.utc)
-                dt_ny  = dt_utc.astimezone(ny_tz)
+                    dt = parser.parse(ts)                  # still naive
+
+                # Treat the CSV timestamp as local (pair) time, then convert to UTC
+                dt_local = dt.replace(tzinfo=local_tz)
+                dt_utc   = dt_local.astimezone(self.utc)
 
                 bars.append({
-                    'time':   int(dt_ny.timestamp()),
+                    'time':   int(dt_utc.timestamp()),
                     'open':   float(row['Open']),
                     'high':   float(row['High']),
                     'low':    float(row['Low']),
@@ -139,7 +140,8 @@ class CSVDataSource(CombinedDataSource):
 
     def subscribe(self, callback, from_time=0):
         print(f"[CSV_DS] subscribe() start → from_time={from_time}, total_bars={len(self._bars)}")
-        start_idx = next((i for i,b in enumerate(self._bars) if b['time'] > from_time), None)
+        start_idx = next((i for i,b in enumerate(self._bars) if b['time'] >= from_time), None)
+
         if start_idx is not None:
             print(f"[CSV_DS] first to play idx={start_idx}, ts={self._bars[start_idx]['time']}")
         else:
@@ -149,7 +151,7 @@ class CSVDataSource(CombinedDataSource):
             if self._stop_event.is_set():
                 print("[CSV_DS] saw stop_event, breaking")
                 break
-            if bar['time'] <= from_time:
+            if bar['time'] < from_time:
                 continue
             self._played_bars.append(bar)
             print(f"[CSV_DS] → playing idx={idx}, ts={bar['time']}")
@@ -185,7 +187,7 @@ class CSVDataSource(CombinedDataSource):
             self._from_time = from_time
         if self.current_1m_index == 0:
             idx = next(
-                (i for i, b in enumerate(self._bars) if b['time'] > self._from_time),
+                (i for i, b in enumerate(self._bars) if b['time'] >= self._from_time),
                 len(self._bars)
             )
             self.current_1m_index = idx
@@ -221,7 +223,7 @@ class CSVDataSource(CombinedDataSource):
         while i < total and not self._stop_event.is_set():
             bar = self._bars[i]
             ts  = bar['time']
-            if ts > self._from_time:
+            if ts >= self._from_time:
                 self.current_1m_index = i + 1
                 self._process_bar(bar)
             i += 1

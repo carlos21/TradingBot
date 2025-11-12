@@ -16,6 +16,7 @@ export class ChartViewer {
     this.activeTrade = null;
     this.historicalBars = [];
     this.tradeMarkers   = [];
+    this.lastBarTs = null;
 
     this.formats = {
       NQ:     { precision: 2,    minMove: 0.01    },
@@ -192,6 +193,12 @@ export class ChartViewer {
     });
 
     this.socket.on('stream_end', () => { window.__done = true; });
+
+    this.socket.on('jump_result', (payload) => {
+      if (payload && payload.to) {
+        label.textContent = 'Current day: ' + tsToIso(payload.to).slice(0, 10) + ' ... ' + tsToIso(payload.to).slice(11, 16);
+      }
+    });
   }
 
   _shadeBar(bar) {
@@ -402,5 +409,33 @@ export class ChartViewer {
     this.historicalBars = bars;
     this.displayChart(bars);
     bars.forEach(bar => this._shadeBar(bar));
+  }
+
+  jumpToDay(direction = 1) {
+    if (!this.lastTime) return;
+    const ONE_DAY = 86400;
+
+    // Start where we are, stop one day away
+    const fromTime = this.lastTime;
+    const stopAt = direction === 1
+      ? this.lastTime + ONE_DAY       // forward a day
+      : Math.max(0, this.lastTime - ONE_DAY); // backward a day
+
+    this.socket.emit('start_stream', {
+      timeframe: this.currentTF || '5m',
+      fromTime,
+      stopAt
+    });
+  }
+
+  startDayReplay(fromTime) {
+    const ONE_DAY = 86400;
+    const stopAt = fromTime + ONE_DAY;
+
+    this.socket.emit('start_stream', {
+      timeframe: this.currentTF || '5m',
+      fromTime,
+      stopAt
+    });
   }
 }
