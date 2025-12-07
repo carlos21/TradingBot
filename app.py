@@ -33,7 +33,9 @@ def build_prod():
 
     options = StrategyOptions(
         line_removal_mode=LineRemovalMode.ON_ENTER,
-        triggers=[retest_cross_trigger],
+        # Triggers are now handled by LiquidityStrategyV2 defaults (wick + 3-candle)
+        # unless you override them here.
+        triggers=None, 
         entry_filters=[
             open_trades_limit_filter(1), 
             max_bounce_filter(numbers.max_bounce)
@@ -46,8 +48,8 @@ def build_prod():
         repos=repos,
         numbers=numbers,
         options=options,
-        strategy_tf="5m",
-        bootstrap_existing_lines=True,   # prod may want it
+        timeframes=["5m", "15m"],
+        bootstrap_existing_lines=True,
     )
 
 if __name__ == "__main__":

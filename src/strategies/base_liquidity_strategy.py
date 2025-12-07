@@ -1,0 +1,328 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from threading import RLock
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from src.dbexception import DBNotFoundException
+from src.repositories.lines_repository import LineRepository
+from src.repositories.trades_repository import TradeRepository
+from src.strategies.entry_context import (
+    EntryContext,
+    EntryFilter,
+    EntryTrigger,
+)
+
+
+class LineRemovalMode(str, Enum):
+    ON_EVALUATE = "on_evaluate"   # remove line after we evaluated it
+    ON_ENTER    = "on_enter"      # remove only if we actually opened a trade
+    NEVER       = "never"         # never remove (we'll reset state for future triggers)
+
+
+@dataclass
+class StrategyOptions:
+    line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE
+    entry_filters: Optional[List[EntryFilter]] = None
+    triggers: Optional[List[EntryTrigger]] = None
+
+
+class BaseLiquidityStrategy:
+    """
+    Base class containing all shared plumbing:
+      - 5m (or configured TF) aggregation
+      - line state & removal policy
+      - filter pipeline
+      - trade open/close bookkeeping & Socket.IO events
+      - persistence via repositories
+
+    Subclasses must provide default triggers via `default_triggers()`.
+    They may set additional attributes needed by their triggers.
+    """
+
+    def __init__(
+        self,
+        min_stop_loss: float,
+        max_bounce: float,
+        socketio,
+        line_repository: LineRepository,
+        trade_repository: TradeRepository,
+        extra_sl_space: float,
+        strategy_tf: str = "5m",
+        options: Optional[StrategyOptions] = None,
+        htf_fetcher: Optional[Callable[..., Optional[dict]]] = None,
+    ):
+        self.min_stop_loss = float(min_stop_loss)
+        self.max_bounce    = float(max_bounce)
+        self.socketio      = socketio
+        self.line_repository  = line_repository
+        self.trade_repository = trade_repository
+        self.extra_sl_space = float(extra_sl_space)
+
+        self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, has_crossed, extreme }
+        self.open_trades: List[Dict[str, Any]] = []
+        self.total_pnl = 0.0
+        self.lock = RLock()
+
+        # parse TF like "5m" or "1h"
+        num, unit = int(strategy_tf[:-1]), strategy_tf[-1]
+        self.strategy_window = num * (60 if unit == "m" else 3600)
+        self._buf: List[Dict[str, Any]] = []
+        self._group_start: Optional[int] = None
+
+        self.options = options or StrategyOptions()
+        # Let subclasses decide the triggers (they may depend on attrs set after super().__init__)
+        self.triggers: List[EntryTrigger] = []
+        # Filters can be taken straight from options
+        self.entry_filters: List[EntryFilter] = list(self.options.entry_filters or [])
+
+        # Optional dependency for multi-TF checks
+        self.htf_fetcher = htf_fetcher
+
+    # ----- Hooks for subclasses -----
+
+    def default_triggers(self) -> List[EntryTrigger]:
+        """Return a list of default triggers. Must be implemented by subclasses."""
+        raise NotImplementedError
+
+    # ----- Public small API for runtime tweaks -----
+
+    def set_entry_filters(self, filters: List[EntryFilter]):
+        with self.lock:
+            self.entry_filters = list(filters)
+
+    def set_triggers(self, triggers: List[EntryTrigger]):
+        with self.lock:
+            self.triggers = list(triggers)
+
+    # ----- Line management -----
+
+    def add_strategy_line(self, id: Any, level: float, direction: str):
+        """
+        direction: 'long' | 'short'
+        """
+        print(f"[Strategy] ➕ add_strategy_line id={id} level={level} direction={direction}")
+        with self.lock:
+            self.strategy_lines[id] = {
+                "level":       float(level),
+                "direction":   direction,
+                "has_crossed": False,
+                "extreme":     float("inf") if direction == "long" else float("-inf"),
+            }
+
+    def remove_strategy_line(self, id: Any):
+        with self.lock:
+            self.strategy_lines.pop(id, None)
+        try:
+            self.line_repository.delete_line(id)
+        except DBNotFoundException:
+            pass
+        self.socketio.emit("line_removed", {"id": id})
+
+    def _reset_line_state(self, line_state: Dict[str, Any]):
+        """If we keep the line, reset so it can trigger again in the future."""
+        line_state["has_crossed"] = False
+        line_state["extreme"] = float("inf") if line_state["direction"] == "long" else float("-inf")
+
+    # ----- Aggregation -----
+
+    def _aggregate_bars(self, bars: List[Dict[str, Any]], window_start: int, window_secs: int) -> Dict[str, Any]:
+        high   = max(b["high"] for b in bars)
+        low    = min(b["low"] for b in bars)
+        open_  = bars[0]["open"]
+        close_ = bars[-1]["close"]
+        volume = sum(b["volume"] for b in bars)
+        pair   = bars[0]["pair"]
+        return {
+            "time":   window_start + window_secs,
+            "open":   open_,
+            "high":   high,
+            "low":    low,
+            "close":  close_,
+            "volume": volume,
+            "pair":   pair,
+        }
+
+    def on_raw_bar(self, bar: Dict[str, Any]):
+        """
+        Feed raw stream bars (assumed 1s or tick granularity).
+        We aggregate to the configured TF and then process strategy logic on each completed bar.
+        """
+        ts = bar["time"]
+        win = (ts // self.strategy_window) * self.strategy_window
+        if self._group_start is None:
+            self._group_start = win
+        if win == self._group_start:
+            self._buf.append(bar)
+        else:
+            agg = self._aggregate_bars(self._buf, self._group_start, self.strategy_window)
+            self._buf, self._group_start = [bar], win
+            self._on_strategy_bar(agg)
+
+    # ----- Core bar processing -----
+
+    def _on_strategy_bar(self, bar: Dict[str, Any]):
+        """
+        1) check exits on open trades
+        2) for each strategy line, run triggers → may propose an EntryContext
+        3) if proposed, run filters; if allowed, open trade and maybe remove the line
+        """
+        with self.lock:
+            # 1) exits first
+            self._check_open_trades(bar)
+
+            # 2) evaluate lines via triggers
+            for sid, line in list(self.strategy_lines.items()):
+                opened = False
+                proposed_ctx: Optional[EntryContext] = None
+
+                # choose triggers: either explicit or subclass defaults
+                active_triggers = self.triggers or self.default_triggers()
+
+                # run triggers in order until one proposes
+                for trig in active_triggers:
+                    proposed_ctx = trig(self, sid, line, bar)
+                    if proposed_ctx is not None:
+                        break
+
+                if proposed_ctx is None:
+                    # nothing to evaluate
+                    continue
+
+                # 3) run filters
+                allow, _reason = self._filters_allow_entry(proposed_ctx)
+                if allow:
+                    trade = self._build_trade_from_context(proposed_ctx)
+                    self._store_and_emit_open(trade)
+                    opened = True
+
+                # line removal policy
+                self._maybe_remove_line(sid, opened)
+
+    def _filters_allow_entry(self, ctx: EntryContext) -> Tuple[bool, str]:
+        """Run all pluggable entry filters. If any returns (False, reason), block the entry."""
+        for f in self.entry_filters:
+            ok, reason = f(ctx)
+            if not ok:
+                return False, reason
+        return True, "ok"
+
+    def _maybe_remove_line(self, line_id: Any, opened: bool):
+        """Remove the evaluated strategy line depending on removal mode."""
+        mode = self.options.line_removal_mode
+        if mode == LineRemovalMode.NEVER:
+            # keep the line and reset state, so it can re-trigger
+            if line_id in self.strategy_lines:
+                self._reset_line_state(self.strategy_lines[line_id])
+            return
+        if mode == LineRemovalMode.ON_EVALUATE:
+            self.remove_strategy_line(line_id)
+        elif mode == LineRemovalMode.ON_ENTER and opened:
+            self.remove_strategy_line(line_id)
+
+    # ----- Exits -----
+
+    def _check_open_trades(self, bar: Dict[str, Any]):
+        remaining: List[Dict[str, Any]] = []
+        for t in self.open_trades:
+            if t["status"] != "open":
+                continue
+            low, high = bar["low"], bar["high"]
+
+            if t["type"] == "long":
+                if low <= t["stop_loss"]:
+                    t.update(status="closed", result=-1, exit_time=bar["time"], exit_price=low)
+                    self.socketio.emit("trade_close", t)
+                elif high >= t["take_profit"]:
+                    t.update(status="closed", result=4, exit_time=bar["time"], exit_price=high)
+                    self.socketio.emit("trade_close", t)
+                else:
+                    remaining.append(t)
+            else:  # short
+                if high >= t["stop_loss"]:
+                    t.update(status="closed", result=-1, exit_time=bar["time"], exit_price=high)
+                    self.socketio.emit("trade_close", t)
+                elif low <= t["take_profit"]:
+                    t.update(status="closed", result=4, exit_time=bar["time"], exit_price=low)
+                    self.socketio.emit("trade_close", t)
+                else:
+                    remaining.append(t)
+
+        self.open_trades = remaining
+
+    # ----- Trade creation & persistence -----
+
+    def _build_trade_from_context(self, ctx: EntryContext) -> Dict[str, Any]:
+        """
+        Generic R-based construction using ctx.extreme:
+          - entry = bar close
+          - risk = max(distance to extreme, min_stop_loss) + extra_sl_space
+          - 4R take-profit
+        """
+        entry = ctx.close
+        extra = self.extra_sl_space
+
+        if ctx.direction == "long":
+            raw_risk = max(entry - ctx.extreme, self.min_stop_loss)
+            eff_risk = raw_risk + extra
+            sl = entry - eff_risk
+            tp = entry + 4 * eff_risk
+            return self._make_trade_dict(ctx.bar, "long", entry, sl, tp, eff_risk)
+        else:
+            raw_risk = max(ctx.extreme - entry, self.min_stop_loss)
+            eff_risk = raw_risk + extra
+            sl = entry + eff_risk
+            tp = entry - 4 * eff_risk
+            return self._make_trade_dict(ctx.bar, "short", entry, sl, tp, eff_risk)
+
+    def _make_trade_dict(
+        self,
+        bar: Dict[str, Any],
+        trade_type: str,
+        entry: float,
+        stop_loss: float,
+        take_profit: float,
+        risk: float,
+    ) -> Dict[str, Any]:
+        return {
+            "pair":        bar["pair"],
+            "type":        trade_type,
+            "entry":       entry,
+            "stop_loss":   stop_loss,
+            "take_profit": take_profit,
+            "risk":        risk,
+            "status":      "open",
+            "entry_time":  bar["time"],
+        }
+
+    def _store_and_emit_open(self, trade: Dict[str, Any]):
+        td = self.trade_repository.insert_trade(
+            pair=trade["pair"],
+            trade_type=trade["type"],
+            entry_price=trade["entry"],
+            stop_loss=trade["stop_loss"],
+            take_profit=trade["take_profit"],
+            risk=trade["risk"],
+            entry_time=self._ts_to_dt(trade["entry_time"]),
+            params={},
+        )
+        trade["trade_id"] = td.trade_id
+        self.open_trades.append(trade)
+        self.socketio.emit("trade_open", trade)
+
+    def _store_and_emit_close(self, trade: Dict[str, Any]):
+        self.socketio.emit("trade_close", trade)
+        self.trade_repository.close_trade(
+            trade_id=trade["trade_id"],
+            exit_price=trade["exit_price"],
+            exit_time=self._ts_to_dt(trade["exit_time"]),
+            result=trade["result"],
+        )
+
+    # ----- utils -----
+
+    @staticmethod
+    def _ts_to_dt(ts):
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(ts, tz=timezone.utc)

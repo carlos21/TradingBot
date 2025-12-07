@@ -1,24 +1,24 @@
 # src/app_factory.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Optional, Callable
+from typing import Optional, List
 
 from flask import Flask, jsonify, request, abort, render_template
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-from datetime import datetime, timezone
 
 from src.bars_loader import BarsLoader
 from src.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
 from src.data_sources.combined_datasource import CombinedDataSource
 from src.services.trade_manager import TradeManager
-from src.strategies.liquidity_strategy import LiquidityStrategy, StrategyOptions
+from src.strategies.liquidity_strategy import StrategyOptions
 from src.strategies.entry_context import (
-    retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
+    open_trades_limit_filter, max_bounce_filter
 )
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
+from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 
 
 @dataclass
@@ -37,7 +37,7 @@ class AppWiring:
     app: Flask
     socketio: SocketIO
     loader: BarsLoader
-    strategy: LiquidityStrategy
+    strategy: LiquidityStrategyV2
     trade_manager: TradeManager
     lines_controller: LinesController
     trades_controller: TradesController
@@ -52,7 +52,8 @@ def create_app(
     repos: Repositories,
     numbers: StrategyNumbers,
     options: Optional[StrategyOptions] = None,
-    strategy_tf: str = "5m",
+    timeframes: Optional[List[str]] = None,  # New argument for V2
+    strategy_tf: Optional[str] = None,       # Kept for backward compatibility
     bootstrap_existing_lines: bool = True,
 ) -> AppWiring:
     """
@@ -63,23 +64,35 @@ def create_app(
     CORS(app)
     socketio = SocketIO(app, cors_allowed_origins="*")
 
+    # Resolve timeframes: prefer explicit list, fall back to legacy string, default to ["5m"]
+    if timeframes is None:
+        if strategy_tf:
+            effective_timeframes = [strategy_tf]
+        else:
+            effective_timeframes = ["5m"]
+    else:
+        effective_timeframes = timeframes
+
     # Strategy & managers
-    tstrategy = LiquidityStrategy(
+    effective_options = options or StrategyOptions(
+        entry_filters=[
+            open_trades_limit_filter(1),
+            max_bounce_filter(numbers.max_bounce),
+        ]
+    )
+    
+    # Initialize V2 Strategy with the list of timeframes
+    tstrategy = LiquidityStrategyV2(
         min_stop_loss   = numbers.min_stop_loss,
         max_bounce      = numbers.max_bounce,
         extra_sl_space  = numbers.extra_sl_space,
         socketio        = socketio,
         line_repository = repos.lines,
         trade_repository= repos.trades,
-        options         = options or StrategyOptions(
-            triggers=[retest_cross_trigger],
-            entry_filters=[
-                open_trades_limit_filter(1),
-                max_bounce_filter(numbers.max_bounce)
-            ]
-        ),
-        strategy_tf     = strategy_tf,
+        options         = effective_options,
+        timeframes      = effective_timeframes, 
     )
+    
     trade_manager = TradeManager(trade_repository=repos.trades, socketio=socketio)
 
     # Combined callback

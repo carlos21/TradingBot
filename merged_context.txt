@@ -113,6 +113,14 @@ class BarsLoader:
 
         self._stop_at = stop_at
 
+        # 🔹 If we're doing a bounded replay (stop_at provided), run with no pacing
+        if stop_at is not None:
+            self._fast_jump_mode = True
+            self._emit_delay = 0.0
+        else:
+            self._fast_jump_mode = False
+            self._emit_delay = self._default_emit_delay
+
         self.streaming = True
         self._stop_event.clear()
 
@@ -210,6 +218,9 @@ class BarsLoader:
 
         # same window → buffer it
         if window_start == self._current_group_start:
+            if self._1m_buffer and self._1m_buffer[-1]['time'] == bar['time']:
+                # ignore the duplicate pushed by subscribe right after seeding
+                return
             self._1m_buffer.append(bar)
             print(f"[PROCESS_BAR] ➕ buffering bar time={bar['time']} (buffer size={len(self._1m_buffer)})")
         else:
@@ -639,9 +650,8 @@ class CSVDataSource(CombinedDataSource):
 
     def _load_historical_bars(self) -> List[Dict]:
         bars: List[Dict] = []
-        ny_tz = ZoneInfo("America/New_York")
-        f = self._fileobj or open(self.file, newline='')
-        with f:
+        local_tz = self.local_tz             # e.g., America/Chicago for NQ
+        with (self._fileobj or open(self.file, newline='')) as f:
             sample  = f.read(2048); f.seek(0)
             dialect = csv.Sniffer().sniff(sample, delimiters=",;")
             reader  = csv.DictReader(f, dialect=dialect)
@@ -649,14 +659,16 @@ class CSVDataSource(CombinedDataSource):
             for row in reader:
                 ts = f"{row['Date']} {row['Time']}"
                 try:
-                    dt = datetime.strptime(ts, self.fmt)
+                    dt = datetime.strptime(ts, self.fmt)   # naive
                 except ValueError:
-                    dt = parser.parse(ts)
-                dt_utc = dt.replace(tzinfo=self.utc)
-                dt_ny  = dt_utc.astimezone(ny_tz)
+                    dt = parser.parse(ts)                  # still naive
+
+                # Treat the CSV timestamp as local (pair) time, then convert to UTC
+                dt_local = dt.replace(tzinfo=local_tz)
+                dt_utc   = dt_local.astimezone(self.utc)
 
                 bars.append({
-                    'time':   int(dt_ny.timestamp()),
+                    'time':   int(dt_utc.timestamp()),
                     'open':   float(row['Open']),
                     'high':   float(row['High']),
                     'low':    float(row['Low']),
@@ -680,7 +692,8 @@ class CSVDataSource(CombinedDataSource):
 
     def subscribe(self, callback, from_time=0):
         print(f"[CSV_DS] subscribe() start → from_time={from_time}, total_bars={len(self._bars)}")
-        start_idx = next((i for i,b in enumerate(self._bars) if b['time'] > from_time), None)
+        start_idx = next((i for i,b in enumerate(self._bars) if b['time'] >= from_time), None)
+
         if start_idx is not None:
             print(f"[CSV_DS] first to play idx={start_idx}, ts={self._bars[start_idx]['time']}")
         else:
@@ -690,7 +703,7 @@ class CSVDataSource(CombinedDataSource):
             if self._stop_event.is_set():
                 print("[CSV_DS] saw stop_event, breaking")
                 break
-            if bar['time'] <= from_time:
+            if bar['time'] < from_time:
                 continue
             self._played_bars.append(bar)
             print(f"[CSV_DS] → playing idx={idx}, ts={bar['time']}")
@@ -726,7 +739,7 @@ class CSVDataSource(CombinedDataSource):
             self._from_time = from_time
         if self.current_1m_index == 0:
             idx = next(
-                (i for i, b in enumerate(self._bars) if b['time'] > self._from_time),
+                (i for i, b in enumerate(self._bars) if b['time'] >= self._from_time),
                 len(self._bars)
             )
             self.current_1m_index = idx
@@ -762,7 +775,7 @@ class CSVDataSource(CombinedDataSource):
         while i < total and not self._stop_event.is_set():
             bar = self._bars[i]
             ts  = bar['time']
-            if ts > self._from_time:
+            if ts >= self._from_time:
                 self.current_1m_index = i + 1
                 self._process_bar(bar)
             i += 1
@@ -1742,6 +1755,340 @@ class TradeManager:
 ```
 ===== END FILE: trade_manager.py =====
 
+===== BEGIN FILE: base_liquidity_strategy.py =====
+(path: src/strategies/base_liquidity_strategy.py)
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from threading import RLock
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from src.dbexception import DBNotFoundException
+from src.repositories.lines_repository import LineRepository
+from src.repositories.trades_repository import TradeRepository
+from src.strategies.entry_context import (
+    EntryContext,
+    EntryFilter,
+    EntryTrigger,
+)
+
+
+class LineRemovalMode(str, Enum):
+    ON_EVALUATE = "on_evaluate"   # remove line after we evaluated it
+    ON_ENTER    = "on_enter"      # remove only if we actually opened a trade
+    NEVER       = "never"         # never remove (we'll reset state for future triggers)
+
+
+@dataclass
+class StrategyOptions:
+    line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE
+    entry_filters: Optional[List[EntryFilter]] = None
+    triggers: Optional[List[EntryTrigger]] = None
+
+
+class BaseLiquidityStrategy:
+    """
+    Base class containing all shared plumbing:
+      - 5m (or configured TF) aggregation
+      - line state & removal policy
+      - filter pipeline
+      - trade open/close bookkeeping & Socket.IO events
+      - persistence via repositories
+
+    Subclasses must provide default triggers via `default_triggers()`.
+    They may set additional attributes needed by their triggers.
+    """
+
+    def __init__(
+        self,
+        min_stop_loss: float,
+        max_bounce: float,
+        socketio,
+        line_repository: LineRepository,
+        trade_repository: TradeRepository,
+        extra_sl_space: float,
+        strategy_tf: str = "5m",
+        options: Optional[StrategyOptions] = None,
+        htf_fetcher: Optional[Callable[..., Optional[dict]]] = None,
+    ):
+        self.min_stop_loss = float(min_stop_loss)
+        self.max_bounce    = float(max_bounce)
+        self.socketio      = socketio
+        self.line_repository  = line_repository
+        self.trade_repository = trade_repository
+        self.extra_sl_space = float(extra_sl_space)
+
+        self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, has_crossed, extreme }
+        self.open_trades: List[Dict[str, Any]] = []
+        self.total_pnl = 0.0
+        self.lock = RLock()
+
+        # parse TF like "5m" or "1h"
+        num, unit = int(strategy_tf[:-1]), strategy_tf[-1]
+        self.strategy_window = num * (60 if unit == "m" else 3600)
+        self._buf: List[Dict[str, Any]] = []
+        self._group_start: Optional[int] = None
+
+        self.options = options or StrategyOptions()
+        # Let subclasses decide the triggers (they may depend on attrs set after super().__init__)
+        self.triggers: List[EntryTrigger] = []
+        # Filters can be taken straight from options
+        self.entry_filters: List[EntryFilter] = list(self.options.entry_filters or [])
+
+        # Optional dependency for multi-TF checks
+        self.htf_fetcher = htf_fetcher
+
+    # ----- Hooks for subclasses -----
+
+    def default_triggers(self) -> List[EntryTrigger]:
+        """Return a list of default triggers. Must be implemented by subclasses."""
+        raise NotImplementedError
+
+    # ----- Public small API for runtime tweaks -----
+
+    def set_entry_filters(self, filters: List[EntryFilter]):
+        with self.lock:
+            self.entry_filters = list(filters)
+
+    def set_triggers(self, triggers: List[EntryTrigger]):
+        with self.lock:
+            self.triggers = list(triggers)
+
+    # ----- Line management -----
+
+    def add_strategy_line(self, id: Any, level: float, direction: str):
+        """
+        direction: 'long' | 'short'
+        """
+        print(f"[Strategy] ➕ add_strategy_line id={id} level={level} direction={direction}")
+        with self.lock:
+            self.strategy_lines[id] = {
+                "level":       float(level),
+                "direction":   direction,
+                "has_crossed": False,
+                "extreme":     float("inf") if direction == "long" else float("-inf"),
+            }
+
+    def remove_strategy_line(self, id: Any):
+        with self.lock:
+            self.strategy_lines.pop(id, None)
+        try:
+            self.line_repository.delete_line(id)
+        except DBNotFoundException:
+            pass
+        self.socketio.emit("line_removed", {"id": id})
+
+    def _reset_line_state(self, line_state: Dict[str, Any]):
+        """If we keep the line, reset so it can trigger again in the future."""
+        line_state["has_crossed"] = False
+        line_state["extreme"] = float("inf") if line_state["direction"] == "long" else float("-inf")
+
+    # ----- Aggregation -----
+
+    def _aggregate_bars(self, bars: List[Dict[str, Any]], window_start: int, window_secs: int) -> Dict[str, Any]:
+        high   = max(b["high"] for b in bars)
+        low    = min(b["low"] for b in bars)
+        open_  = bars[0]["open"]
+        close_ = bars[-1]["close"]
+        volume = sum(b["volume"] for b in bars)
+        pair   = bars[0]["pair"]
+        return {
+            "time":   window_start + window_secs,
+            "open":   open_,
+            "high":   high,
+            "low":    low,
+            "close":  close_,
+            "volume": volume,
+            "pair":   pair,
+        }
+
+    def on_raw_bar(self, bar: Dict[str, Any]):
+        """
+        Feed raw stream bars (assumed 1s or tick granularity).
+        We aggregate to the configured TF and then process strategy logic on each completed bar.
+        """
+        ts = bar["time"]
+        win = (ts // self.strategy_window) * self.strategy_window
+        if self._group_start is None:
+            self._group_start = win
+        if win == self._group_start:
+            self._buf.append(bar)
+        else:
+            agg = self._aggregate_bars(self._buf, self._group_start, self.strategy_window)
+            self._buf, self._group_start = [bar], win
+            self._on_strategy_bar(agg)
+
+    # ----- Core bar processing -----
+
+    def _on_strategy_bar(self, bar: Dict[str, Any]):
+        """
+        1) check exits on open trades
+        2) for each strategy line, run triggers → may propose an EntryContext
+        3) if proposed, run filters; if allowed, open trade and maybe remove the line
+        """
+        with self.lock:
+            # 1) exits first
+            self._check_open_trades(bar)
+
+            # 2) evaluate lines via triggers
+            for sid, line in list(self.strategy_lines.items()):
+                opened = False
+                proposed_ctx: Optional[EntryContext] = None
+
+                # choose triggers: either explicit or subclass defaults
+                active_triggers = self.triggers or self.default_triggers()
+
+                # run triggers in order until one proposes
+                for trig in active_triggers:
+                    proposed_ctx = trig(self, sid, line, bar)
+                    if proposed_ctx is not None:
+                        break
+
+                if proposed_ctx is None:
+                    # nothing to evaluate
+                    continue
+
+                # 3) run filters
+                allow, _reason = self._filters_allow_entry(proposed_ctx)
+                if allow:
+                    trade = self._build_trade_from_context(proposed_ctx)
+                    self._store_and_emit_open(trade)
+                    opened = True
+
+                # line removal policy
+                self._maybe_remove_line(sid, opened)
+
+    def _filters_allow_entry(self, ctx: EntryContext) -> Tuple[bool, str]:
+        """Run all pluggable entry filters. If any returns (False, reason), block the entry."""
+        for f in self.entry_filters:
+            ok, reason = f(ctx)
+            if not ok:
+                return False, reason
+        return True, "ok"
+
+    def _maybe_remove_line(self, line_id: Any, opened: bool):
+        """Remove the evaluated strategy line depending on removal mode."""
+        mode = self.options.line_removal_mode
+        if mode == LineRemovalMode.NEVER:
+            # keep the line and reset state, so it can re-trigger
+            if line_id in self.strategy_lines:
+                self._reset_line_state(self.strategy_lines[line_id])
+            return
+        if mode == LineRemovalMode.ON_EVALUATE:
+            self.remove_strategy_line(line_id)
+        elif mode == LineRemovalMode.ON_ENTER and opened:
+            self.remove_strategy_line(line_id)
+
+    # ----- Exits -----
+
+    def _check_open_trades(self, bar: Dict[str, Any]):
+        remaining: List[Dict[str, Any]] = []
+        for t in self.open_trades:
+            if t["status"] != "open":
+                continue
+            low, high = bar["low"], bar["high"]
+
+            if t["type"] == "long":
+                if low <= t["stop_loss"]:
+                    t.update(status="closed", result=-1, exit_time=bar["time"], exit_price=low)
+                    self.socketio.emit("trade_close", t)
+                elif high >= t["take_profit"]:
+                    t.update(status="closed", result=4, exit_time=bar["time"], exit_price=high)
+                    self.socketio.emit("trade_close", t)
+                else:
+                    remaining.append(t)
+            else:  # short
+                if high >= t["stop_loss"]:
+                    t.update(status="closed", result=-1, exit_time=bar["time"], exit_price=high)
+                    self.socketio.emit("trade_close", t)
+                elif low <= t["take_profit"]:
+                    t.update(status="closed", result=4, exit_time=bar["time"], exit_price=low)
+                    self.socketio.emit("trade_close", t)
+                else:
+                    remaining.append(t)
+
+        self.open_trades = remaining
+
+    # ----- Trade creation & persistence -----
+
+    def _build_trade_from_context(self, ctx: EntryContext) -> Dict[str, Any]:
+        """
+        Generic R-based construction using ctx.extreme:
+          - entry = bar close
+          - risk = max(distance to extreme, min_stop_loss) + extra_sl_space
+          - 4R take-profit
+        """
+        entry = ctx.close
+        extra = self.extra_sl_space
+
+        if ctx.direction == "long":
+            raw_risk = max(entry - ctx.extreme, self.min_stop_loss)
+            eff_risk = raw_risk + extra
+            sl = entry - eff_risk
+            tp = entry + 4 * eff_risk
+            return self._make_trade_dict(ctx.bar, "long", entry, sl, tp, eff_risk)
+        else:
+            raw_risk = max(ctx.extreme - entry, self.min_stop_loss)
+            eff_risk = raw_risk + extra
+            sl = entry + eff_risk
+            tp = entry - 4 * eff_risk
+            return self._make_trade_dict(ctx.bar, "short", entry, sl, tp, eff_risk)
+
+    def _make_trade_dict(
+        self,
+        bar: Dict[str, Any],
+        trade_type: str,
+        entry: float,
+        stop_loss: float,
+        take_profit: float,
+        risk: float,
+    ) -> Dict[str, Any]:
+        return {
+            "pair":        bar["pair"],
+            "type":        trade_type,
+            "entry":       entry,
+            "stop_loss":   stop_loss,
+            "take_profit": take_profit,
+            "risk":        risk,
+            "status":      "open",
+            "entry_time":  bar["time"],
+        }
+
+    def _store_and_emit_open(self, trade: Dict[str, Any]):
+        td = self.trade_repository.insert_trade(
+            pair=trade["pair"],
+            trade_type=trade["type"],
+            entry_price=trade["entry"],
+            stop_loss=trade["stop_loss"],
+            take_profit=trade["take_profit"],
+            risk=trade["risk"],
+            entry_time=self._ts_to_dt(trade["entry_time"]),
+            params={},
+        )
+        trade["trade_id"] = td.trade_id
+        self.open_trades.append(trade)
+        self.socketio.emit("trade_open", trade)
+
+    def _store_and_emit_close(self, trade: Dict[str, Any]):
+        self.socketio.emit("trade_close", trade)
+        self.trade_repository.close_trade(
+            trade_id=trade["trade_id"],
+            exit_price=trade["exit_price"],
+            exit_time=self._ts_to_dt(trade["exit_time"]),
+            result=trade["result"],
+        )
+
+    # ----- utils -----
+
+    @staticmethod
+    def _ts_to_dt(ts):
+        from datetime import datetime, timezone
+        return datetime.fromtimestamp(ts, tz=timezone.utc)
+```
+===== END FILE: base_liquidity_strategy.py =====
+
 ===== BEGIN FILE: entry_context.py =====
 (path: src/strategies/entry_context.py)
 ```python
@@ -2178,291 +2525,168 @@ class LiquidityDualM1Strategy:
 ===== BEGIN FILE: liquidity_strategy.py =====
 (path: src/strategies/liquidity_strategy.py)
 ```python
-# src/strategy.py
-from threading import RLock
-from datetime import datetime, timezone
-from src.dbexception import DBNotFoundException
-from src.repositories.lines_repository import LineRepository
-from src.repositories.trades_repository import TradeRepository
-from dataclasses import dataclass
-from enum import Enum
-from typing import Callable, Optional, Tuple, List, Dict, Any
-from src.strategies.entry_context import *
+from __future__ import annotations
+
+from typing import List
+
+from src.strategies.base_liquidity_strategy import (
+    BaseLiquidityStrategy,
+    StrategyOptions,
+    LineRemovalMode,
+)
+from src.strategies.entry_context import retest_cross_trigger, EntryTrigger
 
 
+__all__ = [
+    "LiquidityStrategy",
+    # Re-export to preserve old imports:
+    "StrategyOptions",
+    "LineRemovalMode",
+]
 
-class LineRemovalMode(str, Enum):
-    ON_EVALUATE = "on_evaluate"   # remove line after we evaluated it (old behavior)
-    ON_ENTER    = "on_enter"      # remove only if we actually opened a trade
-    NEVER       = "never"         # never remove (we'll reset its state for future triggers)
 
-@dataclass
-class StrategyOptions:
-    line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE
-    entry_filters: Optional[List[EntryFilter]] = None
-    triggers: Optional[List[EntryTrigger]] = None
-
-class LiquidityStrategy:
+class LiquidityStrategy(BaseLiquidityStrategy):
     """
-    Server-side version of your JS strategy.
-    Emits 'trade_open' and 'trade_close' via Socket.IO.
+    Original behavior:
+      - waits for a retest CLOSE back through the line
+      - uses the 'extreme' tracked while price was across the level
+      - entries at bar close, 4R TP, min SL guard
+
+    Triggers can be overridden via options.triggers; otherwise uses default below.
     """
-    def __init__(
-        self, 
-        min_stop_loss, 
-        max_bounce, 
-        socketio, 
-        line_repository: LineRepository,
-        trade_repository: TradeRepository,
-        extra_sl_space: float,
-        strategy_tf: str = '5m',
-        options: Optional[StrategyOptions] = None,
-        htf_fetcher: Optional[Callable[[str, int, str], Optional[dict]]] = None,
-    ):
-        self.min_stop_loss = min_stop_loss
-        self.max_bounce    = max_bounce
-        self.socketio      = socketio
-        self.line_repository = line_repository
-        self.trade_repository = trade_repository
-        self.extra_sl_space = extra_sl_space
 
-        self.strategy_lines = {}   # id -> { level, direction, has_crossed, extreme }
-        self.open_trades    = []   # list of open trade dicts
-        self.total_pnl      = 0
-        self.lock           = RLock()
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Use user-provided triggers if given; otherwise our default
+        self.triggers = list(self.options.triggers or self.default_triggers())
 
-        num, unit = int(strategy_tf[:-1]), strategy_tf[-1]
-        self.strategy_window = num * (60 if unit=='m' else 3600)
-        self._buf = []
-        self._group_start = None
-
-        self.options = options or StrategyOptions()
-        self.entry_filters = list(self.options.entry_filters or [])
-        self.triggers = list(self.options.triggers or [retest_cross_trigger])
-
-        # optional dependency for multi-TF checks (15m/1h, etc.)
-        self.htf_fetcher = htf_fetcher
-
-    # Convenience if you want to tweak filters at runtime:
-    def set_entry_filters(self, filters: List[EntryFilter]):
-        with self.lock:
-            self.entry_filters = list(filters)
-
-    def add_strategy_line(self, id, level, direction):
-        print(f"[Strategy] ➕ add_strategy_line id={id} level={level} direction={direction}")
-        with self.lock:
-            self.strategy_lines[id] = {
-                'level':       level,
-                'direction':   direction,
-                'has_crossed': False,
-                'extreme':     float('inf') if direction == 'long' else float('-inf')
-            }
-
-    def remove_strategy_line(self, id):
-        with self.lock:
-            self.strategy_lines.pop(id, None)
-        try:
-            self.line_repository.delete_line(id)
-        except DBNotFoundException:
-            pass
-        self.socketio.emit('line_removed', {'id': id})
-
-    def _aggregate_bars(self, bars: list[dict], window_start: int, window_secs: int) -> dict:
-        high    = max(b['high']   for b in bars)
-        low     = min(b['low']    for b in bars)
-        open_   = bars[0]['open']
-        close_  = bars[-1]['close']
-        volume  = sum(b['volume'] for b in bars)
-        pair    = bars[0]['pair']
-        return {
-            'time':       window_start + window_secs,
-            'open':       open_,
-            'high':       high,
-            'low':        low,
-            'close':      close_,
-            'volume':     volume,
-            'pair':       pair
-        }
-    
-    def on_raw_bar(self, bar):
-        # 1) aggregate into your chosen TF
-        ts = bar['time']
-        win = (ts // self.strategy_window) * self.strategy_window
-        if self._group_start is None:
-            self._group_start = win
-        if win == self._group_start:
-            self._buf.append(bar)
-        else:
-            agg = self._aggregate_bars(self._buf, self._group_start, self.strategy_window)
-            self._buf, self._group_start = [bar], win
-            # 2) now run your entry/exit logic on that agg bar
-            self._on_strategy_bar(agg)
-
-    def _on_strategy_bar(self, bar: dict):
-        """
-        1) check exits on open trades
-        2) for each strategy line, run triggers → may propose an EntryContext
-        3) if proposed, run filters; if allowed, open trade and maybe remove the line
-        """
-        with self.lock:
-            # 1) exits first
-            self._check_open_trades(bar)
-
-            # 2) evaluate lines via triggers
-            for sid, line in list(self.strategy_lines.items()):
-                opened = False
-                proposed_ctx: Optional[EntryContext] = None
-
-                # run triggers in order until one proposes
-                for trig in self.triggers:
-                    proposed_ctx = trig(self, sid, line, bar)
-                    if proposed_ctx is not None:
-                        break
-
-                if proposed_ctx is None:
-                    # nothing to evaluate / no retest yet
-                    continue
-
-                # 3) run filters
-                allow, reason = self._filters_allow_entry(proposed_ctx)
-                if allow:
-                    extra = self.extra_sl_space
-                    if proposed_ctx.direction == 'long':
-                        entry    = proposed_ctx.close
-                        raw_risk = max(entry - proposed_ctx.extreme, self.min_stop_loss)
-                        eff_risk = raw_risk + extra
-                        sl       = entry - eff_risk
-                        tp       = entry + 4 * eff_risk
-                        trade    = self._make_trade_dict(bar, 'long', entry, sl, tp, eff_risk)
-                    else:
-                        entry    = proposed_ctx.close
-                        raw_risk = max(proposed_ctx.extreme - entry, self.min_stop_loss)
-                        eff_risk = raw_risk + extra
-                        sl       = entry + eff_risk
-                        tp       = entry - 4 * eff_risk
-                        trade    = self._make_trade_dict(bar, 'short', entry, sl, tp, eff_risk)
-
-                    self._store_and_emit_open(trade)
-                    opened = True
-
-                # line removal policy (evaluate vs trade)
-                self._maybe_remove_line(sid, opened)
-
-    def _reset_line_state(self, line_state: Dict[str, Any]):
-        """If we keep the line, reset it so it can trigger again in future."""
-        line_state['has_crossed'] = False
-        line_state['extreme'] = float('inf') if line_state['direction'] == 'long' else float('-inf')
-
-    def _filters_allow_entry(self, ctx: EntryContext) -> Tuple[bool, str]:
-        """
-        Run all pluggable entry filters. If any returns (False, reason), block the entry.
-        """
-        for f in self.entry_filters:
-            ok, reason = f(ctx)
-            if not ok:
-                return False, reason
-        return True, "ok"
-
-    def _maybe_remove_line(self, line_id: Any, opened: bool):
-        """
-        Remove the evaluated strategy line depending on removal mode.
-        """
-        mode = self.options.line_removal_mode
-        if mode == LineRemovalMode.NEVER:
-            return
-        if mode == LineRemovalMode.ON_EVALUATE:
-            self.remove_strategy_line(line_id)
-        elif mode == LineRemovalMode.ON_ENTER and opened:
-            self.remove_strategy_line(line_id)
-
-    def _check_open_trades(self, bar):
-        remaining = []
-        for t in self.open_trades:
-            if t['status'] != 'open':
-                continue
-            low, high = bar['low'], bar['high']
-
-            if t['type'] == 'long':
-                if low <= t['stop_loss']:
-                    t.update(status='closed', result=-1,
-                             exit_time=bar['time'], exit_price=low)
-                    # ← this emits the “exit trade” event
-                    self.socketio.emit('trade_close', t)
-
-                elif high >= t['take_profit']:
-                    t.update(status='closed', result=4,
-                             exit_time=bar['time'], exit_price=high)
-                    self.socketio.emit('trade_close', t)
-                else:
-                    remaining.append(t)
-
-            else:  # short
-                if high >= t['stop_loss']:
-                    t.update(status='closed', result=-1,
-                             exit_time=bar['time'], exit_price=high)
-                    self.socketio.emit('trade_close', t)
-
-                elif low <= t['take_profit']:
-                    t.update(status='closed', result=4,
-                             exit_time=bar['time'], exit_price=low)
-                    self.socketio.emit('trade_close', t)
-                else:
-                    remaining.append(t)
-
-        self.open_trades = remaining
-
-    def _make_trade_dict(
-        self,
-        bar: dict,
-        trade_type: str,
-        entry: float,
-        stop_loss: float,
-        take_profit: float,
-        risk: float
-    ) -> dict:
-        return {
-            'pair':       bar['pair'],
-            'type':       trade_type,
-            'entry':      entry,
-            'stop_loss':  stop_loss,
-            'take_profit':take_profit,
-            'risk':       risk,
-            'status':     'open',
-            'entry_time': bar['time']
-        }
-
-    def _store_and_emit_open(self, trade: dict):
-        """
-        Persist a newly opened trade and emit the open event.
-        """
-        td = self.trade_repository.insert_trade(
-            pair=trade['pair'],
-            trade_type=trade['type'],
-            entry_price=trade['entry'],
-            stop_loss=trade['stop_loss'],
-            take_profit=trade['take_profit'],
-            risk=trade['risk'],
-            entry_time=datetime.fromtimestamp(trade['entry_time'], tz=timezone.utc),
-            params={}
-        )
-        trade['trade_id'] = td.trade_id
-        self.open_trades.append(trade)
-        self.socketio.emit('trade_open', trade)
-
-    def _store_and_emit_close(self, trade: dict):
-        """
-        Persist a closed trade and emit the close event.
-        """
-        # emit first so clients see status update
-        self.socketio.emit('trade_close', trade)
-        self.trade_repository.close_trade(
-            trade_id=trade['trade_id'],
-            exit_price=trade['exit_price'],
-            exit_time=datetime.fromtimestamp(trade['exit_time'], tz=timezone.utc),
-            result=trade['result']
-        )
+    def default_triggers(self) -> List[EntryTrigger]:
+        return [retest_cross_trigger]
 ```
 ===== END FILE: liquidity_strategy.py =====
+
+===== BEGIN FILE: liquidity_strategy_v2.py =====
+(path: src/strategies/liquidity_strategy_v2.py)
+```python
+from __future__ import annotations
+from typing import Any, Dict, List, Optional
+from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy, StrategyOptions
+from src.strategies.entry_context import EntryContext, EntryTrigger
+
+
+def wick_near_line_trigger(
+    strategy: "LiquidityStrategyV2",
+    line_id: Any,
+    line: Dict[str, Any],
+    bar: Dict[str, Any],
+) -> Optional[EntryContext]:
+    """
+    One-candle, wick-dominant signal near the line.
+
+    Conditions:
+      - very small body: body/range ≤ strategy.small_body_max_ratio
+      - dominant wick on the side of the trade:
+            LONG  → big LOWER wick (hammer/pin)
+            SHORT → big UPPER wick (shooting star)
+      - proximity to line: min distance from level to candle O/H/L/C is used as
+        EntryContext.cross_depth, which will be checked by max_bounce_filter.
+
+    Entry price = bar close. Risk uses wick extreme (low for long, high for short).
+    """
+    lvl = line["level"]
+    dir_ = line["direction"]  # "long" | "short"
+
+    o, h, l, c = bar["open"], bar["high"], bar["low"], bar["close"]
+    rng = h - l
+    if rng <= 0:
+        return None
+
+    body = abs(c - o)
+    body_ratio = body / rng
+
+    small_body_max_ratio = getattr(strategy, "small_body_max_ratio", 0.25)
+    wick_min_ratio = getattr(strategy, "wick_min_ratio", 0.60)
+
+    # Require very small body
+    if body_ratio > small_body_max_ratio:
+        return None
+
+    # Wick proportions
+    upper_wick = h - max(o, c)
+    lower_wick = min(o, c) - l
+    upper_ratio = upper_wick / rng
+    lower_ratio = lower_wick / rng
+
+    if dir_ == "long":
+        if lower_ratio < wick_min_ratio:
+            return None
+        extreme = l
+    else:
+        if upper_ratio < wick_min_ratio:
+            return None
+        extreme = h
+
+    # Proximity to the line (let max_bounce_filter enforce threshold)
+    min_dist_to_line = min(abs(lvl - x) for x in (o, h, l, c))
+
+    return EntryContext(
+        strategy=strategy,
+        line_id=line_id,
+        direction=dir_,
+        level=lvl,
+        bar=bar,
+        close=c,
+        low=l,
+        high=h,
+        extreme=extreme,
+        cross_depth=min_dist_to_line,
+    )
+
+
+class LiquidityStrategyV2(BaseLiquidityStrategy):
+    """
+    Variant that does NOT require a retest close.
+    It opens on a single candle with small body & large directional wick near the line.
+    """
+
+    def __init__(
+        self,
+        min_stop_loss: float,
+        max_bounce: float,
+        socketio,
+        line_repository,
+        trade_repository,
+        extra_sl_space: float,
+        strategy_tf: str = "5m",
+        options: Optional[StrategyOptions] = None,
+        htf_fetcher=None,
+        *,
+        small_body_max_ratio: float = 0.25,  # body/range ≤ this
+        wick_min_ratio: float = 0.60,        # dominant wick ratio ≥ this
+    ):
+        super().__init__(
+            min_stop_loss=min_stop_loss,
+            max_bounce=max_bounce,
+            socketio=socketio,
+            line_repository=line_repository,
+            trade_repository=trade_repository,
+            extra_sl_space=extra_sl_space,
+            strategy_tf=strategy_tf,
+            options=options,
+            htf_fetcher=htf_fetcher,
+        )
+
+        # Thresholds consumed by our trigger
+        self.small_body_max_ratio = small_body_max_ratio
+        self.wick_min_ratio = wick_min_ratio
+
+        # Use user-provided triggers if given; otherwise our default
+        self.triggers = list(self.options.triggers or self.default_triggers())
+
+    def default_triggers(self) -> List[EntryTrigger]:
+        return [wick_near_line_trigger]
+```
+===== END FILE: liquidity_strategy_v2.py =====
 
 ===== BEGIN FILE: strategy_config.py =====
 (path: src/strategies/strategy_config.py)
@@ -2934,12 +3158,12 @@ def build_prod():
 
     numbers = StrategyNumbers(
         min_stop_loss=10.0,
-        max_bounce=40.0,
+        max_bounce=60.0,
         extra_sl_space=0.0,
     )
 
     options = StrategyOptions(
-        line_removal_mode=LineRemovalMode.NEVER,
+        line_removal_mode=LineRemovalMode.ON_ENTER,
         triggers=[retest_cross_trigger],
         entry_filters=[
             open_trades_limit_filter(1), 
@@ -2969,12 +3193,11 @@ if __name__ == "__main__":
 # src/app_factory.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Optional, Callable
+from typing import Optional
 
 from flask import Flask, jsonify, request, abort, render_template
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-from datetime import datetime, timezone
 
 from src.bars_loader import BarsLoader
 from src.controllers.lines_controller import LinesController
@@ -2987,6 +3210,7 @@ from src.strategies.entry_context import (
 )
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
+from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 
 
 @dataclass
@@ -3032,20 +3256,20 @@ def create_app(
     socketio = SocketIO(app, cors_allowed_origins="*")
 
     # Strategy & managers
-    tstrategy = LiquidityStrategy(
+    effective_options = options or StrategyOptions(
+        entry_filters=[
+            open_trades_limit_filter(1),
+            max_bounce_filter(numbers.max_bounce),
+        ]
+    )
+    tstrategy = LiquidityStrategyV2(
         min_stop_loss   = numbers.min_stop_loss,
         max_bounce      = numbers.max_bounce,
         extra_sl_space  = numbers.extra_sl_space,
         socketio        = socketio,
         line_repository = repos.lines,
         trade_repository= repos.trades,
-        options         = options or StrategyOptions(
-            triggers=[retest_cross_trigger],
-            entry_filters=[
-                open_trades_limit_filter(1),
-                max_bounce_filter(numbers.max_bounce)
-            ]
-        ),
+        options         = effective_options,
         strategy_tf     = strategy_tf,
     )
     trade_manager = TradeManager(trade_repository=repos.trades, socketio=socketio)
@@ -3134,13 +3358,12 @@ def create_app(
     @socketio.on('start_stream')
     def on_start_stream(payload):
         tf = payload.get('timeframe', '1m')
-        print(f">> start_stream; {tf}")
-        try:
-            loader.set_timeframe(tf)
-        except ValueError:
-            loader.set_timeframe('1m')
         from_time = payload.get('fromTime', 0)
         stop_at   = payload.get('stopAt')
+
+        # Set base time first so set_timeframe uses the right window
+        loader.seek(from_time)
+        loader.set_timeframe(tf)
         loader.start(from_time, stop_at)
         emit('stream_status', {'playing': True})
 
@@ -3335,6 +3558,354 @@ if __name__ == "__main__":
     print(f"\n✅ Merged context saved to {out_path}")
 ```
 ===== END FILE: build_prompt.py =====
+
+===== BEGIN FILE: debug_liquidity_v2.py =====
+(path: scripts/debug_liquidity_v2.py)
+```python
+#!/usr/bin/env python
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from pathlib import Path
+import sys
+from typing import Any, Dict, List, Optional, Tuple
+
+import matplotlib.pyplot as plt
+
+# --------------------------------------------------------------------
+# Make project imports work when running this as a standalone script
+# --------------------------------------------------------------------
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2, wick_near_line_trigger
+from src.strategies.entry_context import EntryContext
+
+# --------------------------------------------------------------------
+# Config
+# --------------------------------------------------------------------
+
+# Toggle to show/hide entry / SL / TP on the chart & console
+SHOW_TRADE_LEVELS = True
+
+
+@dataclass
+class DummySocketIO:
+    """Minimal socketio stub so LiquidityStrategyV2 can be constructed.
+    We never emit anything in this debug script.
+    """
+    def emit(self, *args, **kwargs):
+        pass
+
+
+class DummyRepo:
+    """Minimal repo stub. No DB I/O in this debug script."""
+    def __getattr__(self, name):
+        def _(*args, **kwargs):
+            # If something accidentally calls a repo method, fail loudly.
+            raise RuntimeError(f"DummyRepo.{name} was called in debug script.")
+        return _
+
+
+# --------------------------------------------------------------------
+# Example data
+# --------------------------------------------------------------------
+
+def build_example_bars() -> List[Dict[str, float]]:
+    """
+    Hard-coded example bars around ~100 so shapes are easy to see.
+    Replace this later with real bars from your CSV if you want.
+    """
+    return [
+        # index 0: big body (should NOT trigger)
+        {"time": 0, "open": 100.0, "high": 105.0, "low":  99.0, "close":104.0, "volume": 10, "pair": "NQ"},
+        # index 1: small body, big lower wick near line (good LONG candidate)
+        {"time": 1, "open": 100.5, "high":101.0, "low":  99.2, "close":100.7, "volume": 11, "pair": "NQ"},
+        # index 2: small body, big upper wick near line (good SHORT candidate)
+        {"time": 2, "open": 101.0, "high":103.5, "low": 100.5, "close":101.2, "volume":  9, "pair": "NQ"},
+        # index 3: small body, far from line (won't pass max_bounce later)
+        {"time": 3, "open": 110.0, "high":111.0, "low":109.0, "close":110.1, "volume":  8, "pair": "NQ"},
+    ]
+
+
+# --------------------------------------------------------------------
+# Trade-level extraction using the REAL strategy implementation
+# --------------------------------------------------------------------
+
+def build_trade_levels_from_ctx(
+    strategy: LiquidityStrategyV2,
+    ctx: EntryContext,
+) -> Dict[str, float]:
+    """
+    Ask the real strategy to build a trade and extract the levels.
+
+    This uses BaseLiquidityStrategy._build_trade_from_context,
+    so it automatically respects:
+      - strategy.min_stop_loss
+      - strategy.extra_sl_space
+      - any future changes you make to that method.
+    """
+    trade = strategy._build_trade_from_context(ctx)  # yes, private method on purpose
+
+    return {
+        "entry":       trade["entry"],
+        "stop_loss":   trade["stop_loss"],
+        "take_profit": trade["take_profit"],
+        "risk":        trade["risk"],
+    }
+
+
+# --------------------------------------------------------------------
+# Trigger runner
+# --------------------------------------------------------------------
+
+def run_trigger_on_bars(
+    bars: List[Dict[str, float]],
+    line: Dict[str, Any],
+    strategy: LiquidityStrategyV2,
+    show_trade_levels: bool = SHOW_TRADE_LEVELS,
+) -> Tuple[List[Optional[EntryContext]], List[Optional[Dict[str, float]]]]:
+    results: List[Optional[EntryContext]] = []
+    trades: List[Optional[Dict[str, float]]] = []
+
+    for i, bar in enumerate(bars):
+        ctx = wick_near_line_trigger(
+            strategy=strategy,
+            line_id="demo_line",
+            line=line,
+            bar=bar,
+        )
+        results.append(ctx)
+
+        o, h, l, c = bar["open"], bar["high"], bar["low"], bar["close"]
+        rng = h - l
+        body = abs(c - o)
+        body_ratio = body / rng if rng > 0 else math.nan
+        upper_wick = h - max(o, c)
+        lower_wick = min(o, c) - l
+        upper_ratio = upper_wick / rng if rng > 0 else math.nan
+        lower_ratio = lower_wick / rng if rng > 0 else math.nan
+
+        min_dist_to_line = min(abs(line["level"] - x) for x in (o, h, l, c))
+
+        print(f"Bar {i}: {bar}")
+        print(f"  range={rng:.3f}, body={body:.3f}, body_ratio={body_ratio:.3f}")
+        print(f"  upper_ratio={upper_ratio:.3f}, lower_ratio={lower_ratio:.3f}")
+        print(f"  min_dist_to_line={min_dist_to_line:.3f}")
+
+        trade_levels: Optional[Dict[str, float]] = None
+        if ctx is not None:
+            if show_trade_levels:
+                trade_levels = build_trade_levels_from_ctx(strategy, ctx)
+                print("  TRIGGER: YES")
+                print(
+                    f"    entry={trade_levels['entry']:.3f}, "
+                    f"SL={trade_levels['stop_loss']:.3f}, "
+                    f"TP={trade_levels['take_profit']:.3f}, "
+                    f"risk={trade_levels['risk']:.3f}"
+                )
+            else:
+                print("  TRIGGER: YES (trade levels hidden)")
+        else:
+            print("  TRIGGER: no")
+
+        trades.append(trade_levels)
+        print("-" * 60)
+
+    return results, trades
+
+
+# --------------------------------------------------------------------
+# Plotting
+# --------------------------------------------------------------------
+
+def plot_bars_with_results(
+    bars: List[Dict[str, float]],
+    line: Dict[str, Any],
+    contexts: List[Optional[EntryContext]],
+    trades: List[Optional[Dict[str, float]]],
+    show_trade_levels: bool = SHOW_TRADE_LEVELS,
+) -> None:
+    spacing = 0.4  # horizontal spacing between bars (tight but readable)
+    x_positions = [i * spacing for i in range(len(bars))]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+
+    # Draw candles
+    for x, bar in zip(x_positions, bars):
+        o, h, l, c = bar["open"], bar["high"], bar["low"], bar["close"]
+        color = "green" if c >= o else "red"
+
+        # Thicker so they are clearly visible
+        ax.vlines(x, l, h, linewidth=2, color=color)   # wick
+        ax.vlines(x, o, c, linewidth=8, color=color)   # body
+
+    # Horizontal line level
+    ax.axhline(line["level"], linestyle="--", color="blue", label="line level")
+
+    # Highlight triggers & optionally draw trade levels
+    for x, ctx, trade_levels in zip(x_positions, contexts, trades):
+        if ctx is None:
+            continue
+
+        # What price to mark as "entry" on the chart
+        if trade_levels is not None and show_trade_levels:
+            entry_price = trade_levels["entry"]
+        else:
+            entry_price = ctx.close
+
+        # Marker + checkmark on triggered bars
+        ax.scatter(
+            x,
+            entry_price,
+            s=80,
+            edgecolor="black",
+            facecolor="yellow",
+            zorder=3,
+        )
+        ax.text(
+            x,
+            entry_price,
+            "  ✓",
+            va="center",
+            ha="left",
+            fontsize=10,
+            color="black",
+        )
+
+        # Skip drawing trade levels if hidden
+        if not show_trade_levels or trade_levels is None:
+            continue
+
+        half_width = spacing * 0.35
+
+        # Entry
+        ax.hlines(
+            trade_levels["entry"],
+            x - half_width,
+            x + half_width,
+            linestyles="-",
+            linewidth=1.5,
+        )
+        # Stop loss
+        ax.hlines(
+            trade_levels["stop_loss"],
+            x - half_width,
+            x + half_width,
+            linestyles="--",
+            linewidth=1.5,
+        )
+        # Take profit
+        ax.hlines(
+            trade_levels["take_profit"],
+            x - half_width,
+            x + half_width,
+            linestyles=":",
+            linewidth=1.5,
+        )
+
+        ax.text(
+            x + half_width,
+            trade_levels["stop_loss"],
+            " SL",
+            va="center",
+            ha="left",
+            fontsize=8,
+        )
+        ax.text(
+            x + half_width,
+            trade_levels["take_profit"],
+            " TP",
+            va="center",
+            ha="left",
+            fontsize=8,
+        )
+
+    # X-axis: show bar indices
+    ax.set_xticks(x_positions)
+    ax.set_xticklabels(list(range(len(bars))))
+
+    # Y-axis: zoom around bars AND (optionally) trade levels
+    price_highs: List[float] = [b["high"] for b in bars]
+    price_lows: List[float] = [b["low"] for b in bars]
+
+    if show_trade_levels:
+        for tl in trades:
+            if tl is None:
+                continue
+            price_highs.extend([tl["entry"], tl["stop_loss"], tl["take_profit"]])
+            price_lows.extend([tl["entry"], tl["stop_loss"], tl["take_profit"]])
+
+    # Ignore obviously bogus 0s if we have other data
+    non_zero_lows = [v for v in price_lows if v > 0]
+    if non_zero_lows:
+        y_min = min(non_zero_lows)
+    else:
+        y_min = min(price_lows)
+
+    y_max = max(price_highs)
+
+    if y_max == y_min:
+        padding = 1.0
+    else:
+        padding = (y_max - y_min) * 0.1
+
+    ax.set_ylim(y_min - padding, y_max + padding)
+
+    ax.set_xlabel("Bar index")
+    ax.set_ylabel("Price")
+    ax.set_title(f"Wick trigger around line {line['level']} ({line['direction']})")
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+# --------------------------------------------------------------------
+# main
+# --------------------------------------------------------------------
+
+def main():
+    # Construct a REAL LiquidityStrategyV2.
+    # These arguments should mirror your prod config, but the debug
+    # logic itself will always read min_stop_loss / extra_sl_space
+    # from this instance.
+    strategy = LiquidityStrategyV2(
+        min_stop_loss=10.0,      # <- use whatever you use in prod
+        max_bounce=60.0,         # <- same
+        socketio=DummySocketIO(),
+        line_repository=DummyRepo(),
+        trade_repository=DummyRepo(),
+        extra_sl_space=0.0,      # <- same as prod
+        strategy_tf="5m",
+        options=None,            # or your StrategyOptions if you want
+    )
+
+    print(
+        f"Debug strategy configured with "
+        f"min_stop_loss={strategy.min_stop_loss}, "
+        f"extra_sl_space={strategy.extra_sl_space}"
+    )
+
+    # Use synthetic bars first to verify everything visually
+    bars = build_example_bars()
+
+    # Level chosen near the synthetic bars (~100)
+    line = {
+        "level": 100.0,
+        "direction": "long",  # or "short"
+    }
+
+    contexts, trades = run_trigger_on_bars(bars, line, strategy)
+    plot_bars_with_results(bars, line, contexts, trades)
+
+
+if __name__ == "__main__":
+    main()
+```
+===== END FILE: debug_liquidity_v2.py =====
 
 ===== BEGIN FILE: extract_csv_range.py =====
 (path: scripts/extract_csv_range.py)
@@ -5269,14 +5840,20 @@ export class ChartViewer {
   }
 
   jumpToDay(direction = 1) {
-    if (!this.lastTime) return; // guard
-
+    if (!this.lastTime) return;
     const ONE_DAY = 86400;
-    const fromTime = direction === 1
-      ? this.lastTime + ONE_DAY
-      : Math.max(0, this.lastTime - ONE_DAY);
 
-    this.startDayReplay(fromTime);
+    // Start where we are, stop one day away
+    const fromTime = this.lastTime;
+    const stopAt = direction === 1
+      ? this.lastTime + ONE_DAY       // forward a day
+      : Math.max(0, this.lastTime - ONE_DAY); // backward a day
+
+    this.socket.emit('start_stream', {
+      timeframe: this.currentTF || '5m',
+      fromTime,
+      stopAt
+    });
   }
 
   startDayReplay(fromTime) {
