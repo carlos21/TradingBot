@@ -98,17 +98,17 @@ class BaseLiquidityStrategy:
 
     # ----- Line management -----
 
-    def add_strategy_line(self, id: Any, level: float, direction: str):
+    def add_strategy_line(self, id: Any, level: float):
         """
         direction: 'long' | 'short'
         """
-        print(f"[Strategy] ➕ add_strategy_line id={id} level={level} direction={direction}")
+        print(f"[Strategy] ➕ add_strategy_line id={id} level={level}")
         with self.lock:
             self.strategy_lines[id] = {
                 "level":       float(level),
-                "direction":   direction,
+                "direction":   None,
                 "has_crossed": False,
-                "extreme":     float("inf") if direction == "long" else float("-inf"),
+                "extreme":     0.0,
             }
 
     def remove_strategy_line(self, id: Any):
@@ -123,7 +123,7 @@ class BaseLiquidityStrategy:
     def _reset_line_state(self, line_state: Dict[str, Any]):
         """If we keep the line, reset so it can trigger again in the future."""
         line_state["has_crossed"] = False
-        line_state["extreme"] = float("inf") if line_state["direction"] == "long" else float("-inf")
+        line_state["extreme"] = 0.0
 
     # ----- Aggregation -----
 

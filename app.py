@@ -21,7 +21,7 @@ def build_prod():
     ds = CSVDataSource(
         pair=PAIR,
         initial_start_time=datetime.fromisoformat("2024-01-14T00:00:00+00:00"),
-        initial_end_time  =datetime.fromisoformat("2024-05-02T13:45:00+00:00"),
+        initial_end_time  =datetime.fromisoformat("2024-05-15T00:00:00+00:00"),
         bars_per_second=10.0,
     )
 
@@ -32,7 +32,7 @@ def build_prod():
     )
 
     options = StrategyOptions(
-        line_removal_mode=LineRemovalMode.ON_ENTER,
+        line_removal_mode=LineRemovalMode.ON_EVALUATE,
         # Triggers are now handled by LiquidityStrategyV2 defaults (wick + 3-candle)
         # unless you override them here.
         triggers=None, 

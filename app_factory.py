@@ -112,7 +112,7 @@ def create_app(
     # Optionally load any preexisting lines from repo into the in-memory strategy
     if bootstrap_existing_lines:
         for l in repos.lines.list_lines(pair):
-            tstrategy.add_strategy_line(l.line_id, l.price, l.direction)
+            tstrategy.add_strategy_line(l.line_id, l.price)
 
     # ---------------- HTTP endpoints (capturing the injected deps) ----------------
 

@@ -11,44 +11,45 @@ def wick_near_line_trigger(
     line: Dict[str, Any],
     bar: Dict[str, Any],
 ) -> Optional[EntryContext]:
-    """
-    Original single-candle wick trigger.
-    """
+    
+    # 1. Get Fixed Direction
+    dir_ = line.get("direction")
+    if dir_ is None: return None
+
     lvl = line["level"]
-    dir_ = line["direction"]
+    
+    # 2. Check for Line Interaction (Touch)
+    if not (bar["high"] >= lvl >= bar["low"]):
+        return None
 
     o, h, l, c = bar["open"], bar["high"], bar["low"], bar["close"]
     rng = h - l
-    if rng <= 0:
-        return None
+    if rng <= 0: return None
 
     body = abs(c - o)
     body_ratio = body / rng
 
-    # Use strategy config
     small_body_max_ratio = getattr(strategy, "small_body_max_ratio", 0.25)
     wick_min_ratio = getattr(strategy, "wick_min_ratio", 0.60)
 
-    if body_ratio > small_body_max_ratio:
-        return None
+    if body_ratio > small_body_max_ratio: return None
 
     upper_wick = h - max(o, c)
     lower_wick = min(o, c) - l
     upper_ratio = upper_wick / rng
     lower_ratio = lower_wick / rng
 
+    # 3. Use Fixed Direction Logic & Tracked Extreme
     if dir_ == "long":
-        # Long needs big lower wick
-        if lower_ratio < wick_min_ratio:
-            return None
-        extreme = l
+        # Support bounce -> Needs big lower wick
+        if lower_ratio < wick_min_ratio: return None
+        true_extreme = min(line['extreme'], l)
+        cross_depth = max(0.0, lvl - true_extreme)
     else:
-        # Short needs big upper wick
-        if upper_ratio < wick_min_ratio:
-            return None
-        extreme = h
-
-    min_dist_to_line = min(abs(lvl - x) for x in (o, h, l, c))
+        # Resistance reject -> Needs big upper wick
+        if upper_ratio < wick_min_ratio: return None
+        true_extreme = max(line['extreme'], h)
+        cross_depth = max(0.0, true_extreme - lvl)
 
     return EntryContext(
         strategy=strategy,
@@ -59,8 +60,8 @@ def wick_near_line_trigger(
         close=c,
         low=l,
         high=h,
-        extreme=extreme,
-        cross_depth=min_dist_to_line,
+        extreme=true_extreme,
+        cross_depth=cross_depth,
     )
 
 
@@ -70,39 +71,25 @@ def three_candle_reversal_trigger(
     line: Dict[str, Any],
     bar: Dict[str, Any],
 ) -> Optional[EntryContext]:
-    """
-    3-Candle Pattern Trigger.
     
-    SHORT ENTRY (Bearish Reversal):
-      1. Green Candle, Big Body.
-      2. Hammer (Body at Top), Small Upper Wick. MUST CROSS LINE.
-      3. Red Candle (Current Bar).
-      
-    LONG ENTRY (Bullish Reversal):
-      1. Red Candle, Big Body.
-      2. Hammer (Body at Bottom), Small Lower Wick. MUST CROSS LINE.
-      3. Green Candle (Current Bar).
-    """
+    # 1. Get Fixed Direction
+    dir_ = line.get("direction")
+    if dir_ is None: return None
+
     tf = bar.get('tf')
-    if not tf:
-        return None
+    if not tf: return None
 
-    # Get last 3 bars: [Index -3, Index -2, Current]
     history = strategy.get_history(tf, 3)
-    if len(history) < 3:
-        return None
+    if len(history) < 3: return None
 
-    c1, c2, c3 = history[0], history[1], history[2] # c3 is 'bar'
-    
+    c1, c2, c3 = history[0], history[1], history[2]
     lvl = line["level"]
-    dir_ = line["direction"]
 
     # Configs
     big_body_min_ratio = getattr(strategy, "big_body_min_ratio", 0.50)
     hammer_body_max_ratio = getattr(strategy, "hammer_body_max_ratio", 0.30)
     hammer_nose_max_ratio = getattr(strategy, "hammer_nose_max_ratio", 0.10) 
 
-    # Helper to calc ratios
     def get_ratios(b):
         rng = b['high'] - b['low']
         if rng <= 0: return 0, 0, 0
@@ -111,30 +98,29 @@ def three_candle_reversal_trigger(
         lower = min(b['open'], b['close']) - b['low']
         return body/rng, upper/rng, lower/rng
 
-    # --- SHORT LOGIC ---
+    # --- SHORT LOGIC (Fixed) ---
     if dir_ == "short":
-        # 1. First Candle: Green + Big Body
+        # 1. Green Candle
         if c1['close'] <= c1['open']: return None
         b1_ratio, _, _ = get_ratios(c1)
         if b1_ratio < big_body_min_ratio: return None
 
-        # 2. Second Candle: Hammer (Body at Top)
+        # 2. Hammer at Top
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
         if b2_ratio > hammer_body_max_ratio: return None
         if b2_upper > hammer_nose_max_ratio: return None
 
-        # 3. Line Interaction: Hammer MUST go through the line
-        #    (High >= Level >= Low)
-        if not (c2['high'] >= lvl >= c2['low']):
-            return None
+        # 3. Hammer MUST touch the line
+        if not (c2['high'] >= lvl >= c2['low']): return None
 
-        # 4. Third Candle: Red
+        # 4. Red Candle
         if c3['close'] >= c3['open']: return None
 
-        # Extreme for SL is the High of the pattern
-        extreme = max(c1['high'], c2['high'], c3['high'])
+        # Extreme
+        pattern_high = max(c1['high'], c2['high'], c3['high'])
+        true_extreme = max(line['extreme'], pattern_high)
+        cross_depth = max(0.0, true_extreme - lvl)
         
-        # Cross depth is 0 because we enforced crossing, but we can pass the overlap amount or 0
         return EntryContext(
             strategy=strategy,
             line_id=line_id,
@@ -144,31 +130,32 @@ def three_candle_reversal_trigger(
             close=c3['close'],
             low=c3['low'],
             high=c3['high'],
-            extreme=extreme,
-            cross_depth=0.0 
+            extreme=true_extreme,
+            cross_depth=cross_depth 
         )
 
-    # --- LONG LOGIC ---
+    # --- LONG LOGIC (Fixed) ---
     elif dir_ == "long":
-        # 1. First Candle: Red + Big Body
+        # 1. Red Candle
         if c1['close'] >= c1['open']: return None
         b1_ratio, _, _ = get_ratios(c1)
         if b1_ratio < big_body_min_ratio: return None
 
-        # 2. Second Candle: Hammer (Body at Bottom)
+        # 2. Hammer at Bottom
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
         if b2_ratio > hammer_body_max_ratio: return None
         if b2_lower > hammer_nose_max_ratio: return None
 
-        # 3. Line Interaction: Hammer MUST go through the line
-        if not (c2['high'] >= lvl >= c2['low']):
-            return None
+        # 3. Hammer MUST touch the line
+        if not (c2['high'] >= lvl >= c2['low']): return None
 
-        # 4. Third Candle: Green
+        # 4. Green Candle
         if c3['close'] <= c3['open']: return None
 
-        # Extreme for SL is the Low of the pattern
-        extreme = min(c1['low'], c2['low'], c3['low'])
+        # Extreme
+        pattern_low = min(c1['low'], c2['low'], c3['low'])
+        true_extreme = min(line['extreme'], pattern_low)
+        cross_depth = max(0.0, lvl - true_extreme)
 
         return EntryContext(
             strategy=strategy,
@@ -179,19 +166,14 @@ def three_candle_reversal_trigger(
             close=c3['close'],
             low=c3['low'],
             high=c3['high'],
-            extreme=extreme,
-            cross_depth=0.0
+            extreme=true_extreme,
+            cross_depth=cross_depth
         )
 
     return None
 
 
 class LiquidityStrategyV2(BaseLiquidityStrategy):
-    """
-    Variant that checks MULTIPLE timeframes for patterns.
-    Now supports history tracking for multi-candle patterns.
-    """
-
     def __init__(
         self,
         min_stop_loss: float,
@@ -204,10 +186,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         options: Optional[StrategyOptions] = None,
         htf_fetcher=None,
         *,
-        # Configs for Wick Trigger
         small_body_max_ratio: float = 0.25,
         wick_min_ratio: float = 0.60,
-        # Configs for 3-Candle Trigger
         big_body_min_ratio: float = 0.50,
         hammer_body_max_ratio: float = 0.30,
         hammer_nose_max_ratio: float = 0.15, 
@@ -226,19 +206,15 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             htf_fetcher=htf_fetcher,
         )
 
-        # Ratios
         self.small_body_max_ratio = small_body_max_ratio
         self.wick_min_ratio = wick_min_ratio
         self.big_body_min_ratio = big_body_min_ratio
         self.hammer_body_max_ratio = hammer_body_max_ratio
         self.hammer_nose_max_ratio = hammer_nose_max_ratio
 
-        # Triggers: Add the new one to the list
         self.triggers = list(self.options.triggers or self.default_triggers())
 
-        # Aggregation State
         self._tf_aggregators = {}
-        # History Storage: { '5m': deque([...]), '15m': deque([...]) }
         self._tf_histories = {}
 
         for tf in self.timeframes:
@@ -247,11 +223,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 "buf": [],
                 "start": None
             }
-            # Keep last 10 bars for pattern recognition
             self._tf_histories[tf] = deque(maxlen=10)
 
     def default_triggers(self) -> List[EntryTrigger]:
-        # Enable BOTH triggers by default
         return [wick_near_line_trigger, three_candle_reversal_trigger]
 
     def _parse_tf_seconds(self, tf: str) -> int:
@@ -263,7 +237,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         return val
 
     def get_history(self, tf: str, count: int) -> List[Dict[str, Any]]:
-        """Returns the last 'count' bars for the given timeframe."""
         hist = self._tf_histories.get(tf, [])
         if len(hist) < count:
             return []
@@ -272,6 +245,64 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
     def on_raw_bar(self, bar: Dict[str, Any]):
         with self.lock:
             self._check_open_trades(bar)
+            
+            current_price = bar['close']
+            lines_to_remove = set()
+
+            # 1. Latch Directions & Track Extremes
+            for sid, line in self.strategy_lines.items():
+                if line['direction'] is None:
+                    line['direction'] = "short" if current_price < line['level'] else "long"
+                    line['extreme'] = float("-inf") if line['direction'] == "short" else float("inf")
+                    print(f"[StrategyV2] 🔒 Latched line {sid} ({line['level']}) as {line['direction'].upper()} (Price: {current_price})")
+                
+                elif line['direction'] == 'short':
+                    line['extreme'] = max(line['extreme'], bar['high'])
+                    # Max Bounce Breach
+                    if current_price > (line['level'] + self.max_bounce):
+                        print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Max bounce breach")
+                        lines_to_remove.add(sid)
+                
+                elif line['direction'] == 'long':
+                    line['extreme'] = min(line['extreme'], bar['low'])
+                    # Max Bounce Breach
+                    if current_price < (line['level'] - self.max_bounce):
+                        print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Max bounce breach")
+                        lines_to_remove.add(sid)
+
+            # 2. Next Line Breach Check (The Fix)
+            # If price hits Line B, Line A is invalidated.
+            
+            # Group active lines by direction
+            short_lines = [l for l in self.strategy_lines.values() if l['direction'] == 'short']
+            long_lines  = [l for l in self.strategy_lines.values() if l['direction'] == 'long']
+
+            for sid, line in self.strategy_lines.items():
+                if sid in lines_to_remove: continue
+                
+                if line['direction'] == 'short':
+                    # If there is another Short line ABOVE this one, and price hit it
+                    # Condition: Level A < Level B <= Bar High
+                    for other in short_lines:
+                        if other is line: continue
+                        if line['level'] < other['level'] <= bar['high']:
+                            print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Price hit higher resistance {other['level']}")
+                            lines_to_remove.add(sid)
+                            break
+                
+                elif line['direction'] == 'long':
+                    # If there is another Long line BELOW this one, and price hit it
+                    # Condition: Level A > Level B >= Bar Low
+                    for other in long_lines:
+                        if other is line: continue
+                        if line['level'] > other['level'] >= bar['low']:
+                            print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Price hit lower support {other['level']}")
+                            lines_to_remove.add(sid)
+                            break
+
+            # Perform removals
+            for sid in lines_to_remove:
+                self.remove_strategy_line(sid)
 
         ts = bar["time"]
         
@@ -285,15 +316,10 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             if window_start == state["start"]:
                 state["buf"].append(bar)
             else:
-                # Window closed
                 if state["buf"]:
                     agg_bar = self._aggregate_bars(state["buf"], state["start"], window_secs)
                     agg_bar['tf'] = tf 
-                    
-                    # 1. Store in history
                     self._tf_histories[tf].append(agg_bar)
-
-                    # 2. Run strategy
                     self._on_strategy_bar(agg_bar)
 
                 state["buf"] = [bar]

@@ -19,7 +19,6 @@ class LinesController:
             'id':            l.line_id,
             'pair':          l.pair,
             'price':         l.price,
-            'direction':     l.direction,
             'creation_date': l.creation_date.isoformat()
         } for l in lines])
     
@@ -35,28 +34,20 @@ class LinesController:
         if not played or len(played) == 0:
             abort(400, "No bars have been replayed yet to determine last close price")
 
-        last_close = played[-1]['close']
-
-        # decide direction based on last_close vs. new line price
-        direction = 'short' if last_close < price else 'long'
-
         # persist the line and register it with the strategy
         line = self.line_repository.insert_line(
             pair=pair,
-            price=price,
-            direction=direction
+            price=price
         )
         self.liquidity_strategy.add_strategy_line(
             line.line_id,
-            line.price,
-            line.direction
+            line.price
         )
 
         return jsonify({
             'id':            line.line_id,
             'pair':          line.pair,
             'price':         line.price,
-            'direction':     line.direction,
             'creation_date': line.creation_date.isoformat()
         }), 201
 

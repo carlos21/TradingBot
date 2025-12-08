@@ -9,7 +9,6 @@ class Line(Base):
     line_id = Column(String(50), primary_key=True, index=False)
     pair = Column(String(10), nullable=False)
     price = Column(Float, nullable=False)
-    direction = Column(String(10), nullable=False)
     creation_date = Column(DateTime, nullable=False)
 
 class Trade(Base):

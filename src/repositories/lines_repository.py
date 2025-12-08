@@ -14,8 +14,7 @@ class LineRepository(ABC):
     def insert_line(
         self,
         pair: str, 
-        price,
-        direction: str
+        price
     ) -> LineData:
         pass
 
@@ -30,13 +29,12 @@ class LineRepository(ABC):
 
 class SQLLineRepository(LineRepository):
     
-    def insert_line(self, pair: str, price, direction: str) -> LineData:
+    def insert_line(self, pair: str, price) -> LineData:
         with get_db_session() as db:
             new_line = Line(
                 line_id=str(uuid.uuid4()),
                 pair=pair,
                 price=price,
-                direction=direction,
                 creation_date=datetime.utcnow()
             )
             db.add(new_line)
@@ -54,7 +52,6 @@ class SQLLineRepository(LineRepository):
                 line_id=new_line.line_id,
                 pair=new_line.pair,
                 price=new_line.price,
-                direction=new_line.direction,
                 creation_date=new_line.creation_date
             )
 
@@ -70,7 +67,6 @@ class SQLLineRepository(LineRepository):
                     line_id=row.line_id,
                     pair=row.pair,
                     price=row.price,
-                    direction=row.direction,
                     creation_date=row.creation_date
                 )
                 for row in rows
