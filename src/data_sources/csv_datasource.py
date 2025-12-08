@@ -129,6 +129,9 @@ class CSVDataSource(CombinedDataSource):
     def load_historical_bars(self, timeframe='1m', start_time=None):
         print(f"[CSV_DS] load_historical_bars → tf={timeframe!r}, start_time={start_time!r}, "
             f"_played_bars_len={len(self._played_bars)}")
+        
+        # REMOVED: The incorrect truncation logic that caused NameError
+        
         if timeframe == '1m':
             print(f"[CSV_DS] → returning full _played_bars ({len(self._played_bars)})")
             return list(self._played_bars)
@@ -140,27 +143,46 @@ class CSVDataSource(CombinedDataSource):
 
     def subscribe(self, callback, from_time=0):
         print(f"[CSV_DS] subscribe() start → from_time={from_time}, total_bars={len(self._bars)}")
+        
+        # 1. Truncate _played_bars to remove any history AFTER from_time
+        #    This prevents duplicates when seeking back or resuming.
+        self._played_bars = [b for b in self._played_bars if b['time'] < from_time]
+        print(f"[CSV_DS] Truncated _played_bars to {len(self._played_bars)} items (before {from_time})")
+
+        # 2. Find start index in the master list
         start_idx = next((i for i,b in enumerate(self._bars) if b['time'] >= from_time), None)
 
         if start_idx is not None:
             print(f"[CSV_DS] first to play idx={start_idx}, ts={self._bars[start_idx]['time']}")
         else:
             print("[CSV_DS] no bars to play after from_time")
+            # If we are at the end, just return
+            try:
+                callback({'_end': True})
+            except Exception:
+                pass
+            return
 
-        for idx, bar in enumerate(self._bars):
+        # 3. Stream bars
+        for idx in range(start_idx, len(self._bars)):
             if self._stop_event.is_set():
                 print("[CSV_DS] saw stop_event, breaking")
                 break
-            if bar['time'] < from_time:
-                continue
+            
+            bar = self._bars[idx]
+            
+            # Append to history
             self._played_bars.append(bar)
-            print(f"[CSV_DS] → playing idx={idx}, ts={bar['time']}")
+            
+            # Emit
             callback(bar)
         
-        try:
-            callback({'_end': True})
-        except Exception:
-            pass
+        # End of stream
+        if not self._stop_event.is_set():
+            try:
+                callback({'_end': True})
+            except Exception:
+                pass
 
     def set_timeframe(self, tf: str):
         t_logger.debug(f"set_timeframe called → tf={tf}")

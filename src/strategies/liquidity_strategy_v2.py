@@ -313,6 +313,11 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             if state["start"] is None:
                 state["start"] = window_start
 
+            # DUPLICATE PROTECTION:
+            # If we receive the exact same bar time as the last one in buffer, ignore it.
+            if state["buf"] and state["buf"][-1]['time'] == ts:
+                continue
+
             if window_start == state["start"]:
                 state["buf"].append(bar)
             else:
