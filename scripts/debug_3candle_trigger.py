@@ -239,7 +239,7 @@ def main():
     )
 
     # 2. Add Line near the Hammer's high (approx 105.0)
-    strategy.add_strategy_line("L1", 105.0, "short")
+    strategy.add_strategy_line("L1", 105.0)
 
     # 3. Generate Data
     bars = build_3candle_scenario_bars()

@@ -215,7 +215,7 @@ def main():
     )
 
     # 2. Add Line
-    strategy.add_strategy_line("L1", 98.0, "long")
+    strategy.add_strategy_line("L1", 98.0)
 
     # 3. Generate Data
     bars = build_15m_scenario_bars()
