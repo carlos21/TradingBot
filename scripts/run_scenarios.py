@@ -37,8 +37,11 @@ from tests.fakes import FakeLineRepository, FakeTradeRepository
 from src.data_sources.csv_datasource import CSVDataSource
 from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
 from src.strategies.entry_context import (
-    retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
+    open_trades_limit_filter, max_bounce_filter
 )
+# IMPORTS UPDATED TO MATCH APP.PY (V2 + Triggers)
+from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
+from src.strategies.triggers import wick_near_line_trigger, three_candle_reversal_trigger
 from src.bars_loader import BarsLoader
 from src.services.trade_manager import TradeManager
 
@@ -225,9 +228,10 @@ def start_server_in_thread(pair: str,
     ds = CSVDataSource(pair=pair, filename=str(csv_out), bars_per_second=float(bars_per_second))
     numbers = StrategyNumbers(min_stop_loss=10.0, max_bounce=40.0, extra_sl_space=0.0)
 
+    # UPDATED: Use same triggers as app.py (V2)
     options = StrategyOptions(
         line_removal_mode=LineRemovalMode.NEVER,
-        triggers=[retest_cross_trigger],
+        triggers=[wick_near_line_trigger, three_candle_reversal_trigger],
         entry_filters=[open_trades_limit_filter(1), max_bounce_filter(numbers.max_bounce)],
     )
 
@@ -237,7 +241,7 @@ def start_server_in_thread(pair: str,
         repos=repos,
         numbers=numbers,
         options=options,
-        strategy_tf=tf_for_strategy,
+        timeframes=[tf_for_strategy], # V2 requires list of timeframes
         bootstrap_existing_lines=False,   # <-- start clean
     )
 
@@ -312,14 +316,20 @@ def _validate_inproc(csv_path: Path, pair: str, tf: str,
     sock   = DummySock()
     lines_repo  = FakeLineRepository()
     trades_repo = FakeTradeRepository()
+    
+    # UPDATED: Use V2 triggers
     options = StrategyOptions(
         line_removal_mode=LineRemovalMode.NEVER,
-        triggers=[retest_cross_trigger],
+        triggers=[wick_near_line_trigger, three_candle_reversal_trigger],
         entry_filters=[open_trades_limit_filter(1), max_bounce_filter(40.0)]
     )
-    strat = __make_strategy(sock, lines_repo, trades_repo, options, tf)
-    tm    = TradeManager(trade_repository=trades_repo, socketio=sock)
 
+    # 1. Init TradeManager first
+    tm = TradeManager(trade_repository=trades_repo, socketio=sock)
+
+    # 2. Pass TM to strategy factory
+    strat = __make_strategy(sock, lines_repo, trades_repo, tm, options, tf)
+    
     ds = CSVDataSource(pair=pair, filename=str(csv_path), bars_per_second=10000.0)
     if not getattr(ds, "_bars", None):
         raise RuntimeError(
@@ -345,7 +355,7 @@ def _validate_inproc(csv_path: Path, pair: str, tf: str,
             if not item["added"] and bar.get('time', 0) >= item["at"]:
                 last_close = ds._played_bars[-1]['close'] if ds._played_bars else bar['close']
                 direction  = 'short' if last_close < item["price"] else 'long'
-                strat.add_strategy_line(f"L{len(strat.strategy_lines)+1}", item["price"], direction)
+                strat.add_strategy_line(f"L{len(strat.strategy_lines)+1}", item["price"])
                 item["added"] = True
         tm.handle_new_1m_bar(bar)
         strat.on_raw_bar(bar)
@@ -370,14 +380,19 @@ def _validate_inproc(csv_path: Path, pair: str, tf: str,
             return False, f"{field} mismatch: got {got} want {want} tol={tol}", opened
     return True, "OK", opened
 
-def __make_strategy(sock, lines_repo, trades_repo, options, tf):
-    return __import_liq()(min_stop_loss=10.0, max_bounce=40.0, extra_sl_space=0.0,
-                          socketio=sock, line_repository=lines_repo, trade_repository=trades_repo,
-                          options=options, strategy_tf=tf)
-
-def __import_liq():
-    from src.strategies.liquidity_strategy import LiquidityStrategy
-    return LiquidityStrategy
+# UPDATED: Accept TradeManager and use V2
+def __make_strategy(sock, lines_repo, trades_repo, trade_manager, options, tf):
+    return LiquidityStrategyV2(
+        min_stop_loss=10.0, 
+        max_bounce=40.0, 
+        extra_sl_space=0.0,
+        socketio=sock, 
+        line_repository=lines_repo, 
+        trade_repository=trades_repo,
+        trade_manager=trade_manager, # Passed here
+        options=options, 
+        timeframes=[tf] # V2 expects list
+    )
 
 # ---------------- main ----------------
 

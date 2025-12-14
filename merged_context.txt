@@ -1773,6 +1773,18 @@ class TradeManager:
         self.socketio.emit('trade_close', payload)
 
         return payload
+    
+    def update_local_trade_sl(self, trade_id: str, new_sl: float):
+        """
+        Update the SL of an in-memory trade so the exit logic respects the new level.
+        """
+        for t in self.open_trades:
+            if t['trade_id'] == trade_id:
+                old_sl = t['stop_loss']
+                t['stop_loss'] = new_sl
+                print(f"[TradeManager] 🔄 Synced SL for {trade_id}: {old_sl} -> {new_sl}")
+                return
+        print(f"[TradeManager] ⚠️ Could not find trade {trade_id} to update SL")
 ```
 ===== END FILE: trade_manager.py =====
 
@@ -1789,6 +1801,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
+from src.services.trade_manager import TradeManager
 from src.strategies.entry_context import (
     EntryContext,
     EntryFilter,
@@ -1803,10 +1816,17 @@ class LineRemovalMode(str, Enum):
 
 
 @dataclass
+class BreakevenConfig:
+    trigger_rr: float       # Risk:Reward ratio to trigger the move (e.g., 2.0)
+    move_to_rr: float = 0.0 # Where to move SL in R terms (0.0 = Entry, 0.1 = Entry + small profit)
+
+
+@dataclass
 class StrategyOptions:
     line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE
     entry_filters: Optional[List[EntryFilter]] = None
     triggers: Optional[List[EntryTrigger]] = None
+    breakeven: Optional[BreakevenConfig] = None
 
 
 class BaseLiquidityStrategy:
@@ -1829,6 +1849,7 @@ class BaseLiquidityStrategy:
         socketio,
         line_repository: LineRepository,
         trade_repository: TradeRepository,
+        trade_manager: TradeManager,
         extra_sl_space: float,
         strategy_tf: str = "5m",
         options: Optional[StrategyOptions] = None,
@@ -1839,6 +1860,7 @@ class BaseLiquidityStrategy:
         self.socketio      = socketio
         self.line_repository  = line_repository
         self.trade_repository = trade_repository
+        self.trade_manager = trade_manager
         self.extra_sl_space = float(extra_sl_space)
 
         self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, has_crossed, extreme }
@@ -1854,18 +1876,12 @@ class BaseLiquidityStrategy:
 
         self.options = options or StrategyOptions()
         # Let subclasses decide the triggers (they may depend on attrs set after super().__init__)
-        self.triggers: List[EntryTrigger] = []
+        self.triggers: List[EntryTrigger] = list(self.options.triggers) if self.options.triggers else []
         # Filters can be taken straight from options
         self.entry_filters: List[EntryFilter] = list(self.options.entry_filters or [])
 
         # Optional dependency for multi-TF checks
         self.htf_fetcher = htf_fetcher
-
-    # ----- Hooks for subclasses -----
-
-    def default_triggers(self) -> List[EntryTrigger]:
-        """Return a list of default triggers. Must be implemented by subclasses."""
-        raise NotImplementedError
 
     # ----- Public small API for runtime tweaks -----
 
@@ -1930,6 +1946,11 @@ class BaseLiquidityStrategy:
         Feed raw stream bars (assumed 1s or tick granularity).
         We aggregate to the configured TF and then process strategy logic on each completed bar.
         """
+
+        # Check breakeven conditions on every raw bar before aggregation
+        if self.options.breakeven:
+            self._check_breakeven(bar)
+
         ts = bar["time"]
         win = (ts // self.strategy_window) * self.strategy_window
         if self._group_start is None:
@@ -1940,6 +1961,72 @@ class BaseLiquidityStrategy:
             agg = self._aggregate_bars(self._buf, self._group_start, self.strategy_window)
             self._buf, self._group_start = [bar], win
             self._on_strategy_bar(agg)
+
+    def _check_breakeven(self, bar: Dict[str, Any]):
+        cfg = self.options.breakeven
+        if not cfg:
+            return
+
+        for trade in self.open_trades:
+            if trade['status'] != 'open':
+                continue
+            if trade['pair'] != bar['pair']:
+                continue
+
+            current_sl = trade['stop_loss']
+            entry      = trade['entry']
+            risk       = trade['risk'] 
+            
+            new_sl = None
+            should_update = False
+
+            if trade['type'] == 'long':
+                trigger_price = entry + (risk * cfg.trigger_rr)
+                
+                # DEBUG PRINT
+                # print(f"[Strategy] Check Long BE: High={bar['high']} >= Trigger={trigger_price} (Risk={risk})")
+
+                if bar['high'] >= trigger_price:
+                    proposed_sl = entry + (risk * cfg.move_to_rr)
+                    if proposed_sl > current_sl:
+                        new_sl = proposed_sl
+                        should_update = True
+
+            elif trade['type'] in ('short', 'sell'):
+                trigger_price = entry - (risk * cfg.trigger_rr)
+
+                # DEBUG PRINT
+                # print(f"[Strategy] Check Short BE: Low={bar['low']} <= Trigger={trigger_price} (Risk={risk})")
+
+                if bar['low'] <= trigger_price:
+                    proposed_sl = entry - (risk * cfg.move_to_rr)
+                    if proposed_sl < current_sl:
+                        new_sl = proposed_sl
+                        should_update = True
+
+            if should_update and new_sl is not None:
+                self._update_trade_sl(trade, new_sl)
+
+    def _update_trade_sl(self, trade: Dict[str, Any], new_sl: float):
+        print(f"[Strategy] 🛡️ Moving SL for {trade['trade_id']} to {new_sl}")
+        
+        # 1. Update In-Memory State
+        trade['stop_loss'] = new_sl
+        
+        # 2. Update Database
+        try:
+            self.trade_repository.update_stop_loss(trade['trade_id'], new_sl)
+            self.trade_manager.update_local_trade_sl(trade['trade_id'], new_sl)
+        except Exception as e:
+            print(f"[Strategy] ⚠️ Failed to update SL in DB: {e}")
+
+        # 3. Notify Frontend
+        # We emit a 'trade_update' event. You might need to handle this in JS.
+        self.socketio.emit("trade_update", {
+            "trade_id": trade['trade_id'],
+            "stop_loss": new_sl,
+            "pair": trade['pair']
+        })
 
     # ----- Core bar processing -----
 
@@ -1958,11 +2045,8 @@ class BaseLiquidityStrategy:
                 opened = False
                 proposed_ctx: Optional[EntryContext] = None
 
-                # choose triggers: either explicit or subclass defaults
-                active_triggers = self.triggers or self.default_triggers()
-
                 # run triggers in order until one proposes
-                for trig in active_triggers:
+                for trig in self.triggers:
                     proposed_ctx = trig(self, sid, line, bar)
                     if proposed_ctx is not None:
                         break
@@ -2592,8 +2676,212 @@ class LiquidityStrategy(BaseLiquidityStrategy):
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from collections import deque
+from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy, StrategyOptions
 from src.strategies.entry_context import EntryContext, EntryTrigger
+
+
+class LiquidityStrategyV2(BaseLiquidityStrategy):
+    def __init__(
+        self,
+        min_stop_loss: float,
+        max_bounce: float,
+        socketio,
+        line_repository,
+        trade_repository,
+        trade_manager: TradeManager,
+        extra_sl_space: float,
+        timeframes: List[str] = None,
+        options: Optional[StrategyOptions] = None,
+        htf_fetcher=None,
+        *,
+        small_body_max_ratio: float = 0.25,
+        wick_min_ratio: float = 0.60,
+        big_body_min_ratio: float = 0.50,
+        hammer_body_max_ratio: float = 0.30,
+        hammer_nose_max_ratio: float = 0.15, 
+    ):
+        self.timeframes = timeframes or ["5m"]
+        
+        super().__init__(
+            min_stop_loss=min_stop_loss,
+            max_bounce=max_bounce,
+            socketio=socketio,
+            line_repository=line_repository,
+            trade_repository=trade_repository,
+            trade_manager=trade_manager,
+            extra_sl_space=extra_sl_space,
+            strategy_tf=self.timeframes[0], 
+            options=options,
+            htf_fetcher=htf_fetcher,
+        )
+
+        self.small_body_max_ratio = small_body_max_ratio
+        self.wick_min_ratio = wick_min_ratio
+        self.big_body_min_ratio = big_body_min_ratio
+        self.hammer_body_max_ratio = hammer_body_max_ratio
+        self.hammer_nose_max_ratio = hammer_nose_max_ratio
+
+        self._tf_aggregators = {}
+        self._tf_histories = {}
+
+        for tf in self.timeframes:
+            self._tf_aggregators[tf] = {
+                "seconds": self._parse_tf_seconds(tf),
+                "buf": [],
+                "start": None
+            }
+            self._tf_histories[tf] = deque(maxlen=10)
+
+    def _parse_tf_seconds(self, tf: str) -> int:
+        unit = tf[-1].lower()
+        val = int(tf[:-1])
+        if unit == 'm': return val * 60
+        if unit == 'h': return val * 3600
+        if unit == 'd': return val * 86400
+        return val
+
+    def get_history(self, tf: str, count: int) -> List[Dict[str, Any]]:
+        hist = self._tf_histories.get(tf, [])
+        if len(hist) < count:
+            return []
+        return list(hist)[-count:]
+
+    def on_raw_bar(self, bar: Dict[str, Any]):
+        with self.lock:
+            self._check_open_trades(bar)
+
+            if self.options.breakeven:
+                self._check_breakeven(bar)
+            
+            current_price = bar['close']
+            lines_to_remove = set()
+
+            # 1. Latch Directions & Track Extremes
+            for sid, line in self.strategy_lines.items():
+                if line['direction'] is None:
+                    line['direction'] = "short" if current_price < line['level'] else "long"
+                    line['extreme'] = float("-inf") if line['direction'] == "short" else float("inf")
+                    print(f"[StrategyV2] 🔒 Latched line {sid} ({line['level']}) as {line['direction'].upper()} (Price: {current_price})")
+                
+                elif line['direction'] == 'short':
+                    line['extreme'] = max(line['extreme'], bar['high'])
+                    # Max Bounce Breach
+                    if current_price > (line['level'] + self.max_bounce):
+                        print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Max bounce breach")
+                        lines_to_remove.add(sid)
+                
+                elif line['direction'] == 'long':
+                    line['extreme'] = min(line['extreme'], bar['low'])
+                    # Max Bounce Breach
+                    if current_price < (line['level'] - self.max_bounce):
+                        print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Max bounce breach")
+                        lines_to_remove.add(sid)
+
+            # 2. Next Line Breach Check (The Fix)
+            # If price hits Line B, Line A is invalidated.
+            
+            # Group active lines by direction
+            short_lines = [l for l in self.strategy_lines.values() if l['direction'] == 'short']
+            long_lines  = [l for l in self.strategy_lines.values() if l['direction'] == 'long']
+
+            for sid, line in self.strategy_lines.items():
+                if sid in lines_to_remove: continue
+                
+                if line['direction'] == 'short':
+                    # If there is another Short line ABOVE this one, and price hit it
+                    # Condition: Level A < Level B <= Bar High
+                    for other in short_lines:
+                        if other is line: continue
+                        if line['level'] < other['level'] <= bar['high']:
+                            print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Price hit higher resistance {other['level']}")
+                            lines_to_remove.add(sid)
+                            break
+                
+                elif line['direction'] == 'long':
+                    # If there is another Long line BELOW this one, and price hit it
+                    # Condition: Level A > Level B >= Bar Low
+                    for other in long_lines:
+                        if other is line: continue
+                        if line['level'] > other['level'] >= bar['low']:
+                            print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Price hit lower support {other['level']}")
+                            lines_to_remove.add(sid)
+                            break
+
+            # Perform removals
+            for sid in lines_to_remove:
+                self.remove_strategy_line(sid)
+
+        ts = bar["time"]
+        
+        for tf, state in self._tf_aggregators.items():
+            window_secs = state["seconds"]
+            window_start = (ts // window_secs) * window_secs
+
+            if state["start"] is None:
+                state["start"] = window_start
+
+            # DUPLICATE PROTECTION:
+            # If we receive the exact same bar time as the last one in buffer, ignore it.
+            if state["buf"] and state["buf"][-1]['time'] == ts:
+                continue
+
+            if window_start == state["start"]:
+                state["buf"].append(bar)
+            else:
+                if state["buf"]:
+                    agg_bar = self._aggregate_bars(state["buf"], state["start"], window_secs)
+                    agg_bar['tf'] = tf 
+                    self._tf_histories[tf].append(agg_bar)
+                    self._on_strategy_bar(agg_bar)
+
+                state["buf"] = [bar]
+                state["start"] = window_start
+
+    def _on_strategy_bar(self, bar: Dict[str, Any]):
+        with self.lock:
+            for sid, line in list(self.strategy_lines.items()):
+                opened = False
+                proposed_ctx: Optional[EntryContext] = None
+
+                for trig in self.triggers:
+                    proposed_ctx = trig(self, sid, line, bar)
+                    if proposed_ctx is not None:
+                        break
+
+                if proposed_ctx is None:
+                    continue
+
+                allow, reason = self._filters_allow_entry(proposed_ctx)
+                if allow:
+                    print(f"[StrategyV2] Triggered on {bar.get('tf')} timeframe!")
+                    trade = self._build_trade_from_context(proposed_ctx)
+                    self._store_and_emit_open(trade)
+                    opened = True
+                
+                self._maybe_remove_line(sid, opened)
+```
+===== END FILE: liquidity_strategy_v2.py =====
+
+===== BEGIN FILE: strategy_config.py =====
+(path: src/strategies/strategy_config.py)
+```python
+from dataclasses import dataclass
+from typing import Dict
+
+@dataclass
+class StrategyConfig:
+    stop_loss:      Dict[str, float]
+    max_bounce:     Dict[str, float]
+    extra_sl_space: Dict[str, float]
+```
+===== END FILE: strategy_config.py =====
+
+===== BEGIN FILE: triggers.py =====
+(path: src/strategies/triggers.py)
+```python
+from typing import Any, Dict, Optional
+from src.strategies.entry_context import EntryContext
 
 
 def wick_near_line_trigger(
@@ -2762,212 +3050,15 @@ def three_candle_reversal_trigger(
         )
 
     return None
-
-
-class LiquidityStrategyV2(BaseLiquidityStrategy):
-    def __init__(
-        self,
-        min_stop_loss: float,
-        max_bounce: float,
-        socketio,
-        line_repository,
-        trade_repository,
-        extra_sl_space: float,
-        timeframes: List[str] = None,
-        options: Optional[StrategyOptions] = None,
-        htf_fetcher=None,
-        *,
-        small_body_max_ratio: float = 0.25,
-        wick_min_ratio: float = 0.60,
-        big_body_min_ratio: float = 0.50,
-        hammer_body_max_ratio: float = 0.30,
-        hammer_nose_max_ratio: float = 0.15, 
-    ):
-        self.timeframes = timeframes or ["5m"]
-        
-        super().__init__(
-            min_stop_loss=min_stop_loss,
-            max_bounce=max_bounce,
-            socketio=socketio,
-            line_repository=line_repository,
-            trade_repository=trade_repository,
-            extra_sl_space=extra_sl_space,
-            strategy_tf=self.timeframes[0], 
-            options=options,
-            htf_fetcher=htf_fetcher,
-        )
-
-        self.small_body_max_ratio = small_body_max_ratio
-        self.wick_min_ratio = wick_min_ratio
-        self.big_body_min_ratio = big_body_min_ratio
-        self.hammer_body_max_ratio = hammer_body_max_ratio
-        self.hammer_nose_max_ratio = hammer_nose_max_ratio
-
-        self.triggers = list(self.options.triggers or self.default_triggers())
-
-        self._tf_aggregators = {}
-        self._tf_histories = {}
-
-        for tf in self.timeframes:
-            self._tf_aggregators[tf] = {
-                "seconds": self._parse_tf_seconds(tf),
-                "buf": [],
-                "start": None
-            }
-            self._tf_histories[tf] = deque(maxlen=10)
-
-    def default_triggers(self) -> List[EntryTrigger]:
-        return [wick_near_line_trigger, three_candle_reversal_trigger]
-
-    def _parse_tf_seconds(self, tf: str) -> int:
-        unit = tf[-1].lower()
-        val = int(tf[:-1])
-        if unit == 'm': return val * 60
-        if unit == 'h': return val * 3600
-        if unit == 'd': return val * 86400
-        return val
-
-    def get_history(self, tf: str, count: int) -> List[Dict[str, Any]]:
-        hist = self._tf_histories.get(tf, [])
-        if len(hist) < count:
-            return []
-        return list(hist)[-count:]
-
-    def on_raw_bar(self, bar: Dict[str, Any]):
-        with self.lock:
-            self._check_open_trades(bar)
-            
-            current_price = bar['close']
-            lines_to_remove = set()
-
-            # 1. Latch Directions & Track Extremes
-            for sid, line in self.strategy_lines.items():
-                if line['direction'] is None:
-                    line['direction'] = "short" if current_price < line['level'] else "long"
-                    line['extreme'] = float("-inf") if line['direction'] == "short" else float("inf")
-                    print(f"[StrategyV2] 🔒 Latched line {sid} ({line['level']}) as {line['direction'].upper()} (Price: {current_price})")
-                
-                elif line['direction'] == 'short':
-                    line['extreme'] = max(line['extreme'], bar['high'])
-                    # Max Bounce Breach
-                    if current_price > (line['level'] + self.max_bounce):
-                        print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Max bounce breach")
-                        lines_to_remove.add(sid)
-                
-                elif line['direction'] == 'long':
-                    line['extreme'] = min(line['extreme'], bar['low'])
-                    # Max Bounce Breach
-                    if current_price < (line['level'] - self.max_bounce):
-                        print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Max bounce breach")
-                        lines_to_remove.add(sid)
-
-            # 2. Next Line Breach Check (The Fix)
-            # If price hits Line B, Line A is invalidated.
-            
-            # Group active lines by direction
-            short_lines = [l for l in self.strategy_lines.values() if l['direction'] == 'short']
-            long_lines  = [l for l in self.strategy_lines.values() if l['direction'] == 'long']
-
-            for sid, line in self.strategy_lines.items():
-                if sid in lines_to_remove: continue
-                
-                if line['direction'] == 'short':
-                    # If there is another Short line ABOVE this one, and price hit it
-                    # Condition: Level A < Level B <= Bar High
-                    for other in short_lines:
-                        if other is line: continue
-                        if line['level'] < other['level'] <= bar['high']:
-                            print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Price hit higher resistance {other['level']}")
-                            lines_to_remove.add(sid)
-                            break
-                
-                elif line['direction'] == 'long':
-                    # If there is another Long line BELOW this one, and price hit it
-                    # Condition: Level A > Level B >= Bar Low
-                    for other in long_lines:
-                        if other is line: continue
-                        if line['level'] > other['level'] >= bar['low']:
-                            print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Price hit lower support {other['level']}")
-                            lines_to_remove.add(sid)
-                            break
-
-            # Perform removals
-            for sid in lines_to_remove:
-                self.remove_strategy_line(sid)
-
-        ts = bar["time"]
-        
-        for tf, state in self._tf_aggregators.items():
-            window_secs = state["seconds"]
-            window_start = (ts // window_secs) * window_secs
-
-            if state["start"] is None:
-                state["start"] = window_start
-
-            # DUPLICATE PROTECTION:
-            # If we receive the exact same bar time as the last one in buffer, ignore it.
-            if state["buf"] and state["buf"][-1]['time'] == ts:
-                continue
-
-            if window_start == state["start"]:
-                state["buf"].append(bar)
-            else:
-                if state["buf"]:
-                    agg_bar = self._aggregate_bars(state["buf"], state["start"], window_secs)
-                    agg_bar['tf'] = tf 
-                    self._tf_histories[tf].append(agg_bar)
-                    self._on_strategy_bar(agg_bar)
-
-                state["buf"] = [bar]
-                state["start"] = window_start
-
-    def _on_strategy_bar(self, bar: Dict[str, Any]):
-        with self.lock:
-            for sid, line in list(self.strategy_lines.items()):
-                opened = False
-                proposed_ctx: Optional[EntryContext] = None
-
-                active_triggers = self.triggers or self.default_triggers()
-
-                for trig in active_triggers:
-                    proposed_ctx = trig(self, sid, line, bar)
-                    if proposed_ctx is not None:
-                        break
-
-                if proposed_ctx is None:
-                    continue
-
-                allow, reason = self._filters_allow_entry(proposed_ctx)
-                if allow:
-                    print(f"[StrategyV2] Triggered on {bar.get('tf')} timeframe!")
-                    trade = self._build_trade_from_context(proposed_ctx)
-                    self._store_and_emit_open(trade)
-                    opened = True
-                
-                self._maybe_remove_line(sid, opened)
 ```
-===== END FILE: liquidity_strategy_v2.py =====
-
-===== BEGIN FILE: strategy_config.py =====
-(path: src/strategies/strategy_config.py)
-```python
-from dataclasses import dataclass
-from typing import Dict
-
-@dataclass
-class StrategyConfig:
-    stop_loss:      Dict[str, float]
-    max_bounce:     Dict[str, float]
-    extra_sl_space: Dict[str, float]
-```
-===== END FILE: strategy_config.py =====
+===== END FILE: triggers.py =====
 
 ===== BEGIN FILE: fakes.py =====
 (path: tests/fakes.py)
 ```python
-
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 
 
 class DummySocketIO:
@@ -2986,7 +3077,7 @@ class _Line:
     line_id: str
     pair: str
     price: float
-    direction: str
+    direction: Optional[str]
     creation_date: datetime
 
 class FakeLineRepository:
@@ -2997,7 +3088,7 @@ class FakeLineRepository:
     def list_lines(self, pair: str):
         return [obj for obj in self._store.values() if obj.pair == pair]
 
-    def insert_line(self, pair, price, direction):
+    def insert_line(self, pair, price, direction=None):
         self._seq += 1
         lid = f"L{self._seq}"
         obj = _Line(lid, pair, price, direction, datetime.utcnow())
@@ -3024,6 +3115,15 @@ class FakeTradeRepository:
         self._seq += 1
         self.inserted.append(kwargs | {"trade_id": f"T{self._seq}"})
         return _Trade(trade_id=f"T{self._seq}")
+
+    def update_stop_loss(self, trade_id, new_stop_loss):
+        # Find the inserted trade dict and update it
+        for t in self.inserted:
+            if t['trade_id'] == trade_id:
+                t['stop_loss'] = new_stop_loss
+                return
+        # If using real DB logic, would raise NotFound, but for fake just ignore or log
+        pass
 
     def close_trade(self, **kwargs):
         self.closed.append(kwargs)
@@ -3394,9 +3494,11 @@ from app_factory import create_app, Repositories, StrategyNumbers
 from src.repositories.lines_repository import SQLLineRepository
 from src.repositories.trades_repository import SQLTradeRepository
 from src.data_sources.csv_datasource import CSVDataSource
+from src.strategies.base_liquidity_strategy import BreakevenConfig
 from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
 from src.strategies.entry_context import retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
 from src.database import database
+from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
 
 PAIR = "NQ"
 
@@ -3411,8 +3513,8 @@ def build_prod():
     # Data Source (pick your real source)
     ds = CSVDataSource(
         pair=PAIR,
-        initial_start_time=datetime.fromisoformat("2024-01-14T00:00:00+00:00"),
-        initial_end_time  =datetime.fromisoformat("2024-05-15T00:00:00+00:00"),
+        initial_start_time=datetime.fromisoformat("2024-04-01T00:00:00+00:00"),
+        initial_end_time  =datetime.fromisoformat("2024-05-01T08:40:00+00:00"),
         bars_per_second=10.0,
     )
 
@@ -3424,13 +3526,18 @@ def build_prod():
 
     options = StrategyOptions(
         line_removal_mode=LineRemovalMode.ON_EVALUATE,
-        # Triggers are now handled by LiquidityStrategyV2 defaults (wick + 3-candle)
-        # unless you override them here.
-        triggers=None, 
         entry_filters=[
             open_trades_limit_filter(1), 
             max_bounce_filter(numbers.max_bounce)
-        ]
+        ],
+        triggers=[
+            wick_near_line_trigger,
+            three_candle_reversal_trigger
+        ],
+        breakeven=BreakevenConfig(
+            trigger_rr=2.0, 
+            move_to_rr=0.05 
+        )
     )
 
     return create_app(
@@ -3473,6 +3580,7 @@ from src.strategies.entry_context import (
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
+from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
 
 
 @dataclass
@@ -3507,7 +3615,6 @@ def create_app(
     numbers: StrategyNumbers,
     options: Optional[StrategyOptions] = None,
     timeframes: Optional[List[str]] = None,  # New argument for V2
-    strategy_tf: Optional[str] = None,       # Kept for backward compatibility
     bootstrap_existing_lines: bool = True,
 ) -> AppWiring:
     """
@@ -3517,24 +3624,9 @@ def create_app(
     app = Flask(__name__)
     CORS(app)
     socketio = SocketIO(app, cors_allowed_origins="*")
-
-    # Resolve timeframes: prefer explicit list, fall back to legacy string, default to ["5m"]
-    if timeframes is None:
-        if strategy_tf:
-            effective_timeframes = [strategy_tf]
-        else:
-            effective_timeframes = ["5m"]
-    else:
-        effective_timeframes = timeframes
-
-    # Strategy & managers
-    effective_options = options or StrategyOptions(
-        entry_filters=[
-            open_trades_limit_filter(1),
-            max_bounce_filter(numbers.max_bounce),
-        ]
-    )
     
+    trade_manager = TradeManager(trade_repository=repos.trades, socketio=socketio)
+
     # Initialize V2 Strategy with the list of timeframes
     tstrategy = LiquidityStrategyV2(
         min_stop_loss   = numbers.min_stop_loss,
@@ -3543,11 +3635,10 @@ def create_app(
         socketio        = socketio,
         line_repository = repos.lines,
         trade_repository= repos.trades,
-        options         = effective_options,
-        timeframes      = effective_timeframes, 
+        trade_manager   = trade_manager,
+        options         = options,
+        timeframes      = timeframes, 
     )
-    
-    trade_manager = TradeManager(trade_repository=repos.trades, socketio=socketio)
 
     # Combined callback
     def combined_bar_callback(bar):
@@ -4525,8 +4616,11 @@ from tests.fakes import FakeLineRepository, FakeTradeRepository
 from src.data_sources.csv_datasource import CSVDataSource
 from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
 from src.strategies.entry_context import (
-    retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
+    open_trades_limit_filter, max_bounce_filter
 )
+# IMPORTS UPDATED TO MATCH APP.PY (V2 + Triggers)
+from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
+from src.strategies.triggers import wick_near_line_trigger, three_candle_reversal_trigger
 from src.bars_loader import BarsLoader
 from src.services.trade_manager import TradeManager
 
@@ -4713,9 +4807,10 @@ def start_server_in_thread(pair: str,
     ds = CSVDataSource(pair=pair, filename=str(csv_out), bars_per_second=float(bars_per_second))
     numbers = StrategyNumbers(min_stop_loss=10.0, max_bounce=40.0, extra_sl_space=0.0)
 
+    # UPDATED: Use same triggers as app.py (V2)
     options = StrategyOptions(
         line_removal_mode=LineRemovalMode.NEVER,
-        triggers=[retest_cross_trigger],
+        triggers=[wick_near_line_trigger, three_candle_reversal_trigger],
         entry_filters=[open_trades_limit_filter(1), max_bounce_filter(numbers.max_bounce)],
     )
 
@@ -4725,7 +4820,7 @@ def start_server_in_thread(pair: str,
         repos=repos,
         numbers=numbers,
         options=options,
-        strategy_tf=tf_for_strategy,
+        timeframes=[tf_for_strategy], # V2 requires list of timeframes
         bootstrap_existing_lines=False,   # <-- start clean
     )
 
@@ -4800,14 +4895,20 @@ def _validate_inproc(csv_path: Path, pair: str, tf: str,
     sock   = DummySock()
     lines_repo  = FakeLineRepository()
     trades_repo = FakeTradeRepository()
+    
+    # UPDATED: Use V2 triggers
     options = StrategyOptions(
         line_removal_mode=LineRemovalMode.NEVER,
-        triggers=[retest_cross_trigger],
+        triggers=[wick_near_line_trigger, three_candle_reversal_trigger],
         entry_filters=[open_trades_limit_filter(1), max_bounce_filter(40.0)]
     )
-    strat = __make_strategy(sock, lines_repo, trades_repo, options, tf)
-    tm    = TradeManager(trade_repository=trades_repo, socketio=sock)
 
+    # 1. Init TradeManager first
+    tm = TradeManager(trade_repository=trades_repo, socketio=sock)
+
+    # 2. Pass TM to strategy factory
+    strat = __make_strategy(sock, lines_repo, trades_repo, tm, options, tf)
+    
     ds = CSVDataSource(pair=pair, filename=str(csv_path), bars_per_second=10000.0)
     if not getattr(ds, "_bars", None):
         raise RuntimeError(
@@ -4833,7 +4934,7 @@ def _validate_inproc(csv_path: Path, pair: str, tf: str,
             if not item["added"] and bar.get('time', 0) >= item["at"]:
                 last_close = ds._played_bars[-1]['close'] if ds._played_bars else bar['close']
                 direction  = 'short' if last_close < item["price"] else 'long'
-                strat.add_strategy_line(f"L{len(strat.strategy_lines)+1}", item["price"], direction)
+                strat.add_strategy_line(f"L{len(strat.strategy_lines)+1}", item["price"])
                 item["added"] = True
         tm.handle_new_1m_bar(bar)
         strat.on_raw_bar(bar)
@@ -4858,14 +4959,19 @@ def _validate_inproc(csv_path: Path, pair: str, tf: str,
             return False, f"{field} mismatch: got {got} want {want} tol={tol}", opened
     return True, "OK", opened
 
-def __make_strategy(sock, lines_repo, trades_repo, options, tf):
-    return __import_liq()(min_stop_loss=10.0, max_bounce=40.0, extra_sl_space=0.0,
-                          socketio=sock, line_repository=lines_repo, trade_repository=trades_repo,
-                          options=options, strategy_tf=tf)
-
-def __import_liq():
-    from src.strategies.liquidity_strategy import LiquidityStrategy
-    return LiquidityStrategy
+# UPDATED: Accept TradeManager and use V2
+def __make_strategy(sock, lines_repo, trades_repo, trade_manager, options, tf):
+    return LiquidityStrategyV2(
+        min_stop_loss=10.0, 
+        max_bounce=40.0, 
+        extra_sl_space=0.0,
+        socketio=sock, 
+        line_repository=lines_repo, 
+        trade_repository=trades_repo,
+        trade_manager=trade_manager, # Passed here
+        options=options, 
+        timeframes=[tf] # V2 expects list
+    )
 
 # ---------------- main ----------------
 
@@ -6063,6 +6169,16 @@ export class ChartViewer {
     this.socket.on('trade_close', (trade) => {
       this.activeTrade = null;
       this._drawResultMarker(trade)
+    });
+
+    this.socket.on('trade_update', (update) => {
+      console.log('[ChartViewer] trade_update received:', update);
+      
+      // Check if this update belongs to the currently displayed active trade
+      if (this.activeTrade && this.activeTrade.trade_id === update.trade_id) {
+        this.activeTrade.stop_loss = update.stop_loss;
+        this._drawTradeLines(this.activeTrade);
+      }
     });
 
     this.socket.on('line_removed', ({ id }) => {

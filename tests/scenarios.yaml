@@ -1,24 +1,4 @@
 scenarios:
-  - name: "NQ — retest + wick reversal"
-    pair: "NQ"
-    tf: "5m"
-
-    start: "2024-05-23 08:10:00"
-    end:   "2024-05-24 15:20:00"
-
-    lines:
-      - { price: 19560.00 }
-      - { price: 19538.50, at: "2024-05-24 10:14:00" }
-
-    # Expectations (optional). If provided, we assert the *first* opened trade matches.
-    expect:
-      entry: 19546.00
-      sl:    19553.00
-      tp:    19530.00
-      tolerance: 0.25
-
-    snapshot: true
-
   - name: "NQ - 2024-05-01"
     pair: "NQ"
     tf: "5m"

@@ -22,8 +22,8 @@ def build_prod():
     # Data Source (pick your real source)
     ds = CSVDataSource(
         pair=PAIR,
-        initial_start_time=datetime.fromisoformat("2024-01-14T00:00:00+00:00"),
-        initial_end_time  =datetime.fromisoformat("2024-07-25T13:40:00+00:00"),
+        initial_start_time=datetime.fromisoformat("2024-04-01T00:00:00+00:00"),
+        initial_end_time  =datetime.fromisoformat("2024-05-01T08:40:00+00:00"),
         bars_per_second=10.0,
     )
 
@@ -45,7 +45,7 @@ def build_prod():
         ],
         breakeven=BreakevenConfig(
             trigger_rr=2.0, 
-            move_to_rr=0.1 
+            move_to_rr=0.05 
         )
     )
 

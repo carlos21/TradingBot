@@ -1,6 +1,6 @@
-
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Optional
 
 
 class DummySocketIO:
@@ -19,7 +19,7 @@ class _Line:
     line_id: str
     pair: str
     price: float
-    direction: str
+    direction: Optional[str]
     creation_date: datetime
 
 class FakeLineRepository:
@@ -30,7 +30,7 @@ class FakeLineRepository:
     def list_lines(self, pair: str):
         return [obj for obj in self._store.values() if obj.pair == pair]
 
-    def insert_line(self, pair, price, direction):
+    def insert_line(self, pair, price, direction=None):
         self._seq += 1
         lid = f"L{self._seq}"
         obj = _Line(lid, pair, price, direction, datetime.utcnow())
@@ -57,6 +57,15 @@ class FakeTradeRepository:
         self._seq += 1
         self.inserted.append(kwargs | {"trade_id": f"T{self._seq}"})
         return _Trade(trade_id=f"T{self._seq}")
+
+    def update_stop_loss(self, trade_id, new_stop_loss):
+        # Find the inserted trade dict and update it
+        for t in self.inserted:
+            if t['trade_id'] == trade_id:
+                t['stop_loss'] = new_stop_loss
+                return
+        # If using real DB logic, would raise NotFound, but for fake just ignore or log
+        pass
 
     def close_trade(self, **kwargs):
         self.closed.append(kwargs)
