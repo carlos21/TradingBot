@@ -184,6 +184,16 @@ export class ChartViewer {
       this._drawResultMarker(trade)
     });
 
+    this.socket.on('trade_update', (update) => {
+      console.log('[ChartViewer] trade_update received:', update);
+      
+      // Check if this update belongs to the currently displayed active trade
+      if (this.activeTrade && this.activeTrade.trade_id === update.trade_id) {
+        this.activeTrade.stop_loss = update.stop_loss;
+        this._drawTradeLines(this.activeTrade);
+      }
+    });
+
     this.socket.on('line_removed', ({ id }) => {
       console.log('[ChartViewer] line_removed for id=', id);
       const found = this.pinnedLines.find(o => o.id === id);

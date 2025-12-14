@@ -3,9 +3,11 @@ from app_factory import create_app, Repositories, StrategyNumbers
 from src.repositories.lines_repository import SQLLineRepository
 from src.repositories.trades_repository import SQLTradeRepository
 from src.data_sources.csv_datasource import CSVDataSource
+from src.strategies.base_liquidity_strategy import BreakevenConfig
 from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
 from src.strategies.entry_context import retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
 from src.database import database
+from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
 
 PAIR = "NQ"
 
@@ -21,7 +23,7 @@ def build_prod():
     ds = CSVDataSource(
         pair=PAIR,
         initial_start_time=datetime.fromisoformat("2024-01-14T00:00:00+00:00"),
-        initial_end_time  =datetime.fromisoformat("2024-05-15T00:00:00+00:00"),
+        initial_end_time  =datetime.fromisoformat("2024-07-25T13:40:00+00:00"),
         bars_per_second=10.0,
     )
 
@@ -33,13 +35,18 @@ def build_prod():
 
     options = StrategyOptions(
         line_removal_mode=LineRemovalMode.ON_EVALUATE,
-        # Triggers are now handled by LiquidityStrategyV2 defaults (wick + 3-candle)
-        # unless you override them here.
-        triggers=None, 
         entry_filters=[
             open_trades_limit_filter(1), 
             max_bounce_filter(numbers.max_bounce)
-        ]
+        ],
+        triggers=[
+            wick_near_line_trigger,
+            three_candle_reversal_trigger
+        ],
+        breakeven=BreakevenConfig(
+            trigger_rr=2.0, 
+            move_to_rr=0.1 
+        )
     )
 
     return create_app(

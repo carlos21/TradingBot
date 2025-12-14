@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
+from src.services.trade_manager import TradeManager
 from src.strategies.entry_context import (
     EntryContext,
     EntryFilter,
@@ -22,10 +23,17 @@ class LineRemovalMode(str, Enum):
 
 
 @dataclass
+class BreakevenConfig:
+    trigger_rr: float       # Risk:Reward ratio to trigger the move (e.g., 2.0)
+    move_to_rr: float = 0.0 # Where to move SL in R terms (0.0 = Entry, 0.1 = Entry + small profit)
+
+
+@dataclass
 class StrategyOptions:
     line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE
     entry_filters: Optional[List[EntryFilter]] = None
     triggers: Optional[List[EntryTrigger]] = None
+    breakeven: Optional[BreakevenConfig] = None
 
 
 class BaseLiquidityStrategy:
@@ -48,6 +56,7 @@ class BaseLiquidityStrategy:
         socketio,
         line_repository: LineRepository,
         trade_repository: TradeRepository,
+        trade_manager: TradeManager,
         extra_sl_space: float,
         strategy_tf: str = "5m",
         options: Optional[StrategyOptions] = None,
@@ -58,6 +67,7 @@ class BaseLiquidityStrategy:
         self.socketio      = socketio
         self.line_repository  = line_repository
         self.trade_repository = trade_repository
+        self.trade_manager = trade_manager
         self.extra_sl_space = float(extra_sl_space)
 
         self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, has_crossed, extreme }
@@ -73,18 +83,12 @@ class BaseLiquidityStrategy:
 
         self.options = options or StrategyOptions()
         # Let subclasses decide the triggers (they may depend on attrs set after super().__init__)
-        self.triggers: List[EntryTrigger] = []
+        self.triggers: List[EntryTrigger] = list(self.options.triggers) if self.options.triggers else []
         # Filters can be taken straight from options
         self.entry_filters: List[EntryFilter] = list(self.options.entry_filters or [])
 
         # Optional dependency for multi-TF checks
         self.htf_fetcher = htf_fetcher
-
-    # ----- Hooks for subclasses -----
-
-    def default_triggers(self) -> List[EntryTrigger]:
-        """Return a list of default triggers. Must be implemented by subclasses."""
-        raise NotImplementedError
 
     # ----- Public small API for runtime tweaks -----
 
@@ -149,6 +153,11 @@ class BaseLiquidityStrategy:
         Feed raw stream bars (assumed 1s or tick granularity).
         We aggregate to the configured TF and then process strategy logic on each completed bar.
         """
+
+        # Check breakeven conditions on every raw bar before aggregation
+        if self.options.breakeven:
+            self._check_breakeven(bar)
+
         ts = bar["time"]
         win = (ts // self.strategy_window) * self.strategy_window
         if self._group_start is None:
@@ -159,6 +168,72 @@ class BaseLiquidityStrategy:
             agg = self._aggregate_bars(self._buf, self._group_start, self.strategy_window)
             self._buf, self._group_start = [bar], win
             self._on_strategy_bar(agg)
+
+    def _check_breakeven(self, bar: Dict[str, Any]):
+        cfg = self.options.breakeven
+        if not cfg:
+            return
+
+        for trade in self.open_trades:
+            if trade['status'] != 'open':
+                continue
+            if trade['pair'] != bar['pair']:
+                continue
+
+            current_sl = trade['stop_loss']
+            entry      = trade['entry']
+            risk       = trade['risk'] 
+            
+            new_sl = None
+            should_update = False
+
+            if trade['type'] == 'long':
+                trigger_price = entry + (risk * cfg.trigger_rr)
+                
+                # DEBUG PRINT
+                # print(f"[Strategy] Check Long BE: High={bar['high']} >= Trigger={trigger_price} (Risk={risk})")
+
+                if bar['high'] >= trigger_price:
+                    proposed_sl = entry + (risk * cfg.move_to_rr)
+                    if proposed_sl > current_sl:
+                        new_sl = proposed_sl
+                        should_update = True
+
+            elif trade['type'] in ('short', 'sell'):
+                trigger_price = entry - (risk * cfg.trigger_rr)
+
+                # DEBUG PRINT
+                # print(f"[Strategy] Check Short BE: Low={bar['low']} <= Trigger={trigger_price} (Risk={risk})")
+
+                if bar['low'] <= trigger_price:
+                    proposed_sl = entry - (risk * cfg.move_to_rr)
+                    if proposed_sl < current_sl:
+                        new_sl = proposed_sl
+                        should_update = True
+
+            if should_update and new_sl is not None:
+                self._update_trade_sl(trade, new_sl)
+
+    def _update_trade_sl(self, trade: Dict[str, Any], new_sl: float):
+        print(f"[Strategy] 🛡️ Moving SL for {trade['trade_id']} to {new_sl}")
+        
+        # 1. Update In-Memory State
+        trade['stop_loss'] = new_sl
+        
+        # 2. Update Database
+        try:
+            self.trade_repository.update_stop_loss(trade['trade_id'], new_sl)
+            self.trade_manager.update_local_trade_sl(trade['trade_id'], new_sl)
+        except Exception as e:
+            print(f"[Strategy] ⚠️ Failed to update SL in DB: {e}")
+
+        # 3. Notify Frontend
+        # We emit a 'trade_update' event. You might need to handle this in JS.
+        self.socketio.emit("trade_update", {
+            "trade_id": trade['trade_id'],
+            "stop_loss": new_sl,
+            "pair": trade['pair']
+        })
 
     # ----- Core bar processing -----
 
@@ -177,11 +252,8 @@ class BaseLiquidityStrategy:
                 opened = False
                 proposed_ctx: Optional[EntryContext] = None
 
-                # choose triggers: either explicit or subclass defaults
-                active_triggers = self.triggers or self.default_triggers()
-
                 # run triggers in order until one proposes
-                for trig in active_triggers:
+                for trig in self.triggers:
                     proposed_ctx = trig(self, sid, line, bar)
                     if proposed_ctx is not None:
                         break

@@ -145,3 +145,15 @@ class TradeManager:
         self.socketio.emit('trade_close', payload)
 
         return payload
+    
+    def update_local_trade_sl(self, trade_id: str, new_sl: float):
+        """
+        Update the SL of an in-memory trade so the exit logic respects the new level.
+        """
+        for t in self.open_trades:
+            if t['trade_id'] == trade_id:
+                old_sl = t['stop_loss']
+                t['stop_loss'] = new_sl
+                print(f"[TradeManager] 🔄 Synced SL for {trade_id}: {old_sl} -> {new_sl}")
+                return
+        print(f"[TradeManager] ⚠️ Could not find trade {trade_id} to update SL")

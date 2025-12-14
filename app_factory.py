@@ -19,6 +19,7 @@ from src.strategies.entry_context import (
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
+from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
 
 
 @dataclass
@@ -53,7 +54,6 @@ def create_app(
     numbers: StrategyNumbers,
     options: Optional[StrategyOptions] = None,
     timeframes: Optional[List[str]] = None,  # New argument for V2
-    strategy_tf: Optional[str] = None,       # Kept for backward compatibility
     bootstrap_existing_lines: bool = True,
 ) -> AppWiring:
     """
@@ -63,24 +63,9 @@ def create_app(
     app = Flask(__name__)
     CORS(app)
     socketio = SocketIO(app, cors_allowed_origins="*")
-
-    # Resolve timeframes: prefer explicit list, fall back to legacy string, default to ["5m"]
-    if timeframes is None:
-        if strategy_tf:
-            effective_timeframes = [strategy_tf]
-        else:
-            effective_timeframes = ["5m"]
-    else:
-        effective_timeframes = timeframes
-
-    # Strategy & managers
-    effective_options = options or StrategyOptions(
-        entry_filters=[
-            open_trades_limit_filter(1),
-            max_bounce_filter(numbers.max_bounce),
-        ]
-    )
     
+    trade_manager = TradeManager(trade_repository=repos.trades, socketio=socketio)
+
     # Initialize V2 Strategy with the list of timeframes
     tstrategy = LiquidityStrategyV2(
         min_stop_loss   = numbers.min_stop_loss,
@@ -89,11 +74,10 @@ def create_app(
         socketio        = socketio,
         line_repository = repos.lines,
         trade_repository= repos.trades,
-        options         = effective_options,
-        timeframes      = effective_timeframes, 
+        trade_manager   = trade_manager,
+        options         = options,
+        timeframes      = timeframes, 
     )
-    
-    trade_manager = TradeManager(trade_repository=repos.trades, socketio=socketio)
 
     # Combined callback
     def combined_bar_callback(bar):
