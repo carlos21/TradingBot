@@ -192,6 +192,32 @@ def create_app(
         ts = loader.jump_day(direction=direction, fast=fast)
         emit('jump_result', {'to': ts})
 
+    # --- TEST RUNNER HELPERS ---
+    @app.route('/__reset_all', methods=['POST'])
+    def reset_all():
+        """Clears all state for a clean scenario run."""
+        # 1. Clear in-memory strategy state
+        tstrategy.strategy_lines.clear()
+        tstrategy.open_trades.clear()
+        trade_manager.open_trades.clear()
+        
+        # 2. Clear DB lines so they don't reappear on page reload
+        # (Iterate and delete since we don't have a truncate method exposed)
+        try:
+            all_lines = repos.lines.list_lines(pair)
+            for l in all_lines:
+                repos.lines.delete_line(l.line_id)
+        except Exception as e:
+            print(f"Error clearing lines DB: {e}")
+
+        return "OK"
+
+    @app.route('/__shutdown', methods=['POST'])
+    def shutdown():
+        func = request.environ.get('werkzeug.server.shutdown')
+        if func: func()
+        return "OK"
+
     return AppWiring(
         app=app,
         socketio=socketio,

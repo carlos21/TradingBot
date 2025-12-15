@@ -10,6 +10,9 @@ from src.database import database
 from src.strategies.strategy_config import CandleConfig
 from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
 
+import os
+ 
+
 PAIR = "NQ"
 
 def build_prod():
@@ -34,8 +37,10 @@ def build_prod():
         extra_sl_space=0.0,
     )
 
+    removal_mode_env = os.environ.get("LINE_REMOVAL_MODE", "ON_EVALUATE").upper()
+    removal_mode = LineRemovalMode.NEVER if removal_mode_env == "NEVER" else LineRemovalMode.ON_EVALUATE
     options = StrategyOptions(
-        line_removal_mode=LineRemovalMode.ON_EVALUATE,
+        line_removal_mode=removal_mode,
         entry_filters=[
             open_trades_limit_filter(1), 
             max_bounce_filter(numbers.max_bounce)
