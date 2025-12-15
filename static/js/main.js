@@ -7,6 +7,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const socket = io();
     const service = new DataService();
     const chartViewer = new ChartViewer(chartContainer, service, socket);
+    window.chartViewer = chartViewer;
     const controlsView = new ControlsView(chartViewer, socket, service);
     controlsView.init();
 

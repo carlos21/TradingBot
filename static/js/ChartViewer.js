@@ -17,6 +17,7 @@ export class ChartViewer {
     this.historicalBars = [];
     this.tradeMarkers   = [];
     this.lastBarTs = null;
+    this.keepClosedTradeLines = opts.keepClosedTradeLines || false;
 
     this.formats = {
       NQ:     { precision: 2,    minMove: 0.01    },
@@ -355,8 +356,10 @@ export class ChartViewer {
 
   _drawResultMarker(trade) {
     // remove entry/SL/TP lines
-    [ this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine ]
-      .forEach(h => h && this.series.removePriceLine(h));
+    if (!this.keepClosedTradeLines) {
+      [ this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine ]
+        .forEach(h => h && this.series.removePriceLine(h));
+    }
 
     // draw the exit‐marker
     const exitTime = trade.exit_time || trade.exitTime || trade.entryTime;

@@ -7,6 +7,7 @@ from src.strategies.base_liquidity_strategy import BreakevenConfig
 from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
 from src.strategies.entry_context import retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
 from src.database import database
+from src.strategies.strategy_config import CandleConfig
 from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
 
 PAIR = "NQ"
@@ -49,12 +50,15 @@ def build_prod():
         )
     )
 
+    candle_config = CandleConfig()
+
     return create_app(
         pair=PAIR,
         data_source=ds,
         repos=repos,
         numbers=numbers,
         options=options,
+        candle_config=candle_config,
         timeframes=["5m", "15m"],
         bootstrap_existing_lines=True,
     )

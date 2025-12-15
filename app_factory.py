@@ -19,6 +19,7 @@ from src.strategies.entry_context import (
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
+from src.strategies.strategy_config import CandleConfig
 from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
 
 
@@ -53,7 +54,8 @@ def create_app(
     repos: Repositories,
     numbers: StrategyNumbers,
     options: Optional[StrategyOptions] = None,
-    timeframes: Optional[List[str]] = None,  # New argument for V2
+    candle_config: Optional[CandleConfig] = None,
+    timeframes: Optional[List[str]] = None,
     bootstrap_existing_lines: bool = True,
 ) -> AppWiring:
     """
@@ -76,7 +78,8 @@ def create_app(
         trade_repository= repos.trades,
         trade_manager   = trade_manager,
         options         = options,
-        timeframes      = timeframes, 
+        timeframes      = timeframes,
+        candle_config   = candle_config
     )
 
     # Combined callback

@@ -4,6 +4,7 @@ from collections import deque
 from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy, StrategyOptions
 from src.strategies.entry_context import EntryContext, EntryTrigger
+from src.strategies.strategy_config import CandleConfig
 
 
 class LiquidityStrategyV2(BaseLiquidityStrategy):
@@ -19,12 +20,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         timeframes: List[str] = None,
         options: Optional[StrategyOptions] = None,
         htf_fetcher=None,
-        *,
-        small_body_max_ratio: float = 0.25,
-        wick_min_ratio: float = 0.60,
-        big_body_min_ratio: float = 0.50,
-        hammer_body_max_ratio: float = 0.30,
-        hammer_nose_max_ratio: float = 0.15, 
+        candle_config: Optional[CandleConfig] = None, 
     ):
         self.timeframes = timeframes or ["5m"]
         
@@ -41,12 +37,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             htf_fetcher=htf_fetcher,
         )
 
-        self.small_body_max_ratio = small_body_max_ratio
-        self.wick_min_ratio = wick_min_ratio
-        self.big_body_min_ratio = big_body_min_ratio
-        self.hammer_body_max_ratio = hammer_body_max_ratio
-        self.hammer_nose_max_ratio = hammer_nose_max_ratio
-
+        self.candle_config = candle_config
         self._tf_aggregators = {}
         self._tf_histories = {}
 

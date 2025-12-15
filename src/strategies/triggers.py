@@ -26,10 +26,9 @@ def wick_near_line_trigger(
     body = abs(c - o)
     body_ratio = body / rng
 
-    small_body_max_ratio = getattr(strategy, "small_body_max_ratio", 0.25)
-    wick_min_ratio = getattr(strategy, "wick_min_ratio", 0.60)
+    cfg = strategy.candle_config
 
-    if body_ratio > small_body_max_ratio: return None
+    if body_ratio > cfg.small_body_max_ratio: return None
 
     upper_wick = h - max(o, c)
     lower_wick = min(o, c) - l
@@ -39,12 +38,12 @@ def wick_near_line_trigger(
     # 3. Use Fixed Direction Logic & Tracked Extreme
     if dir_ == "long":
         # Support bounce -> Needs big lower wick
-        if lower_ratio < wick_min_ratio: return None
+        if lower_ratio < cfg.wick_min_ratio: return None
         true_extreme = min(line['extreme'], l)
         cross_depth = max(0.0, lvl - true_extreme)
     else:
         # Resistance reject -> Needs big upper wick
-        if upper_ratio < wick_min_ratio: return None
+        if upper_ratio < cfg.wick_min_ratio: return None
         true_extreme = max(line['extreme'], h)
         cross_depth = max(0.0, true_extreme - lvl)
 
@@ -83,9 +82,7 @@ def three_candle_reversal_trigger(
     lvl = line["level"]
 
     # Configs
-    big_body_min_ratio = getattr(strategy, "big_body_min_ratio", 0.50)
-    hammer_body_max_ratio = getattr(strategy, "hammer_body_max_ratio", 0.30)
-    hammer_nose_max_ratio = getattr(strategy, "hammer_nose_max_ratio", 0.10) 
+    cfg = strategy.candle_config
 
     def get_ratios(b):
         rng = b['high'] - b['low']
@@ -100,12 +97,12 @@ def three_candle_reversal_trigger(
         # 1. Green Candle
         if c1['close'] <= c1['open']: return None
         b1_ratio, _, _ = get_ratios(c1)
-        if b1_ratio < big_body_min_ratio: return None
+        if b1_ratio < cfg.big_body_min_ratio: return None
 
         # 2. Hammer at Top
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
-        if b2_ratio > hammer_body_max_ratio: return None
-        if b2_upper > hammer_nose_max_ratio: return None
+        if b2_ratio > cfg.hammer_body_max_ratio: return None
+        if b2_upper > cfg.hammer_nose_max_ratio: return None
 
         # 3. Hammer MUST touch the line
         if not (c2['high'] >= lvl >= c2['low']): return None
@@ -136,12 +133,12 @@ def three_candle_reversal_trigger(
         # 1. Red Candle
         if c1['close'] >= c1['open']: return None
         b1_ratio, _, _ = get_ratios(c1)
-        if b1_ratio < big_body_min_ratio: return None
+        if b1_ratio < cfg.big_body_min_ratio: return None
 
         # 2. Hammer at Bottom
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
-        if b2_ratio > hammer_body_max_ratio: return None
-        if b2_lower > hammer_nose_max_ratio: return None
+        if b2_ratio > cfg.hammer_body_max_ratio: return None
+        if b2_lower > cfg.hammer_nose_max_ratio: return None
 
         # 3. Hammer MUST touch the line
         if not (c2['high'] >= lvl >= c2['low']): return None

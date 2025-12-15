@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Run YAML scenarios (no line direction in YAML) with pure dependency injection.
+Run YAML scenarios with pure dependency injection.
+Robustly handles lines defined as Lists or Dictionaries.
 
 Per scenario:
 - Slice --source-csv to <outdir>/<scenario-name>/data.csv
 - Start a fresh in-process Flask/Socket.IO app via create_app(...) (NO env vars)
-- Post lines via HTTP (no direction; server infers)
+- Post lines via HTTP
 - Play the whole CSV and take <outdir>/<scenario-name>/snapshot_<tf>.png at END
-- Guaranteed clean state: no lines/trades carry over between scenarios
 """
 
 import argparse
@@ -31,7 +31,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 # --- app imports (pure DI)
-from flask import request as flask_request  # for shutdown/reset routes
+from flask import request as flask_request
 from app_factory import create_app, Repositories, StrategyNumbers
 from tests.fakes import FakeLineRepository, FakeTradeRepository
 from src.data_sources.csv_datasource import CSVDataSource
@@ -39,11 +39,12 @@ from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
 from src.strategies.entry_context import (
     open_trades_limit_filter, max_bounce_filter
 )
-# IMPORTS UPDATED TO MATCH APP.PY (V2 + Triggers)
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 from src.strategies.triggers import wick_near_line_trigger, three_candle_reversal_trigger
 from src.bars_loader import BarsLoader
 from src.services.trade_manager import TradeManager
+from src.strategies.strategy_config import CandleConfig
+
 
 APP_HOST = "127.0.0.1"
 
@@ -73,10 +74,6 @@ def _parse_any_dt_naive(s: str) -> datetime:
     return dt.replace(tzinfo=None)
 
 def slice_csv(source_csv: Path, out_csv: Path, start: str, end: str):
-    """
-    Auto-detect ',' vs ';' and keep rows with Date+Time in [start,end].
-    Logs the CSV's actual date range so you can see gaps (e.g., weekends).
-    """
     start_dt = _parse_any_dt_naive(start)
     end_dt   = _parse_any_dt_naive(end)
     if end_dt < start_dt:
@@ -120,8 +117,6 @@ def slice_csv(source_csv: Path, out_csv: Path, start: str, end: str):
     print(f"[slice] {source_csv.name} → {out_csv}  kept_rows={len(rows_out)} "
           f"window=[{start_dt} .. {end_dt}]  csv_range=[{first_dt} .. {last_dt}] "
           f"delim='{dialect.delimiter}'")
-    if last_dt and end_dt > last_dt:
-        print(f"[slice] ⚠️ end > last CSV row ({last_dt}) — that's fine; you get all available rows.")
 
 def wait_http_ok(base_url: str, timeout: int = 30):
     t0 = time.time()
@@ -139,11 +134,6 @@ def wait_http_ok(base_url: str, timeout: int = 30):
 async def shoot_png(base_url: str, output_png: Path, timeframe: str,
                     selector: str = "#chartContainer",
                     snapshot_at: str = "end"):
-    """
-    Take the screenshot at the end of playback, but ensure trade lines
-    (entry/SL/TP) are ALWAYS visible by adding persistent strategy lines
-    as soon as trades open.
-    """
     async with async_playwright() as pw:
         browser = await pw.chromium.launch(headless=True)
         ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
@@ -177,6 +167,10 @@ async def shoot_png(base_url: str, output_png: Path, timeframe: str,
                 if (!sock) throw new Error("Socket.IO client not found");
                 window.socket = sock;
 
+                if (window.chartViewer) {
+                    window.chartViewer.keepClosedTradeLines = true;
+                }
+
                 sock.on('trade_open', (t) => {
                     const entry = t.entry ?? t.entry_price ?? t.price ?? t.level ?? t.entryPrice;
                     const sl    = t.stop_loss ?? t.sl ?? t.stopLoss;
@@ -197,7 +191,7 @@ async def shoot_png(base_url: str, output_png: Path, timeframe: str,
         locator = page.locator(selector)
         await locator.wait_for(state="visible", timeout=25000)
         await page.wait_for_function("() => window.__done === true", timeout=180000)
-        await page.wait_for_timeout(500)  # let last paints render
+        await page.wait_for_timeout(500)
 
         try:
             await locator.screenshot(path=str(output_png))
@@ -214,26 +208,73 @@ def add_line_http(base_url: str, pair: str, price: float):
     if not r.ok:
         raise RuntimeError(f"POST /api/lines failed: {r.status_code} {r.text}")
 
+# ---------------- line parsing ----------------
+
+def parse_line_spec(line_row: Any) -> Dict[str, Any]:
+    """
+    Parses a line definition which can be a dict (from JSON/YAML) or a list.
+    
+    Dict input: { "price": 17756.50, "at": "2024-05-01..." }
+    List input: ["short", 17756.5] or ["L1", "short", 17756.5]
+    
+    Returns: {"id":..., "direction":..., "level":..., "at_raw":...}
+    """
+    # 1. Handle Dictionary Input
+    if isinstance(line_row, dict):
+        return {
+            "id": line_row.get("id"),
+            "direction": line_row.get("direction", "long"), # Default to long if missing, V2 latches anyway
+            "level": float(line_row.get("price") or line_row.get("level", 0)),
+            "at_raw": line_row.get("at")
+        }
+
+    # 2. Handle List Input
+    flat = list(line_row)
+    lid, at_raw = None, None
+
+    # Extract ID (L...)
+    for i, x in enumerate(list(flat)):
+        if isinstance(x, str) and x.upper().startswith("L") and len(x) < 10:
+            lid = flat.pop(i)
+            break
+    
+    # Extract Time (row: or date-like)
+    for i, x in enumerate(list(flat)):
+        if isinstance(x, str) and (x.startswith("row:") or x[0].isdigit()):
+            at_raw = flat.pop(i)
+            break
+
+    # Remaining should be [direction, level] or [level]
+    direction, level = "long", 0.0
+    if len(flat) == 2:
+        a, b = flat
+        if isinstance(a, str):
+            direction, level = a, float(b)
+        else:
+            direction, level = b, float(a)
+    elif len(flat) == 1:
+        level = float(flat[0])
+    
+    return {"id": lid, "direction": direction.lower(), "level": level, "at_raw": at_raw}
+
+
+# ---------------- server launch ----------------
+
 def start_server_in_thread(pair: str,
                            csv_out: Path,
                            tf_for_strategy: str,
                            bars_per_second: int,
                            port: int) -> Tuple[threading.Thread, str, Any]:
-    """
-    Fresh app per scenario. Also exposes:
-      - /__shutdown   → terminate server
-      - /__reset_all  → clear lines/trades in memory (safety)
-    """
     repos = Repositories(lines=FakeLineRepository(), trades=FakeTradeRepository())
     ds = CSVDataSource(pair=pair, filename=str(csv_out), bars_per_second=float(bars_per_second))
     numbers = StrategyNumbers(min_stop_loss=10.0, max_bounce=40.0, extra_sl_space=0.0)
 
-    # UPDATED: Use same triggers as app.py (V2)
     options = StrategyOptions(
         line_removal_mode=LineRemovalMode.NEVER,
         triggers=[wick_near_line_trigger, three_candle_reversal_trigger],
         entry_filters=[open_trades_limit_filter(1), max_bounce_filter(numbers.max_bounce)],
     )
+    candle_config = CandleConfig()
 
     wiring = create_app(
         pair=pair,
@@ -241,23 +282,20 @@ def start_server_in_thread(pair: str,
         repos=repos,
         numbers=numbers,
         options=options,
-        timeframes=[tf_for_strategy], # V2 requires list of timeframes
-        bootstrap_existing_lines=False,   # <-- start clean
+        candle_config=candle_config,
+        timeframes=[tf_for_strategy], 
+        bootstrap_existing_lines=False,
     )
 
-    # Align pacing
     wiring.loader.bars_per_second = float(bars_per_second)
     wiring.loader._emit_delay     = 1.0 / float(bars_per_second)
 
-    # --- maintenance routes (internal)
     def _shutdown():
         func = flask_request.environ.get('werkzeug.server.shutdown')
-        if func:
-            func()
+        if func: func()
         return "OK"
 
     def _reset_all():
-        # wipe in-memory state (safety even though we create fresh each run)
         try:
             wiring.strategy.strategy_lines.clear()
             wiring.strategy.open_trades.clear()
@@ -294,19 +332,17 @@ def start_server_in_thread(pair: str,
     return t, base_url, wiring
 
 def stop_server(base_url: str, thread: threading.Thread, join_timeout: float = 5.0):
-    # ask app to stop
     try:
         requests.post(base_url.rstrip("/") + "/__shutdown", timeout=2)
     except Exception:
         pass
-    # wait for the thread to exit to avoid state bleed
     if thread and thread.is_alive():
         thread.join(timeout=join_timeout)
 
-# ---- quick validator (no HTTP) ----
+# ---------------- validator ----------------
 
 def _validate_inproc(csv_path: Path, pair: str, tf: str,
-                     lines: List[Dict[str, Any]],
+                     lines: List[Any],
                      expect: Optional[Dict[str, Any]]) -> Tuple[bool, str, Optional[Dict[str,Any]]]:
     class DummySock:
         def __init__(self): self.events=[]
@@ -317,25 +353,18 @@ def _validate_inproc(csv_path: Path, pair: str, tf: str,
     lines_repo  = FakeLineRepository()
     trades_repo = FakeTradeRepository()
     
-    # UPDATED: Use V2 triggers
     options = StrategyOptions(
         line_removal_mode=LineRemovalMode.NEVER,
         triggers=[wick_near_line_trigger, three_candle_reversal_trigger],
         entry_filters=[open_trades_limit_filter(1), max_bounce_filter(40.0)]
     )
 
-    # 1. Init TradeManager first
     tm = TradeManager(trade_repository=trades_repo, socketio=sock)
-
-    # 2. Pass TM to strategy factory
     strat = __make_strategy(sock, lines_repo, trades_repo, tm, options, tf)
     
     ds = CSVDataSource(pair=pair, filename=str(csv_path), bars_per_second=10000.0)
     if not getattr(ds, "_bars", None):
-        raise RuntimeError(
-            f"Sliced CSV has 0 rows: {csv_path}\n"
-            f"- Verify your start/end exist in the source CSV (weekends/holidays are empty for NQ)."
-        )
+        raise RuntimeError(f"Sliced CSV has 0 rows: {csv_path}")
 
     def to_epoch(at_raw: Optional[str]) -> int:
         if not at_raw:
@@ -345,17 +374,20 @@ def _validate_inproc(csv_path: Path, pair: str, tf: str,
             return int(ds._bars[max(1,n)-1]['time'])
         return int(_parse_any_dt_naive(str(at_raw)).timestamp())
 
-    sched = [{"price": float(li["price"]),
-              "at": to_epoch(li.get("at")),
-              "added": False}
-             for li in lines]
+    # NORMALIZE LINE INPUTS HERE
+    parsed_lines = [parse_line_spec(li) for li in lines]
+
+    sched = [{"price": float(li["level"]),
+              "at": to_epoch(li.get("at_raw")),
+              "added": False,
+              "id": li.get("id")}
+             for li in parsed_lines]
 
     def cb(bar):
         for item in sched:
             if not item["added"] and bar.get('time', 0) >= item["at"]:
-                last_close = ds._played_bars[-1]['close'] if ds._played_bars else bar['close']
-                direction  = 'short' if last_close < item["price"] else 'long'
-                strat.add_strategy_line(f"L{len(strat.strategy_lines)+1}", item["price"])
+                lid = item["id"] or f"L{len(strat.strategy_lines)+1}"
+                strat.add_strategy_line(lid, item["price"])
                 item["added"] = True
         tm.handle_new_1m_bar(bar)
         strat.on_raw_bar(bar)
@@ -380,7 +412,6 @@ def _validate_inproc(csv_path: Path, pair: str, tf: str,
             return False, f"{field} mismatch: got {got} want {want} tol={tol}", opened
     return True, "OK", opened
 
-# UPDATED: Accept TradeManager and use V2
 def __make_strategy(sock, lines_repo, trades_repo, trade_manager, options, tf):
     return LiquidityStrategyV2(
         min_stop_loss=10.0, 
@@ -389,34 +420,27 @@ def __make_strategy(sock, lines_repo, trades_repo, trade_manager, options, tf):
         socketio=sock, 
         line_repository=lines_repo, 
         trade_repository=trades_repo,
-        trade_manager=trade_manager, # Passed here
+        trade_manager=trade_manager, 
         options=options, 
-        timeframes=[tf] # V2 expects list
+        candle_config=CandleConfig(),
+        timeframes=[tf]
     )
 
 # ---------------- main ----------------
 
 def main():
-    ap = argparse.ArgumentParser(
-        description="Slice a large 1m CSV into per-scenario windows, validate, and snapshot. "
-                    "Outputs are placed in <outdir>/<scenario-name>/ (data.csv + snapshot_<tf>.png)."
-    )
-    ap.add_argument("--yaml", required=True, help="YAML file with scenarios.")
-    ap.add_argument("--source-csv", required=True, help="Path to the large 1m CSV to slice from.")
-    ap.add_argument("--outdir", required=True,
-                    help="Base directory where per-scenario folders will be created.")
-    ap.add_argument("--port", type=int, default=5001,
-                    help="Base port; each scenario uses base+index for isolation.")
-    ap.add_argument("--bars-per-second", type=int, default=2000,
-                    help="Playback speed for the app (default: 2000 bars/sec).")
-    ap.add_argument("--chart-selector", default="#chartContainer",
-                    help="CSS selector for the chart container (default: #chartContainer).")
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--yaml", required=True)
+    ap.add_argument("--source-csv", required=True)
+    ap.add_argument("--outdir", required=True)
+    ap.add_argument("--port", type=int, default=5001)
+    ap.add_argument("--bars-per-second", type=int, default=2000)
+    ap.add_argument("--chart-selector", default="#chartContainer")
     args = ap.parse_args()
 
     ydoc = yaml.safe_load(Path(args.yaml).read_text())
     scenarios = ydoc.get("scenarios") or []
-    if not scenarios:
-        raise SystemExit("No scenarios defined.")
+    if not scenarios: raise SystemExit("No scenarios defined.")
 
     source_csv = Path(args.source_csv)
     outroot = Path(args.outdir); outroot.mkdir(parents=True, exist_ok=True)
@@ -433,103 +457,86 @@ def main():
         expect = sc.get("expect")
         snapshot = sc.get("snapshot", True)
 
-        # per-scenario folder + data.csv
         sdir    = outroot / sanitize(name)
         csv_out = sdir / "data.csv"
         sdir.mkdir(parents=True, exist_ok=True)
         slice_csv(source_csv, csv_out, start, end)
 
-        # quick validation
         try:
             ok, reason, opened = _validate_inproc(csv_out, pair, tf, lines, expect)
             status = "OK" if ok else f"FAIL: {reason}"
             print(f"[check] {name}: {status}")
             if opened:
-                print(f"        entry={opened['entry_price']} sl={opened['stop_loss']} "
-                      f"tp={opened['take_profit']} type={opened.get('trade_type','?')}")
+                print(f"        entry={opened['entry_price']} sl={opened['stop_loss']} tp={opened['take_profit']}")
         except RuntimeError as e:
             print(f"[check] {name}: FAIL: {e}")
             opened = None
 
-        if not snapshot:
-            continue
+        if not snapshot: continue
 
-        # fresh server (UNIQUE PORT per scenario)
         port = int(args.port) + idx
         thread, base_url, wiring = start_server_in_thread(
-            pair=pair,
-            csv_out=csv_out,
-            tf_for_strategy=tf,
-            bars_per_second=args.bars_per_second,
-            port=port,
+            pair=pair, csv_out=csv_out, tf_for_strategy=tf,
+            bars_per_second=args.bars_per_second, port=port
         )
         try:
             wait_http_ok(base_url, timeout=30)
+            try: requests.post(base_url.rstrip("/") + "/__reset_all", timeout=3)
+            except Exception: pass
 
-            # hard reset (safety) even though it's a fresh app
-            try:
-                requests.post(base_url.rstrip("/") + "/__reset_all", timeout=3)
-            except Exception:
-                pass
+            # Read CSV times for scheduling
+            all_dts = []
+            with open(csv_out, newline="", encoding="utf-8") as f:
+                sample = f.read(4096); f.seek(0)
+                try: dialect = csv.Sniffer().sniff(sample, delimiters=",;")
+                except csv.Error: dialect = csv.excel(); dialect.delimiter=";"
+                rdr = csv.DictReader(f, dialect=dialect)
+                for row in rdr:
+                    all_dts.append(_parse_dt_flexible(
+                        (row.get("Date") or row.get("date") or "").strip(),
+                        (row.get("Time") or row.get("time") or "").strip()
+                    ))
+            
+            parsed_lines = [parse_line_spec(li) for li in lines]
+            
+            # Post immediate
+            for p in parsed_lines:
+                if not p.get("at_raw"):
+                    add_line_http(base_url, pair, p["level"])
 
-            # Immediate lines now (no direction; server infers from last_close).
-            for li in (li for li in lines if not li.get("at")):
-                add_line_http(base_url, pair, li["price"])
+            # Schedule timed
+            timed = [p for p in parsed_lines if p.get("at_raw")]
+            if timed and all_dts:
+                idx_map = {int(dt.timestamp()): i for i, dt in enumerate(all_dts)}
+                start_idx  = 0
+                emit_delay = 1.0 / float(args.bars_per_second)
 
-            # Timed lines scheduled relative to playback indices
-            timed = [li for li in lines if li.get("at")]
-            if timed:
-                # Read sliced CSV times to map at → index
-                all_dts = []
-                with open(csv_out, newline="", encoding="utf-8") as f:
-                    sample = f.read(4096); f.seek(0)
-                    try:
-                        dialect = csv.Sniffer().sniff(sample, delimiters=",;")
-                    except csv.Error:
-                        class _D: ...
-                        dialect = _D(); dialect.delimiter = "," if ("," in sample and ";" not in sample) else ";"
-                    rdr = csv.DictReader(f, dialect=dialect)
-                    for row in rdr:
-                        all_dts.append(_parse_dt_flexible(
-                            (row.get("Date") or row.get("date") or "").strip(),
-                            (row.get("Time") or row.get("time") or "").strip()
-                        ))
-                if all_dts:
-                    idx_map = {int(dt.timestamp()): i for i, dt in enumerate(all_dts)}
-                    start_idx  = 0
-                    emit_delay = 1.0 / float(args.bars_per_second)
+                def _resolve_at_to_index(at_str: str) -> int:
+                    if str(at_str).startswith("row:"):
+                        n = int(at_str.split(":",1)[1])
+                        return max(0, min(n-1, len(all_dts)-1))
+                    sec = int(_parse_any_dt_naive(str(at_str)).timestamp())
+                    return idx_map.get(sec, min(range(len(all_dts)),
+                                                key=lambda i: abs(int(all_dts[i].timestamp()) - sec)))
 
-                    def _resolve_at_to_index(at_str: str) -> int:
-                        if at_str.startswith("row:"):
-                            n = int(at_str.split(":",1)[1])
-                            return max(0, min(n-1, len(all_dts)-1))
-                        sec = int(_parse_any_dt_naive(at_str).timestamp())
-                        return idx_map.get(sec, min(range(len(all_dts)),
-                                                    key=lambda i: abs(int(all_dts[i].timestamp()) - sec)))
+                def post_timed():
+                    items = []
+                    for p in timed:
+                        try: items.append((_resolve_at_to_index(p["at_raw"]), p))
+                        except Exception: continue
+                    items.sort(key=lambda x: x[0])
+                    last_idx = start_idx
+                    for at_idx, p in items:
+                        delay = max(0.0, (at_idx - last_idx) * emit_delay)
+                        time.sleep(delay)
+                        last_idx = at_idx
+                        try: add_line_http(base_url, pair, p["level"])
+                        except Exception as e: print(f"[sched] error: {e}", file=sys.stderr)
 
-                    def post_timed():
-                        items = []
-                        for li in timed:
-                            try:
-                                items.append((_resolve_at_to_index(str(li["at"])), li))
-                            except Exception:
-                                continue
-                        items.sort(key=lambda x: x[0])
-                        last_idx = start_idx
-                        for at_idx, li in items:
-                            delay = max(0.0, (at_idx - last_idx) * emit_delay)
-                            time.sleep(delay)
-                            last_idx = at_idx
-                            try:
-                                add_line_http(base_url, pair, li["price"])
-                            except Exception as e:
-                                print(f"[sched] add_line failed: {e}", file=sys.stderr)
+                threading.Thread(target=post_timed, daemon=True).start()
 
-                    threading.Thread(target=post_timed, daemon=True).start()
-
-            # Snapshot AFTER the full CSV playback; trade-level marker lines are added on opens
             png = sdir / f"snapshot_{tf}.png"
-            asyncio.run(shoot_png(base_url, png, tf, selector=args.chart_selector, snapshot_at="end"))
+            asyncio.run(shoot_png(base_url, png, tf, selector=args.chart_selector))
             print(f"[snap] {name} → {png}")
         finally:
             stop_server(base_url, thread)

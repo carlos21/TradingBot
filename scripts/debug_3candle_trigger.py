@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 
+from src.strategies.strategy_config import CandleConfig
+
 # --------------------------------------------------------------------
 # Make project imports work
 # --------------------------------------------------------------------
@@ -222,8 +224,9 @@ def plot_simulation(raw_bars, line_level, trades):
 # --------------------------------------------------------------------
 
 def main():
+    cfg = CandleConfig()
+    
     # 1. Setup Strategy
-    # We enable 5m and 15m. The pattern is designed for 5m.
     strategy = LiquidityStrategyV2(
         min_stop_loss=1.0,
         max_bounce=10.0,
@@ -232,10 +235,7 @@ def main():
         trade_repository=DummyRepo(),
         extra_sl_space=0.0,
         timeframes=["5m", "15m"], 
-        # Ratios (Defaults are usually fine, but explicit here for clarity)
-        big_body_min_ratio=0.5,
-        hammer_body_max_ratio=0.3,
-        hammer_nose_max_ratio=0.15
+        candle_config=cfg
     )
 
     # 2. Add Line near the Hammer's high (approx 105.0)
