@@ -12,3 +12,17 @@ scenarios:
       tp:    17547.00
       tolerance: 0.25
     snapshot: true
+
+  - name: "NQ - 2024-05-06"
+    pair: "NQ"
+    tf: "15m"
+    start: "2024-05-06 11:00:00"
+    end:   "2024-05-06 19:35:00"
+    lines:
+      - { price: 18120.37, at: "2024-05-06 15:47:00" }
+    expect:
+      entry: 17744.00
+      sl:    17793.00
+      tp:    17547.00
+      tolerance: 0.25
+    snapshot: true

@@ -196,21 +196,44 @@ def create_app(
     @app.route('/__reset_all', methods=['POST'])
     def reset_all():
         """Clears all state for a clean scenario run."""
-        # 1. Clear in-memory strategy state
-        tstrategy.strategy_lines.clear()
-        tstrategy.open_trades.clear()
-        trade_manager.open_trades.clear()
-        
-        # 2. Clear DB lines so they don't reappear on page reload
-        # (Iterate and delete since we don't have a truncate method exposed)
         try:
-            all_lines = repos.lines.list_lines(pair)
-            for l in all_lines:
-                repos.lines.delete_line(l.line_id)
-        except Exception as e:
-            print(f"Error clearing lines DB: {e}")
+            # 1. Clear in-memory strategy state
+            tstrategy.strategy_lines.clear()
+            tstrategy.open_trades.clear()
+            trade_manager.open_trades.clear()
+            
+            # 2. Clear DB lines
+            try:
+                all_lines = repos.lines.list_lines(pair)
+                for l in all_lines:
+                    repos.lines.delete_line(l.line_id)
+            except Exception as e:
+                print(f"Error clearing lines DB: {e}")
+                return jsonify({"error": str(e)}), 500
 
-        return "OK"
+            # 3. Reset DataSource history
+            data = request.get_json() or {}
+            start_ts = data.get('start_time')
+            end_ts   = data.get('end_time')
+
+            if hasattr(data_source, 'reset'):
+                try:
+                    data_source.reset(start_time=start_ts, end_time=end_ts)
+                except TypeError:
+                    data_source.reset()
+
+            # 4. WARM UP STRATEGY
+            played = getattr(data_source, '_played_bars', [])
+            if played:
+                print(f"[Reset] Warming up strategy with {len(played)} bars...")
+                for bar in played:
+                    tstrategy.on_raw_bar(bar)
+                print("[Reset] Warmup complete.")
+
+            return jsonify({"status": "OK"})
+        except Exception as e:
+            print(f"[Reset] Critical error: {e}")
+            return jsonify({"error": str(e)}), 500
 
     @app.route('/__shutdown', methods=['POST'])
     def shutdown():

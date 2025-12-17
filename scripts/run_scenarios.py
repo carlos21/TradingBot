@@ -8,6 +8,7 @@ Optimizations:
 3. Resets state via API between scenarios.
 4. Validates expectations (Original SL/TP) and prints a summary.
 5. Draws persistent "Original SL" lines for visualization.
+6. Timezone-aware: Syncs YAML/CSV times with the Pair's specific timezone.
 """
 
 import argparse
@@ -22,6 +23,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import yaml
 import requests
@@ -30,6 +32,12 @@ from playwright.async_api import async_playwright
 
 APP_HOST = "127.0.0.1"
 APP_URL = f"http://{APP_HOST}:5001"
+
+# Timezones must match src/data_sources/csv_datasource.py
+PAIR_TZS = {
+    'EURUSD': 'Europe/London',
+    'NQ':     'America/Chicago',
+}
 
 # ---------------- helpers ----------------
 
@@ -43,7 +51,8 @@ def _parse_dt_flexible(date_str: str, time_str: str) -> datetime:
     except ValueError:
         return dtparser.parse(s)
 
-def _parse_any_dt_naive(s: str) -> datetime:
+def _parse_yaml_dt(s: str) -> datetime:
+    """Parses YAML datetime string. Returns naive datetime."""
     return dtparser.parse(s).replace(tzinfo=None)
 
 def parse_line_spec(line_row: Any) -> Dict[str, Any]:
@@ -86,21 +95,37 @@ def wait_http_ok(url, timeout=30):
     raise TimeoutError(f"Server at {url} did not start.")
 
 def add_line_http(pair: str, price: float):
-    requests.post(f"{APP_URL}/api/lines", json={"pair": pair, "price": float(price)}, timeout=5)
+    try:
+        r = requests.post(f"{APP_URL}/api/lines", json={"pair": pair, "price": float(price)}, timeout=5)
+        if not r.ok:
+            print(f"⚠️ Failed to add line {price}: {r.status_code} {r.text}")
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️ Exception adding line {price}: {e}")
+        return False
 
-def reset_app_state():
-    try: requests.post(f"{APP_URL}/__reset_all", timeout=5)
-    except: pass
+def reset_app_state(start=None, end=None):
+    payload = {}
+    if start: payload['start_time'] = start
+    if end:   payload['end_time'] = end
+    try:
+        # Increased timeout to 10s to allow for strategy warmup
+        r = requests.post(f"{APP_URL}/__reset_all", json=payload, timeout=10)
+        if not r.ok:
+            print(f"⚠️ Reset failed: {r.status_code} {r.text}")
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️ Reset exception: {e}")
+        return False
 
 def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]:
     """Returns (Status, Reason, FormattedValues)"""
     if not trades:
         return "FAIL", "No trades opened", ""
     
-    # Check the first trade
     trade = trades[0]
-    
-    # Extract values for logging
     entry = trade.get("entry") or trade.get("entry_price")
     sl    = trade.get("stop_loss") or trade.get("stopLoss") or trade.get("sl")
     tp    = trade.get("take_profit") or trade.get("takeProfit") or trade.get("tp")
@@ -108,7 +133,7 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
     values_str = f"(Entry: {entry}, Orig SL: {sl}, TP: {tp})"
 
     if not expect:
-        return "PASS", "No expectations", values_str
+        return "PASS", "Matches expectations", values_str
     
     tol = float(expect.get("tolerance", 1.0))
     errors = []
@@ -151,14 +176,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     env["START_ISO"] = "2000-01-01" 
     env["END_ISO"]   = "2099-01-01"
     env["FLASK_RUN_PORT"] = str(args.port)
-    
-    # FORCE LINES TO STAY VISIBLE FOR TESTS
     env["LINE_REMOVAL_MODE"] = "NEVER"
 
     proc = subprocess.Popen([sys.executable, "app.py"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    print("📂 Indexing CSV times...")
-    all_dts = []
+    # 1. Read CSV (Naive)
+    print("📂 Reading CSV...")
+    all_dts_naive = []
     try:
         with open(csv_path, newline="", encoding="utf-8") as f:
             sample = f.read(4096); f.seek(0)
@@ -166,7 +190,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             except: dialect = csv.excel(); dialect.delimiter=";"
             rdr = csv.DictReader(f, dialect=dialect)
             for row in rdr:
-                all_dts.append(_parse_dt_flexible(
+                all_dts_naive.append(_parse_dt_flexible(
                     (row.get("Date") or row.get("date") or "").strip(),
                     (row.get("Time") or row.get("time") or "").strip()
                 ))
@@ -175,21 +199,41 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         proc.kill()
         return
 
-    idx_map = {int(dt.timestamp()): i for i, dt in enumerate(all_dts)}
-    def resolve_at(at_str):
-        if str(at_str).startswith("row:"):
-            n = int(at_str.split(":",1)[1])
-            return max(0, min(n-1, len(all_dts)-1))
-        sec = int(_parse_any_dt_naive(str(at_str)).timestamp())
-        return idx_map.get(sec, 0)
-
-    summary_results = []
-
     try:
+        summary_results = []
+
+        # 2. Wait for App & Get Pair
         wait_http_ok(f"{APP_URL}/api/pair")
         pair_resp = requests.get(f"{APP_URL}/api/pair").json()
         pair_name = pair_resp['pair']
-        print(f"✅ App running ({pair_name}). Starting Browser...")
+        
+        # 3. Determine Timezone
+        pair_tz = ZoneInfo(PAIR_TZS.get(pair_name, 'UTC'))
+        print(f"✅ App running ({pair_name}). Timezone: {pair_tz}")
+
+        # 4. Build Index Map (Aware)
+        # Convert naive CSV times to Pair TZ -> UTC Epoch
+        idx_map = {}
+        for i, dt_naive in enumerate(all_dts_naive):
+            dt_aware = dt_naive.replace(tzinfo=pair_tz)
+            ts = int(dt_aware.timestamp())
+            idx_map[ts] = i
+
+        def resolve_at(at_str):
+            if str(at_str).startswith("row:"):
+                n = int(at_str.split(":",1)[1])
+                return max(0, min(n-1, len(all_dts_naive)-1))
+            
+            # Parse YAML string as naive, attach Pair TZ, get epoch
+            dt_naive = _parse_yaml_dt(str(at_str))
+            dt_aware = dt_naive.replace(tzinfo=pair_tz)
+            sec = int(dt_aware.timestamp())
+            return idx_map.get(sec, 0)
+
+        def get_epoch(dt_str):
+            dt_naive = _parse_yaml_dt(dt_str)
+            dt_aware = dt_naive.replace(tzinfo=pair_tz)
+            return int(dt_aware.timestamp())
 
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
@@ -203,39 +247,54 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 sdir = Path(args.outdir) / sanitize(name)
                 sdir.mkdir(parents=True, exist_ok=True)
                 
-                reset_app_state()
-                await page.goto(f"{APP_URL}/", wait_until="domcontentloaded")
-
-                start_ts = int(_parse_any_dt_naive(sc["start"]).timestamp())
-                end_ts   = int(_parse_any_dt_naive(sc["end"]).timestamp())
+                # Use Timezone-Aware Epochs
+                start_ts = get_epoch(sc["start"])
+                end_ts   = get_epoch(sc["end"])
                 tf       = sc.get("tf", "5m")
 
-                # Inject socket listener logic + Trade Capture
+                # Reset app state with a buffer (e.g. 2 days history + scenario duration)
+                if not reset_app_state(start=start_ts - 172800, end=end_ts + 3600):
+                    print("❌ Skipping scenario due to reset failure")
+                    continue
+                
+                # --- ADD ALL LINES BEFORE PAGE LOAD ---
+                lines = [parse_line_spec(l) for l in sc.get("lines", [])]
+                for l in lines:
+                    # We add ALL lines immediately, ignoring l.get("at_raw") check
+                    if not add_line_http(pair_name, l["level"]):
+                        print(f"❌ Failed to add line {l['level']}")
+                # --------------------------------------------
+
+                # Calculate a view buffer (e.g. 24 hours) to limit history load on frontend
+                view_start_ts = start_ts - 86400
+                
+                # Pass start_time to frontend to prevent loading full history
+                # Pass keep_lines=true to prevent line removal on trade trigger
+                await page.goto(f"{APP_URL}/?start_time={view_start_ts}&keep_lines=true", wait_until="domcontentloaded")
+
                 await page.evaluate("""
                     window.__done = false;
-                    window.__trades = []; // Capture trades here
+                    window.__trades = [];
                     
                     const sock = (window.io && window.io()) || window.socket;
                     if (!sock) throw new Error("Socket.IO not found");
                     window.socket = sock;
                     
-                    // Ensure App keeps its own lines on close
                     if (window.chartViewer) {
                         window.chartViewer.keepClosedTradeLines = true;
                     }
 
                     sock.on('trade_open', (t) => {
-                        window.__trades.push(t); // Store for validation
+                        window.__trades.push(t);
                         
-                        // Draw a persistent "Original SL" line
                         if (window.chartViewer && window.chartViewer.series) {
                             const sl = t.stop_loss ?? t.sl ?? t.stopLoss;
                             if (typeof sl === 'number') {
                                 window.chartViewer.series.createPriceLine({
                                     price: sl,
-                                    color: '#ff5252', // Distinct red
+                                    color: '#ff5252',
                                     lineWidth: 1,
-                                    lineStyle: 1,     // Dotted
+                                    lineStyle: 1,
                                     axisLabelVisible: true,
                                     title: 'Orig SL'
                                 });
@@ -246,34 +305,15 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     sock.on('stream_end', () => { window.__done = true; });
                 """)
 
-                lines = [parse_line_spec(l) for l in sc.get("lines", [])]
-                
-                for l in lines:
-                    if not l.get("at_raw"):
-                        add_line_http(pair_name, l["level"])
+                # Wait for chart to be ready (bars loaded, lines loaded)
+                try:
+                    await page.wait_for_function("() => window.__chartReady === true", timeout=10000)
+                except Exception as e:
+                    print(f"⚠️ Warning: Chart did not report ready: {e}")
 
                 stop_sched = threading.Event()
-                def run_scheduler():
-                    timed = [l for l in lines if l.get("at_raw")]
-                    if not timed: return
-                    start_idx = idx_map.get(start_ts, 0)
-                    emit_delay = 1.0 / args.bars_per_second
-                    sched_items = []
-                    for item in timed:
-                        abs_idx = resolve_at(item["at_raw"])
-                        if abs_idx > start_idx: sched_items.append((abs_idx, item))
-                        else: add_line_http(pair_name, item["level"])
-                    sched_items.sort(key=lambda x: x[0])
-                    last_idx = start_idx
-                    for idx, item in sched_items:
-                        if stop_sched.is_set(): return
-                        wait_bars = idx - last_idx
-                        time.sleep(wait_bars * emit_delay)
-                        add_line_http(pair_name, item["level"])
-                        last_idx = idx
-
-                sched_thread = threading.Thread(target=run_scheduler, daemon=True)
-                sched_thread.start()
+                
+                # REMOVED SCHEDULER THREAD COMPLETELY
 
                 await page.evaluate(
                     """(p) => window.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
@@ -282,14 +322,12 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
                 try:
                     await page.wait_for_function("() => window.__done === true", timeout=120000)
-                    await page.wait_for_timeout(500)
+                    await page.wait_for_timeout(1000)
                 except Exception as e:
                     print(f"❌ Timeout/Error waiting for stream end: {e}")
 
                 stop_sched.set()
-                sched_thread.join(timeout=1)
 
-                # --- Validation ---
                 captured_trades = await page.evaluate("window.__trades")
                 status, reason, values = check_expectations(sc.get("expect"), captured_trades)
                 summary_results.append({"name": name, "status": status, "reason": reason, "values": values})
@@ -311,7 +349,6 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         proc.send_signal(signal.SIGINT)
         proc.wait()
 
-    # --- Print Summary ---
     print("\n" + "="*100)
     print(f"{'SCENARIO':<35} | {'STATUS':<6} | {'DETAILS'}")
     print("-" * 100)

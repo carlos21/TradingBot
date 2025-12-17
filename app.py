@@ -23,12 +23,22 @@ def build_prod():
         trades= SQLTradeRepository(),
     )
 
+    # 1) Support environment variable overrides for scenarios
+    csv_file = os.environ.get("CSV_FILE")
+    start_iso = os.environ.get("START_ISO")
+    end_iso   = os.environ.get("END_ISO")
+    bps       = float(os.environ.get("BARS_PER_SECOND", 10.0))
+
+    initial_start = datetime.fromisoformat(start_iso) if start_iso else datetime.fromisoformat("2024-04-01T00:00:00+00:00")
+    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-05-01T08:40:00+00:00")
+
     # Data Source (pick your real source)
     ds = CSVDataSource(
         pair=PAIR,
-        initial_start_time=datetime.fromisoformat("2024-04-01T00:00:00+00:00"),
-        initial_end_time  =datetime.fromisoformat("2024-05-01T08:40:00+00:00"),
-        bars_per_second=10.0,
+        filename=csv_file,
+        initial_start_time=initial_start,
+        initial_end_time=initial_end,
+        bars_per_second=bps,
     )
 
     numbers = StrategyNumbers(

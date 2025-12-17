@@ -18,6 +18,12 @@ export class ChartViewer {
     this.tradeMarkers   = [];
     this.lastBarTs = null;
     this.keepClosedTradeLines = opts.keepClosedTradeLines || false;
+    
+    // Use the passed startTime to limit history fetching
+    this.startTime = opts.startTime || null;
+    
+    // New option to keep blue lines even after they trigger
+    this.keepStrategyLines = opts.keepStrategyLines || false;
 
     this.formats = {
       NQ:     { precision: 2,    minMove: 0.01    },
@@ -120,7 +126,10 @@ export class ChartViewer {
     this._initPair()
       .then(() => this._initBars())
       .then(() => this._initLines())
-      .then(() => this._setupSocket())
+      .then(() => {
+          window.__chartReady = true; // Signal to Playwright
+          return this._setupSocket();
+      })
       .catch(console.error);
   }
 
@@ -137,7 +146,8 @@ export class ChartViewer {
   }
 
   async _initBars() {
-    const bars = await this.dataService.fetchBars(this.pair, this.currentTF);
+    // Pass this.startTime to fetchBars to limit history
+    const bars = await this.dataService.fetchBars(this.pair, this.currentTF, this.startTime);
     this.historicalBars = bars;
     this.displayChart(bars);
     bars.forEach(bar => this._shadeBar(bar));
@@ -146,16 +156,23 @@ export class ChartViewer {
   async _initLines() {
     const lines = await this.dataService.fetchLines(this.pair);
     lines.forEach(ld => {
-      const line = this.series.createPriceLine({
-        price: ld.price,
-        color: 'blue',
-        lineWidth: 1,
-        lineStyle: LightweightCharts.LineStyle.Dotted,
-        axisLabelVisible: true,
-        title: 'Line'
-      });
-      this.pinnedLines.push({ line, id: ld.id });
+      this._createLineOnChart(ld);
     });
+  }
+
+  _createLineOnChart(ld) {
+    // Avoid duplicates
+    if (this.pinnedLines.find(x => x.id === ld.id)) return;
+
+    const line = this.series.createPriceLine({
+      price: ld.price,
+      color: 'blue',
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dotted,
+      axisLabelVisible: true,
+      title: 'Line'
+    });
+    this.pinnedLines.push({ line, id: ld.id });
   }
 
   _setupSocket() {
@@ -197,6 +214,13 @@ export class ChartViewer {
 
     this.socket.on('line_removed', ({ id }) => {
       console.log('[ChartViewer] line_removed for id=', id);
+      
+      // FIX: If we are in test mode, keep the line visible for the screenshot
+      if (this.keepStrategyLines) {
+          console.log('[ChartViewer] Ignoring line removal (keepStrategyLines=true)');
+          return;
+      }
+
       const found = this.pinnedLines.find(o => o.id === id);
       if (!found) return;
       this.series.removePriceLine(found.line);
@@ -418,7 +442,7 @@ export class ChartViewer {
     this.londonSeries.setData([]);
     this.nySeries.setData([]);
 
-    const bars = await this.dataService.fetchBars(this.pair, tf, this.lastTime);
+    const bars = await this.dataService.fetchBars(this.pair, tf, this.startTime || this.lastTime);
     this.historicalBars = bars;
     this.displayChart(bars);
     bars.forEach(bar => this._shadeBar(bar));

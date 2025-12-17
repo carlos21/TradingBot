@@ -96,6 +96,39 @@ class CSVDataSource(CombinedDataSource):
         self._1m_buffer           = []
         self._current_group_start = None
 
+    def reset(self, start_time: int = None, end_time: int = None):
+        """
+        Resets the datasource to its initial state.
+        Re-seeds _played_bars with the full allowed range.
+        
+        :param start_time: Optional epoch timestamp to start the history buffer.
+        :param end_time:   Optional epoch timestamp to end the history buffer.
+        """
+        t_logger.debug(f"[CSV_DS] Resetting state... start={start_time}, end={end_time}")
+        
+        # Use provided bounds or fall back to initial config
+        s = start_time if start_time is not None else self.initial_start_time
+        e = end_time   if end_time   is not None else self.initial_end_time
+
+        # Re-seed _played_bars from master _bars based on bounds
+        self._played_bars = [
+            b for b in self._bars
+            if (s is None or b['time'] >= s)
+            and (e is None or b['time'] <= e)
+        ]
+        
+        self.current_1m_index = 0
+        self._1m_buffer = []
+        self._current_group_start = None
+        
+        # Stop any running replay thread
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+             self._thread.join(timeout=1.0)
+        self._stop_event.clear()
+        
+        t_logger.info(f"[CSV_DS] Reset complete. _played_bars re-seeded with {len(self._played_bars)} bars.")
+
     def _load_historical_bars(self) -> List[Dict]:
         bars: List[Dict] = []
         local_tz = self.local_tz             # e.g., America/Chicago for NQ
@@ -130,16 +163,18 @@ class CSVDataSource(CombinedDataSource):
         print(f"[CSV_DS] load_historical_bars → tf={timeframe!r}, start_time={start_time!r}, "
             f"_played_bars_len={len(self._played_bars)}")
         
-        # REMOVED: The incorrect truncation logic that caused NameError
-        
-        if timeframe == '1m':
-            print(f"[CSV_DS] → returning full _played_bars ({len(self._played_bars)})")
-            return list(self._played_bars)
+        # Filter source bars based on start_time if provided
+        source = self._played_bars
+        if start_time is not None:
+            source = [b for b in source if b['time'] >= start_time]
 
-        # ─── Higher TFs: aggregate the *entire* buffer, ignore start_time ───
-        bars = self._played_bars
-        t_logger.debug(f"Aggregating {len(bars)} bars into {timeframe}")
-        return self._aggregate_whole_history_from_list(bars, timeframe)
+        if timeframe == '1m':
+            print(f"[CSV_DS] → returning {len(source)} 1m bars")
+            return list(source)
+
+        # ─── Higher TFs: aggregate the filtered buffer ───
+        t_logger.debug(f"Aggregating {len(source)} bars into {timeframe}")
+        return self._aggregate_whole_history_from_list(source, timeframe)
 
     def subscribe(self, callback, from_time=0):
         print(f"[CSV_DS] subscribe() start → from_time={from_time}, total_bars={len(self._bars)}")

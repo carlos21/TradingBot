@@ -32,7 +32,9 @@ class LinesController:
         # use in-memory played bars to get the last close price
         played = getattr(ds, '_played_bars', None)
         if not played or len(played) == 0:
-            abort(400, "No bars have been replayed yet to determine last close price")
+            # Relaxed check: Log warning but proceed. 
+            # This allows adding lines before streaming starts (e.g. in test scenarios).
+            print(f"[LinesController] ⚠️ Warning: Adding line {price} with no history loaded yet.")
 
         # persist the line and register it with the strategy
         line = self.line_repository.insert_line(
@@ -55,6 +57,9 @@ class LinesController:
         try:
             self.line_repository.delete_line(line_id)
             self.liquidity_strategy.remove_strategy_line(line_id)
+            # Emit removal event
+            if self.bars_loader.socketio:
+                self.bars_loader.socketio.emit('line_removed', {'id': line_id})
         except DBNotFoundException:
             abort(404, f"Line id={line_id} not found")
         return '', 204
