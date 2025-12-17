@@ -19,7 +19,7 @@ export class ChartViewer {
     this.lastBarTs = null;
     this.keepClosedTradeLines = opts.keepClosedTradeLines || false;
     
-    // Use the passed startTime to limit history fetching
+    // Use the passed startTime to limit history fetching (for test scenarios)
     this.startTime = opts.startTime || null;
     
     // New option to keep blue lines even after they trigger
@@ -442,7 +442,9 @@ export class ChartViewer {
     this.londonSeries.setData([]);
     this.nySeries.setData([]);
 
-    const bars = await this.dataService.fetchBars(this.pair, tf, this.startTime || this.lastTime);
+    // FIX: Only use this.startTime if it is explicitly set (test mode).
+    // Otherwise pass null to fetch full history.
+    const bars = await this.dataService.fetchBars(this.pair, tf, this.startTime);
     this.historicalBars = bars;
     this.displayChart(bars);
     bars.forEach(bar => this._shadeBar(bar));
