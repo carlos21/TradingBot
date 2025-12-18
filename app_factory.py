@@ -198,9 +198,7 @@ def create_app(
         """Clears all state for a clean scenario run."""
         try:
             # 1. Clear in-memory strategy state
-            tstrategy.strategy_lines.clear()
-            tstrategy.open_trades.clear()
-            trade_manager.open_trades.clear()
+            tstrategy.reset()
             
             # 2. Clear DB lines
             try:

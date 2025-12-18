@@ -11,7 +11,7 @@ export class ChartViewer {
     this.lastTime     = -Infinity;
     this.lastPrice    = null;
     this.pair         = null;
-    this.currentTF    = '5m';
+    this.currentTF    = opts.timeframe || '5m';
     this.isPlaying    = false;
     this.activeTrade = null;
     this.historicalBars = [];

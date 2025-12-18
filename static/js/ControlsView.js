@@ -51,7 +51,7 @@ export class ControlsView {
     this.updateCurrentPrice(this.chartViewer.lastPrice);
 
     // default timeframe button
-    const defaultBtn = document.querySelector('[data-timeframe="5m"]');
+    const defaultBtn = document.querySelector(`[data-timeframe="${this.chartViewer.currentTF}"]`);
     if (defaultBtn) this.setActiveTf(defaultBtn);
   }
 

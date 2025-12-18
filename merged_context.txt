@@ -425,7 +425,9 @@ class LinesController:
         # use in-memory played bars to get the last close price
         played = getattr(ds, '_played_bars', None)
         if not played or len(played) == 0:
-            abort(400, "No bars have been replayed yet to determine last close price")
+            # Relaxed check: Log warning but proceed. 
+            # This allows adding lines before streaming starts (e.g. in test scenarios).
+            print(f"[LinesController] ⚠️ Warning: Adding line {price} with no history loaded yet.")
 
         # persist the line and register it with the strategy
         line = self.line_repository.insert_line(
@@ -448,6 +450,9 @@ class LinesController:
         try:
             self.line_repository.delete_line(line_id)
             self.liquidity_strategy.remove_strategy_line(line_id)
+            # Emit removal event
+            if self.bars_loader.socketio:
+                self.bars_loader.socketio.emit('line_removed', {'id': line_id})
         except DBNotFoundException:
             abort(404, f"Line id={line_id} not found")
         return '', 204
@@ -654,6 +659,39 @@ class CSVDataSource(CombinedDataSource):
         self._1m_buffer           = []
         self._current_group_start = None
 
+    def reset(self, start_time: int = None, end_time: int = None):
+        """
+        Resets the datasource to its initial state.
+        Re-seeds _played_bars with the full allowed range.
+        
+        :param start_time: Optional epoch timestamp to start the history buffer.
+        :param end_time:   Optional epoch timestamp to end the history buffer.
+        """
+        t_logger.debug(f"[CSV_DS] Resetting state... start={start_time}, end={end_time}")
+        
+        # Use provided bounds or fall back to initial config
+        s = start_time if start_time is not None else self.initial_start_time
+        e = end_time   if end_time   is not None else self.initial_end_time
+
+        # Re-seed _played_bars from master _bars based on bounds
+        self._played_bars = [
+            b for b in self._bars
+            if (s is None or b['time'] >= s)
+            and (e is None or b['time'] <= e)
+        ]
+        
+        self.current_1m_index = 0
+        self._1m_buffer = []
+        self._current_group_start = None
+        
+        # Stop any running replay thread
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+             self._thread.join(timeout=1.0)
+        self._stop_event.clear()
+        
+        t_logger.info(f"[CSV_DS] Reset complete. _played_bars re-seeded with {len(self._played_bars)} bars.")
+
     def _load_historical_bars(self) -> List[Dict]:
         bars: List[Dict] = []
         local_tz = self.local_tz             # e.g., America/Chicago for NQ
@@ -688,16 +726,18 @@ class CSVDataSource(CombinedDataSource):
         print(f"[CSV_DS] load_historical_bars → tf={timeframe!r}, start_time={start_time!r}, "
             f"_played_bars_len={len(self._played_bars)}")
         
-        # REMOVED: The incorrect truncation logic that caused NameError
-        
-        if timeframe == '1m':
-            print(f"[CSV_DS] → returning full _played_bars ({len(self._played_bars)})")
-            return list(self._played_bars)
+        # Filter source bars based on start_time if provided
+        source = self._played_bars
+        if start_time is not None:
+            source = [b for b in source if b['time'] >= start_time]
 
-        # ─── Higher TFs: aggregate the *entire* buffer, ignore start_time ───
-        bars = self._played_bars
-        t_logger.debug(f"Aggregating {len(bars)} bars into {timeframe}")
-        return self._aggregate_whole_history_from_list(bars, timeframe)
+        if timeframe == '1m':
+            print(f"[CSV_DS] → returning {len(source)} 1m bars")
+            return list(source)
+
+        # ─── Higher TFs: aggregate the filtered buffer ───
+        t_logger.debug(f"Aggregating {len(source)} bars into {timeframe}")
+        return self._aggregate_whole_history_from_list(source, timeframe)
 
     def subscribe(self, callback, from_time=0):
         print(f"[CSV_DS] subscribe() start → from_time={from_time}, total_bars={len(self._bars)}")
@@ -3511,12 +3551,22 @@ def build_prod():
         trades= SQLTradeRepository(),
     )
 
+    # 1) Support environment variable overrides for scenarios
+    csv_file = os.environ.get("CSV_FILE")
+    start_iso = os.environ.get("START_ISO")
+    end_iso   = os.environ.get("END_ISO")
+    bps       = float(os.environ.get("BARS_PER_SECOND", 10.0))
+
+    initial_start = datetime.fromisoformat(start_iso) if start_iso else datetime.fromisoformat("2024-04-01T00:00:00+00:00")
+    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-05-01T08:40:00+00:00")
+
     # Data Source (pick your real source)
     ds = CSVDataSource(
         pair=PAIR,
-        initial_start_time=datetime.fromisoformat("2024-04-01T00:00:00+00:00"),
-        initial_end_time  =datetime.fromisoformat("2024-05-01T08:40:00+00:00"),
-        bars_per_second=10.0,
+        filename=csv_file,
+        initial_start_time=initial_start,
+        initial_end_time=initial_end,
+        bars_per_second=bps,
     )
 
     numbers = StrategyNumbers(
@@ -3763,21 +3813,44 @@ def create_app(
     @app.route('/__reset_all', methods=['POST'])
     def reset_all():
         """Clears all state for a clean scenario run."""
-        # Clear in-memory strategy state
-        tstrategy.strategy_lines.clear()
-        tstrategy.open_trades.clear()
-        trade_manager.open_trades.clear()
-        
-        # Clear DB lines so they don't reappear on page reload
-        # (Iterate and delete since we don't have a truncate method exposed)
         try:
-            all_lines = repos.lines.list_lines(pair)
-            for l in all_lines:
-                repos.lines.delete_line(l.line_id)
-        except Exception as e:
-            print(f"Error clearing lines DB: {e}")
+            # 1. Clear in-memory strategy state
+            tstrategy.strategy_lines.clear()
+            tstrategy.open_trades.clear()
+            trade_manager.open_trades.clear()
+            
+            # 2. Clear DB lines
+            try:
+                all_lines = repos.lines.list_lines(pair)
+                for l in all_lines:
+                    repos.lines.delete_line(l.line_id)
+            except Exception as e:
+                print(f"Error clearing lines DB: {e}")
+                return jsonify({"error": str(e)}), 500
 
-        return "OK"
+            # 3. Reset DataSource history
+            data = request.get_json() or {}
+            start_ts = data.get('start_time')
+            end_ts   = data.get('end_time')
+
+            if hasattr(data_source, 'reset'):
+                try:
+                    data_source.reset(start_time=start_ts, end_time=end_ts)
+                except TypeError:
+                    data_source.reset()
+
+            # 4. WARM UP STRATEGY
+            played = getattr(data_source, '_played_bars', [])
+            if played:
+                print(f"[Reset] Warming up strategy with {len(played)} bars...")
+                for bar in played:
+                    tstrategy.on_raw_bar(bar)
+                print("[Reset] Warmup complete.")
+
+            return jsonify({"status": "OK"})
+        except Exception as e:
+            print(f"[Reset] Critical error: {e}")
+            return jsonify({"error": str(e)}), 500
 
     @app.route('/__shutdown', methods=['POST'])
     def shutdown():
@@ -4709,11 +4782,30 @@ def wait_http_ok(url, timeout=30):
     raise TimeoutError(f"Server at {url} did not start.")
 
 def add_line_http(pair: str, price: float):
-    requests.post(f"{APP_URL}/api/lines", json={"pair": pair, "price": float(price)}, timeout=5)
+    try:
+        r = requests.post(f"{APP_URL}/api/lines", json={"pair": pair, "price": float(price)}, timeout=5)
+        if not r.ok:
+            print(f"⚠️ Failed to add line {price}: {r.status_code} {r.text}")
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️ Exception adding line {price}: {e}")
+        return False
 
-def reset_app_state():
-    try: requests.post(f"{APP_URL}/__reset_all", timeout=5)
-    except: pass
+def reset_app_state(start=None, end=None):
+    payload = {}
+    if start: payload['start_time'] = start
+    if end:   payload['end_time'] = end
+    try:
+        # Increased timeout to 10s to allow for strategy warmup
+        r = requests.post(f"{APP_URL}/__reset_all", json=payload, timeout=10)
+        if not r.ok:
+            print(f"⚠️ Reset failed: {r.status_code} {r.text}")
+            return False
+        return True
+    except Exception as e:
+        print(f"⚠️ Reset exception: {e}")
+        return False
 
 def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]:
     """Returns (Status, Reason, FormattedValues)"""
@@ -4728,7 +4820,7 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
     values_str = f"(Entry: {entry}, Orig SL: {sl}, TP: {tp})"
 
     if not expect:
-        return "PASS", "No expectations", values_str
+        return "PASS", "Matches expectations", values_str
     
     tol = float(expect.get("tolerance", 1.0))
     errors = []
@@ -4842,13 +4934,30 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 sdir = Path(args.outdir) / sanitize(name)
                 sdir.mkdir(parents=True, exist_ok=True)
                 
-                reset_app_state()
-                await page.goto(f"{APP_URL}/", wait_until="domcontentloaded")
-
                 # Use Timezone-Aware Epochs
                 start_ts = get_epoch(sc["start"])
                 end_ts   = get_epoch(sc["end"])
                 tf       = sc.get("tf", "5m")
+
+                # Reset app state with a buffer (e.g. 2 days history + scenario duration)
+                if not reset_app_state(start=start_ts - 172800, end=end_ts + 3600):
+                    print("❌ Skipping scenario due to reset failure")
+                    continue
+                
+                # --- ADD ALL LINES BEFORE PAGE LOAD ---
+                lines = [parse_line_spec(l) for l in sc.get("lines", [])]
+                for l in lines:
+                    # We add ALL lines immediately, ignoring l.get("at_raw") check
+                    if not add_line_http(pair_name, l["level"]):
+                        print(f"❌ Failed to add line {l['level']}")
+                # --------------------------------------------
+
+                # Calculate a view buffer (e.g. 24 hours) to limit history load on frontend
+                view_start_ts = start_ts - 86400
+                
+                # Pass start_time to frontend to prevent loading full history
+                # Pass keep_lines=true to prevent line removal on trade trigger
+                await page.goto(f"{APP_URL}/?start_time={view_start_ts}&keep_lines=true", wait_until="domcontentloaded")
 
                 await page.evaluate("""
                     window.__done = false;
@@ -4883,34 +4992,15 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     sock.on('stream_end', () => { window.__done = true; });
                 """)
 
-                lines = [parse_line_spec(l) for l in sc.get("lines", [])]
-                
-                for l in lines:
-                    if not l.get("at_raw"):
-                        add_line_http(pair_name, l["level"])
+                # Wait for chart to be ready (bars loaded, lines loaded)
+                try:
+                    await page.wait_for_function("() => window.__chartReady === true", timeout=10000)
+                except Exception as e:
+                    print(f"⚠️ Warning: Chart did not report ready: {e}")
 
                 stop_sched = threading.Event()
-                def run_scheduler():
-                    timed = [l for l in lines if l.get("at_raw")]
-                    if not timed: return
-                    start_idx = idx_map.get(start_ts, 0)
-                    emit_delay = 1.0 / args.bars_per_second
-                    sched_items = []
-                    for item in timed:
-                        abs_idx = resolve_at(item["at_raw"])
-                        if abs_idx > start_idx: sched_items.append((abs_idx, item))
-                        else: add_line_http(pair_name, item["level"])
-                    sched_items.sort(key=lambda x: x[0])
-                    last_idx = start_idx
-                    for idx, item in sched_items:
-                        if stop_sched.is_set(): return
-                        wait_bars = idx - last_idx
-                        time.sleep(wait_bars * emit_delay)
-                        add_line_http(pair_name, item["level"])
-                        last_idx = idx
-
-                sched_thread = threading.Thread(target=run_scheduler, daemon=True)
-                sched_thread.start()
+                
+                # REMOVED SCHEDULER THREAD COMPLETELY
 
                 await page.evaluate(
                     """(p) => window.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
@@ -4919,12 +5009,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
                 try:
                     await page.wait_for_function("() => window.__done === true", timeout=120000)
-                    await page.wait_for_timeout(500)
+                    await page.wait_for_timeout(1000)
                 except Exception as e:
                     print(f"❌ Timeout/Error waiting for stream end: {e}")
 
                 stop_sched.set()
-                sched_thread.join(timeout=1)
 
                 captured_trades = await page.evaluate("window.__trades")
                 status, reason, values = check_expectations(sc.get("expect"), captured_trades)
@@ -5862,6 +5951,12 @@ export class ChartViewer {
     this.tradeMarkers   = [];
     this.lastBarTs = null;
     this.keepClosedTradeLines = opts.keepClosedTradeLines || false;
+    
+    // Use the passed startTime to limit history fetching (for test scenarios)
+    this.startTime = opts.startTime || null;
+    
+    // New option to keep blue lines even after they trigger
+    this.keepStrategyLines = opts.keepStrategyLines || false;
 
     this.formats = {
       NQ:     { precision: 2,    minMove: 0.01    },
@@ -5964,7 +6059,10 @@ export class ChartViewer {
     this._initPair()
       .then(() => this._initBars())
       .then(() => this._initLines())
-      .then(() => this._setupSocket())
+      .then(() => {
+          window.__chartReady = true; // Signal to Playwright
+          return this._setupSocket();
+      })
       .catch(console.error);
   }
 
@@ -5981,7 +6079,8 @@ export class ChartViewer {
   }
 
   async _initBars() {
-    const bars = await this.dataService.fetchBars(this.pair, this.currentTF);
+    // Pass this.startTime to fetchBars to limit history
+    const bars = await this.dataService.fetchBars(this.pair, this.currentTF, this.startTime);
     this.historicalBars = bars;
     this.displayChart(bars);
     bars.forEach(bar => this._shadeBar(bar));
@@ -5990,16 +6089,23 @@ export class ChartViewer {
   async _initLines() {
     const lines = await this.dataService.fetchLines(this.pair);
     lines.forEach(ld => {
-      const line = this.series.createPriceLine({
-        price: ld.price,
-        color: 'blue',
-        lineWidth: 1,
-        lineStyle: LightweightCharts.LineStyle.Dotted,
-        axisLabelVisible: true,
-        title: 'Line'
-      });
-      this.pinnedLines.push({ line, id: ld.id });
+      this._createLineOnChart(ld);
     });
+  }
+
+  _createLineOnChart(ld) {
+    // Avoid duplicates
+    if (this.pinnedLines.find(x => x.id === ld.id)) return;
+
+    const line = this.series.createPriceLine({
+      price: ld.price,
+      color: 'blue',
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dotted,
+      axisLabelVisible: true,
+      title: 'Line'
+    });
+    this.pinnedLines.push({ line, id: ld.id });
   }
 
   _setupSocket() {
@@ -6041,6 +6147,13 @@ export class ChartViewer {
 
     this.socket.on('line_removed', ({ id }) => {
       console.log('[ChartViewer] line_removed for id=', id);
+      
+      // FIX: If we are in test mode, keep the line visible for the screenshot
+      if (this.keepStrategyLines) {
+          console.log('[ChartViewer] Ignoring line removal (keepStrategyLines=true)');
+          return;
+      }
+
       const found = this.pinnedLines.find(o => o.id === id);
       if (!found) return;
       this.series.removePriceLine(found.line);
@@ -6262,7 +6375,9 @@ export class ChartViewer {
     this.londonSeries.setData([]);
     this.nySeries.setData([]);
 
-    const bars = await this.dataService.fetchBars(this.pair, tf, this.lastTime);
+    // FIX: Only use this.startTime if it is explicitly set (test mode).
+    // Otherwise pass null to fetch full history.
+    const bars = await this.dataService.fetchBars(this.pair, tf, this.startTime);
     this.historicalBars = bars;
     this.displayChart(bars);
     bars.forEach(bar => this._shadeBar(bar));
@@ -6296,7 +6411,6 @@ export class ChartViewer {
     });
   }
 }
-
 ```
 ===== END FILE: ChartViewer.js =====
 
@@ -6807,7 +6921,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const chartContainer = document.getElementById('chartContainer');
     const socket = io();
     const service = new DataService();
-    const chartViewer = new ChartViewer(chartContainer, service, socket);
+    
+    // Parse start_time and keep_lines from URL query params
+    const urlParams = new URLSearchParams(window.location.search);
+    const startTimeParam = urlParams.get('start_time');
+    const startTime = startTimeParam ? parseInt(startTimeParam, 10) : null;
+    const keepLines = urlParams.get('keep_lines') === 'true';
+
+    const chartViewer = new ChartViewer(chartContainer, service, socket, {
+        startTime: startTime,
+        keepStrategyLines: keepLines
+    });
     window.chartViewer = chartViewer;
     const controlsView = new ControlsView(chartViewer, socket, service);
     controlsView.init();

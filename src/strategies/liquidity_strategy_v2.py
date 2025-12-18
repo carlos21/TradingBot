@@ -49,6 +49,29 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             }
             self._tf_histories[tf] = deque(maxlen=10)
 
+    def reset(self):
+        """
+        Clears all internal state, including lines, trades, and aggregation buffers.
+        Crucial for running back-to-back scenarios without state pollution.
+        """
+        with self.lock:
+            # 1. Clear Lines and Trades
+            self.strategy_lines.clear()
+            self.open_trades.clear()
+            self.trade_manager.open_trades.clear()
+            
+            # 2. Reset Aggregators
+            for tf in self.timeframes:
+                self._tf_aggregators[tf] = {
+                    "seconds": self._parse_tf_seconds(tf),
+                    "buf": [],
+                    "start": None
+                }
+                # Clear the history deque
+                self._tf_histories[tf].clear()
+            
+            print("[StrategyV2] 🧹 Internal state fully reset.")
+
     def _parse_tf_seconds(self, tf: str) -> int:
         unit = tf[-1].lower()
         val = int(tf[:-1])

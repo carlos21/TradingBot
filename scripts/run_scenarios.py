@@ -270,7 +270,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 
                 # Pass start_time to frontend to prevent loading full history
                 # Pass keep_lines=true to prevent line removal on trade trigger
-                await page.goto(f"{APP_URL}/?start_time={view_start_ts}&keep_lines=true", wait_until="domcontentloaded")
+                await page.goto(f"{APP_URL}/?start_time={view_start_ts}&keep_lines=true&tf={tf}", wait_until="domcontentloaded")
 
                 await page.evaluate("""
                     window.__done = false;
