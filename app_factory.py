@@ -195,9 +195,10 @@ def create_app(
     # --- TEST RUNNER HELPERS ---
     @app.route('/__reset_all', methods=['POST'])
     def reset_all():
-        """Clears all state for a clean scenario run."""
+        """Clears all state, resets DataSource range, AND warms up strategy."""
         try:
-            # 1. Clear in-memory strategy state
+            # 1. Clear in-memory strategy state (Deep Reset)
+            # This clears lines, trades, and HISTORY BUFFERS
             tstrategy.reset()
             
             # 2. Clear DB lines
@@ -206,7 +207,6 @@ def create_app(
                 for l in all_lines:
                     repos.lines.delete_line(l.line_id)
             except Exception as e:
-                print(f"Error clearing lines DB: {e}")
                 return jsonify({"error": str(e)}), 500
 
             # 3. Reset DataSource history
@@ -220,10 +220,12 @@ def create_app(
                 except TypeError:
                     data_source.reset()
 
-            # 4. WARM UP STRATEGY
+            # 4. WARM UP STRATEGY (Without lines)
+            # We process history NOW, while strategy_lines is empty.
+            # This fills _tf_histories without deleting lines due to bounce rules.
             played = getattr(data_source, '_played_bars', [])
             if played:
-                print(f"[Reset] Warming up strategy with {len(played)} bars...")
+                print(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")
                 for bar in played:
                     tstrategy.on_raw_bar(bar)
                 print("[Reset] Warmup complete.")

@@ -253,7 +253,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 tf       = sc.get("tf", "5m")
 
                 # Reset app state with a buffer (e.g. 2 days history + scenario duration)
-                if not reset_app_state(start=start_ts - 172800, end=end_ts + 3600):
+                if not reset_app_state(start=start_ts - 172800, end=start_ts - 1):
                     print("❌ Skipping scenario due to reset failure")
                     continue
                 
