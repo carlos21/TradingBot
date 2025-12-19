@@ -1,25 +1,27 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
-
+from typing import Optional, List
+from src.models import LineData  # Import strict model
 
 class DummySocketIO:
     def __init__(self):
-        self.events = []  # list[(event, payload)]
+        self.events = []
 
     def emit(self, event, payload):
         self.events.append((event, payload))
 
-    # In tests, call the target immediately (no threads).
     def start_background_task(self, target, *args, **kwargs):
         return target(*args, **kwargs)
-    
+
+    def run(self, app, **kwargs):
+        # Allow calling run() in tests, though usually we mock it out
+        pass
+
 @dataclass
 class _Line:
     line_id: str
     pair: str
     price: float
-    direction: Optional[str]
     creation_date: datetime
 
 class FakeLineRepository:
@@ -27,45 +29,71 @@ class FakeLineRepository:
         self._seq = 0
         self._store = {}
 
-    def list_lines(self, pair: str):
-        return [obj for obj in self._store.values() if obj.pair == pair]
+    def list_lines(self, pair: str) -> List[LineData]:
+        # Must return LineData objects, not internal _Line dicts
+        results = []
+        for obj in self._store.values():
+            if obj.pair == pair:
+                results.append(LineData(
+                    line_id=obj.line_id,
+                    pair=obj.pair,
+                    price=obj.price,
+                    creation_date=obj.creation_date
+                ))
+        return results
 
-    def insert_line(self, pair, price, direction=None):
+    def insert_line(self, pair, price) -> LineData:
         self._seq += 1
         lid = f"L{self._seq}"
-        obj = _Line(lid, pair, price, direction, datetime.utcnow())
+        obj = _Line(lid, pair, price, datetime.utcnow())
         self._store[lid] = obj
-        return obj
+        
+        return LineData(
+            line_id=obj.line_id,
+            pair=obj.pair,
+            price=obj.price,
+            creation_date=obj.creation_date
+        )
 
     def delete_line(self, line_id):
-        if line_id not in self._store:
-            from src.dbexception import DBNotFoundException
-            raise DBNotFoundException()
-        del self._store[line_id]
-
-@dataclass
-class _Trade:
-    trade_id: str
+        if line_id in self._store:
+            del self._store[line_id]
+        # Silent ignore if missing, matching some DB behaviors or strict if needed
 
 class FakeTradeRepository:
     def __init__(self):
         self._seq = 0
-        self.inserted = []  # dicts of fields
-        self.closed   = []  # dicts of fields
+        self.inserted = [] 
+        self.closed   = [] 
 
-    def insert_trade(self, **kwargs):
+    def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None):
         self._seq += 1
-        self.inserted.append(kwargs | {"trade_id": f"T{self._seq}"})
-        return _Trade(trade_id=f"T{self._seq}")
+        trade_id = f"T{self._seq}"
+        
+        # Create a mock object that mimics the SQL Alchemy model return
+        class MockTradeData:
+            def __init__(self, tid): self.trade_id = tid
+
+        self.inserted.append({
+            "trade_id": trade_id,
+            "pair": pair,
+            "type": trade_type,
+            "entry": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "risk": risk
+        })
+        return MockTradeData(trade_id)
 
     def update_stop_loss(self, trade_id, new_stop_loss):
-        # Find the inserted trade dict and update it
         for t in self.inserted:
             if t['trade_id'] == trade_id:
                 t['stop_loss'] = new_stop_loss
                 return
-        # If using real DB logic, would raise NotFound, but for fake just ignore or log
-        pass
-
-    def close_trade(self, **kwargs):
-        self.closed.append(kwargs)
+    
+    def close_trade(self, trade_id, exit_price, exit_time, result):
+        self.closed.append({
+            "trade_id": trade_id,
+            "exit_price": exit_price,
+            "result": result
+        })

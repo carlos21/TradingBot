@@ -2764,6 +2764,29 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             }
             self._tf_histories[tf] = deque(maxlen=10)
 
+    def reset(self):
+        """
+        Clears all internal state, including lines, trades, and aggregation buffers.
+        Crucial for running back-to-back scenarios without state pollution.
+        """
+        with self.lock:
+            # 1. Clear Lines and Trades
+            self.strategy_lines.clear()
+            self.open_trades.clear()
+            self.trade_manager.open_trades.clear()
+            
+            # 2. Reset Aggregators
+            for tf in self.timeframes:
+                self._tf_aggregators[tf] = {
+                    "seconds": self._parse_tf_seconds(tf),
+                    "buf": [],
+                    "start": None
+                }
+                # Clear the history deque
+                self._tf_histories[tf].clear()
+            
+            print("[StrategyV2] 🧹 Internal state fully reset.")
+
     def _parse_tf_seconds(self, tf: str) -> int:
         unit = tf[-1].lower()
         val = int(tf[:-1])
@@ -3812,12 +3835,11 @@ def create_app(
     # --- TEST RUNNER HELPERS ---
     @app.route('/__reset_all', methods=['POST'])
     def reset_all():
-        """Clears all state for a clean scenario run."""
+        """Clears all state, resets DataSource range, AND warms up strategy."""
         try:
-            # 1. Clear in-memory strategy state
-            tstrategy.strategy_lines.clear()
-            tstrategy.open_trades.clear()
-            trade_manager.open_trades.clear()
+            # 1. Clear in-memory strategy state (Deep Reset)
+            # This clears lines, trades, and HISTORY BUFFERS
+            tstrategy.reset()
             
             # 2. Clear DB lines
             try:
@@ -3825,7 +3847,6 @@ def create_app(
                 for l in all_lines:
                     repos.lines.delete_line(l.line_id)
             except Exception as e:
-                print(f"Error clearing lines DB: {e}")
                 return jsonify({"error": str(e)}), 500
 
             # 3. Reset DataSource history
@@ -3839,10 +3860,12 @@ def create_app(
                 except TypeError:
                     data_source.reset()
 
-            # 4. WARM UP STRATEGY
+            # 4. WARM UP STRATEGY (Without lines)
+            # We process history NOW, while strategy_lines is empty.
+            # This fills _tf_histories without deleting lines due to bounce rules.
             played = getattr(data_source, '_played_bars', [])
             if played:
-                print(f"[Reset] Warming up strategy with {len(played)} bars...")
+                print(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")
                 for bar in played:
                     tstrategy.on_raw_bar(bar)
                 print("[Reset] Warmup complete.")
@@ -4940,7 +4963,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 tf       = sc.get("tf", "5m")
 
                 # Reset app state with a buffer (e.g. 2 days history + scenario duration)
-                if not reset_app_state(start=start_ts - 172800, end=end_ts + 3600):
+                if not reset_app_state(start=start_ts - 172800, end=start_ts - 1):
                     print("❌ Skipping scenario due to reset failure")
                     continue
                 
@@ -4957,7 +4980,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 
                 # Pass start_time to frontend to prevent loading full history
                 # Pass keep_lines=true to prevent line removal on trade trigger
-                await page.goto(f"{APP_URL}/?start_time={view_start_ts}&keep_lines=true", wait_until="domcontentloaded")
+                await page.goto(f"{APP_URL}/?start_time={view_start_ts}&keep_lines=true&tf={tf}", wait_until="domcontentloaded")
 
                 await page.evaluate("""
                     window.__done = false;
@@ -5944,7 +5967,7 @@ export class ChartViewer {
     this.lastTime     = -Infinity;
     this.lastPrice    = null;
     this.pair         = null;
-    this.currentTF    = '5m';
+    this.currentTF    = opts.timeframe || '5m';
     this.isPlaying    = false;
     this.activeTrade = null;
     this.historicalBars = [];
@@ -6470,7 +6493,7 @@ export class ControlsView {
     this.updateCurrentPrice(this.chartViewer.lastPrice);
 
     // default timeframe button
-    const defaultBtn = document.querySelector('[data-timeframe="5m"]');
+    const defaultBtn = document.querySelector(`[data-timeframe="${this.chartViewer.currentTF}"]`);
     if (defaultBtn) this.setActiveTf(defaultBtn);
   }
 
@@ -6913,6 +6936,7 @@ export class LiquidityStrategy {
 ===== BEGIN FILE: main.js =====
 (path: static/js/main.js)
 ```javascript
+// (path: static/js/main.js)
 import { ChartViewer } from './ChartViewer.js';
 import { DataService } from './DataService.js';
 import { ControlsView } from './ControlsView.js';
@@ -6922,15 +6946,17 @@ document.addEventListener("DOMContentLoaded", () => {
     const socket = io();
     const service = new DataService();
     
-    // Parse start_time and keep_lines from URL query params
+    // Parse start_time, keep_lines, AND tf from URL query params
     const urlParams = new URLSearchParams(window.location.search);
     const startTimeParam = urlParams.get('start_time');
     const startTime = startTimeParam ? parseInt(startTimeParam, 10) : null;
     const keepLines = urlParams.get('keep_lines') === 'true';
+    const tfParam = urlParams.get('tf'); // [CHANGE] Get tf param
 
     const chartViewer = new ChartViewer(chartContainer, service, socket, {
         startTime: startTime,
-        keepStrategyLines: keepLines
+        keepStrategyLines: keepLines,
+        timeframe: tfParam // [CHANGE] Pass to ChartViewer
     });
     window.chartViewer = chartViewer;
     const controlsView = new ControlsView(chartViewer, socket, service);

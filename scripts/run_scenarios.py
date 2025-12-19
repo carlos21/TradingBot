@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """
-High-Performance Scenario Runner.
+High-Performance Scenario Runner with Dependency Injection.
 
-Optimizations:
-1. Starts Flask App ONCE (loads CSV once).
-2. Starts Browser ONCE (reuses context).
-3. Resets state via API between scenarios.
-4. Validates expectations (Original SL/TP) and prints a summary.
-5. Draws persistent "Original SL" lines for visualization.
-6. Timezone-aware: Syncs YAML/CSV times with the Pair's specific timezone.
+Features:
+1. Injects FakeLineRepository and FakeTradeRepository (In-Memory).
+2. Uses EXACTLY the same StrategyOptions/CandleConfig as Production (via src.prod_config).
+3. Spawns a dedicated server process per test suite to ensure clean state.
+4. Uses Playwright for end-to-end verification.
 """
 
 import argparse
@@ -16,22 +14,38 @@ import asyncio
 import csv
 import sys
 import time
-import threading
-import subprocess
-import signal
 import os
+import signal
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from multiprocessing import Process, Event
 
 import yaml
 import requests
 from dateutil import parser as dtparser
 from playwright.async_api import async_playwright
 
+# -------------------------------------------------------------------------
+# PATH SETUP: Ensure we can import from project root
+# -------------------------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# --- Project Imports ---
+from app_factory import create_app, Repositories
+from src.data_sources.csv_datasource import CSVDataSource
+from src.prod_config import (
+    get_prod_strategy_numbers,
+    get_prod_candle_config,
+    get_prod_strategy_options
+)
+# Use Fakes instead of SQL
+from tests.fakes import FakeLineRepository, FakeTradeRepository
+
 APP_HOST = "127.0.0.1"
-APP_URL = f"http://{APP_HOST}:5001"
 
 # Timezones must match src/data_sources/csv_datasource.py
 PAIR_TZS = {
@@ -39,20 +53,78 @@ PAIR_TZS = {
     'NQ':     'America/Chicago',
 }
 
-# ---------------- helpers ----------------
+# -------------------------------------------------------------------------
+# Server Process Logic (The "App" in Test Mode)
+# -------------------------------------------------------------------------
+
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event):
+    """
+    Entry point for the background process.
+    Constructs the app with Mock Repos + Real Strategy Logic.
+    """
+    # 1. Configure Environment for Test Mode
+    # We want the BACKEND to remove the line after evaluation so it doesn't trigger twice.
+    # The FRONTEND will ignore this removal command because of ?keep_lines=true.
+    os.environ["LINE_REMOVAL_MODE"] = "ON_EVALUATE"
+
+    # 2. Mocks (InMemory)
+    repos = Repositories(
+        lines=FakeLineRepository(),
+        trades=FakeTradeRepository()
+    )
+
+    # 3. Data Source (Real CSV logic)
+    ds = CSVDataSource(
+        pair="NQ",
+        filename=csv_path,
+        initial_start_time=0, 
+        initial_end_time=9999999999,
+        bars_per_second=bars_per_second,
+    )
+
+    # 4. Strategy Logic (EXACT Match with Production)
+    numbers = get_prod_strategy_numbers()
+    candle_config = get_prod_candle_config()
+    options = get_prod_strategy_options(numbers.max_bounce)
+
+    # 5. Build App
+    wiring = create_app(
+        pair="NQ",
+        data_source=ds,
+        repos=repos,
+        numbers=numbers,
+        options=options,
+        candle_config=candle_config,
+        timeframes=["5m", "15m"],
+        bootstrap_existing_lines=False, # No DB lines to load
+    )
+
+    # Signal parent that we are about to start
+    ready_event.set()
+
+    # Disable generic Flask logs to keep console clean
+    import logging
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.ERROR)
+
+    # allow_unsafe_werkzeug=True is required for non-debug mode in recent Flask-SocketIO
+    wiring.socketio.run(
+        wiring.app, 
+        host=APP_HOST, 
+        port=port, 
+        debug=False, 
+        use_reloader=False, 
+        allow_unsafe_werkzeug=True
+    )
+
+# -------------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------------
 
 def sanitize(name: str) -> str:
     return "".join(c if c.isalnum() or c in ("-","_"," ") else "_" for c in name).strip().replace(" ", "_")
 
-def _parse_dt_flexible(date_str: str, time_str: str) -> datetime:
-    s = f"{date_str} {time_str}".strip()
-    try:
-        return datetime.strptime(s, "%d/%m/%Y %H:%M:%S")
-    except ValueError:
-        return dtparser.parse(s)
-
 def _parse_yaml_dt(s: str) -> datetime:
-    """Parses YAML datetime string. Returns naive datetime."""
     return dtparser.parse(s).replace(tzinfo=None)
 
 def parse_line_spec(line_row: Any) -> Dict[str, Any]:
@@ -94,34 +166,25 @@ def wait_http_ok(url, timeout=30):
         time.sleep(0.2)
     raise TimeoutError(f"Server at {url} did not start.")
 
-def add_line_http(pair: str, price: float):
+def add_line_http(base_url: str, pair: str, price: float):
     try:
-        r = requests.post(f"{APP_URL}/api/lines", json={"pair": pair, "price": float(price)}, timeout=5)
-        if not r.ok:
-            print(f"⚠️ Failed to add line {price}: {r.status_code} {r.text}")
-            return False
-        return True
+        r = requests.post(f"{base_url}/api/lines", json={"pair": pair, "price": float(price)}, timeout=5)
+        return r.ok
     except Exception as e:
         print(f"⚠️ Exception adding line {price}: {e}")
         return False
 
-def reset_app_state(start=None, end=None):
+def reset_app_state(base_url: str, start=None, end=None):
     payload = {}
     if start: payload['start_time'] = start
     if end:   payload['end_time'] = end
     try:
-        # Increased timeout to 10s to allow for strategy warmup
-        r = requests.post(f"{APP_URL}/__reset_all", json=payload, timeout=10)
-        if not r.ok:
-            print(f"⚠️ Reset failed: {r.status_code} {r.text}")
-            return False
-        return True
-    except Exception as e:
-        print(f"⚠️ Reset exception: {e}")
+        r = requests.post(f"{base_url}/__reset_all", json=payload, timeout=10)
+        return r.ok
+    except Exception:
         return False
 
 def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]:
-    """Returns (Status, Reason, FormattedValues)"""
     if not trades:
         return "FAIL", "No trades opened", ""
     
@@ -154,7 +217,7 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
                     break
             
             if actual is None:
-                errors.append(f"{yaml_key} missing in trade data")
+                errors.append(f"{yaml_key} missing")
                 continue
             
             if abs(actual - target) > tol:
@@ -165,23 +228,48 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
     
     return "PASS", "Matches expectations", values_str
 
-# ---------------- async runner ----------------
+
+# -------------------------------------------------------------------------
+# Test Runner
+# -------------------------------------------------------------------------
 
 async def run_suite(args, scenarios: List[Dict], csv_path: Path):
-    print(f"🚀 Launching persistent App with {csv_path}...")
-    
-    env = os.environ.copy()
-    env["CSV_FILE"] = str(csv_path.resolve())
-    env["BARS_PER_SECOND"] = str(args.bars_per_second)
-    env["START_ISO"] = "2000-01-01" 
-    env["END_ISO"]   = "2099-01-01"
-    env["FLASK_RUN_PORT"] = str(args.port)
-    env["LINE_REMOVAL_MODE"] = "NEVER"
+    print(f"🚀 Launching In-Memory Test Server with {csv_path}...")
 
-    proc = subprocess.Popen([sys.executable, "app.py"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
-    # 1. Read CSV (Naive)
-    print("📂 Reading CSV...")
+    # Construct Base URL based on args
+    base_url = f"http://{APP_HOST}:{args.port}"
+
+    # Event to know when Flask is ready
+    server_ready = Event()
+
+    # Spawn the server process
+    server_proc = Process(
+        target=run_test_server, 
+        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready)
+    )
+    server_proc.start()
+
+    # Wait for ready signal
+    if not server_ready.wait(timeout=10):
+        print("❌ Server failed to start within timeout.")
+        server_proc.terminate()
+        return
+
+    # Wait for HTTP 200 (double check)
+    try:
+        wait_http_ok(f"{base_url}/api/pair")
+    except TimeoutError:
+        print("❌ Server process started but HTTP not reachable.")
+        server_proc.terminate()
+        return
+
+    # 1. Prepare Timezone logic
+    pair_resp = requests.get(f"{base_url}/api/pair").json()
+    pair_name = pair_resp['pair']
+    pair_tz = ZoneInfo(PAIR_TZS.get(pair_name, 'UTC'))
+    print(f"✅ Test Server running ({pair_name}) at {base_url}. Timezone: {pair_tz}")
+
+    # 2. Naive CSV read for index mapping (client-side helper)
     all_dts_naive = []
     try:
         with open(csv_path, newline="", encoding="utf-8") as f:
@@ -190,51 +278,27 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             except: dialect = csv.excel(); dialect.delimiter=";"
             rdr = csv.DictReader(f, dialect=dialect)
             for row in rdr:
-                all_dts_naive.append(_parse_dt_flexible(
-                    (row.get("Date") or row.get("date") or "").strip(),
-                    (row.get("Time") or row.get("time") or "").strip()
+                all_dts_naive.append(datetime.strptime(
+                    f"{row['Date']} {row['Time']}".strip(), 
+                    "%d/%m/%Y %H:%M:%S"
                 ))
     except Exception as e:
-        print(f"⚠️ Error reading CSV: {e}")
-        proc.kill()
-        return
+        print(f"⚠️ Error reading CSV for index map: {e}")
+
+    # 3. Build Index Map
+    idx_map = {}
+    for i, dt_naive in enumerate(all_dts_naive):
+        dt_aware = dt_naive.replace(tzinfo=pair_tz)
+        ts = int(dt_aware.timestamp())
+        idx_map[ts] = i
+
+    def get_epoch(dt_str):
+        dt_naive = _parse_yaml_dt(dt_str)
+        dt_aware = dt_naive.replace(tzinfo=pair_tz)
+        return int(dt_aware.timestamp())
 
     try:
         summary_results = []
-
-        # 2. Wait for App & Get Pair
-        wait_http_ok(f"{APP_URL}/api/pair")
-        pair_resp = requests.get(f"{APP_URL}/api/pair").json()
-        pair_name = pair_resp['pair']
-        
-        # 3. Determine Timezone
-        pair_tz = ZoneInfo(PAIR_TZS.get(pair_name, 'UTC'))
-        print(f"✅ App running ({pair_name}). Timezone: {pair_tz}")
-
-        # 4. Build Index Map (Aware)
-        # Convert naive CSV times to Pair TZ -> UTC Epoch
-        idx_map = {}
-        for i, dt_naive in enumerate(all_dts_naive):
-            dt_aware = dt_naive.replace(tzinfo=pair_tz)
-            ts = int(dt_aware.timestamp())
-            idx_map[ts] = i
-
-        def resolve_at(at_str):
-            if str(at_str).startswith("row:"):
-                n = int(at_str.split(":",1)[1])
-                return max(0, min(n-1, len(all_dts_naive)-1))
-            
-            # Parse YAML string as naive, attach Pair TZ, get epoch
-            dt_naive = _parse_yaml_dt(str(at_str))
-            dt_aware = dt_naive.replace(tzinfo=pair_tz)
-            sec = int(dt_aware.timestamp())
-            return idx_map.get(sec, 0)
-
-        def get_epoch(dt_str):
-            dt_naive = _parse_yaml_dt(dt_str)
-            dt_aware = dt_naive.replace(tzinfo=pair_tz)
-            return int(dt_aware.timestamp())
-
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
             ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
@@ -247,46 +311,38 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 sdir = Path(args.outdir) / sanitize(name)
                 sdir.mkdir(parents=True, exist_ok=True)
                 
-                # Use Timezone-Aware Epochs
                 start_ts = get_epoch(sc["start"])
                 end_ts   = get_epoch(sc["end"])
                 tf       = sc.get("tf", "5m")
 
-                # Reset app state with a buffer (e.g. 2 days history + scenario duration)
-                if not reset_app_state(start=start_ts - 172800, end=start_ts - 1):
-                    print("❌ Skipping scenario due to reset failure")
+                # Reset the In-Memory App
+                if not reset_app_state(base_url, start=start_ts - 172800, end=start_ts - 1):
+                    print("❌ Reset failed")
                     continue
                 
-                # --- ADD ALL LINES BEFORE PAGE LOAD ---
+                # Add Lines (HTTP)
                 lines = [parse_line_spec(l) for l in sc.get("lines", [])]
                 for l in lines:
-                    # We add ALL lines immediately, ignoring l.get("at_raw") check
-                    if not add_line_http(pair_name, l["level"]):
+                    if not add_line_http(base_url, pair_name, l["level"]):
                         print(f"❌ Failed to add line {l['level']}")
-                # --------------------------------------------
 
-                # Calculate a view buffer (e.g. 24 hours) to limit history load on frontend
+                # Load Page with keep_closed_trades=true
                 view_start_ts = start_ts - 86400
-                
-                # Pass start_time to frontend to prevent loading full history
-                # Pass keep_lines=true to prevent line removal on trade trigger
-                await page.goto(f"{APP_URL}/?start_time={view_start_ts}&keep_lines=true&tf={tf}", wait_until="domcontentloaded")
+                # FIX: Added &keep_closed_trades=true
+                await page.goto(f"{base_url}/?start_time={view_start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}", wait_until="domcontentloaded")
 
+                # Inject Test Listeners
                 await page.evaluate("""
                     window.__done = false;
                     window.__trades = [];
-                    
                     const sock = (window.io && window.io()) || window.socket;
                     if (!sock) throw new Error("Socket.IO not found");
                     window.socket = sock;
-                    
-                    if (window.chartViewer) {
-                        window.chartViewer.keepClosedTradeLines = true;
-                    }
 
                     sock.on('trade_open', (t) => {
                         window.__trades.push(t);
                         
+                        // Optional: Draw persistent "Orig SL" line for debugging
                         if (window.chartViewer && window.chartViewer.series) {
                             const sl = t.stop_loss ?? t.sl ?? t.stopLoss;
                             if (typeof sl === 'number') {
@@ -301,53 +357,41 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                             }
                         }
                     });
-
                     sock.on('stream_end', () => { window.__done = true; });
                 """)
 
-                # Wait for chart to be ready (bars loaded, lines loaded)
-                try:
-                    await page.wait_for_function("() => window.__chartReady === true", timeout=10000)
-                except Exception as e:
-                    print(f"⚠️ Warning: Chart did not report ready: {e}")
-
-                stop_sched = threading.Event()
-                
-                # REMOVED SCHEDULER THREAD COMPLETELY
-
+                # Start Stream
                 await page.evaluate(
                     """(p) => window.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
                     {"tf": tf, "start": start_ts, "end": end_ts}
                 )
 
+                # Wait for completion
                 try:
                     await page.wait_for_function("() => window.__done === true", timeout=120000)
-                    await page.wait_for_timeout(1000)
                 except Exception as e:
-                    print(f"❌ Timeout/Error waiting for stream end: {e}")
+                    print(f"❌ Timeout waiting for stream end: {e}")
 
-                stop_sched.set()
-
+                # Check Results
                 captured_trades = await page.evaluate("window.__trades")
                 status, reason, values = check_expectations(sc.get("expect"), captured_trades)
                 summary_results.append({"name": name, "status": status, "reason": reason, "values": values})
                 print(f"   [{status}] {reason} {values}")
 
                 if sc.get("snapshot", True):
-                    png_path = sdir / f"snapshot_{tf}.png"
                     try:
                         chart = page.locator(args.chart_selector)
                         await chart.wait_for(state="visible", timeout=2000)
-                        await chart.screenshot(path=str(png_path))
+                        await chart.screenshot(path=str(sdir / f"snapshot_{tf}.png"))
                     except:
-                        await page.screenshot(path=str(png_path), full_page=True)
+                        pass
 
             await browser.close()
 
     finally:
-        print("🛑 Shutting down App...")
-        proc.send_signal(signal.SIGINT)
-        proc.wait()
+        print("🛑 Terminating Test Server...")
+        server_proc.terminate()
+        server_proc.join()
 
     print("\n" + "="*100)
     print(f"{'SCENARIO':<35} | {'STATUS':<6} | {'DETAILS'}")
@@ -356,20 +400,40 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         print(f"{r['name']:<35} | {r['status']:<6} | {r['reason']} {r['values']}")
     print("="*100 + "\n")
 
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--yaml", required=True)
     ap.add_argument("--source-csv", required=True)
     ap.add_argument("--outdir", required=True)
-    ap.add_argument("--port", type=int, default=5001)
     ap.add_argument("--bars-per-second", type=int, default=5000)
     ap.add_argument("--chart-selector", default="#chartContainer")
+    ap.add_argument("--port", type=int, default=5001)
     args = ap.parse_args()
 
-    ydoc = yaml.safe_load(Path(args.yaml).read_text())
-    scenarios = ydoc.get("scenarios", [])
-    if not scenarios: return
+    yaml_path = Path(args.yaml)
+    if not yaml_path.exists():
+        print(f"❌ YAML file not found: {yaml_path}")
+        return
 
+    print(f"📂 Loading scenarios from {yaml_path}...")
+    try:
+        ydoc = yaml.safe_load(yaml_path.read_text())
+    except Exception as e:
+        print(f"❌ Error parsing YAML: {e}")
+        return
+
+    if not ydoc:
+        print(f"⚠️  YAML file is empty or invalid.")
+        return
+
+    scenarios = ydoc.get("scenarios", [])
+    if not scenarios:
+        print(f"⚠️  No 'scenarios' key found in YAML or list is empty.")
+        print(f"   Found keys: {list(ydoc.keys())}")
+        return
+
+    print(f"✅ Found {len(scenarios)} scenarios. Starting runner...")
     asyncio.run(run_suite(args, scenarios, Path(args.source_csv)))
 
 if __name__ == "__main__":
