@@ -392,11 +392,33 @@ export class ChartViewer {
 
     // draw the exit‐marker
     const exitTime = trade.exit_time || trade.exitTime || trade.entryTime;
+    const isWin = trade.result > 0;
+    const isLong = trade.type === 'long' || trade.type === 'buy';
+    
+    // Logic: Place marker near the exit price (High for Long Win/Short Loss, Low for Long Loss/Short Win)
+    // Long Win (High) -> Above
+    // Long Loss (Low) -> Below
+    // Short Win (Low) -> Below
+    // Short Loss (High) -> Above
+    
+    let position = 'aboveBar';
+    let shape = 'arrowDown';
+
+    if (isLong) {
+        if (isWin) { position = 'aboveBar'; shape = 'arrowDown'; }
+        else       { position = 'belowBar'; shape = 'arrowUp';   }
+    } else {
+        if (isWin) { position = 'belowBar'; shape = 'arrowUp';   }
+        else       { position = 'aboveBar'; shape = 'arrowDown'; }
+    }
+
     const marker   = {
       time:     exitTime,
-      position: trade.type === 'long' ? 'belowBar' : 'aboveBar',
-      shape:    'text',
+      position: position,
+      shape:    shape,
+      color:    isWin ? '#00E676' : '#FF1744', // Bright Green / Red
       text:     trade.result > 0 ? `+${trade.result}` : `${trade.result}`,
+      size:     2, // Make it bigger (default is 1)
     };
     this.tradeMarkers.push(marker);
     this.series.setMarkers(this.tradeMarkers);
