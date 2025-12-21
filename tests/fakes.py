@@ -42,10 +42,12 @@ class FakeLineRepository:
                 ))
         return results
 
-    def insert_line(self, pair, price) -> LineData:
+    def insert_line(self, pair, price, creation_date=None) -> LineData:
         self._seq += 1
         lid = f"L{self._seq}"
-        obj = _Line(lid, pair, price, datetime.utcnow())
+        # Use passed date or fallback
+        c_date = creation_date if creation_date else datetime.utcnow()
+        obj = _Line(lid, pair, price, c_date)
         self._store[lid] = obj
         
         return LineData(

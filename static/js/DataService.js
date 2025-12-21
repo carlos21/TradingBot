@@ -27,11 +27,11 @@ export class DataService {
   }
 
   // Add a new line with `pair` and `price`
-  async addLine(pair, price) {
+  async addLine(pair, price, creationTime = null) {
     const resp = await fetch(`${this.baseUrl}/api/lines`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pair, price }),
+      body: JSON.stringify({ pair, price, creation_time: creationTime }),
     });
     if (!resp.ok) {
       const txt = await resp.text();

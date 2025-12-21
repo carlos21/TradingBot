@@ -50,26 +50,17 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             self._tf_histories[tf] = deque(maxlen=10)
 
     def reset(self):
-        """
-        Clears all internal state, including lines, trades, and aggregation buffers.
-        Crucial for running back-to-back scenarios without state pollution.
-        """
         with self.lock:
-            # 1. Clear Lines and Trades
             self.strategy_lines.clear()
             self.open_trades.clear()
             self.trade_manager.open_trades.clear()
-            
-            # 2. Reset Aggregators
             for tf in self.timeframes:
                 self._tf_aggregators[tf] = {
                     "seconds": self._parse_tf_seconds(tf),
                     "buf": [],
                     "start": None
                 }
-                # Clear the history deque
                 self._tf_histories[tf].clear()
-            
             print("[StrategyV2] 🧹 Internal state fully reset.")
 
     def _parse_tf_seconds(self, tf: str) -> int:
@@ -94,65 +85,59 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 self._check_breakeven(bar)
             
             current_price = bar['close']
+            bar_time = bar['time']
             lines_to_remove = set()
 
-            # 1. Latch Directions & Track Extremes
             for sid, line in self.strategy_lines.items():
+                # --- DEBUG: Future Check ---
+                creation_ts = line.get('creation_ts', 0)
+                if creation_ts > bar_time:
+                    # Only print periodically or if needed, otherwise it spams
+                    # print(f"[StrategyV2] SKIP Future Line {sid}: Created {creation_ts} > Bar {bar_time}")
+                    continue
+
                 if line['direction'] is None:
                     line['direction'] = "short" if current_price < line['level'] else "long"
                     line['extreme'] = float("-inf") if line['direction'] == "short" else float("inf")
-                    print(f"[StrategyV2] 🔒 Latched line {sid} ({line['level']}) as {line['direction'].upper()} (Price: {current_price})")
+                    print(f"[StrategyV2] 🔒 LATCHED {sid} ({line['level']}) as {line['direction'].upper()} @ {current_price}")
                 
                 elif line['direction'] == 'short':
                     line['extreme'] = max(line['extreme'], bar['high'])
-                    # Max Bounce Breach
                     if current_price > (line['level'] + self.max_bounce):
-                        print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Max bounce breach")
+                        print(f"[StrategyV2] 🗑️ REMOVE {sid} ({line['level']}) - Max bounce breach (Price {current_price} > {line['level'] + self.max_bounce})")
                         lines_to_remove.add(sid)
                 
                 elif line['direction'] == 'long':
                     line['extreme'] = min(line['extreme'], bar['low'])
-                    # Max Bounce Breach
                     if current_price < (line['level'] - self.max_bounce):
-                        print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Max bounce breach")
+                        print(f"[StrategyV2] 🗑️ REMOVE {sid} ({line['level']}) - Max bounce breach (Price {current_price} < {line['level'] - self.max_bounce})")
                         lines_to_remove.add(sid)
 
-            # 2. Next Line Breach Check (The Fix)
-            # If price hits Line B, Line A is invalidated.
-            
-            # Group active lines by direction
+            # Next Line Breach Check
             short_lines = [l for l in self.strategy_lines.values() if l['direction'] == 'short']
             long_lines  = [l for l in self.strategy_lines.values() if l['direction'] == 'long']
 
             for sid, line in self.strategy_lines.items():
                 if sid in lines_to_remove: continue
-                
                 if line['direction'] == 'short':
-                    # If there is another Short line ABOVE this one, and price hit it
-                    # Condition: Level A < Level B <= Bar High
                     for other in short_lines:
                         if other is line: continue
                         if line['level'] < other['level'] <= bar['high']:
-                            print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Price hit higher resistance {other['level']}")
+                            print(f"[StrategyV2] 🗑️ REMOVE {sid} - Hit higher resistance {other['level']}")
                             lines_to_remove.add(sid)
                             break
-                
                 elif line['direction'] == 'long':
-                    # If there is another Long line BELOW this one, and price hit it
-                    # Condition: Level A > Level B >= Bar Low
                     for other in long_lines:
                         if other is line: continue
                         if line['level'] > other['level'] >= bar['low']:
-                            print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Price hit lower support {other['level']}")
+                            print(f"[StrategyV2] 🗑️ REMOVE {sid} - Hit lower support {other['level']}")
                             lines_to_remove.add(sid)
                             break
 
-            # Perform removals
             for sid in lines_to_remove:
                 self.remove_strategy_line(sid)
 
         ts = bar["time"]
-        
         for tf, state in self._tf_aggregators.items():
             window_secs = state["seconds"]
             window_start = (ts // window_secs) * window_secs
@@ -160,8 +145,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             if state["start"] is None:
                 state["start"] = window_start
 
-            # DUPLICATE PROTECTION:
-            # If we receive the exact same bar time as the last one in buffer, ignore it.
             if state["buf"] and state["buf"][-1]['time'] == ts:
                 continue
 
@@ -180,22 +163,30 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
     def _on_strategy_bar(self, bar: Dict[str, Any]):
         with self.lock:
             for sid, line in list(self.strategy_lines.items()):
+                if line.get('creation_ts', 0) > bar['time']:
+                    continue
+
                 opened = False
                 proposed_ctx: Optional[EntryContext] = None
 
                 for trig in self.triggers:
                     proposed_ctx = trig(self, sid, line, bar)
                     if proposed_ctx is not None:
+                        print(f"[StrategyV2] 🎯 TRIGGER MATCHED for {sid} on {bar.get('tf')}")
                         break
+                    # else:
+                    #     print(f"[StrategyV2] Trigger failed for {sid}")
 
                 if proposed_ctx is None:
                     continue
 
                 allow, reason = self._filters_allow_entry(proposed_ctx)
                 if allow:
-                    print(f"[StrategyV2] Triggered on {bar.get('tf')} timeframe!")
+                    print(f"[StrategyV2] ✅ ENTRY ALLOWED: {bar.get('tf')} {proposed_ctx.direction}")
                     trade = self._build_trade_from_context(proposed_ctx)
                     self._store_and_emit_open(trade)
                     opened = True
+                else:
+                    print(f"[StrategyV2] ⛔ FILTER BLOCKED: {reason}")
                 
                 self._maybe_remove_line(sid, opened)

@@ -292,7 +292,12 @@ export class ChartViewer {
       title: `Line ${this.pinnedLines.length + 1}`
     });
     try {
-      const saved = await this.dataService.addLine(this.pair, price);
+      // Use this.lastTime (current replay time) as creation time
+      // If replay hasn't started, this.lastTime might be -Infinity or null, 
+      // in which case the backend defaults to Now.
+      const creationTime = (this.lastTime > 0) ? this.lastTime : null;
+
+      const saved = await this.dataService.addLine(this.pair, price, creationTime);
       this.pinnedLines.push({ line, id: saved.id });
     } catch (err) {
       this.series.removePriceLine(line);

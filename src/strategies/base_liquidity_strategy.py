@@ -102,17 +102,19 @@ class BaseLiquidityStrategy:
 
     # ----- Line management -----
 
-    def add_strategy_line(self, id: Any, level: float):
+    def add_strategy_line(self, id: Any, level: float, creation_timestamp: float = 0.0): # <--- CHANGED
         """
         direction: 'long' | 'short'
+        creation_timestamp: Epoch seconds when this line became valid
         """
-        print(f"[Strategy] ➕ add_strategy_line id={id} level={level}")
+        print(f"[Strategy] ➕ add_strategy_line id={id} level={level} ts={creation_timestamp}")
         with self.lock:
             self.strategy_lines[id] = {
                 "level":       float(level),
                 "direction":   None,
                 "has_crossed": False,
                 "extreme":     0.0,
+                "creation_ts": float(creation_timestamp)
             }
 
     def remove_strategy_line(self, id: Any):

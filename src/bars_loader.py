@@ -53,6 +53,15 @@ class BarsLoader:
         self._fast_jump_mode  = False                 # ← when True we restore at end
         self._last_played_ts  = 0 # ← updated on every bar/tick
 
+    def reset(self):
+        """Reset state for a fresh scenario run."""
+        self._last_played_ts = 0
+        self._1m_buffer = []
+        self._current_group_start = None
+        self._from_time = 0
+        self.streaming = False
+        self._stop_event.clear()
+
     def set_timeframe(self, tf: str):
         print(f"[SET_TF] called with tf={tf}")
 
@@ -166,6 +175,9 @@ class BarsLoader:
         self._from_time           = from_time
         self._1m_buffer           = []
         self._current_group_start = None
+        # FIX: Update the 'Virtual Time' to the seek target immediately.
+        # This ensures lines drawn right after seeking get the correct timestamp.
+        self._last_played_ts      = from_time 
 
     def _handle_message(self, msg: dict):
         # 🔚 handle end-of-stream sentinel FIRST so we never miss it

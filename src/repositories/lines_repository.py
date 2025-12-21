@@ -14,7 +14,8 @@ class LineRepository(ABC):
     def insert_line(
         self,
         pair: str, 
-        price
+        price: float,
+        creation_date: Optional[datetime] = None
     ) -> LineData:
         pass
 
@@ -29,13 +30,15 @@ class LineRepository(ABC):
 
 class SQLLineRepository(LineRepository):
     
-    def insert_line(self, pair: str, price) -> LineData:
+    def insert_line(self, pair: str, price: float, creation_date: Optional[datetime] = None) -> LineData:
         with get_db_session() as db:
+            c_date = creation_date if creation_date else datetime.utcnow()
+            
             new_line = Line(
                 line_id=str(uuid.uuid4()),
                 pair=pair,
                 price=price,
-                creation_date=datetime.utcnow()
+                creation_date=c_date
             )
             db.add(new_line)
 
@@ -48,11 +51,17 @@ class SQLLineRepository(LineRepository):
             finally:
                 db.close()
 
+            # FIX: Ensure the returned datetime is UTC-aware before returning.
+            # SQLite often strips TZ info, causing Python to interpret it as Local Time later.
+            ret_date = new_line.creation_date
+            if ret_date.tzinfo is None:
+                ret_date = ret_date.replace(tzinfo=timezone.utc)
+
             return LineData(
                 line_id=new_line.line_id,
                 pair=new_line.pair,
                 price=new_line.price,
-                creation_date=new_line.creation_date
+                creation_date=ret_date
             )
 
     def list_lines(self, pair: str) -> List[LineData]:
@@ -62,15 +71,21 @@ class SQLLineRepository(LineRepository):
                   .filter(Line.pair == pair)
                   .all()
             )
-            return [
-                LineData(
+            
+            results = []
+            for row in rows:
+                # FIX: Ensure read lines are also UTC-aware
+                c_date = row.creation_date
+                if c_date.tzinfo is None:
+                    c_date = c_date.replace(tzinfo=timezone.utc)
+
+                results.append(LineData(
                     line_id=row.line_id,
                     pair=row.pair,
                     price=row.price,
-                    creation_date=row.creation_date
-                )
-                for row in rows
-            ]
+                    creation_date=c_date
+                ))
+            return results
          
     def delete_line(self, line_id: str) -> None:
         with get_db_session() as db:

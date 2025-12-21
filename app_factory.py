@@ -1,6 +1,7 @@
 # src/app_factory.py
 from __future__ import annotations
 from dataclasses import dataclass
+from datetime import timezone
 from typing import Optional, List
 
 from flask import Flask, jsonify, request, abort, render_template
@@ -99,7 +100,9 @@ def create_app(
     # Optionally load any preexisting lines from repo into the in-memory strategy
     if bootstrap_existing_lines:
         for l in repos.lines.list_lines(pair):
-            tstrategy.add_strategy_line(l.line_id, l.price)
+            # FIX: Force timestamp to 0 for existing DB lines so they are valid for ALL history.
+            # This prevents "future" creation dates (e.g. 2025) from blocking trades on 2024 data.
+            tstrategy.add_strategy_line(l.line_id, l.price, creation_timestamp=0)
 
     # ---------------- HTTP endpoints (capturing the injected deps) ----------------
 
@@ -128,13 +131,29 @@ def create_app(
     @app.route('/api/lines', methods=['POST'])
     def add_line():
         data = request.get_json() or {}
+        
         if 'pair' not in data or 'price' not in data:
             abort(400, 'Must provide {"pair":..., "price":...}')
+        
         try:
             price = float(data['price'])
         except ValueError:
             abort(400, "Field 'price' must be a number")
-        return lines_controller.add_line(data['pair'], price)
+            
+        # Extract optional creation_time from request
+        creation_time = data.get('creation_time')
+        if creation_time is not None:
+            try:
+                creation_time = float(creation_time)
+            except ValueError:
+                abort(400, "Field 'creation_time' must be a timestamp number")
+
+        # INJECT dependencies into the controller method
+        return lines_controller.add_line(
+            pair=data['pair'], 
+            price=price, 
+            creation_timestamp=creation_time
+        )
 
     @app.route('/api/lines/<string:line_id>', methods=['DELETE'])
     def delete_line(line_id):
@@ -198,10 +217,12 @@ def create_app(
         """Clears all state, resets DataSource range, AND warms up strategy."""
         try:
             # 1. Clear in-memory strategy state (Deep Reset)
-            # This clears lines, trades, and HISTORY BUFFERS
             tstrategy.reset()
             
-            # 2. Clear DB lines
+            # 2. Reset Loader State (so _last_played_ts goes back to 0)
+            loader.reset()
+
+            # 3. Clear DB lines
             try:
                 all_lines = repos.lines.list_lines(pair)
                 for l in all_lines:
@@ -209,7 +230,7 @@ def create_app(
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
-            # 3. Reset DataSource history
+            # 4. Reset DataSource history
             data = request.get_json() or {}
             start_ts = data.get('start_time')
             end_ts   = data.get('end_time')
@@ -220,9 +241,7 @@ def create_app(
                 except TypeError:
                     data_source.reset()
 
-            # 4. WARM UP STRATEGY (Without lines)
-            # We process history NOW, while strategy_lines is empty.
-            # This fills _tf_histories without deleting lines due to bounce rules.
+            # 5. WARM UP STRATEGY (Without lines)
             played = getattr(data_source, '_played_bars', [])
             if played:
                 print(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")

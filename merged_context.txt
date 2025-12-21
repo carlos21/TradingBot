@@ -391,13 +391,14 @@ class BarsLoader:
 ===== BEGIN FILE: lines_controller.py =====
 (path: src/controllers/lines_controller.py)
 ```python
+from typing import Callable, List
+from datetime import datetime, timezone
+from flask import jsonify, abort
+
 from src.bars_loader import BarsLoader
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
-from flask import jsonify, abort
-
 from src.strategies.liquidity_strategy import LiquidityStrategy
-
 
 class LinesController:
 
@@ -415,28 +416,39 @@ class LinesController:
             'creation_date': l.creation_date.isoformat()
         } for l in lines])
     
-    def add_line(self, pair: str, price: float):
+    # -------------------------------------------------------------------------
+    # NO FLASK.REQUEST HERE. All data is passed as arguments.
+    # -------------------------------------------------------------------------
+    def add_line(self, pair: str, price: float, creation_timestamp: float = None):
         # ensure only the configured pair is supported
         ds = self.bars_loader.data_source
         supported_pair = getattr(ds, 'pair', None)
         if pair != supported_pair:
             abort(400, f"Only pair '{supported_pair}' is supported")
 
-        # use in-memory played bars to get the last close price
-        played = getattr(ds, '_played_bars', None)
-        if not played or len(played) == 0:
-            # Relaxed check: Log warning but proceed. 
-            # This allows adding lines before streaming starts (e.g. in test scenarios).
-            print(f"[LinesController] ⚠️ Warning: Adding line {price} with no history loaded yet.")
+        # 1. Resolve the Date
+        if creation_timestamp is not None:
+            # Explicit time provided by caller
+            c_date = datetime.fromtimestamp(float(creation_timestamp), tz=timezone.utc)
+        elif self.bars_loader._last_played_ts > 0:
+            # Fallback: Use the loader's current replay time (Stateful dependency)
+            c_date = datetime.fromtimestamp(self.bars_loader._last_played_ts, tz=timezone.utc)
+        else:
+            # Fallback: System real-time
+            c_date = datetime.now(timezone.utc)
 
-        # persist the line and register it with the strategy
+        # 2. Persist with specific date
         line = self.line_repository.insert_line(
             pair=pair,
-            price=price
+            price=price,
+            creation_date=c_date
         )
+
+        # 3. Update Strategy
         self.liquidity_strategy.add_strategy_line(
             line.line_id,
-            line.price
+            line.price,
+            creation_timestamp=line.creation_date.timestamp()
         )
 
         return jsonify({
@@ -450,7 +462,6 @@ class LinesController:
         try:
             self.line_repository.delete_line(line_id)
             self.liquidity_strategy.remove_strategy_line(line_id)
-            # Emit removal event
             if self.bars_loader.socketio:
                 self.bars_loader.socketio.emit('line_removed', {'id': line_id})
         except DBNotFoundException:
@@ -1368,6 +1379,50 @@ class TradeData:
 ```
 ===== END FILE: models.py =====
 
+===== BEGIN FILE: prod_config.py =====
+(path: src/prod_config.py)
+```python
+from src.strategies.base_liquidity_strategy import BreakevenConfig
+from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
+from src.strategies.entry_context import open_trades_limit_filter, max_bounce_filter
+from src.strategies.strategy_config import CandleConfig, StrategyNumbers
+from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
+import os
+
+def get_prod_strategy_numbers() -> StrategyNumbers:
+    return StrategyNumbers(
+        min_stop_loss=10.0,
+        max_bounce=65.0,
+        extra_sl_space=0.0,
+    )
+
+def get_prod_candle_config() -> CandleConfig:
+    return CandleConfig()
+
+def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
+    # Allow env override for testing specific behaviors if needed, 
+    # but default to production settings.
+    removal_mode_env = os.environ.get("LINE_REMOVAL_MODE", "ON_EVALUATE").upper()
+    removal_mode = LineRemovalMode.NEVER if removal_mode_env == "NEVER" else LineRemovalMode.ON_EVALUATE
+
+    return StrategyOptions(
+        line_removal_mode=removal_mode,
+        entry_filters=[
+            open_trades_limit_filter(1), 
+            max_bounce_filter(max_bounce)
+        ],
+        triggers=[
+            wick_near_line_trigger,
+            three_candle_reversal_trigger
+        ],
+        breakeven=BreakevenConfig(
+            trigger_rr=2.0, 
+            move_to_rr=0.05 
+        )
+    )
+```
+===== END FILE: prod_config.py =====
+
 ===== BEGIN FILE: lines_repository.py =====
 (path: src/repositories/lines_repository.py)
 ```python
@@ -1387,7 +1442,8 @@ class LineRepository(ABC):
     def insert_line(
         self,
         pair: str, 
-        price
+        price: float,
+        creation_date: Optional[datetime] = None
     ) -> LineData:
         pass
 
@@ -1402,13 +1458,15 @@ class LineRepository(ABC):
 
 class SQLLineRepository(LineRepository):
     
-    def insert_line(self, pair: str, price) -> LineData:
+    def insert_line(self, pair: str, price: float, creation_date: Optional[datetime] = None) -> LineData: # <--- CHANGED
         with get_db_session() as db:
+            c_date = creation_date if creation_date else datetime.utcnow()
+            
             new_line = Line(
                 line_id=str(uuid.uuid4()),
                 pair=pair,
                 price=price,
-                creation_date=datetime.utcnow()
+                creation_date=c_date  # <--- CHANGED
             )
             db.add(new_line)
 
@@ -1935,17 +1993,19 @@ class BaseLiquidityStrategy:
 
     # ----- Line management -----
 
-    def add_strategy_line(self, id: Any, level: float):
+    def add_strategy_line(self, id: Any, level: float, creation_timestamp: float = 0.0): # <--- CHANGED
         """
         direction: 'long' | 'short'
+        creation_timestamp: Epoch seconds when this line became valid
         """
-        print(f"[Strategy] ➕ add_strategy_line id={id} level={level}")
+        print(f"[Strategy] ➕ add_strategy_line id={id} level={level} ts={creation_timestamp}")
         with self.lock:
             self.strategy_lines[id] = {
                 "level":       float(level),
                 "direction":   None,
                 "has_crossed": False,
                 "extreme":     0.0,
+                "creation_ts": float(creation_timestamp)
             }
 
     def remove_strategy_line(self, id: Any):
@@ -2809,10 +2869,17 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 self._check_breakeven(bar)
             
             current_price = bar['close']
+            bar_time = bar['time']
             lines_to_remove = set()
 
             # 1. Latch Directions & Track Extremes
             for sid, line in self.strategy_lines.items():
+                # --- NEW LOGIC: Skip lines created in the future ---
+                if line.get('creation_ts', 0) > bar_time:
+                    # Line is from the future (e.g. drawn later in history during a replay)
+                    # We treat it as non-existent for now.
+                    continue
+
                 if line['direction'] is None:
                     line['direction'] = "short" if current_price < line['level'] else "long"
                     line['extreme'] = float("-inf") if line['direction'] == "short" else float("inf")
@@ -2895,6 +2962,10 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
     def _on_strategy_bar(self, bar: Dict[str, Any]):
         with self.lock:
             for sid, line in list(self.strategy_lines.items()):
+                # Double check inside strategy bar execution
+                if line.get('creation_ts', 0) > bar['time']:
+                    continue
+
                 opened = False
                 proposed_ctx: Optional[EntryContext] = None
 
@@ -2928,6 +2999,16 @@ class StrategyConfig:
     stop_loss:      Dict[str, float]
     max_bounce:     Dict[str, float]
     extra_sl_space: Dict[str, float]
+
+@dataclass
+class StrategyNumbers:
+    """
+    Configuration for numeric strategy parameters.
+    Moved here from app_factory.py to allow shared usage.
+    """
+    min_stop_loss: float
+    max_bounce: float
+    extra_sl_space: float
 
 @dataclass
 class CandleConfig:
@@ -3118,26 +3199,28 @@ def three_candle_reversal_trigger(
 ```python
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
-
+from typing import Optional, List
+from src.models import LineData  # Import strict model
 
 class DummySocketIO:
     def __init__(self):
-        self.events = []  # list[(event, payload)]
+        self.events = []
 
     def emit(self, event, payload):
         self.events.append((event, payload))
 
-    # In tests, call the target immediately (no threads).
     def start_background_task(self, target, *args, **kwargs):
         return target(*args, **kwargs)
-    
+
+    def run(self, app, **kwargs):
+        # Allow calling run() in tests, though usually we mock it out
+        pass
+
 @dataclass
 class _Line:
     line_id: str
     pair: str
     price: float
-    direction: Optional[str]
     creation_date: datetime
 
 class FakeLineRepository:
@@ -3145,445 +3228,118 @@ class FakeLineRepository:
         self._seq = 0
         self._store = {}
 
-    def list_lines(self, pair: str):
-        return [obj for obj in self._store.values() if obj.pair == pair]
+    def list_lines(self, pair: str) -> List[LineData]:
+        # Must return LineData objects, not internal _Line dicts
+        results = []
+        for obj in self._store.values():
+            if obj.pair == pair:
+                results.append(LineData(
+                    line_id=obj.line_id,
+                    pair=obj.pair,
+                    price=obj.price,
+                    creation_date=obj.creation_date
+                ))
+        return results
 
-    def insert_line(self, pair, price, direction=None):
+    def insert_line(self, pair, price, creation_date=None) -> LineData:
         self._seq += 1
         lid = f"L{self._seq}"
-        obj = _Line(lid, pair, price, direction, datetime.utcnow())
+        # Use passed date or fallback
+        c_date = creation_date if creation_date else datetime.utcnow()
+        obj = _Line(lid, pair, price, c_date)
         self._store[lid] = obj
-        return obj
+        
+        return LineData(
+            line_id=obj.line_id,
+            pair=obj.pair,
+            price=obj.price,
+            creation_date=obj.creation_date
+        )
 
     def delete_line(self, line_id):
-        if line_id not in self._store:
-            from src.dbexception import DBNotFoundException
-            raise DBNotFoundException()
-        del self._store[line_id]
-
-@dataclass
-class _Trade:
-    trade_id: str
+        if line_id in self._store:
+            del self._store[line_id]
+        # Silent ignore if missing, matching some DB behaviors or strict if needed
 
 class FakeTradeRepository:
     def __init__(self):
         self._seq = 0
-        self.inserted = []  # dicts of fields
-        self.closed   = []  # dicts of fields
+        self.inserted = [] 
+        self.closed   = [] 
 
-    def insert_trade(self, **kwargs):
+    def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None):
         self._seq += 1
-        self.inserted.append(kwargs | {"trade_id": f"T{self._seq}"})
-        return _Trade(trade_id=f"T{self._seq}")
+        trade_id = f"T{self._seq}"
+        
+        # Create a mock object that mimics the SQL Alchemy model return
+        class MockTradeData:
+            def __init__(self, tid): self.trade_id = tid
+
+        self.inserted.append({
+            "trade_id": trade_id,
+            "pair": pair,
+            "type": trade_type,
+            "entry": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "risk": risk
+        })
+        return MockTradeData(trade_id)
 
     def update_stop_loss(self, trade_id, new_stop_loss):
-        # Find the inserted trade dict and update it
         for t in self.inserted:
             if t['trade_id'] == trade_id:
                 t['stop_loss'] = new_stop_loss
                 return
-        # If using real DB logic, would raise NotFound, but for fake just ignore or log
-        pass
-
-    def close_trade(self, **kwargs):
-        self.closed.append(kwargs)
+    
+    def close_trade(self, trade_id, exit_price, exit_time, result):
+        self.closed.append({
+            "trade_id": trade_id,
+            "exit_price": exit_price,
+            "result": result
+        })
 ```
 ===== END FILE: fakes.py =====
-
-===== BEGIN FILE: scenario.py =====
-(path: tests/scenario.py)
-```python
-# tests/scenario_model.py
-from __future__ import annotations
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import List, Literal, Tuple, Dict, Any, Optional
-from zoneinfo import ZoneInfo
-
-from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository
-from src.bars_loader import BarsLoader
-from src.data_sources.csv_datasource import CSVDataSource
-from src.services.trade_manager import TradeManager
-from src.strategies.liquidity_strategy import LiquidityStrategy, StrategyOptions, LineRemovalMode
-from src.strategies.entry_context import (
-    EntryFilter, retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
-)
-from dateutil import parser as dtparser
-
-import re
-
-Direction = Literal["long", "short", "buy", "sell"]
-
-@dataclass
-class Scenario:
-    name: str
-    csv_path: Path
-    pair: str = "NQ"
-    strategy_tf: str = "1m"
-    min_sl: float = 10.0
-    max_bounce: float = 40.0
-    extra_sl: float = 0.0
-    line_removal: LineRemovalMode = LineRemovalMode.NEVER
-    lines: List[List[Any]] = field(default_factory=list)
-    extra_filters: Optional[List[EntryFilter]] = None
-
-    # optional: override CSV parsing format/TZ if needed
-    time_fmt: Optional[str] = None
-    tz: Optional[str] = None  # if None, CSVDataSource default is used
-
-    def _parse_line_row(self, row: List[Any], idx: int) -> Dict[str, Any]:
-        """
-        Accept any of:
-          ["short", 19560.0]
-          ["L1", "short", 19560.0]
-          ["short", 19560.0, "2024-07-31T11:12:00-04:00"]
-          ["L2", "short", 19560.0, "row:3"]
-          ["short", 19560.0, "L3", "row:3"]
-
-        Returns a dict: {id, level, direction, at_time (int|None), at_row (int|None)}
-        """
-        lid, direction, level, at = None, None, None, None
-
-        # Flatten flexible shapes
-        flat = list(row)
-
-        # try to extract an ISO/epoch/row:* token if present
-        row_match_idx = next((i for i, x in enumerate(flat)
-                              if isinstance(x, str) and (x.startswith("row:") or re.fullmatch(r"\d{4}-\d{2}-\d{2}.*", x))), None)
-        if row_match_idx is not None:
-            at = flat.pop(row_match_idx)
-
-        # pull out id if present (L…)
-        id_idx = next((i for i, x in enumerate(flat)
-                       if isinstance(x, str) and x.upper().startswith("L")), None)
-        if id_idx is not None:
-            lid = flat.pop(id_idx)
-
-        # remaining must be [direction, level] (any order was already handled)
-        if len(flat) != 2:
-            raise ValueError(f"Invalid line spec {row!r}. Expected 2 of (direction, level) after id/at extraction.")
-        a, b = flat
-        if isinstance(a, str):
-            direction, level = a, float(b)
-        else:
-            direction, level = b, float(a)
-
-        direction = direction.lower()
-        if direction == "buy":  direction = "long"
-        if direction == "sell": direction = "short"
-        if lid is None: lid = f"L{idx+1}"
-
-        # convert 'at' later (needs ds._bars for row:N), keep raw for now
-        return {"id": lid, "direction": direction, "level": level, "at_raw": at}
-
-    @staticmethod
-    def _parse_at_to_epoch(at_raw: Any, ds: CSVDataSource) -> Optional[int]:
-        """
-        Convert at_raw into epoch seconds aligned with the datasource's bar timestamps.
-        Supports:
-          - "row:N" (1-based row index in CSV)
-          - ISO 8601 with/without tz (naive = America/New_York)
-          - integer/float epoch seconds
-        """
-        if at_raw is None:
-            return None
-
-        # row:N shortcut
-        if isinstance(at_raw, str) and at_raw.startswith("row:"):
-            n = int(at_raw.split(":", 1)[1])
-            if n <= 0 or n > len(ds._bars):
-                raise ValueError(f"row:{n} is out of range (1..{len(ds._bars)})")
-            return int(ds._bars[n-1]['time'])
-
-        # epoch
-        if isinstance(at_raw, (int, float)):
-            return int(at_raw)
-
-        if isinstance(at_raw, str):
-            if dtparser is None:
-                raise RuntimeError("python-dateutil not installed; cannot parse datetime strings")
-            dt = dtparser.parse(at_raw)
-            ny = ZoneInfo("America/New_York")
-            if dt.tzinfo is None:
-                # Interpret naive strings in New York to match CSVDataSource’s NY output.
-                dt = dt.replace(tzinfo=ny)
-            else:
-                # Normalize to New York (bars are NY-based)
-                dt = dt.astimezone(ny)
-            return int(dt.timestamp())
-
-        raise ValueError(f"Unsupported 'at' value: {at_raw!r}")
-
-    def build(self):
-        """Construct the full in-memory system using fakes and return all parts (including ds)."""
-        sock   = DummySocketIO()
-        lines_repo  = FakeLineRepository()
-        trades_repo = FakeTradeRepository()
-
-        filters = [
-            open_trades_limit_filter(1),
-            max_bounce_filter(self.max_bounce),
-        ]
-        if self.extra_filters:
-            filters.extend(self.extra_filters)
-
-        options = StrategyOptions(
-            line_removal_mode=self.line_removal,
-            triggers=[retest_cross_trigger],
-            entry_filters=filters
-        )
-
-        strat = LiquidityStrategy(
-            min_stop_loss=self.min_sl,
-            max_bounce=self.max_bounce,
-            extra_sl_space=self.extra_sl,
-            socketio=sock,
-            line_repository=lines_repo,
-            trade_repository=trades_repo,
-            options=options,
-            strategy_tf=self.strategy_tf,
-        )
-
-        tm = TradeManager(trade_repository=trades_repo, socketio=sock)
-
-        ds = CSVDataSource(
-            pair=self.pair,
-            filename=str(self.csv_path),
-            time_fmt=self.time_fmt,
-            tz=self.tz,
-            bars_per_second=1000.0
-        )
-
-        # Prepare scheduled lines: convert 'at' into epoch using the loaded ds
-        parsed = [self._parse_line_row(r, i) for i, r in enumerate(self.lines)]
-        scheduled, immediate = [], []
-        for p in parsed:
-            at_ts = self._parse_at_to_epoch(p["at_raw"], ds)
-            rec = {"id": p["id"], "level": p["level"], "direction": p["direction"], "at_time": at_ts, "added": False}
-            (scheduled if at_ts is not None else immediate).append(rec)
-
-        def combined_bar_callback(bar):
-            # add any scheduled lines whose time has arrived BEFORE evaluating
-            for item in scheduled:
-                if not item["added"] and bar['time'] >= item["at_time"]:
-                    strat.add_strategy_line(item["id"], item["level"], item["direction"])
-                    item["added"] = True
-
-            # 1m SL/TP checks
-            tm.handle_new_1m_bar(bar)
-            # strategy aggregation/evaluation
-            strat.on_raw_bar(bar)
-
-        loader = BarsLoader(
-            data_source=ds,
-            socketio=sock,
-            bar_callback=combined_bar_callback
-        )
-
-        # seed immediate lines before streaming
-        for item in immediate:
-            strat.add_strategy_line(item["id"], item["level"], item["direction"])
-
-        # expose scheduled list so tests can inspect if needed
-        return strat, tm, lines_repo, trades_repo, loader, sock, ds
-
-
-@dataclass
-class ScenarioResult:
-    trade_opens: List[Dict[str, Any]]
-    trade_closes: List[Dict[str, Any]]
-    inserted_trades: List[Dict[str, Any]]
-    closed_trades: List[Dict[str, Any]]
-    
-
-def run_scenario(s: Scenario) -> ScenarioResult:
-    strat, tm, lines_repo, trades_repo, loader, sock = s.build()
-
-    # seed lines directly into strategy (mirrors what /api/lines does eventually)
-    parsed = [s._parse_line_row(row, i) for i, row in enumerate(s.lines)]
-    for lid, level, direction in parsed:
-        strat.add_strategy_line(lid, level, direction)
-
-    # synchronous in DummySocketIO
-    loader.start(from_time=0)
-
-    opens  = [p for (evt, p) in sock.events if evt == "trade_open"]
-    closes = [p for (evt, p) in sock.events if evt == "trade_close"]
-
-    return ScenarioResult(
-        trade_opens=opens,
-        trade_closes=closes,
-        inserted_trades=list(trades_repo.inserted),
-        closed_trades=list(trades_repo.closed),
-    )
-```
-===== END FILE: scenario.py =====
-
-===== BEGIN FILE: scenario_utils.py =====
-(path: tests/scenario_utils.py)
-```python
-import io
-from src.strategies.liquidity_strategy import LiquidityStrategy, StrategyOptions, LineRemovalMode
-from src.strategies.entry_context import retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
-from src.strategies.strategy_config import StrategyConfig
-from src.bars_loader import BarsLoader
-from src.services.trade_manager import TradeManager
-from src.data_sources.csv_datasource import CSVDataSource
-from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository
-
-
-def build_system(csv_text: str,
-                 pair='NQ',
-                 strategy_tf='1m',
-                 min_sl=10.0,
-                 max_bounce=40.0,
-                 extra_sl=0.0,
-                 line_removal=LineRemovalMode.NEVER,
-                 filters=None,
-                 triggers=None):
-    sock   = DummySocketIO()
-    lines  = FakeLineRepository()
-    trades = FakeTradeRepository()
-
-    options = StrategyOptions(
-        line_removal_mode=line_removal,
-        triggers=triggers or [retest_cross_trigger],
-        entry_filters=filters or [open_trades_limit_filter(1), max_bounce_filter(max_bounce)]
-    )
-
-    strat = LiquidityStrategy(
-        min_stop_loss=min_sl,
-        max_bounce=max_bounce,
-        extra_sl_space=extra_sl,
-        socketio=sock,
-        line_repository=lines,
-        trade_repository=trades,
-        options=options,
-        strategy_tf=strategy_tf
-    )
-
-    tm = TradeManager(trade_repository=trades, socketio=sock)
-
-    ds = CSVDataSource(
-        pair=pair,
-        time_fmt='%d/%m/%Y %H:%M:%S',
-        tz='America/Chicago', # NQ
-        bars_per_second=10.0,
-        fileobj=io.StringIO(csv_text)
-    )
-
-    def combined_bar_callback(bar):
-        tm.handle_new_1m_bar(bar) # closes by 1m extremes
-        strat.on_raw_bar(bar) # opens by strategy TF, closes by TF extremes
-
-    loader = BarsLoader(
-        data_source=ds,
-        socketio=sock,
-        bar_callback=combined_bar_callback
-    )
-    return strat, tm, lines, trades, loader, sock
-
-
-def seed_lines(strat, lines):
-    """
-    lines = [
-        {"id": "L1", "level": 19560.0, "direction": "short"},
-        {"id": "L2", "level": 19540.0, "direction": "short"},
-    ]
-    """
-    for L in lines:
-        strat.add_strategy_line(L["id"], L["level"], L["direction"])
-```
-===== END FILE: scenario_utils.py =====
-
-===== BEGIN FILE: nq_sample.py =====
-(path: tests/scenarios/2025_09_02/nq_sample.py)
-```python
-from pathlib import Path
-from tests.scenario import Scenario
-
-SCENARIO = Scenario(
-    name="NQ — retest + wick reversal",
-    csv_path=Path(__file__).with_name("data.csv"),
-    strategy_tf="5m",  # optional; defaults to 5m
-    lines=[
-        ["L1", "short",  18258.25, "2024-05-07 07:05:00"]
-    ],
-)
-```
-===== END FILE: nq_sample.py =====
-
-===== BEGIN FILE: test_scenarios.py =====
-(path: tests/test_scenarios.py)
-```python
-from tests.scenario import Scenario, run_scenario
-from src.strategies.liquidity_strategy import LineRemovalMode
-
-def test_short_retest_opens():
-    csv_path = ''
-
-    s = Scenario(
-        name="short line scheduled at row 3",
-        csv_path=csv_path,
-        pair="NQ",
-        strategy_tf="1m",
-        min_sl=10.0,
-        max_bounce=40.0,
-        extra_sl=0.0,
-        line_removal=LineRemovalMode.NEVER,
-        lines=[["L1", "short", 19560.0, "2024-07-31T11:12:00-04:00"]]
-    )
-
-    r = run_scenario(s)
-
-    assert len(r.trade_opens) == 1
-    t = r.trade_opens[0]
-    assert t["type"] in ("short", "sell")
-    # quick sanity on risk/SL/TP relationships
-    assert abs(t["stop_loss"] - (t["entry"] + t["risk"])) < 1e-6
-    assert abs(t["take_profit"] - (t["entry"] - 4 * t["risk"])) < 1e-6
-
-```
-===== END FILE: test_scenarios.py =====
 
 ===== BEGIN FILE: app.py =====
 (path: app.py)
 ```python
 from datetime import datetime
-from app_factory import create_app, Repositories, StrategyNumbers
+import os
+
+from app_factory import create_app, Repositories
 from src.repositories.lines_repository import SQLLineRepository
 from src.repositories.trades_repository import SQLTradeRepository
 from src.data_sources.csv_datasource import CSVDataSource
-from src.strategies.base_liquidity_strategy import BreakevenConfig
-from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
-from src.strategies.entry_context import retest_cross_trigger, open_trades_limit_filter, max_bounce_filter
 from src.database import database
-from src.strategies.strategy_config import CandleConfig
-from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
 
-import os
- 
+# Import the centralized configuration
+from src.prod_config import (
+    get_prod_strategy_numbers,
+    get_prod_candle_config,
+    get_prod_strategy_options
+)
 
 PAIR = "NQ"
 
 def build_prod():
-    # DB
+    # 1. DB & Repositories (Real SQL for Production)
     database.setup_database()
     repos = Repositories(
         lines = SQLLineRepository(),
         trades= SQLTradeRepository(),
     )
 
-    # 1) Support environment variable overrides for scenarios
+    # 2. Configuration (Env Vars)
     csv_file = os.environ.get("CSV_FILE")
     start_iso = os.environ.get("START_ISO")
     end_iso   = os.environ.get("END_ISO")
     bps       = float(os.environ.get("BARS_PER_SECOND", 10.0))
 
     initial_start = datetime.fromisoformat(start_iso) if start_iso else datetime.fromisoformat("2024-04-01T00:00:00+00:00")
-    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-05-01T08:40:00+00:00")
+    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-04-11T11:30:00+00:00")
 
-    # Data Source (pick your real source)
+    # 3. Data Source
     ds = CSVDataSource(
         pair=PAIR,
         filename=csv_file,
@@ -3592,32 +3348,12 @@ def build_prod():
         bars_per_second=bps,
     )
 
-    numbers = StrategyNumbers(
-        min_stop_loss=10.0,
-        max_bounce=60.0,
-        extra_sl_space=0.0,
-    )
+    # 4. Strategy Logic (Centralized)
+    numbers = get_prod_strategy_numbers()
+    candle_config = get_prod_candle_config()
+    options = get_prod_strategy_options(numbers.max_bounce)
 
-    removal_mode_env = os.environ.get("LINE_REMOVAL_MODE", "ON_EVALUATE").upper()
-    removal_mode = LineRemovalMode.NEVER if removal_mode_env == "NEVER" else LineRemovalMode.ON_EVALUATE
-    options = StrategyOptions(
-        line_removal_mode=removal_mode,
-        entry_filters=[
-            open_trades_limit_filter(1), 
-            max_bounce_filter(numbers.max_bounce)
-        ],
-        triggers=[
-            wick_near_line_trigger,
-            three_candle_reversal_trigger
-        ],
-        breakeven=BreakevenConfig(
-            trigger_rr=2.0, 
-            move_to_rr=0.05 
-        )
-    )
-
-    candle_config = CandleConfig()
-
+    # 5. Build App
     return create_app(
         pair=PAIR,
         data_source=ds,
@@ -3641,6 +3377,7 @@ if __name__ == "__main__":
 # src/app_factory.py
 from __future__ import annotations
 from dataclasses import dataclass
+from datetime import timezone
 from typing import Optional, List
 
 from flask import Flask, jsonify, request, abort, render_template
@@ -3739,7 +3476,8 @@ def create_app(
     # Optionally load any preexisting lines from repo into the in-memory strategy
     if bootstrap_existing_lines:
         for l in repos.lines.list_lines(pair):
-            tstrategy.add_strategy_line(l.line_id, l.price)
+            ts = l.creation_date.replace(tzinfo=timezone.utc).timestamp()
+            tstrategy.add_strategy_line(l.line_id, l.price, creation_timestamp=ts)
 
     # ---------------- HTTP endpoints (capturing the injected deps) ----------------
 
@@ -3768,13 +3506,30 @@ def create_app(
     @app.route('/api/lines', methods=['POST'])
     def add_line():
         data = request.get_json() or {}
+        
+        # Validation happens here or in Pydantic models (if using FastAPI/Marshmallow)
         if 'pair' not in data or 'price' not in data:
             abort(400, 'Must provide {"pair":..., "price":...}')
+        
         try:
             price = float(data['price'])
         except ValueError:
             abort(400, "Field 'price' must be a number")
-        return lines_controller.add_line(data['pair'], price)
+            
+        # Extract optional creation_time from request
+        creation_time = data.get('creation_time')
+        if creation_time is not None:
+            try:
+                creation_time = float(creation_time)
+            except ValueError:
+                abort(400, "Field 'creation_time' must be a timestamp number")
+
+        # INJECT dependencies into the controller method
+        return lines_controller.add_line(
+            pair=data['pair'], 
+            price=price, 
+            creation_timestamp=creation_time
+        )
 
     @app.route('/api/lines/<string:line_id>', methods=['DELETE'])
     def delete_line(line_id):
@@ -4710,15 +4465,13 @@ if __name__ == "__main__":
 ```python
 #!/usr/bin/env python3
 """
-High-Performance Scenario Runner.
+High-Performance Scenario Runner with Dependency Injection.
 
-Optimizations:
-1. Starts Flask App ONCE (loads CSV once).
-2. Starts Browser ONCE (reuses context).
-3. Resets state via API between scenarios.
-4. Validates expectations (Original SL/TP) and prints a summary.
-5. Draws persistent "Original SL" lines for visualization.
-6. Timezone-aware: Syncs YAML/CSV times with the Pair's specific timezone.
+Features:
+1. Injects FakeLineRepository and FakeTradeRepository (In-Memory).
+2. Uses EXACTLY the same StrategyOptions/CandleConfig as Production (via src.prod_config).
+3. Spawns a dedicated server process per test suite to ensure clean state.
+4. Uses Playwright for end-to-end verification.
 """
 
 import argparse
@@ -4726,22 +4479,38 @@ import asyncio
 import csv
 import sys
 import time
-import threading
-import subprocess
-import signal
 import os
+import signal
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 from datetime import datetime
 from zoneinfo import ZoneInfo
+from multiprocessing import Process, Event
 
 import yaml
 import requests
 from dateutil import parser as dtparser
 from playwright.async_api import async_playwright
 
+# -------------------------------------------------------------------------
+# PATH SETUP: Ensure we can import from project root
+# -------------------------------------------------------------------------
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# --- Project Imports ---
+from app_factory import create_app, Repositories
+from src.data_sources.csv_datasource import CSVDataSource
+from src.prod_config import (
+    get_prod_strategy_numbers,
+    get_prod_candle_config,
+    get_prod_strategy_options
+)
+# Use Fakes instead of SQL
+from tests.fakes import FakeLineRepository, FakeTradeRepository
+
 APP_HOST = "127.0.0.1"
-APP_URL = f"http://{APP_HOST}:5001"
 
 # Timezones must match src/data_sources/csv_datasource.py
 PAIR_TZS = {
@@ -4749,20 +4518,78 @@ PAIR_TZS = {
     'NQ':     'America/Chicago',
 }
 
-# ---------------- helpers ----------------
+# -------------------------------------------------------------------------
+# Server Process Logic (The "App" in Test Mode)
+# -------------------------------------------------------------------------
+
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event):
+    """
+    Entry point for the background process.
+    Constructs the app with Mock Repos + Real Strategy Logic.
+    """
+    # 1. Configure Environment for Test Mode
+    # We want the BACKEND to remove the line after evaluation so it doesn't trigger twice.
+    # The FRONTEND will ignore this removal command because of ?keep_lines=true.
+    os.environ["LINE_REMOVAL_MODE"] = "ON_EVALUATE"
+
+    # 2. Mocks (InMemory)
+    repos = Repositories(
+        lines=FakeLineRepository(),
+        trades=FakeTradeRepository()
+    )
+
+    # 3. Data Source (Real CSV logic)
+    ds = CSVDataSource(
+        pair="NQ",
+        filename=csv_path,
+        initial_start_time=0, 
+        initial_end_time=9999999999,
+        bars_per_second=bars_per_second,
+    )
+
+    # 4. Strategy Logic (EXACT Match with Production)
+    numbers = get_prod_strategy_numbers()
+    candle_config = get_prod_candle_config()
+    options = get_prod_strategy_options(numbers.max_bounce)
+
+    # 5. Build App
+    wiring = create_app(
+        pair="NQ",
+        data_source=ds,
+        repos=repos,
+        numbers=numbers,
+        options=options,
+        candle_config=candle_config,
+        timeframes=["5m", "15m"],
+        bootstrap_existing_lines=False, # No DB lines to load
+    )
+
+    # Signal parent that we are about to start
+    ready_event.set()
+
+    # Disable generic Flask logs to keep console clean
+    import logging
+    log = logging.getLogger('werkzeug')
+    log.setLevel(logging.ERROR)
+
+    # allow_unsafe_werkzeug=True is required for non-debug mode in recent Flask-SocketIO
+    wiring.socketio.run(
+        wiring.app, 
+        host=APP_HOST, 
+        port=port, 
+        debug=False, 
+        use_reloader=False, 
+        allow_unsafe_werkzeug=True
+    )
+
+# -------------------------------------------------------------------------
+# Helpers
+# -------------------------------------------------------------------------
 
 def sanitize(name: str) -> str:
     return "".join(c if c.isalnum() or c in ("-","_"," ") else "_" for c in name).strip().replace(" ", "_")
 
-def _parse_dt_flexible(date_str: str, time_str: str) -> datetime:
-    s = f"{date_str} {time_str}".strip()
-    try:
-        return datetime.strptime(s, "%d/%m/%Y %H:%M:%S")
-    except ValueError:
-        return dtparser.parse(s)
-
 def _parse_yaml_dt(s: str) -> datetime:
-    """Parses YAML datetime string. Returns naive datetime."""
     return dtparser.parse(s).replace(tzinfo=None)
 
 def parse_line_spec(line_row: Any) -> Dict[str, Any]:
@@ -4804,34 +4631,25 @@ def wait_http_ok(url, timeout=30):
         time.sleep(0.2)
     raise TimeoutError(f"Server at {url} did not start.")
 
-def add_line_http(pair: str, price: float):
+def add_line_http(base_url: str, pair: str, price: float):
     try:
-        r = requests.post(f"{APP_URL}/api/lines", json={"pair": pair, "price": float(price)}, timeout=5)
-        if not r.ok:
-            print(f"⚠️ Failed to add line {price}: {r.status_code} {r.text}")
-            return False
-        return True
+        r = requests.post(f"{base_url}/api/lines", json={"pair": pair, "price": float(price)}, timeout=5)
+        return r.ok
     except Exception as e:
         print(f"⚠️ Exception adding line {price}: {e}")
         return False
 
-def reset_app_state(start=None, end=None):
+def reset_app_state(base_url: str, start=None, end=None):
     payload = {}
     if start: payload['start_time'] = start
     if end:   payload['end_time'] = end
     try:
-        # Increased timeout to 10s to allow for strategy warmup
-        r = requests.post(f"{APP_URL}/__reset_all", json=payload, timeout=10)
-        if not r.ok:
-            print(f"⚠️ Reset failed: {r.status_code} {r.text}")
-            return False
-        return True
-    except Exception as e:
-        print(f"⚠️ Reset exception: {e}")
+        r = requests.post(f"{base_url}/__reset_all", json=payload, timeout=10)
+        return r.ok
+    except Exception:
         return False
 
 def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]:
-    """Returns (Status, Reason, FormattedValues)"""
     if not trades:
         return "FAIL", "No trades opened", ""
     
@@ -4864,7 +4682,7 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
                     break
             
             if actual is None:
-                errors.append(f"{yaml_key} missing in trade data")
+                errors.append(f"{yaml_key} missing")
                 continue
             
             if abs(actual - target) > tol:
@@ -4875,23 +4693,48 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
     
     return "PASS", "Matches expectations", values_str
 
-# ---------------- async runner ----------------
+
+# -------------------------------------------------------------------------
+# Test Runner
+# -------------------------------------------------------------------------
 
 async def run_suite(args, scenarios: List[Dict], csv_path: Path):
-    print(f"🚀 Launching persistent App with {csv_path}...")
-    
-    env = os.environ.copy()
-    env["CSV_FILE"] = str(csv_path.resolve())
-    env["BARS_PER_SECOND"] = str(args.bars_per_second)
-    env["START_ISO"] = "2000-01-01" 
-    env["END_ISO"]   = "2099-01-01"
-    env["FLASK_RUN_PORT"] = str(args.port)
-    env["LINE_REMOVAL_MODE"] = "NEVER"
+    print(f"🚀 Launching In-Memory Test Server with {csv_path}...")
 
-    proc = subprocess.Popen([sys.executable, "app.py"], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    
-    # 1. Read CSV (Naive)
-    print("📂 Reading CSV...")
+    # Construct Base URL based on args
+    base_url = f"http://{APP_HOST}:{args.port}"
+
+    # Event to know when Flask is ready
+    server_ready = Event()
+
+    # Spawn the server process
+    server_proc = Process(
+        target=run_test_server, 
+        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready)
+    )
+    server_proc.start()
+
+    # Wait for ready signal
+    if not server_ready.wait(timeout=10):
+        print("❌ Server failed to start within timeout.")
+        server_proc.terminate()
+        return
+
+    # Wait for HTTP 200 (double check)
+    try:
+        wait_http_ok(f"{base_url}/api/pair")
+    except TimeoutError:
+        print("❌ Server process started but HTTP not reachable.")
+        server_proc.terminate()
+        return
+
+    # 1. Prepare Timezone logic
+    pair_resp = requests.get(f"{base_url}/api/pair").json()
+    pair_name = pair_resp['pair']
+    pair_tz = ZoneInfo(PAIR_TZS.get(pair_name, 'UTC'))
+    print(f"✅ Test Server running ({pair_name}) at {base_url}. Timezone: {pair_tz}")
+
+    # 2. Naive CSV read for index mapping (client-side helper)
     all_dts_naive = []
     try:
         with open(csv_path, newline="", encoding="utf-8") as f:
@@ -4900,51 +4743,27 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             except: dialect = csv.excel(); dialect.delimiter=";"
             rdr = csv.DictReader(f, dialect=dialect)
             for row in rdr:
-                all_dts_naive.append(_parse_dt_flexible(
-                    (row.get("Date") or row.get("date") or "").strip(),
-                    (row.get("Time") or row.get("time") or "").strip()
+                all_dts_naive.append(datetime.strptime(
+                    f"{row['Date']} {row['Time']}".strip(), 
+                    "%d/%m/%Y %H:%M:%S"
                 ))
     except Exception as e:
-        print(f"⚠️ Error reading CSV: {e}")
-        proc.kill()
-        return
+        print(f"⚠️ Error reading CSV for index map: {e}")
+
+    # 3. Build Index Map
+    idx_map = {}
+    for i, dt_naive in enumerate(all_dts_naive):
+        dt_aware = dt_naive.replace(tzinfo=pair_tz)
+        ts = int(dt_aware.timestamp())
+        idx_map[ts] = i
+
+    def get_epoch(dt_str):
+        dt_naive = _parse_yaml_dt(dt_str)
+        dt_aware = dt_naive.replace(tzinfo=pair_tz)
+        return int(dt_aware.timestamp())
 
     try:
         summary_results = []
-
-        # 2. Wait for App & Get Pair
-        wait_http_ok(f"{APP_URL}/api/pair")
-        pair_resp = requests.get(f"{APP_URL}/api/pair").json()
-        pair_name = pair_resp['pair']
-        
-        # 3. Determine Timezone
-        pair_tz = ZoneInfo(PAIR_TZS.get(pair_name, 'UTC'))
-        print(f"✅ App running ({pair_name}). Timezone: {pair_tz}")
-
-        # 4. Build Index Map (Aware)
-        # Convert naive CSV times to Pair TZ -> UTC Epoch
-        idx_map = {}
-        for i, dt_naive in enumerate(all_dts_naive):
-            dt_aware = dt_naive.replace(tzinfo=pair_tz)
-            ts = int(dt_aware.timestamp())
-            idx_map[ts] = i
-
-        def resolve_at(at_str):
-            if str(at_str).startswith("row:"):
-                n = int(at_str.split(":",1)[1])
-                return max(0, min(n-1, len(all_dts_naive)-1))
-            
-            # Parse YAML string as naive, attach Pair TZ, get epoch
-            dt_naive = _parse_yaml_dt(str(at_str))
-            dt_aware = dt_naive.replace(tzinfo=pair_tz)
-            sec = int(dt_aware.timestamp())
-            return idx_map.get(sec, 0)
-
-        def get_epoch(dt_str):
-            dt_naive = _parse_yaml_dt(dt_str)
-            dt_aware = dt_naive.replace(tzinfo=pair_tz)
-            return int(dt_aware.timestamp())
-
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
             ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
@@ -4957,46 +4776,38 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 sdir = Path(args.outdir) / sanitize(name)
                 sdir.mkdir(parents=True, exist_ok=True)
                 
-                # Use Timezone-Aware Epochs
                 start_ts = get_epoch(sc["start"])
                 end_ts   = get_epoch(sc["end"])
                 tf       = sc.get("tf", "5m")
 
-                # Reset app state with a buffer (e.g. 2 days history + scenario duration)
-                if not reset_app_state(start=start_ts - 172800, end=start_ts - 1):
-                    print("❌ Skipping scenario due to reset failure")
+                # Reset the In-Memory App
+                if not reset_app_state(base_url, start=start_ts - 172800, end=start_ts - 1):
+                    print("❌ Reset failed")
                     continue
                 
-                # --- ADD ALL LINES BEFORE PAGE LOAD ---
+                # Add Lines (HTTP)
                 lines = [parse_line_spec(l) for l in sc.get("lines", [])]
                 for l in lines:
-                    # We add ALL lines immediately, ignoring l.get("at_raw") check
-                    if not add_line_http(pair_name, l["level"]):
+                    if not add_line_http(base_url, pair_name, l["level"]):
                         print(f"❌ Failed to add line {l['level']}")
-                # --------------------------------------------
 
-                # Calculate a view buffer (e.g. 24 hours) to limit history load on frontend
+                # Load Page with keep_closed_trades=true
                 view_start_ts = start_ts - 86400
-                
-                # Pass start_time to frontend to prevent loading full history
-                # Pass keep_lines=true to prevent line removal on trade trigger
-                await page.goto(f"{APP_URL}/?start_time={view_start_ts}&keep_lines=true&tf={tf}", wait_until="domcontentloaded")
+                # FIX: Added &keep_closed_trades=true
+                await page.goto(f"{base_url}/?start_time={view_start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}", wait_until="domcontentloaded")
 
+                # Inject Test Listeners
                 await page.evaluate("""
                     window.__done = false;
                     window.__trades = [];
-                    
                     const sock = (window.io && window.io()) || window.socket;
                     if (!sock) throw new Error("Socket.IO not found");
                     window.socket = sock;
-                    
-                    if (window.chartViewer) {
-                        window.chartViewer.keepClosedTradeLines = true;
-                    }
 
                     sock.on('trade_open', (t) => {
                         window.__trades.push(t);
                         
+                        // Optional: Draw persistent "Orig SL" line for debugging
                         if (window.chartViewer && window.chartViewer.series) {
                             const sl = t.stop_loss ?? t.sl ?? t.stopLoss;
                             if (typeof sl === 'number') {
@@ -5011,53 +4822,41 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                             }
                         }
                     });
-
                     sock.on('stream_end', () => { window.__done = true; });
                 """)
 
-                # Wait for chart to be ready (bars loaded, lines loaded)
-                try:
-                    await page.wait_for_function("() => window.__chartReady === true", timeout=10000)
-                except Exception as e:
-                    print(f"⚠️ Warning: Chart did not report ready: {e}")
-
-                stop_sched = threading.Event()
-                
-                # REMOVED SCHEDULER THREAD COMPLETELY
-
+                # Start Stream
                 await page.evaluate(
                     """(p) => window.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
                     {"tf": tf, "start": start_ts, "end": end_ts}
                 )
 
+                # Wait for completion
                 try:
                     await page.wait_for_function("() => window.__done === true", timeout=120000)
-                    await page.wait_for_timeout(1000)
                 except Exception as e:
-                    print(f"❌ Timeout/Error waiting for stream end: {e}")
+                    print(f"❌ Timeout waiting for stream end: {e}")
 
-                stop_sched.set()
-
+                # Check Results
                 captured_trades = await page.evaluate("window.__trades")
                 status, reason, values = check_expectations(sc.get("expect"), captured_trades)
                 summary_results.append({"name": name, "status": status, "reason": reason, "values": values})
                 print(f"   [{status}] {reason} {values}")
 
                 if sc.get("snapshot", True):
-                    png_path = sdir / f"snapshot_{tf}.png"
                     try:
                         chart = page.locator(args.chart_selector)
                         await chart.wait_for(state="visible", timeout=2000)
-                        await chart.screenshot(path=str(png_path))
+                        await chart.screenshot(path=str(sdir / f"snapshot_{tf}.png"))
                     except:
-                        await page.screenshot(path=str(png_path), full_page=True)
+                        pass
 
             await browser.close()
 
     finally:
-        print("🛑 Shutting down App...")
-        proc.send_signal(signal.SIGINT)
-        proc.wait()
+        print("🛑 Terminating Test Server...")
+        server_proc.terminate()
+        server_proc.join()
 
     print("\n" + "="*100)
     print(f"{'SCENARIO':<35} | {'STATUS':<6} | {'DETAILS'}")
@@ -5066,890 +4865,46 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         print(f"{r['name']:<35} | {r['status']:<6} | {r['reason']} {r['values']}")
     print("="*100 + "\n")
 
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--yaml", required=True)
     ap.add_argument("--source-csv", required=True)
     ap.add_argument("--outdir", required=True)
-    ap.add_argument("--port", type=int, default=5001)
     ap.add_argument("--bars-per-second", type=int, default=5000)
     ap.add_argument("--chart-selector", default="#chartContainer")
+    ap.add_argument("--port", type=int, default=5001)
     args = ap.parse_args()
 
-    ydoc = yaml.safe_load(Path(args.yaml).read_text())
-    scenarios = ydoc.get("scenarios", [])
-    if not scenarios: return
+    yaml_path = Path(args.yaml)
+    if not yaml_path.exists():
+        print(f"❌ YAML file not found: {yaml_path}")
+        return
 
+    print(f"📂 Loading scenarios from {yaml_path}...")
+    try:
+        ydoc = yaml.safe_load(yaml_path.read_text())
+    except Exception as e:
+        print(f"❌ Error parsing YAML: {e}")
+        return
+
+    if not ydoc:
+        print(f"⚠️  YAML file is empty or invalid.")
+        return
+
+    scenarios = ydoc.get("scenarios", [])
+    if not scenarios:
+        print(f"⚠️  No 'scenarios' key found in YAML or list is empty.")
+        print(f"   Found keys: {list(ydoc.keys())}")
+        return
+
+    print(f"✅ Found {len(scenarios)} scenarios. Starting runner...")
     asyncio.run(run_suite(args, scenarios, Path(args.source_csv)))
 
 if __name__ == "__main__":
     main()
 ```
 ===== END FILE: run_scenarios.py =====
-
-===== BEGIN FILE: snapshot_all_scenarios.py =====
-(path: scripts/snapshot_all_scenarios.py)
-```python
-#!/usr/bin/env python3
-"""
-snapshot_all_scenarios.py
-
-Discovers Scenario objects and renders a screenshot for each by:
-- launching your Flask/Socket.IO app with the scenario's CSV and time window
-- adding scenario lines (immediate + scheduled) via /api/lines
-- starting the stream at the scenario's timeframe (default 5m)
-- waiting for 'stream_end' and taking a screenshot of the chart container
-
-Assumptions:
-- Your app reads env vars CSV_FILE, START_ISO, END_ISO, BARS_PER_SECOND (patch shown earlier)
-- Your app emits 'stream_end' on Socket.IO when playback finishes (tiny patch shown earlier)
-- Frontend chart container selector is '#chart-root' (override with --chart-selector)
-- Scenario class lives in tests/scenario_model.py, and scenario files live under tests/scenarios/
-
-Discovery rules for each Python file that matches --glob (default: tests/scenarios/**/*.py):
-- SCENARIO: a Scenario object or a zero-arg callable returning one
-- SCENARIOS: an iterable of Scenario objects or zero-arg callables
-- Any zero-arg top-level function whose name starts with 'scenario' returning a Scenario
-
-Usage:
-  python scripts/snapshot_all_scenarios.py --outdir snapshots
-  python scripts/snapshot_all_scenarios.py --glob "tests/scenarios/**/*.py" --outdir snapshots --file-dtformat auto
-"""
-
-import argparse
-import asyncio
-import csv
-import importlib.util
-import os
-import runpy
-import signal
-import subprocess
-import sys
-import threading
-import time
-import inspect
-from dataclasses import is_dataclass
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
-
-import requests
-
-try:
-    from dateutil import parser as dtparser
-    from dateutil.tz import gettz
-except Exception:
-    dtparser = None
-    gettz = None
-
-from playwright.async_api import async_playwright
-
-APP_URL = "http://127.0.0.1:5001"
-DEFAULT_FILE_DTFORMAT = "%d/%m/%Y %H:%M:%S"  # "31/07/2024 15:12:00"
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent  # repo root (one up from scripts/)
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-# ---------- tiny CSV helpers ----------
-
-def parse_any_dt(s: str) -> datetime:
-    if s is None:
-        raise ValueError("datetime string is None")
-    if dtparser is not None:
-        return dtparser.parse(s)
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%d/%m/%Y %H:%M:%S", "%m/%d/%Y %H:%M:%S"):
-        try:
-            return datetime.strptime(s, fmt)
-        except ValueError:
-            pass
-    raise ValueError(f"Install python-dateutil or pass a supported datetime format: {s!r}")
-
-def load_csv_times(csv_path: Path, file_dtformat: Optional[str]) -> List[datetime]:
-    dts: List[datetime] = []
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        rdr = csv.DictReader(f, delimiter=";")
-        for row in rdr:
-            dt = (datetime.strptime(f"{row['Date']} {row['Time']}", file_dtformat)
-                  if file_dtformat else parse_any_dt(f"{row['Date']} {row['Time']}"))
-            dts.append(dt)
-    return dts
-
-def map_unix_to_index(dts: List[datetime]) -> Dict[int, int]:
-    m: Dict[int, int] = {}
-    for i, dt in enumerate(dts):
-        ts = int(dt.timestamp())
-        if ts not in m:
-            m[ts] = i
-    return m
-
-# ---------- HTTP + app helpers ----------
-
-def wait_for_http(url: str, timeout=30):
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        try:
-            r = requests.get(url, timeout=2)
-            if r.ok:
-                return
-        except Exception:
-            pass
-        time.sleep(0.25)
-    raise SystemExit(f"App not reachable at {url} within {timeout}s")
-
-def add_line(pair: str, price: float):
-    r = requests.post(f"{APP_URL}/api/lines", json={"pair": pair, "price": float(price)}, timeout=10)
-    if not r.ok:
-        raise SystemExit(f"POST /api/lines failed: {r.status_code} {r.text}")
-
-# ---------- scenario parsing ----------
-
-def is_scenario_instance(x: Any) -> bool:
-    # Loose duck-typing: must have csv_path and lines
-    return hasattr(x, "csv_path") and hasattr(x, "lines")
-
-def discover_scenarios(pyfile: Path) -> List[Any]:
-    """
-    Execute `pyfile` and return a list of Scenario *instances* discovered inside.
-    Discovery rules (in this order):
-      1) SCENARIO = Scenario(...)        # instance
-         SCENARIO = scenario_factory()   # zero-arg function returning instance
-      2) SCENARIOS = [Scenario(...), ...] or a zero-arg function returning an iterable
-      3) Any zero-arg top-level function whose name starts with 'scenario' returning an instance
-
-    Safety:
-      - Only zero-arg *functions* are auto-called. Classes are never called.
-      - If SCENARIO/SCENARIOS contains the class (not an instance), a TypeError is raised
-        so the caller can show a clear "Did you mean SCENARIO = Scenario(...)" message.
-    """
-    # duck-typing: what *looks* like a Scenario instance?
-    def looks_like_scenario(x: Any) -> bool:
-        return hasattr(x, "csv_path") and hasattr(x, "lines")
-
-    def normalize(obj: Any) -> Any:
-        """Return a Scenario instance if possible; never call classes."""
-        # Already an instance?
-        if looks_like_scenario(obj):
-            return obj
-
-        # Call only zero-arg FUNCTIONS (not classes)
-        if inspect.isfunction(obj):
-            sig = inspect.signature(obj)
-            req = [
-                p for p in sig.parameters.values()
-                if p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-            ]
-            if not req:  # zero required positional params
-                res = obj()
-                if looks_like_scenario(res):
-                    return res
-                return res  # caller will validate and potentially error
-
-        # Do not call classes; return as-is
-        return obj
-
-    ns = runpy.run_path(str(pyfile))
-    found: List[Any] = []
-
-    # 1) SCENARIO
-    if "SCENARIO" in ns:
-        s = normalize(ns["SCENARIO"])
-        if inspect.isclass(s):
-            raise TypeError(
-                f"{pyfile} exports the Scenario class in SCENARIO. "
-                f"Did you mean 'SCENARIO = Scenario(...)'?"
-            )
-        if looks_like_scenario(s):
-            found.append(s)
-        elif s is not None:
-            raise TypeError(
-                f"{pyfile} SCENARIO is not a Scenario instance (got {type(s).__name__})."
-            )
-
-    # 2) SCENARIOS
-    if "SCENARIOS" in ns:
-        seq = ns["SCENARIOS"]
-        if inspect.isfunction(seq):
-            # zero-arg factory returning iterable
-            sig = inspect.signature(seq)
-            req = [
-                p for p in sig.parameters.values()
-                if p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-            ]
-            if not req:
-                seq = seq()
-        if isinstance(seq, Iterable) and not isinstance(seq, (str, bytes, dict)):
-            for item in seq:
-                s = normalize(item)
-                if inspect.isclass(s):
-                    raise TypeError(
-                        f"{pyfile} SCENARIOS contains the Scenario class. "
-                        f"Use Scenario(...) instances."
-                    )
-                if looks_like_scenario(s):
-                    found.append(s)
-                else:
-                    raise TypeError(
-                        f"{pyfile} SCENARIOS element is not a Scenario instance (got {type(s).__name__})."
-                    )
-        else:
-            raise TypeError(f"{pyfile} SCENARIOS is not an iterable of scenarios.")
-
-    # 3) Any zero-arg function named scenario*
-    for name, val in ns.items():
-        if name.lower().startswith("scenario") and inspect.isfunction(val):
-            sig = inspect.signature(val)
-            req = [
-                p for p in sig.parameters.values()
-                if p.default is p.empty and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
-            ]
-            if req:
-                continue  # needs args; skip
-            res = val()
-            if looks_like_scenario(res):
-                found.append(res)
-            elif inspect.isclass(res):
-                raise TypeError(
-                    f"{pyfile} function {name} returned the Scenario class; return an instance instead."
-                )
-            else:
-                raise TypeError(
-                    f"{pyfile} function {name} did not return a Scenario instance (got {type(res).__name__})."
-                )
-
-    return found
-
-# ---------- line scheduling (parse like Scenario’s flexible format) ----------
-
-def parse_line_spec(line_row: List[Any]) -> Dict[str, Any]:
-    lid, at_raw = None, None
-    flat = list(line_row)
-    # time token
-    for i, x in enumerate(list(flat)):
-        if isinstance(x, str) and (x.startswith("row:") or x[:4].isdigit()):
-            at_raw = flat.pop(i); break
-    # id token
-    for i, x in enumerate(list(flat)):
-        if isinstance(x, str) and x.upper().startswith("L"):
-            lid = flat.pop(i); break
-    if len(flat) != 2:
-        raise ValueError(f"Bad line spec: {line_row!r}. Expect [dir, level] (+optional id/at)")
-    a, b = flat
-    if isinstance(a, str):
-        direction, level = a, float(b)
-    else:
-        direction, level = b, float(a)
-    direction = {"buy":"long","sell":"short"}.get(direction.lower(), direction.lower())
-    return {"id": lid, "direction": direction, "level": level, "at_raw": at_raw}
-
-def resolve_at_to_epoch(at_raw: Optional[str], all_dts: List[datetime]) -> Optional[int]:
-    if at_raw is None: return None
-    if at_raw.startswith("row:"):
-        n = int(at_raw.split(":",1)[1])
-        if n <= 0 or n > len(all_dts):
-            raise ValueError(f"{at_raw} out of range 1..{len(all_dts)}")
-        return int(all_dts[n-1].timestamp())
-    dt = parse_any_dt(at_raw)
-    if dt.tzinfo is None and gettz is not None:
-        dt = dt.replace(tzinfo=gettz("America/New_York"))
-    return int(dt.timestamp())
-
-# ---------- Playwright screenshot ----------
-
-async def shoot(output_png: Path, timeframe: str, from_epoch: int, selector: str):
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
-        page = await ctx.new_page()
-        await page.goto(APP_URL + "/", wait_until="domcontentloaded")
-
-        # Install our hooks inside the page and wait for the socket to connect
-        await page.expose_function("__py_log", lambda *args: print("[page]", *args))
-
-        # Create or reuse the socket, wait for 'connect', set completion conditions
-        await page.evaluate("""
-            (function () {
-                window.__done = false;
-
-                // Prefer existing socket created by the page (if any)
-                let sock = window.socket || (window.io ? window.io() : null);
-                if (!sock) throw new Error("Socket.IO client not found on the page");
-
-                window.socket = sock;
-
-                // If not connected yet, we'll wait for 'connect' below
-                sock.on('stream_end', () => { window.__done = true; });
-                sock.on('stream_status', (p) => {
-                    if (p && p.playing === false) window.__done = true;
-                });
-
-                // Stash a helper promise we can await from Python
-                window.__waitConnected = new Promise((resolve) => {
-                    if (sock.connected) return resolve(true);
-                    sock.once('connect', () => resolve(true));
-                });
-            })();
-        """)
-
-        # Wait for the socket to actually connect
-        await page.evaluate("() => window.__waitConnected")
-
-        # Start the stream (object-arg form for Playwright)
-        await page.evaluate(
-            """(args) => {
-                window.socket.emit('start_stream', { timeframe: args.tf, fromTime: args.fromTs });
-            }""",
-            {"tf": timeframe, "fromTs": int(from_epoch)}
-        )
-
-        # Ensure the chart is visible
-        locator = page.locator(selector)
-        await locator.wait_for(state="visible", timeout=25000)
-
-        # Wait until the backend signals EOF via either event
-        await page.wait_for_function("() => window.__done === true", timeout=180000)
-
-        # Small settle so the last bar/lines render
-        await page.wait_for_timeout(400)
-
-        # Try element screenshot; fall back to full-page
-        try:
-            await locator.screenshot(path=str(output_png))
-        except Exception:
-            await page.screenshot(path=str(output_png), full_page=True)
-
-        await ctx.close()
-        await browser.close()
-
-# ---------- per-scenario run ----------
-
-def sanitize(name: str) -> str:
-    return "".join(c if c.isalnum() or c in ("-","_") else "_" for c in name)[:120]
-
-def run_one_scenario(
-    scenario: Any,
-    outdir: Path,
-    chart_selector: str,
-    file_dtformat: Optional[str],
-    bars_per_second: int,
-    app_path: Path,
-    port: str,
-):
-    name = getattr(scenario, "name", sanitize(Path(getattr(scenario, "csv_path")).stem))
-    tf   = getattr(scenario, "strategy_tf", None) or "5m"  # default to 5m
-    csv_path: Path = Path(scenario.csv_path)
-    lines_spec: List[List[Any]] = list(getattr(scenario, "lines", []) or [])
-
-    # Load CSV and set full window if not provided
-    fdt = None if (file_dtformat or "").lower() == "auto" else file_dtformat
-    all_dts = load_csv_times(csv_path, file_dtformat=fdt)
-    if not all_dts:
-        print(f"[skip] {name}: CSV is empty: {csv_path}")
-        return
-    start_dt, end_dt = all_dts[0], all_dts[-1]
-    start_epoch = int(start_dt.timestamp())
-
-    # Launch app with env overrides
-    env = os.environ.copy()
-    env["CSV_FILE"] = str(csv_path.resolve())
-    env["START_ISO"] = start_dt.isoformat()
-    env["END_ISO"]   = end_dt.isoformat()
-    env["BARS_PER_SECOND"] = str(bars_per_second)
-    env["FLASK_RUN_PORT"] = port
-
-    print(f"[run] {name}  tf={tf}  rows={len(all_dts)}")
-    proc = subprocess.Popen([sys.executable, str(app_path)], env=env,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-
-    try:
-        wait_for_http(APP_URL + "/api/pair", timeout=30)
-        pair = requests.get(APP_URL + "/api/pair", timeout=5).json()["pair"]
-
-        # Build line schedule
-        idx_map = map_unix_to_index(all_dts)
-        start_idx = idx_map.get(start_epoch, 0)
-        emit_delay = 1.0 / float(bars_per_second)
-
-        immediate: List[float] = []
-        scheduled: List[Tuple[int, float]] = []
-        for spec in lines_spec:
-            p = parse_line_spec(spec)
-            price = p["level"]
-            at_ts = resolve_at_to_epoch(p["at_raw"], all_dts) if p["at_raw"] else None
-            if at_ts is None:
-                immediate.append(price)
-            else:
-                scheduled.append((at_ts, price))
-
-        # Post immediate lines now
-        for price in immediate:
-            add_line(pair, price)
-
-        # Scheduler for timed lines
-        def scheduler():
-            for at_ts, price in sorted(scheduled):
-                # map at_ts → index
-                sec = int(at_ts)
-                if sec in idx_map:
-                    at_idx = idx_map[sec]
-                else:
-                    at_idx = min(range(len(all_dts)),
-                                 key=lambda i: abs(int(all_dts[i].timestamp()) - sec))
-                if at_idx <= start_idx:
-                    delay = 0.0
-                else:
-                    delay = (at_idx - start_idx) * emit_delay
-                time.sleep(delay)
-                try:
-                    add_line(pair, price)
-                except Exception as e:
-                    print(f"[{name}] warn: add_line failed: {e}", file=sys.stderr)
-
-        if scheduled:
-            threading.Thread(target=scheduler, daemon=True).start()
-
-        # Shoot
-        out_png = outdir / f"{sanitize(name)}_{tf}.png"
-        asyncio.run(shoot(out_png, tf, start_epoch, chart_selector))
-        print(f"[ok]  {name} → {out_png}")
-
-    finally:
-        try:
-            proc.send_signal(signal.SIGINT)
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
-
-# ---------- main ----------
-
-def main():
-    ap = argparse.ArgumentParser(description="Discover and snapshot ALL scenarios.")
-    ap.add_argument("--glob", default="tests/scenarios/**/*.py",
-                    help="Glob pattern to find scenario files (default: tests/scenarios/**/*.py).")
-    ap.add_argument("--outdir", required=True, help="Directory to write PNG snapshots.")
-    ap.add_argument("--chart-selector", default="#chartContainer",
-                    help="CSS selector for the chart container (default '#chart-root').")
-    ap.add_argument("--file-dtformat", default=DEFAULT_FILE_DTFORMAT,
-                    help="Datetime format for CSV Date+Time; use 'auto' to autodetect.")
-    ap.add_argument("--bars-per-second", type=int, default=2000,
-                    help="Playback speed (default 2000 bars/sec).")
-    ap.add_argument("--app-path", default="app.py", help="Path to your app entry (default app.py).")
-    ap.add_argument("--port", default="5001", help="App port (must match frontend).")
-    args = ap.parse_args()
-
-    outdir = Path(args.outdir); outdir.mkdir(parents=True, exist_ok=True)
-    app_path = Path(args.app_path)
-
-    # Find scenario files
-    files = sorted(Path().glob(args.glob))
-    if not files:
-        raise SystemExit(f"No scenario files found for glob: {args.glob}")
-
-    # Discover scenarios across files
-    scenarios: List[Any] = []
-    for f in files:
-        try:
-            scenarios.extend(discover_scenarios(f))
-        except Exception as e:
-            print(f"[warn] skipping {f}: {e}", file=sys.stderr)
-
-    if not scenarios:
-        raise SystemExit("Found 0 scenarios.")
-
-    print(f"Discovered {len(scenarios)} scenarios\n")
-
-    # Run sequentially (avoid port collisions)
-    for s in scenarios:
-        try:
-            run_one_scenario(
-                scenario=s,
-                outdir=outdir,
-                chart_selector=args.chart_selector,
-                file_dtformat=args.file_dtformat,
-                bars_per_second=args.bars_per_second,
-                app_path=app_path,
-                port=args.port,
-            )
-        except Exception as e:
-            name = getattr(s, "name", "<unnamed>")
-            print(f"[fail] {name}: {e}", file=sys.stderr)
-
-if __name__ == "__main__":
-    main()
-```
-===== END FILE: snapshot_all_scenarios.py =====
-
-===== BEGIN FILE: snapshot_scenario.py =====
-(path: scripts/snapshot_scenario.py)
-```python
-#!/usr/bin/env python3
-"""
-snapshot_scenario.py
-
-Run the Flask/Socket.IO app headlessly, load a Scenario (tests/scenario_model.py),
-add its lines (immediate + scheduled), stream bars at desired TF, and screenshot
-the chart including lines and trade markers.
-
-Usage examples are at the bottom of this file.
-"""
-
-import argparse
-import asyncio
-import csv
-import importlib
-import math
-import os
-import runpy
-import signal
-import subprocess
-import sys
-import threading
-import time
-from dataclasses import asdict
-from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-import requests
-
-try:
-    from dateutil import parser as dtparser
-    from dateutil.tz import gettz
-except Exception:
-    dtparser = None
-    gettz = None
-
-from playwright.async_api import async_playwright
-
-
-APP_URL = "http://127.0.0.1:5001"
-DEFAULT_FILE_DTFORMAT = "%d/%m/%Y %H:%M:%S"  # matches sample
-
-
-# ---------- CSV helpers ----------
-
-def parse_any_dt(s: str) -> datetime:
-    if dtparser is None:
-        # minimal fallback
-        for fmt in ("%Y-%m-%d %H:%M:%S",
-                    "%Y-%m-%dT%H:%M:%S",
-                    "%d/%m/%Y %H:%M:%S",
-                    "%m/%d/%Y %H:%M:%S"):
-            try:
-                return datetime.strptime(s, fmt)
-            except ValueError:
-                pass
-        raise ValueError(f"Install python-dateutil for flexible parsing: {s!r}")
-    return dtparser.parse(s)
-
-def load_csv_times(csv_path: Path, file_dtformat: Optional[str] = DEFAULT_FILE_DTFORMAT) -> List[datetime]:
-    dts: List[datetime] = []
-    with open(csv_path, newline="", encoding="utf-8") as f:
-        rdr = csv.DictReader(f, delimiter=";")
-        for row in rdr:
-            if file_dtformat:
-                dt = datetime.strptime(f"{row['Date']} {row['Time']}", file_dtformat)
-            else:
-                dt = parse_any_dt(f"{row['Date']} {row['Time']}")
-            dts.append(dt)
-    return dts
-
-def times_to_index_map(dts: List[datetime]) -> Dict[int, int]:
-    """Map Unix second -> first index with that second (1m bars -> unique enough)."""
-    m: Dict[int, int] = {}
-    for i, dt in enumerate(dts):
-        ts = int(dt.timestamp())
-        if ts not in m:
-            m[ts] = i
-    return m
-
-
-# ---------- HTTP helpers ----------
-
-def wait_for_http(url: str, timeout=25):
-    t0 = time.time()
-    while time.time() - t0 < timeout:
-        try:
-            r = requests.get(url, timeout=2)
-            if r.ok:
-                return
-        except Exception:
-            pass
-        time.sleep(0.25)
-    raise SystemExit(f"App not reachable at {url} within {timeout}s")
-
-def add_line(pair: str, price: float):
-    payload = {"pair": pair, "price": float(price)}
-    r = requests.post(f"{APP_URL}/api/lines", json=payload, timeout=10)
-    if not r.ok:
-        raise SystemExit(f"POST /api/lines failed: {r.status_code} {r.text}")
-
-
-# ---------- Scenario loading ----------
-
-def import_obj(dotted: str) -> Any:
-    """
-    Import "module:attr" or "module.attr".
-    Returns the referenced object.
-    """
-    if ":" in dotted:
-        mod, attr = dotted.split(":", 1)
-    else:
-        parts = dotted.split(".")
-        mod, attr = ".".join(parts[:-1]), parts[-1]
-    m = importlib.import_module(mod)
-    return getattr(m, attr)
-
-def load_scenario_from_py(path: Path, var_name: str = "SCENARIO") -> Any:
-    """
-    Execute a Python file and read a variable or a no-arg function that returns Scenario.
-    """
-    ns = runpy.run_path(str(path))
-    obj = ns.get(var_name)
-    if obj is None:
-        raise SystemExit(f"{path} does not define {var_name}")
-    if callable(obj):
-        obj = obj()  # assume it returns Scenario
-    return obj
-
-
-# ---------- Schedule helpers ----------
-
-def parse_line_spec(line_row: List[Any]) -> Dict[str, Any]:
-    """
-    Accept:
-      ["short", 19560.0]
-      ["L1","short",19560.0]
-      ["short",19560.0,"row:3"]
-      ["L2","short",19560.0,"2024-07-31T15:12:00-04:00"]
-    """
-    lid = None
-    at_raw = None
-    flat = list(line_row)
-
-    # detect at
-    for i, x in enumerate(list(flat)):
-        if isinstance(x, str) and (x.startswith("row:") or x[:4].isdigit()):
-            at_raw = flat.pop(i)
-            break
-
-    # detect id (L*)
-    for i, x in enumerate(list(flat)):
-        if isinstance(x, str) and x.upper().startswith("L"):
-            lid = flat.pop(i)
-            break
-
-    if len(flat) != 2:
-        raise ValueError(f"Bad line spec: {line_row!r}. Expect [dir, level] with optional id/at.")
-
-    a, b = flat
-    if isinstance(a, str):
-        direction, level = a, float(b)
-    else:
-        direction, level = b, float(a)
-
-    direction = direction.lower()
-    if direction == "buy":  direction = "long"
-    if direction == "sell": direction = "short"
-    return {"id": lid, "direction": direction, "level": level, "at_raw": at_raw}
-
-def resolve_at_to_epoch(at_raw: Optional[str], dts: List[datetime]) -> Optional[int]:
-    if at_raw is None:
-        return None
-    if isinstance(at_raw, str) and at_raw.startswith("row:"):
-        n = int(at_raw.split(":", 1)[1])
-        if n <= 0 or n > len(dts):
-            raise ValueError(f"{at_raw} out of range 1..{len(dts)}")
-        return int(dts[n-1].timestamp())
-    # datetime string
-    dt = parse_any_dt(at_raw)
-    if dt.tzinfo is None and gettz is not None:
-        # treat naive as New York like your app alignment
-        dt = dt.replace(tzinfo=gettz("America/New_York"))
-    return int(dt.timestamp())
-
-
-# ---------- Playwright ----------
-
-async def take_screenshot(output_png: str, timeframe: str, from_epoch: int, chart_selector: str):
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=True)
-        ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
-        page = await ctx.new_page()
-        await page.goto(APP_URL + "/", wait_until="domcontentloaded")
-
-        # wire stream_end listener
-        await page.evaluate("""
-            window.__done = false;
-            const sock = (window.io && window.io()) || window.socket;
-            if (!sock) { throw new Error("Socket.IO client not found on page"); }
-            window.socket = sock;
-            sock.on('stream_end', () => { window.__done = true; });
-        """)
-
-        # start stream
-        await page.evaluate(
-            """(tf, fromTs) => { window.socket.emit('start_stream', { timeframe: tf, fromTime: fromTs }); }""",
-            timeframe, from_epoch
-        )
-
-        # wait chart container
-        locator = page.locator(chart_selector)
-        await locator.wait_for(state="visible", timeout=20000)
-
-        # wait playback end
-        await page.wait_for_function("() => window.__done === true", timeout=120000)
-        await page.wait_for_timeout(500)
-
-        # screenshot
-        try:
-            await locator.screenshot(path=output_png)
-        except Exception:
-            await page.screenshot(path=output_png, full_page=True)
-
-        await ctx.close()
-        await browser.close()
-
-
-# ---------- Main flow ----------
-
-def main():
-    ap = argparse.ArgumentParser(description="Snapshot a Scenario chart (runs app + browser, auto-lines, TF, screenshot).")
-    g = ap.add_mutually_exclusive_group(required=True)
-    g.add_argument("--scenario", help="Import dotted path 'module:attr' or 'module.attr' that yields a Scenario or factory.")
-    g.add_argument("--scenario-py", help="Path to a .py file that defines SCENARIO (object or zero-arg factory).")
-
-    ap.add_argument("--output", required=True, help="Output PNG path.")
-    ap.add_argument("--chart-selector", default="#chartContainer", help="CSS selector for the chart container.")
-    ap.add_argument("--file-dtformat", default=DEFAULT_FILE_DTFORMAT, help="CSV file Date+Time format ('auto' to autodetect).")
-    ap.add_argument("--bars-per-second", default="2000", help="Playback speed (higher = faster).")
-    ap.add_argument("--port", default="5001", help="App port.")
-
-    # Optional start/end override (if omitted we use full CSV)
-    ap.add_argument("--start", help="Optional start datetime (inclusive). If omitted: start of CSV.")
-    ap.add_argument("--end", help="Optional end datetime (inclusive). If omitted: end of CSV.")
-
-    args = ap.parse_args()
-
-    # 1) Load scenario
-    if args.scenario:
-        obj = import_obj(args.scenario)
-        scenario = obj() if callable(obj) else obj
-    else:
-        scenario = load_scenario_from_py(Path(args.scenario_py))
-
-    # Pull essentials from Scenario
-    csv_path: Path = Path(scenario.csv_path)
-    tf: str = getattr(scenario, "strategy_tf", None) or "5m"  # default to 5m
-    # Note: we will not use scenario.pair to avoid mismatch with app; we'll ask the app.
-
-    # 2) Determine start/end from CSV if not provided
-    file_dtformat = None if (args.file_dtformat or "").lower() == "auto" else args.file_dtformat
-    all_dts = load_csv_times(csv_path, file_dtformat=file_dtformat)
-    if not all_dts:
-        raise SystemExit(f"No data rows in {csv_path}")
-    csv_start_dt = all_dts[0]
-    csv_end_dt = all_dts[-1]
-
-    start_dt = parse_any_dt(args.start) if args.start else csv_start_dt
-    end_dt   = parse_any_dt(args.end)   if args.end   else csv_end_dt
-    if end_dt < start_dt:
-        raise SystemExit("End datetime must be >= start datetime.")
-    start_epoch = int(start_dt.timestamp())
-    end_epoch   = int(end_dt.timestamp())
-
-    # 3) Launch app with env overrides so it loads the right CSV/time window fast
-    env = os.environ.copy()
-    env["CSV_FILE"] = str(csv_path.resolve())
-    env["START_ISO"] = start_dt.isoformat()
-    env["END_ISO"]   = end_dt.isoformat()
-    env["BARS_PER_SECOND"] = str(args.bars_per_second)
-    env["FLASK_RUN_PORT"] = args.port
-    # NOTE: We rely on the small app patch where app.py reads these envs.
-
-    proc = subprocess.Popen([sys.executable, "app.py"], env=env,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-
-    try:
-        # 4) Wait for app up
-        wait_for_http(APP_URL + "/api/pair", timeout=30)
-        pair_resp = requests.get(APP_URL + "/api/pair", timeout=5)
-        pair_resp.raise_for_status()
-        pair = pair_resp.json()["pair"]
-
-        # 5) Build line schedule from scenario.lines
-        #    immediate: no 'at', scheduled: 'row:N' or datetime string
-        idx_map = times_to_index_map(all_dts)
-        # Find index of start dt to compute bar offsets
-        start_idx = idx_map.get(int(start_dt.timestamp()))
-        if start_idx is None:
-            # find nearest index >= start_dt
-            nearest = min(range(len(all_dts)), key=lambda i: abs((all_dts[i]-start_dt).total_seconds()))
-            start_idx = nearest
-
-        # Parse Scenario lines
-        immediate: List[Tuple[float]] = []
-        scheduled: List[Tuple[int, float]] = []  # (at_ts, price)
-        for i, spec in enumerate(getattr(scenario, "lines", []) or []):
-            parsed = parse_line_spec(spec)
-            price = parsed["level"]
-            at_ts = resolve_at_to_epoch(parsed["at_raw"], all_dts)
-            if at_ts is None:
-                immediate.append((price,))
-            else:
-                scheduled.append((at_ts, price))
-
-        # 6) Add immediate lines before playback
-        for (price,) in immediate:
-            add_line(pair, price)
-
-        # 7) Start a scheduler thread to add scheduled lines at the proper wall-clock time during playback
-        #    Delay calculation: bars are pushed one per emit_delay (1/BPS).
-        #    We compute offset = (index(at_ts) - start_idx) * emit_delay.
-        emit_delay = 1.0 / float(args.bars_per_second)
-
-        def schedule_lines():
-            for at_ts, price in sorted(scheduled):
-                # map at_ts to CSV index (closest >= at_ts)
-                at_idx = None
-                sec = int(at_ts)
-                if sec in idx_map:
-                    at_idx = idx_map[sec]
-                else:
-                    # pick closest index
-                    at_idx = min(range(len(all_dts)), key=lambda i: abs((int(all_dts[i].timestamp()) - sec)))
-                if at_idx < start_idx:
-                    # already in the past for this stream -> add right now
-                    delay = 0.0
-                else:
-                    bars_ahead = at_idx - start_idx
-                    delay = max(0.0, bars_ahead * emit_delay)
-                time.sleep(delay)
-                try:
-                    add_line(pair, price)
-                except Exception as e:
-                    print(f"[scheduler] add_line failed: {e}", file=sys.stderr)
-
-        if scheduled:
-            th = threading.Thread(target=schedule_lines, daemon=True)
-            th.start()
-
-        # 8) Headless browser: open and start stream, wait for end, screenshot
-        asyncio.run(take_screenshot(args.output, tf, int(start_epoch), args.chart_selector))
-        print(f"Snapshot saved to {args.output}")
-
-    finally:
-        # 9) Stop the app
-        try:
-            proc.send_signal(signal.SIGINT)
-            proc.wait(timeout=5)
-        except Exception:
-            proc.kill()
-
-if __name__ == "__main__":
-    main()
-```
-===== END FILE: snapshot_scenario.py =====
 
 ===== BEGIN FILE: ChartViewer.js =====
 (path: static/js/ChartViewer.js)
@@ -6248,7 +5203,12 @@ export class ChartViewer {
       title: `Line ${this.pinnedLines.length + 1}`
     });
     try {
-      const saved = await this.dataService.addLine(this.pair, price);
+      // Use this.lastTime (current replay time) as creation time
+      // If replay hasn't started, this.lastTime might be -Infinity or null, 
+      // in which case the backend defaults to Now.
+      const creationTime = (this.lastTime > 0) ? this.lastTime : null;
+
+      const saved = await this.dataService.addLine(this.pair, price, creationTime);
       this.pinnedLines.push({ line, id: saved.id });
     } catch (err) {
       this.series.removePriceLine(line);
@@ -6673,11 +5633,11 @@ export class DataService {
   }
 
   // Add a new line with `pair` and `price`
-  async addLine(pair, price) {
+  async addLine(pair, price, creationTime = null) {
     const resp = await fetch(`${this.baseUrl}/api/lines`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pair, price }),
+      body: JSON.stringify({ pair, price, creation_time: creationTime }),
     });
     if (!resp.ok) {
       const txt = await resp.text();
@@ -6936,7 +5896,6 @@ export class LiquidityStrategy {
 ===== BEGIN FILE: main.js =====
 (path: static/js/main.js)
 ```javascript
-// (path: static/js/main.js)
 import { ChartViewer } from './ChartViewer.js';
 import { DataService } from './DataService.js';
 import { ControlsView } from './ControlsView.js';
@@ -6946,17 +5905,24 @@ document.addEventListener("DOMContentLoaded", () => {
     const socket = io();
     const service = new DataService();
     
-    // Parse start_time, keep_lines, AND tf from URL query params
+    // Parse URL query params
     const urlParams = new URLSearchParams(window.location.search);
     const startTimeParam = urlParams.get('start_time');
     const startTime = startTimeParam ? parseInt(startTimeParam, 10) : null;
-    const keepLines = urlParams.get('keep_lines') === 'true';
-    const tfParam = urlParams.get('tf'); // [CHANGE] Get tf param
+    
+    // keep_lines = Strategy Lines (Blue Dotted)
+    const keepStrategyLines = urlParams.get('keep_lines') === 'true';
+    
+    // keep_closed_trades = Trade Lines (Entry/SL/TP) after close
+    const keepClosedTrades = urlParams.get('keep_closed_trades') === 'true';
+    
+    const tfParam = urlParams.get('tf');
 
     const chartViewer = new ChartViewer(chartContainer, service, socket, {
         startTime: startTime,
-        keepStrategyLines: keepLines,
-        timeframe: tfParam // [CHANGE] Pass to ChartViewer
+        keepStrategyLines: keepStrategyLines,
+        keepClosedTradeLines: keepClosedTrades, // Pass this to constructor
+        timeframe: tfParam
     });
     window.chartViewer = chartViewer;
     const controlsView = new ControlsView(chartViewer, socket, service);
