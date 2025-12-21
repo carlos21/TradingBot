@@ -92,8 +92,10 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 # --- DEBUG: Future Check ---
                 creation_ts = line.get('creation_ts', 0)
                 if creation_ts > bar_time:
-                    # Only print periodically or if needed, otherwise it spams
-                    # print(f"[StrategyV2] SKIP Future Line {sid}: Created {creation_ts} > Bar {bar_time}")
+                    # UNCOMMENTED THIS LOG FOR DIAGNOSIS
+                    # We limit it to printing only when the minute changes to avoid spamming 10x/sec
+                    if bar_time % 60 == 0: 
+                        print(f"[StrategyV2] ⏳ Waiting for Line {sid} (Created: {creation_ts} > Current: {bar_time})")
                     continue
 
                 if line['direction'] is None:

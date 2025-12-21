@@ -56,6 +56,15 @@ class BarsLoader:
         self._fast_jump_mode  = False                 # ← when True we restore at end
         self._last_played_ts  = 0 # ← updated on every bar/tick
 
+    def reset(self):
+        """Reset state for a fresh scenario run."""
+        self._last_played_ts = 0
+        self._1m_buffer = []
+        self._current_group_start = None
+        self._from_time = 0
+        self.streaming = False
+        self._stop_event.clear()
+
     def set_timeframe(self, tf: str):
         print(f"[SET_TF] called with tf={tf}")
 
@@ -169,6 +178,9 @@ class BarsLoader:
         self._from_time           = from_time
         self._1m_buffer           = []
         self._current_group_start = None
+        # FIX: Update the 'Virtual Time' to the seek target immediately.
+        # This ensures lines drawn right after seeking get the correct timestamp.
+        self._last_played_ts      = from_time 
 
     def _handle_message(self, msg: dict):
         # 🔚 handle end-of-stream sentinel FIRST so we never miss it
@@ -416,11 +428,7 @@ class LinesController:
             'creation_date': l.creation_date.isoformat()
         } for l in lines])
     
-    # -------------------------------------------------------------------------
-    # NO FLASK.REQUEST HERE. All data is passed as arguments.
-    # -------------------------------------------------------------------------
     def add_line(self, pair: str, price: float, creation_timestamp: float = None):
-        # ensure only the configured pair is supported
         ds = self.bars_loader.data_source
         supported_pair = getattr(ds, 'pair', None)
         if pair != supported_pair:
@@ -428,16 +436,16 @@ class LinesController:
 
         # 1. Resolve the Date
         if creation_timestamp is not None:
-            # Explicit time provided by caller
             c_date = datetime.fromtimestamp(float(creation_timestamp), tz=timezone.utc)
+            print(f"[LinesController] Using Provided Time: {c_date}")
         elif self.bars_loader._last_played_ts > 0:
-            # Fallback: Use the loader's current replay time (Stateful dependency)
             c_date = datetime.fromtimestamp(self.bars_loader._last_played_ts, tz=timezone.utc)
+            print(f"[LinesController] Using Loader Replay Time: {c_date}")
         else:
-            # Fallback: System real-time
-            c_date = datetime.now(timezone.utc)
+            c_date = datetime.fromtimestamp(0, tz=timezone.utc)
+            print(f"[LinesController] Loader not started -> Defaulting to Epoch 0 (1970)")
 
-        # 2. Persist with specific date
+        # 2. Persist
         line = self.line_repository.insert_line(
             pair=pair,
             price=price,
@@ -445,10 +453,15 @@ class LinesController:
         )
 
         # 3. Update Strategy
+        # FIX: Double-check timezone awareness to prevent Local Time conversion issues
+        strat_date = line.creation_date
+        if strat_date.tzinfo is None:
+            strat_date = strat_date.replace(tzinfo=timezone.utc)
+
         self.liquidity_strategy.add_strategy_line(
             line.line_id,
             line.price,
-            creation_timestamp=line.creation_date.timestamp()
+            creation_timestamp=strat_date.timestamp()
         )
 
         return jsonify({
@@ -1192,7 +1205,7 @@ class Line(Base):
     line_id = Column(String(50), primary_key=True, index=False)
     pair = Column(String(10), nullable=False)
     price = Column(Float, nullable=False)
-    creation_date = Column(DateTime, nullable=False)
+    creation_date = Column(DateTime(timezone=True), nullable=False)
 
 class Trade(Base):
     __tablename__ = "trades"
@@ -1458,7 +1471,7 @@ class LineRepository(ABC):
 
 class SQLLineRepository(LineRepository):
     
-    def insert_line(self, pair: str, price: float, creation_date: Optional[datetime] = None) -> LineData: # <--- CHANGED
+    def insert_line(self, pair: str, price: float, creation_date: Optional[datetime] = None) -> LineData:
         with get_db_session() as db:
             c_date = creation_date if creation_date else datetime.utcnow()
             
@@ -1466,7 +1479,7 @@ class SQLLineRepository(LineRepository):
                 line_id=str(uuid.uuid4()),
                 pair=pair,
                 price=price,
-                creation_date=c_date  # <--- CHANGED
+                creation_date=c_date
             )
             db.add(new_line)
 
@@ -1479,11 +1492,17 @@ class SQLLineRepository(LineRepository):
             finally:
                 db.close()
 
+            # FIX: Ensure the returned datetime is UTC-aware before returning.
+            # SQLite often strips TZ info, causing Python to interpret it as Local Time later.
+            ret_date = new_line.creation_date
+            if ret_date.tzinfo is None:
+                ret_date = ret_date.replace(tzinfo=timezone.utc)
+
             return LineData(
                 line_id=new_line.line_id,
                 pair=new_line.pair,
                 price=new_line.price,
-                creation_date=new_line.creation_date
+                creation_date=ret_date
             )
 
     def list_lines(self, pair: str) -> List[LineData]:
@@ -1493,15 +1512,21 @@ class SQLLineRepository(LineRepository):
                   .filter(Line.pair == pair)
                   .all()
             )
-            return [
-                LineData(
+            
+            results = []
+            for row in rows:
+                # FIX: Ensure read lines are also UTC-aware
+                c_date = row.creation_date
+                if c_date.tzinfo is None:
+                    c_date = c_date.replace(tzinfo=timezone.utc)
+
+                results.append(LineData(
                     line_id=row.line_id,
                     pair=row.pair,
                     price=row.price,
-                    creation_date=row.creation_date
-                )
-                for row in rows
-            ]
+                    creation_date=c_date
+                ))
+            return results
          
     def delete_line(self, line_id: str) -> None:
         with get_db_session() as db:
@@ -2825,26 +2850,17 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             self._tf_histories[tf] = deque(maxlen=10)
 
     def reset(self):
-        """
-        Clears all internal state, including lines, trades, and aggregation buffers.
-        Crucial for running back-to-back scenarios without state pollution.
-        """
         with self.lock:
-            # 1. Clear Lines and Trades
             self.strategy_lines.clear()
             self.open_trades.clear()
             self.trade_manager.open_trades.clear()
-            
-            # 2. Reset Aggregators
             for tf in self.timeframes:
                 self._tf_aggregators[tf] = {
                     "seconds": self._parse_tf_seconds(tf),
                     "buf": [],
                     "start": None
                 }
-                # Clear the history deque
                 self._tf_histories[tf].clear()
-            
             print("[StrategyV2] 🧹 Internal state fully reset.")
 
     def _parse_tf_seconds(self, tf: str) -> int:
@@ -2872,69 +2888,58 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             bar_time = bar['time']
             lines_to_remove = set()
 
-            # 1. Latch Directions & Track Extremes
             for sid, line in self.strategy_lines.items():
-                # --- NEW LOGIC: Skip lines created in the future ---
-                if line.get('creation_ts', 0) > bar_time:
-                    # Line is from the future (e.g. drawn later in history during a replay)
-                    # We treat it as non-existent for now.
+                # --- DEBUG: Future Check ---
+                creation_ts = line.get('creation_ts', 0)
+                if creation_ts > bar_time:
+                    # UNCOMMENTED THIS LOG FOR DIAGNOSIS
+                    # We limit it to printing only when the minute changes to avoid spamming 10x/sec
+                    if bar_time % 60 == 0: 
+                        print(f"[StrategyV2] ⏳ Waiting for Line {sid} (Created: {creation_ts} > Current: {bar_time})")
                     continue
 
                 if line['direction'] is None:
                     line['direction'] = "short" if current_price < line['level'] else "long"
                     line['extreme'] = float("-inf") if line['direction'] == "short" else float("inf")
-                    print(f"[StrategyV2] 🔒 Latched line {sid} ({line['level']}) as {line['direction'].upper()} (Price: {current_price})")
+                    print(f"[StrategyV2] 🔒 LATCHED {sid} ({line['level']}) as {line['direction'].upper()} @ {current_price}")
                 
                 elif line['direction'] == 'short':
                     line['extreme'] = max(line['extreme'], bar['high'])
-                    # Max Bounce Breach
                     if current_price > (line['level'] + self.max_bounce):
-                        print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Max bounce breach")
+                        print(f"[StrategyV2] 🗑️ REMOVE {sid} ({line['level']}) - Max bounce breach (Price {current_price} > {line['level'] + self.max_bounce})")
                         lines_to_remove.add(sid)
                 
                 elif line['direction'] == 'long':
                     line['extreme'] = min(line['extreme'], bar['low'])
-                    # Max Bounce Breach
                     if current_price < (line['level'] - self.max_bounce):
-                        print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Max bounce breach")
+                        print(f"[StrategyV2] 🗑️ REMOVE {sid} ({line['level']}) - Max bounce breach (Price {current_price} < {line['level'] - self.max_bounce})")
                         lines_to_remove.add(sid)
 
-            # 2. Next Line Breach Check (The Fix)
-            # If price hits Line B, Line A is invalidated.
-            
-            # Group active lines by direction
+            # Next Line Breach Check
             short_lines = [l for l in self.strategy_lines.values() if l['direction'] == 'short']
             long_lines  = [l for l in self.strategy_lines.values() if l['direction'] == 'long']
 
             for sid, line in self.strategy_lines.items():
                 if sid in lines_to_remove: continue
-                
                 if line['direction'] == 'short':
-                    # If there is another Short line ABOVE this one, and price hit it
-                    # Condition: Level A < Level B <= Bar High
                     for other in short_lines:
                         if other is line: continue
                         if line['level'] < other['level'] <= bar['high']:
-                            print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Price hit higher resistance {other['level']}")
+                            print(f"[StrategyV2] 🗑️ REMOVE {sid} - Hit higher resistance {other['level']}")
                             lines_to_remove.add(sid)
                             break
-                
                 elif line['direction'] == 'long':
-                    # If there is another Long line BELOW this one, and price hit it
-                    # Condition: Level A > Level B >= Bar Low
                     for other in long_lines:
                         if other is line: continue
                         if line['level'] > other['level'] >= bar['low']:
-                            print(f"[StrategyV2] 🗑️ Removing Line {sid} ({line['level']}) - Price hit lower support {other['level']}")
+                            print(f"[StrategyV2] 🗑️ REMOVE {sid} - Hit lower support {other['level']}")
                             lines_to_remove.add(sid)
                             break
 
-            # Perform removals
             for sid in lines_to_remove:
                 self.remove_strategy_line(sid)
 
         ts = bar["time"]
-        
         for tf, state in self._tf_aggregators.items():
             window_secs = state["seconds"]
             window_start = (ts // window_secs) * window_secs
@@ -2942,8 +2947,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             if state["start"] is None:
                 state["start"] = window_start
 
-            # DUPLICATE PROTECTION:
-            # If we receive the exact same bar time as the last one in buffer, ignore it.
             if state["buf"] and state["buf"][-1]['time'] == ts:
                 continue
 
@@ -2962,7 +2965,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
     def _on_strategy_bar(self, bar: Dict[str, Any]):
         with self.lock:
             for sid, line in list(self.strategy_lines.items()):
-                # Double check inside strategy bar execution
                 if line.get('creation_ts', 0) > bar['time']:
                     continue
 
@@ -2972,17 +2974,22 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 for trig in self.triggers:
                     proposed_ctx = trig(self, sid, line, bar)
                     if proposed_ctx is not None:
+                        print(f"[StrategyV2] 🎯 TRIGGER MATCHED for {sid} on {bar.get('tf')}")
                         break
+                    # else:
+                    #     print(f"[StrategyV2] Trigger failed for {sid}")
 
                 if proposed_ctx is None:
                     continue
 
                 allow, reason = self._filters_allow_entry(proposed_ctx)
                 if allow:
-                    print(f"[StrategyV2] Triggered on {bar.get('tf')} timeframe!")
+                    print(f"[StrategyV2] ✅ ENTRY ALLOWED: {bar.get('tf')} {proposed_ctx.direction}")
                     trade = self._build_trade_from_context(proposed_ctx)
                     self._store_and_emit_open(trade)
                     opened = True
+                else:
+                    print(f"[StrategyV2] ⛔ FILTER BLOCKED: {reason}")
                 
                 self._maybe_remove_line(sid, opened)
 ```
@@ -3027,7 +3034,6 @@ class CandleConfig:
 from typing import Any, Dict, Optional
 from src.strategies.entry_context import EntryContext
 
-
 def wick_near_line_trigger(
     strategy: "LiquidityStrategyV2",
     line_id: Any,
@@ -3035,14 +3041,14 @@ def wick_near_line_trigger(
     bar: Dict[str, Any],
 ) -> Optional[EntryContext]:
     
-    # 1. Get Fixed Direction
     dir_ = line.get("direction")
     if dir_ is None: return None
 
     lvl = line["level"]
     
-    # 2. Check for Line Interaction (Touch)
+    # Check for Line Interaction
     if not (bar["high"] >= lvl >= bar["low"]):
+        # print(f"[Trigger] No touch: Lvl {lvl} not in [{bar['low']}, {bar['high']}]")
         return None
 
     o, h, l, c = bar["open"], bar["high"], bar["low"], bar["close"]
@@ -3051,25 +3057,27 @@ def wick_near_line_trigger(
 
     body = abs(c - o)
     body_ratio = body / rng
-
     cfg = strategy.candle_config
 
-    if body_ratio > cfg.small_body_max_ratio: return None
+    if body_ratio > cfg.small_body_max_ratio:
+        print(f"[Trigger] Body too big: {body_ratio:.2f} > {cfg.small_body_max_ratio}")
+        return None
 
     upper_wick = h - max(o, c)
     lower_wick = min(o, c) - l
     upper_ratio = upper_wick / rng
     lower_ratio = lower_wick / rng
 
-    # 3. Use Fixed Direction Logic & Tracked Extreme
     if dir_ == "long":
-        # Support bounce -> Needs big lower wick
-        if lower_ratio < cfg.wick_min_ratio: return None
+        if lower_ratio < cfg.wick_min_ratio:
+            print(f"[Trigger] Long wick too small: {lower_ratio:.2f} < {cfg.wick_min_ratio}")
+            return None
         true_extreme = min(line['extreme'], l)
         cross_depth = max(0.0, lvl - true_extreme)
     else:
-        # Resistance reject -> Needs big upper wick
-        if upper_ratio < cfg.wick_min_ratio: return None
+        if upper_ratio < cfg.wick_min_ratio:
+            print(f"[Trigger] Short wick too small: {upper_ratio:.2f} < {cfg.wick_min_ratio}")
+            return None
         true_extreme = max(line['extreme'], h)
         cross_depth = max(0.0, true_extreme - lvl)
 
@@ -3086,7 +3094,6 @@ def wick_near_line_trigger(
         cross_depth=cross_depth,
     )
 
-
 def three_candle_reversal_trigger(
     strategy: "LiquidityStrategyV2",
     line_id: Any,
@@ -3094,7 +3101,6 @@ def three_candle_reversal_trigger(
     bar: Dict[str, Any],
 ) -> Optional[EntryContext]:
     
-    # 1. Get Fixed Direction
     dir_ = line.get("direction")
     if dir_ is None: return None
 
@@ -3106,8 +3112,6 @@ def three_candle_reversal_trigger(
 
     c1, c2, c3 = history[0], history[1], history[2]
     lvl = line["level"]
-
-    # Configs
     cfg = strategy.candle_config
 
     def get_ratios(b):
@@ -3118,25 +3122,19 @@ def three_candle_reversal_trigger(
         lower = min(b['open'], b['close']) - b['low']
         return body/rng, upper/rng, lower/rng
 
-    # --- SHORT LOGIC (Fixed) ---
     if dir_ == "short":
-        # 1. Green Candle
         if c1['close'] <= c1['open']: return None
         b1_ratio, _, _ = get_ratios(c1)
         if b1_ratio < cfg.big_body_min_ratio: return None
 
-        # 2. Hammer at Top
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
         if b2_ratio > cfg.hammer_body_max_ratio: return None
         if b2_upper > cfg.hammer_nose_max_ratio: return None
 
-        # 3. Hammer MUST touch the line
         if not (c2['high'] >= lvl >= c2['low']): return None
 
-        # 4. Red Candle
         if c3['close'] >= c3['open']: return None
 
-        # Extreme
         pattern_high = max(c1['high'], c2['high'], c3['high'])
         true_extreme = max(line['extreme'], pattern_high)
         cross_depth = max(0.0, true_extreme - lvl)
@@ -3154,25 +3152,19 @@ def three_candle_reversal_trigger(
             cross_depth=cross_depth 
         )
 
-    # --- LONG LOGIC (Fixed) ---
     elif dir_ == "long":
-        # 1. Red Candle
         if c1['close'] >= c1['open']: return None
         b1_ratio, _, _ = get_ratios(c1)
         if b1_ratio < cfg.big_body_min_ratio: return None
 
-        # 2. Hammer at Bottom
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
         if b2_ratio > cfg.hammer_body_max_ratio: return None
         if b2_lower > cfg.hammer_nose_max_ratio: return None
 
-        # 3. Hammer MUST touch the line
         if not (c2['high'] >= lvl >= c2['low']): return None
 
-        # 4. Green Candle
         if c3['close'] <= c3['open']: return None
 
-        # Extreme
         pattern_low = min(c1['low'], c2['low'], c3['low'])
         true_extreme = min(line['extreme'], pattern_low)
         cross_depth = max(0.0, lvl - true_extreme)
@@ -3476,8 +3468,9 @@ def create_app(
     # Optionally load any preexisting lines from repo into the in-memory strategy
     if bootstrap_existing_lines:
         for l in repos.lines.list_lines(pair):
-            ts = l.creation_date.replace(tzinfo=timezone.utc).timestamp()
-            tstrategy.add_strategy_line(l.line_id, l.price, creation_timestamp=ts)
+            # FIX: Force timestamp to 0 for existing DB lines so they are valid for ALL history.
+            # This prevents "future" creation dates (e.g. 2025) from blocking trades on 2024 data.
+            tstrategy.add_strategy_line(l.line_id, l.price, creation_timestamp=0)
 
     # ---------------- HTTP endpoints (capturing the injected deps) ----------------
 
@@ -3507,7 +3500,6 @@ def create_app(
     def add_line():
         data = request.get_json() or {}
         
-        # Validation happens here or in Pydantic models (if using FastAPI/Marshmallow)
         if 'pair' not in data or 'price' not in data:
             abort(400, 'Must provide {"pair":..., "price":...}')
         
@@ -3593,10 +3585,12 @@ def create_app(
         """Clears all state, resets DataSource range, AND warms up strategy."""
         try:
             # 1. Clear in-memory strategy state (Deep Reset)
-            # This clears lines, trades, and HISTORY BUFFERS
             tstrategy.reset()
             
-            # 2. Clear DB lines
+            # 2. Reset Loader State (so _last_played_ts goes back to 0)
+            loader.reset()
+
+            # 3. Clear DB lines
             try:
                 all_lines = repos.lines.list_lines(pair)
                 for l in all_lines:
@@ -3604,7 +3598,7 @@ def create_app(
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
-            # 3. Reset DataSource history
+            # 4. Reset DataSource history
             data = request.get_json() or {}
             start_ts = data.get('start_time')
             end_ts   = data.get('end_time')
@@ -3615,9 +3609,7 @@ def create_app(
                 except TypeError:
                     data_source.reset()
 
-            # 4. WARM UP STRATEGY (Without lines)
-            # We process history NOW, while strategy_lines is empty.
-            # This fills _tf_histories without deleting lines due to bounce rules.
+            # 5. WARM UP STRATEGY (Without lines)
             played = getattr(data_source, '_played_bars', [])
             if played:
                 print(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")
@@ -4631,9 +4623,14 @@ def wait_http_ok(url, timeout=30):
         time.sleep(0.2)
     raise TimeoutError(f"Server at {url} did not start.")
 
-def add_line_http(base_url: str, pair: str, price: float):
+# FIX: Updated to accept creation_time
+def add_line_http(base_url: str, pair: str, price: float, creation_time: float = None):
+    payload = {"pair": pair, "price": float(price)}
+    if creation_time is not None:
+        payload["creation_time"] = creation_time
+
     try:
-        r = requests.post(f"{base_url}/api/lines", json={"pair": pair, "price": float(price)}, timeout=5)
+        r = requests.post(f"{base_url}/api/lines", json=payload, timeout=5)
         return r.ok
     except Exception as e:
         print(f"⚠️ Exception adding line {price}: {e}")
@@ -4788,7 +4785,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 # Add Lines (HTTP)
                 lines = [parse_line_spec(l) for l in sc.get("lines", [])]
                 for l in lines:
-                    if not add_line_http(base_url, pair_name, l["level"]):
+                    # FIX: Parse 'at' time using the same timezone logic as start/end
+                    c_ts = None
+                    if l["at_raw"]:
+                        c_ts = get_epoch(l["at_raw"])
+                        print(f"   -> Line {l['level']} scheduled at {l['at_raw']} ({c_ts})")
+                    
+                    if not add_line_http(base_url, pair_name, l["level"], creation_time=c_ts):
                         print(f"❌ Failed to add line {l['level']}")
 
                 # Load Page with keep_closed_trades=true

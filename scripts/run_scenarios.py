@@ -125,7 +125,8 @@ def sanitize(name: str) -> str:
     return "".join(c if c.isalnum() or c in ("-","_"," ") else "_" for c in name).strip().replace(" ", "_")
 
 def _parse_yaml_dt(s: str) -> datetime:
-    return dtparser.parse(s).replace(tzinfo=None)
+    # FIX: Do not strip tzinfo here; let get_epoch handle it
+    return dtparser.parse(s)
 
 def parse_line_spec(line_row: Any) -> Dict[str, Any]:
     if isinstance(line_row, dict):
@@ -166,9 +167,14 @@ def wait_http_ok(url, timeout=30):
         time.sleep(0.2)
     raise TimeoutError(f"Server at {url} did not start.")
 
-def add_line_http(base_url: str, pair: str, price: float):
+# FIX: Updated to accept creation_time
+def add_line_http(base_url: str, pair: str, price: float, creation_time: float = None):
+    payload = {"pair": pair, "price": float(price)}
+    if creation_time is not None:
+        payload["creation_time"] = creation_time
+
     try:
-        r = requests.post(f"{base_url}/api/lines", json={"pair": pair, "price": float(price)}, timeout=5)
+        r = requests.post(f"{base_url}/api/lines", json=payload, timeout=5)
         return r.ok
     except Exception as e:
         print(f"⚠️ Exception adding line {price}: {e}")
@@ -293,9 +299,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         idx_map[ts] = i
 
     def get_epoch(dt_str):
-        dt_naive = _parse_yaml_dt(dt_str)
-        dt_aware = dt_naive.replace(tzinfo=pair_tz)
-        return int(dt_aware.timestamp())
+        dt = _parse_yaml_dt(dt_str)
+        # FIX: Only attach pair_tz if the string didn't specify one
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=pair_tz)
+        return int(dt.timestamp())
 
     try:
         summary_results = []
@@ -323,7 +331,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 # Add Lines (HTTP)
                 lines = [parse_line_spec(l) for l in sc.get("lines", [])]
                 for l in lines:
-                    if not add_line_http(base_url, pair_name, l["level"]):
+                    # FIX: Parse 'at' time using the same timezone logic as start/end
+                    c_ts = None
+                    if l["at_raw"]:
+                        c_ts = get_epoch(l["at_raw"])
+                        print(f"   -> Line {l['level']} scheduled at {l['at_raw']} (Epoch: {c_ts})")
+                    
+                    if not add_line_http(base_url, pair_name, l["level"], creation_time=c_ts):
                         print(f"❌ Failed to add line {l['level']}")
 
                 # Load Page with keep_closed_trades=true
