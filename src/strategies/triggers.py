@@ -110,14 +110,14 @@ def three_candle_reversal_trigger(
 
     if dir_ == "short":
         # C1: Must be Bullish (Green)
-        if c1['close'] <= c1['open']: 
-            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C1 is not Bullish (Green)")
-            return None
+        # if c1['close'] <= c1['open']: 
+        #     strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C1 is not Bullish (Green)")
+        #     return None
         
-        b1_ratio, _, _ = get_ratios(c1)
-        if b1_ratio < cfg.big_body_min_ratio: 
-            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C1 Body {b1_ratio:.2f} < Min {cfg.big_body_min_ratio}")
-            return None
+        # b1_ratio, _, _ = get_ratios(c1)
+        # if b1_ratio < cfg.big_body_min_ratio: 
+        #     strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C1 Body {b1_ratio:.2f} < Min {cfg.big_body_min_ratio}")
+        #     return None
 
         # C2: Hammer/Pinbar
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
@@ -152,14 +152,14 @@ def three_candle_reversal_trigger(
 
     elif dir_ == "long":
         # C1: Must be Bearish (Red)
-        if c1['close'] >= c1['open']: 
-            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C1 is not Bearish (Red)")
-            return None
+        # if c1['close'] >= c1['open']: 
+        #     strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C1 is not Bearish (Red)")
+        #     return None
         
-        b1_ratio, _, _ = get_ratios(c1)
-        if b1_ratio < cfg.big_body_min_ratio: 
-            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C1 Body {b1_ratio:.2f} < Min {cfg.big_body_min_ratio}")
-            return None
+        # b1_ratio, _, _ = get_ratios(c1)
+        # if b1_ratio < cfg.big_body_min_ratio: 
+        #     strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C1 Body {b1_ratio:.2f} < Min {cfg.big_body_min_ratio}")
+        #     return None
 
         # C2: Hammer/Pinbar
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)

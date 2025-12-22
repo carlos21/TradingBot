@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """
 High-Performance Scenario Runner with Dependency Injection.
-
-Features:
-1. Injects FakeLineRepository and FakeTradeRepository (In-Memory).
-2. Uses EXACTLY the same StrategyOptions/CandleConfig as Production (via src.prod_config).
-3. Spawns a dedicated server process per test suite to ensure clean state.
-4. Uses Playwright for end-to-end verification.
 """
 
 import argparse
@@ -28,13 +22,12 @@ from dateutil import parser as dtparser
 from playwright.async_api import async_playwright
 
 # -------------------------------------------------------------------------
-# PATH SETUP: Ensure we can import from project root
+# PATH SETUP
 # -------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# --- Project Imports ---
 from app_factory import create_app, Repositories
 from src.data_sources.csv_datasource import CSVDataSource
 from src.prod_config import (
@@ -42,38 +35,26 @@ from src.prod_config import (
     get_prod_candle_config,
     get_prod_strategy_options
 )
-# Use Fakes instead of SQL
 from tests.fakes import FakeLineRepository, FakeTradeRepository
 
 APP_HOST = "127.0.0.1"
-
-# Timezones must match src/data_sources/csv_datasource.py
 PAIR_TZS = {
     'EURUSD': 'Europe/London',
     'NQ':     'America/Chicago',
 }
 
 # -------------------------------------------------------------------------
-# Server Process Logic (The "App" in Test Mode)
+# Server Process Logic
 # -------------------------------------------------------------------------
 
 def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event):
-    """
-    Entry point for the background process.
-    Constructs the app with Mock Repos + Real Strategy Logic.
-    """
-    # 1. Configure Environment for Test Mode
-    # We want the BACKEND to remove the line after evaluation so it doesn't trigger twice.
-    # The FRONTEND will ignore this removal command because of ?keep_lines=true.
     os.environ["LINE_REMOVAL_MODE"] = "ON_EVALUATE"
 
-    # 2. Mocks (InMemory)
     repos = Repositories(
         lines=FakeLineRepository(),
         trades=FakeTradeRepository()
     )
 
-    # 3. Data Source (Real CSV logic)
     ds = CSVDataSource(
         pair="NQ",
         filename=csv_path,
@@ -82,12 +63,10 @@ def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_even
         bars_per_second=bars_per_second,
     )
 
-    # 4. Strategy Logic (EXACT Match with Production)
     numbers = get_prod_strategy_numbers()
     candle_config = get_prod_candle_config()
     options = get_prod_strategy_options(numbers.max_bounce)
 
-    # 5. Build App
     wiring = create_app(
         pair="NQ",
         data_source=ds,
@@ -96,18 +75,15 @@ def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_even
         options=options,
         candle_config=candle_config,
         timeframes=["5m", "15m"],
-        bootstrap_existing_lines=False, # No DB lines to load
+        bootstrap_existing_lines=False,
     )
 
-    # Signal parent that we are about to start
     ready_event.set()
 
-    # Disable generic Flask logs to keep console clean
     import logging
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
 
-    # allow_unsafe_werkzeug=True is required for non-debug mode in recent Flask-SocketIO
     wiring.socketio.run(
         wiring.app, 
         host=APP_HOST, 
@@ -125,7 +101,6 @@ def sanitize(name: str) -> str:
     return "".join(c if c.isalnum() or c in ("-","_"," ") else "_" for c in name).strip().replace(" ", "_")
 
 def _parse_yaml_dt(s: str) -> datetime:
-    # FIX: Do not strip tzinfo here; let get_epoch handle it
     return dtparser.parse(s)
 
 def parse_line_spec(line_row: Any) -> Dict[str, Any]:
@@ -167,7 +142,6 @@ def wait_http_ok(url, timeout=30):
         time.sleep(0.2)
     raise TimeoutError(f"Server at {url} did not start.")
 
-# FIX: Updated to accept creation_time
 def add_line_http(base_url: str, pair: str, price: float, creation_time: float = None):
     payload = {"pair": pair, "price": float(price)}
     if creation_time is not None:
@@ -191,7 +165,6 @@ def reset_app_state(base_url: str, start=None, end=None):
         return False
 
 def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]:
-    # 1. Check for explicit "No Trade" expectation
     if expect and expect.get("none") is True:
         if not trades:
             return "PASS", "Correctly had no trades", ""
@@ -200,16 +173,13 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
             entry = t.get("entry") or t.get("entry_price")
             return "FAIL", f"Expected NO trades, but got {len(trades)}", f"(Got trade @ {entry})"
 
-    # 2. Default: We expect at least one trade
     if not trades:
         return "FAIL", "No trades opened", ""
     
     trade = trades[0]
     entry = trade.get("entry") or trade.get("entry_price")
-    sl    = trade.get("stop_loss") or trade.get("stopLoss") or trade.get("sl")
-    tp    = trade.get("take_profit") or trade.get("takeProfit") or trade.get("tp")
     
-    values_str = f"(Entry: {entry}, Orig SL: {sl}, TP: {tp})"
+    values_str = f"(Entry: {entry}, Orig SL: {trade.get('stop_loss')}, TP: {trade.get('take_profit')})"
 
     if not expect:
         return "PASS", "Matches expectations", values_str
@@ -244,7 +214,6 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
     
     return "PASS", "Matches expectations", values_str
 
-
 # -------------------------------------------------------------------------
 # Log Printer
 # -------------------------------------------------------------------------
@@ -255,13 +224,15 @@ def print_detailed_summary(logs: List[Dict], pair_tz: ZoneInfo):
         return
 
     print("\n   📋 SCENARIO DECISION LOG:")
-    print(f"   {'TIME':<20} | {'TF':<4} | {'LINE':<5} | {'EVENT':<12} | {'DETAILS'}")
-    print("   " + "-"*100)
+    # CHANGED: Header now indicates UTC
+    print(f"   {'TIME (UTC)':<20} | {'TF':<4} | {'LINE':<5} | {'EVENT':<15} | {'DETAILS'}")
+    print("   " + "-"*110)
 
     for log in logs:
         ts = log.get("time", 0)
-        dt = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(pair_tz)
-        t_str = dt.strftime("%Y-%m-%d %H:%M")
+        # CHANGED: Use UTC directly, do not convert to pair_tz
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        t_str = dt.strftime("%Y-%m-%d %H:%M:%S")
         
         tf = log.get("tf", "--")
         lid = log.get("line_id", "")
@@ -275,8 +246,10 @@ def print_detailed_summary(logs: List[Dict], pair_tz: ZoneInfo):
             evt = f"\033[93m{evt}\033[0m" # Yellow
         elif evt == "REMOVE":
             evt = f"\033[91m{evt}\033[0m" # Red
+        elif "FAIL" in evt:
+            evt = f"\033[90m{evt}\033[0m" # Gray
 
-        print(f"   {t_str:<20} | {tf:<4} | {lid:<5} | {evt:<12} | {det}")
+        print(f"   {t_str:<20} | {tf:<4} | {lid:<5} | {evt:<24} | {det}")
     print("\n")
 
 # -------------------------------------------------------------------------
@@ -286,26 +259,20 @@ def print_detailed_summary(logs: List[Dict], pair_tz: ZoneInfo):
 async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     print(f"🚀 Launching In-Memory Test Server with {csv_path}...")
 
-    # Construct Base URL based on args
     base_url = f"http://{APP_HOST}:{args.port}"
-
-    # Event to know when Flask is ready
     server_ready = Event()
 
-    # Spawn the server process
     server_proc = Process(
         target=run_test_server, 
         args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready)
     )
     server_proc.start()
 
-    # Wait for ready signal
     if not server_ready.wait(timeout=10):
         print("❌ Server failed to start within timeout.")
         server_proc.terminate()
         return
 
-    # Wait for HTTP 200 (double check)
     try:
         wait_http_ok(f"{base_url}/api/pair")
     except TimeoutError:
@@ -313,38 +280,14 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         server_proc.terminate()
         return
 
-    # 1. Prepare Timezone logic
     pair_resp = requests.get(f"{base_url}/api/pair").json()
     pair_name = pair_resp['pair']
     pair_tz = ZoneInfo(PAIR_TZS.get(pair_name, 'UTC'))
     print(f"✅ Test Server running ({pair_name}) at {base_url}. Timezone: {pair_tz}")
 
-    # 2. Naive CSV read for index mapping (client-side helper)
-    all_dts_naive = []
-    try:
-        with open(csv_path, newline="", encoding="utf-8") as f:
-            sample = f.read(4096); f.seek(0)
-            try: dialect = csv.Sniffer().sniff(sample, delimiters=",;")
-            except: dialect = csv.excel(); dialect.delimiter=";"
-            rdr = csv.DictReader(f, dialect=dialect)
-            for row in rdr:
-                all_dts_naive.append(datetime.strptime(
-                    f"{row['Date']} {row['Time']}".strip(), 
-                    "%d/%m/%Y %H:%M:%S"
-                ))
-    except Exception as e:
-        print(f"⚠️ Error reading CSV for index map: {e}")
-
-    # 3. Build Index Map
-    idx_map = {}
-    for i, dt_naive in enumerate(all_dts_naive):
-        dt_aware = dt_naive.replace(tzinfo=pair_tz)
-        ts = int(dt_aware.timestamp())
-        idx_map[ts] = i
-
+    # Index Map logic
     def get_epoch(dt_str):
-        dt = _parse_yaml_dt(dt_str)
-        # FIX: Only attach pair_tz if the string didn't specify one
+        dt = dtparser.parse(dt_str)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=pair_tz)
         return int(dt.timestamp())
@@ -367,36 +310,26 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 end_ts   = get_epoch(sc["end"])
                 tf       = sc.get("tf", "5m")
 
-                # Reset the In-Memory App
                 if not reset_app_state(base_url, start=start_ts - 172800, end=start_ts - 1):
                     print("❌ Reset failed")
                     continue
                 
-                # Add Lines (HTTP)
                 lines = [parse_line_spec(l) for l in sc.get("lines", [])]
                 for l in lines:
-                    # FIX: Parse 'at' time using the same timezone logic as start/end
                     c_ts = None
                     if l["at_raw"]:
                         c_ts = get_epoch(l["at_raw"])
-                        print(f"   -> Line {l['level']} scheduled at {l['at_raw']} (Epoch: {c_ts})")
-                    
-                    if not add_line_http(base_url, pair_name, l["level"], creation_time=c_ts):
-                        print(f"❌ Failed to add line {l['level']}")
+                    add_line_http(base_url, pair_name, l["level"], creation_time=c_ts)
 
-                # Load Page with keep_closed_trades=true
                 view_start_ts = start_ts - 86400
-                # FIX: Added &keep_closed_trades=true
                 await page.goto(f"{base_url}/?start_time={view_start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}", wait_until="domcontentloaded")
 
-                # Inject Test Listeners
                 await page.evaluate("""
                     window.__done = false;
                     window.__trades = [];
                     const sock = (window.io && window.io()) || window.socket;
                     if (!sock) throw new Error("Socket.IO not found");
                     window.socket = sock;
-
                     sock.on('trade_open', (t) => {
                         window.__trades.push(t);
                         
@@ -418,25 +351,21 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     sock.on('stream_end', () => { window.__done = true; });
                 """)
 
-                # Start Stream
                 await page.evaluate(
                     """(p) => window.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
                     {"tf": tf, "start": start_ts, "end": end_ts}
                 )
 
-                # Wait for completion
                 try:
                     await page.wait_for_function("() => window.__done === true", timeout=120000)
                 except Exception as e:
                     print(f"❌ Timeout waiting for stream end: {e}")
 
-                # Check Results
                 captured_trades = await page.evaluate("window.__trades")
                 status, reason, values = check_expectations(sc.get("expect"), captured_trades)
                 summary_results.append({"name": name, "status": status, "reason": reason, "values": values})
                 print(f"   [{status}] {reason} {values}")
 
-                # Export Summary Logic
                 if sc.get("export_summary", False):
                     try:
                         logs = requests.get(f"{base_url}/api/debug/logs", timeout=2).json()
@@ -496,7 +425,6 @@ def main():
     scenarios = ydoc.get("scenarios", [])
     if not scenarios:
         print(f"⚠️  No 'scenarios' key found in YAML or list is empty.")
-        print(f"   Found keys: {list(ydoc.keys())}")
         return
 
     print(f"✅ Found {len(scenarios)} scenarios. Starting runner...")
