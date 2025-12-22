@@ -212,6 +212,11 @@ def create_app(
         emit('jump_result', {'to': ts})
 
     # --- TEST RUNNER HELPERS ---
+    @app.route('/api/debug/logs', methods=['GET'])
+    def get_debug_logs():
+        """Return the decision logs from the strategy."""
+        return jsonify(tstrategy.decision_logs)
+    
     @app.route('/__reset_all', methods=['POST'])
     def reset_all():
         """Clears all state, resets DataSource range, AND warms up strategy."""

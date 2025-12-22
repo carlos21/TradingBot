@@ -40,6 +40,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         self.candle_config = candle_config
         self._tf_aggregators = {}
         self._tf_histories = {}
+        
+        # NEW: Decision Logs for debugging/testing
+        self.decision_logs = []
 
         for tf in self.timeframes:
             self._tf_aggregators[tf] = {
@@ -54,6 +57,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             self.strategy_lines.clear()
             self.open_trades.clear()
             self.trade_manager.open_trades.clear()
+            self.decision_logs.clear()  # Clear logs on reset
             for tf in self.timeframes:
                 self._tf_aggregators[tf] = {
                     "seconds": self._parse_tf_seconds(tf),
@@ -77,6 +81,16 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             return []
         return list(hist)[-count:]
 
+    def _log_decision(self, bar_time: int, tf: str, line_id: str, event: str, details: str):
+        """Internal helper to record decision logic."""
+        self.decision_logs.append({
+            "time": bar_time,
+            "tf": tf,
+            "line_id": line_id,
+            "event": event,
+            "details": details
+        })
+
     def on_raw_bar(self, bar: Dict[str, Any]):
         with self.lock:
             self._check_open_trades(bar)
@@ -89,30 +103,27 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             lines_to_remove = set()
 
             for sid, line in self.strategy_lines.items():
-                # --- DEBUG: Future Check ---
                 creation_ts = line.get('creation_ts', 0)
                 if creation_ts > bar_time:
-                    # UNCOMMENTED THIS LOG FOR DIAGNOSIS
-                    # We limit it to printing only when the minute changes to avoid spamming 10x/sec
-                    if bar_time % 60 == 0: 
-                        print(f"[StrategyV2] ⏳ Waiting for Line {sid} (Created: {creation_ts} > Current: {bar_time})")
                     continue
 
                 if line['direction'] is None:
                     line['direction'] = "short" if current_price < line['level'] else "long"
                     line['extreme'] = float("-inf") if line['direction'] == "short" else float("inf")
-                    print(f"[StrategyV2] 🔒 LATCHED {sid} ({line['level']}) as {line['direction'].upper()} @ {current_price}")
+                    self._log_decision(bar_time, "1m", sid, "LATCH", f"Latched {line['direction']} @ {current_price}")
                 
                 elif line['direction'] == 'short':
                     line['extreme'] = max(line['extreme'], bar['high'])
                     if current_price > (line['level'] + self.max_bounce):
-                        print(f"[StrategyV2] 🗑️ REMOVE {sid} ({line['level']}) - Max bounce breach (Price {current_price} > {line['level'] + self.max_bounce})")
+                        msg = f"Price {current_price} > {line['level'] + self.max_bounce} (Max Bounce)"
+                        self._log_decision(bar_time, "1m", sid, "REMOVE", msg)
                         lines_to_remove.add(sid)
                 
                 elif line['direction'] == 'long':
                     line['extreme'] = min(line['extreme'], bar['low'])
                     if current_price < (line['level'] - self.max_bounce):
-                        print(f"[StrategyV2] 🗑️ REMOVE {sid} ({line['level']}) - Max bounce breach (Price {current_price} < {line['level'] - self.max_bounce})")
+                        msg = f"Price {current_price} < {line['level'] - self.max_bounce} (Max Bounce)"
+                        self._log_decision(bar_time, "1m", sid, "REMOVE", msg)
                         lines_to_remove.add(sid)
 
             # Next Line Breach Check
@@ -125,14 +136,14 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     for other in short_lines:
                         if other is line: continue
                         if line['level'] < other['level'] <= bar['high']:
-                            print(f"[StrategyV2] 🗑️ REMOVE {sid} - Hit higher resistance {other['level']}")
+                            self._log_decision(bar_time, "1m", sid, "REMOVE", f"Hit higher resistance {other['level']}")
                             lines_to_remove.add(sid)
                             break
                 elif line['direction'] == 'long':
                     for other in long_lines:
                         if other is line: continue
                         if line['level'] > other['level'] >= bar['low']:
-                            print(f"[StrategyV2] 🗑️ REMOVE {sid} - Hit lower support {other['level']}")
+                            self._log_decision(bar_time, "1m", sid, "REMOVE", f"Hit lower support {other['level']}")
                             lines_to_remove.add(sid)
                             break
 
@@ -170,25 +181,42 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
                 opened = False
                 proposed_ctx: Optional[EntryContext] = None
+                trigger_name = "None"
 
+                # 1. Check Triggers
                 for trig in self.triggers:
                     proposed_ctx = trig(self, sid, line, bar)
                     if proposed_ctx is not None:
-                        print(f"[StrategyV2] 🎯 TRIGGER MATCHED for {sid} on {bar.get('tf')}")
+                        trigger_name = trig.__name__
                         break
-                    # else:
-                    #     print(f"[StrategyV2] Trigger failed for {sid}")
-
+                
                 if proposed_ctx is None:
+                    # Optional: Log that we checked but found nothing (can be noisy)
+                    # self._log_decision(bar['time'], bar.get('tf'), sid, "CHECK_FAIL", "No trigger matched")
                     continue
 
+                # 2. Check Filters
                 allow, reason = self._filters_allow_entry(proposed_ctx)
+                
                 if allow:
-                    print(f"[StrategyV2] ✅ ENTRY ALLOWED: {bar.get('tf')} {proposed_ctx.direction}")
+                    self._log_decision(bar['time'], bar.get('tf'), sid, "ENTRY", 
+                        f"Trigger: {trigger_name} | Dir: {proposed_ctx.direction} | Price: {proposed_ctx.close}")
+                    
                     trade = self._build_trade_from_context(proposed_ctx)
                     self._store_and_emit_open(trade)
                     opened = True
                 else:
-                    print(f"[StrategyV2] ⛔ FILTER BLOCKED: {reason}")
+                    self._log_decision(bar['time'], bar.get('tf'), sid, "FILTER_BLOCK", 
+                        f"Trigger: {trigger_name} | Reason: {reason}")
                 
                 self._maybe_remove_line(sid, opened)
+
+    def log_decision(self, bar_time: int, tf: str, line_id: str, event: str, details: str):
+        """Public helper to record decision logic."""
+        self.decision_logs.append({
+            "time": bar_time,
+            "tf": tf,
+            "line_id": line_id,
+            "event": event,
+            "details": details
+        })

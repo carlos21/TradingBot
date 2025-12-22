@@ -18,7 +18,7 @@ import os
 import signal
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from multiprocessing import Process, Event
 
@@ -246,6 +246,40 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
 
 
 # -------------------------------------------------------------------------
+# Log Printer
+# -------------------------------------------------------------------------
+
+def print_detailed_summary(logs: List[Dict], pair_tz: ZoneInfo):
+    if not logs:
+        print("   ℹ️  No decision logs recorded.")
+        return
+
+    print("\n   📋 SCENARIO DECISION LOG:")
+    print(f"   {'TIME':<20} | {'TF':<4} | {'LINE':<5} | {'EVENT':<12} | {'DETAILS'}")
+    print("   " + "-"*100)
+
+    for log in logs:
+        ts = log.get("time", 0)
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc).astimezone(pair_tz)
+        t_str = dt.strftime("%Y-%m-%d %H:%M")
+        
+        tf = log.get("tf", "--")
+        lid = log.get("line_id", "")
+        evt = log.get("event", "")
+        det = log.get("details", "")
+
+        # Color coding for console
+        if evt == "ENTRY":
+            evt = f"\033[92m{evt}\033[0m" # Green
+        elif evt == "FILTER_BLOCK":
+            evt = f"\033[93m{evt}\033[0m" # Yellow
+        elif evt == "REMOVE":
+            evt = f"\033[91m{evt}\033[0m" # Red
+
+        print(f"   {t_str:<20} | {tf:<4} | {lid:<5} | {evt:<12} | {det}")
+    print("\n")
+
+# -------------------------------------------------------------------------
 # Test Runner
 # -------------------------------------------------------------------------
 
@@ -401,6 +435,14 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 status, reason, values = check_expectations(sc.get("expect"), captured_trades)
                 summary_results.append({"name": name, "status": status, "reason": reason, "values": values})
                 print(f"   [{status}] {reason} {values}")
+
+                # Export Summary Logic
+                if sc.get("export_summary", False):
+                    try:
+                        logs = requests.get(f"{base_url}/api/debug/logs", timeout=2).json()
+                        print_detailed_summary(logs, pair_tz)
+                    except Exception as e:
+                        print(f"   ⚠️ Failed to fetch summary logs: {e}")
 
                 if sc.get("snapshot", True):
                     try:

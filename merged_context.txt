@@ -3022,7 +3022,7 @@ class CandleConfig:
     """Central configuration for candle pattern recognition ratios."""
     small_body_max_ratio: float = 0.25
     wick_min_ratio: float = 0.60
-    big_body_min_ratio: float = 0.45
+    big_body_min_ratio: float = 0.40
     hammer_body_max_ratio: float = 0.30
     hammer_nose_max_ratio: float = 0.25
 ```
@@ -3329,7 +3329,7 @@ def build_prod():
     bps       = float(os.environ.get("BARS_PER_SECOND", 10.0))
 
     initial_start = datetime.fromisoformat(start_iso) if start_iso else datetime.fromisoformat("2024-04-01T00:00:00+00:00")
-    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-04-11T11:30:00+00:00")
+    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-07-03T10:45:00+00:00")
 
     # 3. Data Source
     ds = CSVDataSource(
@@ -4582,7 +4582,8 @@ def sanitize(name: str) -> str:
     return "".join(c if c.isalnum() or c in ("-","_"," ") else "_" for c in name).strip().replace(" ", "_")
 
 def _parse_yaml_dt(s: str) -> datetime:
-    return dtparser.parse(s).replace(tzinfo=None)
+    # FIX: Do not strip tzinfo here; let get_epoch handle it
+    return dtparser.parse(s)
 
 def parse_line_spec(line_row: Any) -> Dict[str, Any]:
     if isinstance(line_row, dict):
@@ -4647,6 +4648,16 @@ def reset_app_state(base_url: str, start=None, end=None):
         return False
 
 def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]:
+    # 1. Check for explicit "No Trade" expectation
+    if expect and expect.get("none") is True:
+        if not trades:
+            return "PASS", "Correctly had no trades", ""
+        else:
+            t = trades[0]
+            entry = t.get("entry") or t.get("entry_price")
+            return "FAIL", f"Expected NO trades, but got {len(trades)}", f"(Got trade @ {entry})"
+
+    # 2. Default: We expect at least one trade
     if not trades:
         return "FAIL", "No trades opened", ""
     
@@ -4755,9 +4766,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         idx_map[ts] = i
 
     def get_epoch(dt_str):
-        dt_naive = _parse_yaml_dt(dt_str)
-        dt_aware = dt_naive.replace(tzinfo=pair_tz)
-        return int(dt_aware.timestamp())
+        dt = _parse_yaml_dt(dt_str)
+        # FIX: Only attach pair_tz if the string didn't specify one
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=pair_tz)
+        return int(dt.timestamp())
 
     try:
         summary_results = []
@@ -4789,7 +4802,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     c_ts = None
                     if l["at_raw"]:
                         c_ts = get_epoch(l["at_raw"])
-                        print(f"   -> Line {l['level']} scheduled at {l['at_raw']} ({c_ts})")
+                        print(f"   -> Line {l['level']} scheduled at {l['at_raw']} (Epoch: {c_ts})")
                     
                     if not add_line_http(base_url, pair_name, l["level"], creation_time=c_ts):
                         print(f"❌ Failed to add line {l['level']}")
@@ -5306,11 +5319,33 @@ export class ChartViewer {
 
     // draw the exit‐marker
     const exitTime = trade.exit_time || trade.exitTime || trade.entryTime;
+    const isWin = trade.result > 0;
+    const isLong = trade.type === 'long' || trade.type === 'buy';
+    
+    // Logic: Place marker near the exit price (High for Long Win/Short Loss, Low for Long Loss/Short Win)
+    // Long Win (High) -> Above
+    // Long Loss (Low) -> Below
+    // Short Win (Low) -> Below
+    // Short Loss (High) -> Above
+    
+    let position = 'aboveBar';
+    let shape = 'arrowDown';
+
+    if (isLong) {
+        if (isWin) { position = 'aboveBar'; shape = 'arrowDown'; }
+        else       { position = 'belowBar'; shape = 'arrowUp';   }
+    } else {
+        if (isWin) { position = 'belowBar'; shape = 'arrowUp';   }
+        else       { position = 'aboveBar'; shape = 'arrowDown'; }
+    }
+
     const marker   = {
       time:     exitTime,
-      position: trade.type === 'long' ? 'belowBar' : 'aboveBar',
-      shape:    'text',
+      position: position,
+      shape:    shape,
+      color:    isWin ? '#00E676' : '#FF1744', // Bright Green / Red
       text:     trade.result > 0 ? `+${trade.result}` : `${trade.result}`,
+      size:     2, // Make it bigger (default is 1)
     };
     this.tradeMarkers.push(marker);
     this.series.setMarkers(this.tradeMarkers);
