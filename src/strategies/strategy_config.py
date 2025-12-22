@@ -22,6 +22,6 @@ class CandleConfig:
     """Central configuration for candle pattern recognition ratios."""
     small_body_max_ratio: float = 0.25
     wick_min_ratio: float = 0.60
-    big_body_min_ratio: float = 0.45
+    big_body_min_ratio: float = 0.40
     hammer_body_max_ratio: float = 0.30
     hammer_nose_max_ratio: float = 0.25

@@ -191,6 +191,16 @@ def reset_app_state(base_url: str, start=None, end=None):
         return False
 
 def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]:
+    # 1. Check for explicit "No Trade" expectation
+    if expect and expect.get("none") is True:
+        if not trades:
+            return "PASS", "Correctly had no trades", ""
+        else:
+            t = trades[0]
+            entry = t.get("entry") or t.get("entry_price")
+            return "FAIL", f"Expected NO trades, but got {len(trades)}", f"(Got trade @ {entry})"
+
+    # 2. Default: We expect at least one trade
     if not trades:
         return "FAIL", "No trades opened", ""
     
