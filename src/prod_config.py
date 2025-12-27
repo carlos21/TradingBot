@@ -2,7 +2,7 @@ from src.strategies.base_liquidity_strategy import BreakevenConfig
 from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
 from src.strategies.entry_context import open_trades_limit_filter, max_bounce_filter
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
-from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
+from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger, double_5m_cross_trigger
 import os
 
 def get_prod_strategy_numbers() -> StrategyNumbers:
@@ -28,8 +28,9 @@ def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
             max_bounce_filter(max_bounce)
         ],
         triggers=[
-            wick_near_line_trigger,
-            three_candle_reversal_trigger
+            three_candle_reversal_trigger,
+            double_5m_cross_trigger,
+            wick_near_line_trigger
         ],
         breakeven=BreakevenConfig(
             trigger_rr=2.0, 

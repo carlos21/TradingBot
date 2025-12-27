@@ -67,6 +67,13 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 self._tf_histories[tf].clear()
             print("[StrategyV2] 🧹 Internal state fully reset.")
 
+    def _reset_line_state(self, line_state: Dict[str, Any]):
+        """If we keep the line, reset so it can trigger again in the future."""
+        super()._reset_line_state(line_state)
+        # Reset the double 5m cross stage
+        if "d5_stage" in line_state:
+            line_state["d5_stage"] = 0
+
     def _parse_tf_seconds(self, tf: str) -> int:
         unit = tf[-1].lower()
         val = int(tf[:-1])
