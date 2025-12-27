@@ -75,9 +75,23 @@ scenarios:
     lines:
       - { price: 20207.87, at: "2024-07-03 10:50:00Z" }
     expect:
-      entry: 18111.25
-      sl:    18121.50
-      tp:    18070.25
+      entry: 20216.00
+      sl:    20205.00
+      tp:    20260.00
+      tolerance: 0.25
+    snapshot: true
+
+  - name: "NQ - 2024-08-01"
+    pair: "NQ"
+    tf: "15m"
+    start: "2024-07-17 08:00:00Z"
+    end:   "2024-08-01 16:45:00Z"
+    lines:
+      - { price: 19653.02, at: "2024-07-31 09:00:00Z" }
+    expect:
+      entry: 20216.00
+      sl:    20205.00
+      tp:    20260.00
       tolerance: 0.25
     snapshot: true
     export_summary: true

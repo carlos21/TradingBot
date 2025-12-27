@@ -2840,6 +2840,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         self.candle_config = candle_config
         self._tf_aggregators = {}
         self._tf_histories = {}
+        
+        # NEW: Decision Logs for debugging/testing
+        self.decision_logs = []
 
         for tf in self.timeframes:
             self._tf_aggregators[tf] = {
@@ -2854,6 +2857,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             self.strategy_lines.clear()
             self.open_trades.clear()
             self.trade_manager.open_trades.clear()
+            self.decision_logs.clear()  # Clear logs on reset
             for tf in self.timeframes:
                 self._tf_aggregators[tf] = {
                     "seconds": self._parse_tf_seconds(tf),
@@ -2877,6 +2881,16 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             return []
         return list(hist)[-count:]
 
+    def log_decision(self, bar_time: int, tf: str, line_id: str, event: str, details: str):
+        """Public helper to record decision logic."""
+        self.decision_logs.append({
+            "time": bar_time,
+            "tf": tf,
+            "line_id": line_id,
+            "event": event,
+            "details": details
+        })
+
     def on_raw_bar(self, bar: Dict[str, Any]):
         with self.lock:
             self._check_open_trades(bar)
@@ -2889,30 +2903,27 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             lines_to_remove = set()
 
             for sid, line in self.strategy_lines.items():
-                # --- DEBUG: Future Check ---
                 creation_ts = line.get('creation_ts', 0)
                 if creation_ts > bar_time:
-                    # UNCOMMENTED THIS LOG FOR DIAGNOSIS
-                    # We limit it to printing only when the minute changes to avoid spamming 10x/sec
-                    if bar_time % 60 == 0: 
-                        print(f"[StrategyV2] ⏳ Waiting for Line {sid} (Created: {creation_ts} > Current: {bar_time})")
                     continue
 
                 if line['direction'] is None:
                     line['direction'] = "short" if current_price < line['level'] else "long"
                     line['extreme'] = float("-inf") if line['direction'] == "short" else float("inf")
-                    print(f"[StrategyV2] 🔒 LATCHED {sid} ({line['level']}) as {line['direction'].upper()} @ {current_price}")
+                    self.log_decision(bar_time, "1m", sid, "LATCH", f"Latched {line['direction']} @ {current_price}")
                 
                 elif line['direction'] == 'short':
                     line['extreme'] = max(line['extreme'], bar['high'])
                     if current_price > (line['level'] + self.max_bounce):
-                        print(f"[StrategyV2] 🗑️ REMOVE {sid} ({line['level']}) - Max bounce breach (Price {current_price} > {line['level'] + self.max_bounce})")
+                        msg = f"Price {current_price} > {line['level'] + self.max_bounce} (Max Bounce)"
+                        self.log_decision(bar_time, "1m", sid, "REMOVE", msg)
                         lines_to_remove.add(sid)
                 
                 elif line['direction'] == 'long':
                     line['extreme'] = min(line['extreme'], bar['low'])
                     if current_price < (line['level'] - self.max_bounce):
-                        print(f"[StrategyV2] 🗑️ REMOVE {sid} ({line['level']}) - Max bounce breach (Price {current_price} < {line['level'] - self.max_bounce})")
+                        msg = f"Price {current_price} < {line['level'] - self.max_bounce} (Max Bounce)"
+                        self.log_decision(bar_time, "1m", sid, "REMOVE", msg)
                         lines_to_remove.add(sid)
 
             # Next Line Breach Check
@@ -2925,14 +2936,14 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     for other in short_lines:
                         if other is line: continue
                         if line['level'] < other['level'] <= bar['high']:
-                            print(f"[StrategyV2] 🗑️ REMOVE {sid} - Hit higher resistance {other['level']}")
+                            self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit higher resistance {other['level']}")
                             lines_to_remove.add(sid)
                             break
                 elif line['direction'] == 'long':
                     for other in long_lines:
                         if other is line: continue
                         if line['level'] > other['level'] >= bar['low']:
-                            print(f"[StrategyV2] 🗑️ REMOVE {sid} - Hit lower support {other['level']}")
+                            self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit lower support {other['level']}")
                             lines_to_remove.add(sid)
                             break
 
@@ -2970,26 +2981,31 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
                 opened = False
                 proposed_ctx: Optional[EntryContext] = None
+                trigger_name = "None"
 
+                # 1. Check Triggers
                 for trig in self.triggers:
                     proposed_ctx = trig(self, sid, line, bar)
                     if proposed_ctx is not None:
-                        print(f"[StrategyV2] 🎯 TRIGGER MATCHED for {sid} on {bar.get('tf')}")
+                        trigger_name = trig.__name__
                         break
-                    # else:
-                    #     print(f"[StrategyV2] Trigger failed for {sid}")
-
+                
                 if proposed_ctx is None:
                     continue
 
+                # 2. Check Filters
                 allow, reason = self._filters_allow_entry(proposed_ctx)
+                
                 if allow:
-                    print(f"[StrategyV2] ✅ ENTRY ALLOWED: {bar.get('tf')} {proposed_ctx.direction}")
+                    self.log_decision(bar['time'], bar.get('tf'), sid, "ENTRY", 
+                        f"Trigger: {trigger_name} | Dir: {proposed_ctx.direction} | Price: {proposed_ctx.close}")
+                    
                     trade = self._build_trade_from_context(proposed_ctx)
                     self._store_and_emit_open(trade)
                     opened = True
                 else:
-                    print(f"[StrategyV2] ⛔ FILTER BLOCKED: {reason}")
+                    self.log_decision(bar['time'], bar.get('tf'), sid, "FILTER_BLOCK", 
+                        f"Trigger: {trigger_name} | Reason: {reason}")
                 
                 self._maybe_remove_line(sid, opened)
 ```
@@ -3046,9 +3062,9 @@ def wick_near_line_trigger(
 
     lvl = line["level"]
     
-    # Check for Line Interaction
+    # 1. Check for Line Interaction (Touch)
+    # If the bar doesn't touch the line, we don't care to log "why" it failed.
     if not (bar["high"] >= lvl >= bar["low"]):
-        # print(f"[Trigger] No touch: Lvl {lvl} not in [{bar['low']}, {bar['high']}]")
         return None
 
     o, h, l, c = bar["open"], bar["high"], bar["low"], bar["close"]
@@ -3059,8 +3075,12 @@ def wick_near_line_trigger(
     body_ratio = body / rng
     cfg = strategy.candle_config
 
+    # 2. Check Body Size
     if body_ratio > cfg.small_body_max_ratio:
-        print(f"[Trigger] Body too big: {body_ratio:.2f} > {cfg.small_body_max_ratio}")
+        strategy.log_decision(
+            bar['time'], bar.get('tf'), line_id, "WICK_FAIL", 
+            f"Body too big: {body_ratio:.2f} > Max {cfg.small_body_max_ratio}"
+        )
         return None
 
     upper_wick = h - max(o, c)
@@ -3068,15 +3088,22 @@ def wick_near_line_trigger(
     upper_ratio = upper_wick / rng
     lower_ratio = lower_wick / rng
 
+    # 3. Check Wick Size based on direction
     if dir_ == "long":
         if lower_ratio < cfg.wick_min_ratio:
-            print(f"[Trigger] Long wick too small: {lower_ratio:.2f} < {cfg.wick_min_ratio}")
+            strategy.log_decision(
+                bar['time'], bar.get('tf'), line_id, "WICK_FAIL", 
+                f"Long wick too small: {lower_ratio:.2f} < Min {cfg.wick_min_ratio}"
+            )
             return None
         true_extreme = min(line['extreme'], l)
         cross_depth = max(0.0, lvl - true_extreme)
     else:
         if upper_ratio < cfg.wick_min_ratio:
-            print(f"[Trigger] Short wick too small: {upper_ratio:.2f} < {cfg.wick_min_ratio}")
+            strategy.log_decision(
+                bar['time'], bar.get('tf'), line_id, "WICK_FAIL", 
+                f"Short wick too small: {upper_ratio:.2f} < Min {cfg.wick_min_ratio}"
+            )
             return None
         true_extreme = max(line['extreme'], h)
         cross_depth = max(0.0, true_extreme - lvl)
@@ -3114,6 +3141,7 @@ def three_candle_reversal_trigger(
     lvl = line["level"]
     cfg = strategy.candle_config
 
+    # Helper to calculate ratios
     def get_ratios(b):
         rng = b['high'] - b['low']
         if rng <= 0: return 0, 0, 0
@@ -3122,18 +3150,37 @@ def three_candle_reversal_trigger(
         lower = min(b['open'], b['close']) - b['low']
         return body/rng, upper/rng, lower/rng
 
+    # Only log failures if the Middle Candle (C2) is actually interacting with the line.
+    # Otherwise we spam logs for every random 3 candles.
+    c2_touches = (c2['high'] >= lvl >= c2['low'])
+    
+    if not c2_touches:
+        return None
+
     if dir_ == "short":
-        if c1['close'] <= c1['open']: return None
-        b1_ratio, _, _ = get_ratios(c1)
-        if b1_ratio < cfg.big_body_min_ratio: return None
+        # C1: Must be Bullish (Green)
+        # if c1['close'] <= c1['open']: 
+        #     strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C1 is not Bullish (Green)")
+        #     return None
+        
+        # b1_ratio, _, _ = get_ratios(c1)
+        # if b1_ratio < cfg.big_body_min_ratio: 
+        #     strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C1 Body {b1_ratio:.2f} < Min {cfg.big_body_min_ratio}")
+        #     return None
 
+        # C2: Hammer/Pinbar
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
-        if b2_ratio > cfg.hammer_body_max_ratio: return None
-        if b2_upper > cfg.hammer_nose_max_ratio: return None
+        if b2_ratio > cfg.hammer_body_max_ratio: 
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Body {b2_ratio:.2f} > Max {cfg.hammer_body_max_ratio}")
+            return None
+        if b2_upper > cfg.hammer_nose_max_ratio: 
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Nose {b2_upper:.2f} > Max {cfg.hammer_nose_max_ratio}")
+            return None
 
-        if not (c2['high'] >= lvl >= c2['low']): return None
-
-        if c3['close'] >= c3['open']: return None
+        # C3: Must be Bearish (Red)
+        if c3['close'] >= c3['open']: 
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C3 is not Bearish (Red)")
+            return None
 
         pattern_high = max(c1['high'], c2['high'], c3['high'])
         true_extreme = max(line['extreme'], pattern_high)
@@ -3153,17 +3200,29 @@ def three_candle_reversal_trigger(
         )
 
     elif dir_ == "long":
-        if c1['close'] >= c1['open']: return None
-        b1_ratio, _, _ = get_ratios(c1)
-        if b1_ratio < cfg.big_body_min_ratio: return None
+        # C1: Must be Bearish (Red)
+        # if c1['close'] >= c1['open']: 
+        #     strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C1 is not Bearish (Red)")
+        #     return None
+        
+        # b1_ratio, _, _ = get_ratios(c1)
+        # if b1_ratio < cfg.big_body_min_ratio: 
+        #     strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C1 Body {b1_ratio:.2f} < Min {cfg.big_body_min_ratio}")
+        #     return None
 
+        # C2: Hammer/Pinbar
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
-        if b2_ratio > cfg.hammer_body_max_ratio: return None
-        if b2_lower > cfg.hammer_nose_max_ratio: return None
+        if b2_ratio > cfg.hammer_body_max_ratio: 
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Body {b2_ratio:.2f} > Max {cfg.hammer_body_max_ratio}")
+            return None
+        if b2_lower > cfg.hammer_nose_max_ratio: 
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Nose {b2_lower:.2f} > Max {cfg.hammer_nose_max_ratio}")
+            return None
 
-        if not (c2['high'] >= lvl >= c2['low']): return None
-
-        if c3['close'] <= c3['open']: return None
+        # C3: Must be Bullish (Green)
+        if c3['close'] <= c3['open']: 
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C3 is not Bullish (Green)")
+            return None
 
         pattern_low = min(c1['low'], c2['low'], c3['low'])
         true_extreme = min(line['extreme'], pattern_low)
@@ -3329,7 +3388,7 @@ def build_prod():
     bps       = float(os.environ.get("BARS_PER_SECOND", 10.0))
 
     initial_start = datetime.fromisoformat(start_iso) if start_iso else datetime.fromisoformat("2024-04-01T00:00:00+00:00")
-    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-07-03T10:45:00+00:00")
+    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-07-31T10:45:00+00:00")
 
     # 3. Data Source
     ds = CSVDataSource(
@@ -3580,6 +3639,11 @@ def create_app(
         emit('jump_result', {'to': ts})
 
     # --- TEST RUNNER HELPERS ---
+    @app.route('/api/debug/logs', methods=['GET'])
+    def get_debug_logs():
+        """Return the decision logs from the strategy."""
+        return jsonify(tstrategy.decision_logs)
+    
     @app.route('/__reset_all', methods=['POST'])
     def reset_all():
         """Clears all state, resets DataSource range, AND warms up strategy."""
@@ -4458,12 +4522,6 @@ if __name__ == "__main__":
 #!/usr/bin/env python3
 """
 High-Performance Scenario Runner with Dependency Injection.
-
-Features:
-1. Injects FakeLineRepository and FakeTradeRepository (In-Memory).
-2. Uses EXACTLY the same StrategyOptions/CandleConfig as Production (via src.prod_config).
-3. Spawns a dedicated server process per test suite to ensure clean state.
-4. Uses Playwright for end-to-end verification.
 """
 
 import argparse
@@ -4475,7 +4533,7 @@ import os
 import signal
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from multiprocessing import Process, Event
 
@@ -4485,13 +4543,12 @@ from dateutil import parser as dtparser
 from playwright.async_api import async_playwright
 
 # -------------------------------------------------------------------------
-# PATH SETUP: Ensure we can import from project root
+# PATH SETUP
 # -------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-# --- Project Imports ---
 from app_factory import create_app, Repositories
 from src.data_sources.csv_datasource import CSVDataSource
 from src.prod_config import (
@@ -4499,38 +4556,26 @@ from src.prod_config import (
     get_prod_candle_config,
     get_prod_strategy_options
 )
-# Use Fakes instead of SQL
 from tests.fakes import FakeLineRepository, FakeTradeRepository
 
 APP_HOST = "127.0.0.1"
-
-# Timezones must match src/data_sources/csv_datasource.py
 PAIR_TZS = {
     'EURUSD': 'Europe/London',
     'NQ':     'America/Chicago',
 }
 
 # -------------------------------------------------------------------------
-# Server Process Logic (The "App" in Test Mode)
+# Server Process Logic
 # -------------------------------------------------------------------------
 
 def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event):
-    """
-    Entry point for the background process.
-    Constructs the app with Mock Repos + Real Strategy Logic.
-    """
-    # 1. Configure Environment for Test Mode
-    # We want the BACKEND to remove the line after evaluation so it doesn't trigger twice.
-    # The FRONTEND will ignore this removal command because of ?keep_lines=true.
     os.environ["LINE_REMOVAL_MODE"] = "ON_EVALUATE"
 
-    # 2. Mocks (InMemory)
     repos = Repositories(
         lines=FakeLineRepository(),
         trades=FakeTradeRepository()
     )
 
-    # 3. Data Source (Real CSV logic)
     ds = CSVDataSource(
         pair="NQ",
         filename=csv_path,
@@ -4539,12 +4584,10 @@ def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_even
         bars_per_second=bars_per_second,
     )
 
-    # 4. Strategy Logic (EXACT Match with Production)
     numbers = get_prod_strategy_numbers()
     candle_config = get_prod_candle_config()
     options = get_prod_strategy_options(numbers.max_bounce)
 
-    # 5. Build App
     wiring = create_app(
         pair="NQ",
         data_source=ds,
@@ -4553,18 +4596,15 @@ def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_even
         options=options,
         candle_config=candle_config,
         timeframes=["5m", "15m"],
-        bootstrap_existing_lines=False, # No DB lines to load
+        bootstrap_existing_lines=False,
     )
 
-    # Signal parent that we are about to start
     ready_event.set()
 
-    # Disable generic Flask logs to keep console clean
     import logging
     log = logging.getLogger('werkzeug')
     log.setLevel(logging.ERROR)
 
-    # allow_unsafe_werkzeug=True is required for non-debug mode in recent Flask-SocketIO
     wiring.socketio.run(
         wiring.app, 
         host=APP_HOST, 
@@ -4582,7 +4622,6 @@ def sanitize(name: str) -> str:
     return "".join(c if c.isalnum() or c in ("-","_"," ") else "_" for c in name).strip().replace(" ", "_")
 
 def _parse_yaml_dt(s: str) -> datetime:
-    # FIX: Do not strip tzinfo here; let get_epoch handle it
     return dtparser.parse(s)
 
 def parse_line_spec(line_row: Any) -> Dict[str, Any]:
@@ -4624,7 +4663,6 @@ def wait_http_ok(url, timeout=30):
         time.sleep(0.2)
     raise TimeoutError(f"Server at {url} did not start.")
 
-# FIX: Updated to accept creation_time
 def add_line_http(base_url: str, pair: str, price: float, creation_time: float = None):
     payload = {"pair": pair, "price": float(price)}
     if creation_time is not None:
@@ -4648,7 +4686,6 @@ def reset_app_state(base_url: str, start=None, end=None):
         return False
 
 def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]:
-    # 1. Check for explicit "No Trade" expectation
     if expect and expect.get("none") is True:
         if not trades:
             return "PASS", "Correctly had no trades", ""
@@ -4657,16 +4694,13 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
             entry = t.get("entry") or t.get("entry_price")
             return "FAIL", f"Expected NO trades, but got {len(trades)}", f"(Got trade @ {entry})"
 
-    # 2. Default: We expect at least one trade
     if not trades:
         return "FAIL", "No trades opened", ""
     
     trade = trades[0]
     entry = trade.get("entry") or trade.get("entry_price")
-    sl    = trade.get("stop_loss") or trade.get("stopLoss") or trade.get("sl")
-    tp    = trade.get("take_profit") or trade.get("takeProfit") or trade.get("tp")
     
-    values_str = f"(Entry: {entry}, Orig SL: {sl}, TP: {tp})"
+    values_str = f"(Entry: {entry}, Orig SL: {trade.get('stop_loss')}, TP: {trade.get('take_profit')})"
 
     if not expect:
         return "PASS", "Matches expectations", values_str
@@ -4701,6 +4735,43 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
     
     return "PASS", "Matches expectations", values_str
 
+# -------------------------------------------------------------------------
+# Log Printer
+# -------------------------------------------------------------------------
+
+def print_detailed_summary(logs: List[Dict], pair_tz: ZoneInfo):
+    if not logs:
+        print("   ℹ️  No decision logs recorded.")
+        return
+
+    print("\n   📋 SCENARIO DECISION LOG:")
+    # CHANGED: Header now indicates UTC
+    print(f"   {'TIME (UTC)':<20} | {'TF':<4} | {'LINE':<5} | {'EVENT':<15} | {'DETAILS'}")
+    print("   " + "-"*110)
+
+    for log in logs:
+        ts = log.get("time", 0)
+        # CHANGED: Use UTC directly, do not convert to pair_tz
+        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+        t_str = dt.strftime("%Y-%m-%d %H:%M:%S")
+        
+        tf = log.get("tf", "--")
+        lid = log.get("line_id", "")
+        evt = log.get("event", "")
+        det = log.get("details", "")
+
+        # Color coding for console
+        if evt == "ENTRY":
+            evt = f"\033[92m{evt}\033[0m" # Green
+        elif evt == "FILTER_BLOCK":
+            evt = f"\033[93m{evt}\033[0m" # Yellow
+        elif evt == "REMOVE":
+            evt = f"\033[91m{evt}\033[0m" # Red
+        elif "FAIL" in evt:
+            evt = f"\033[90m{evt}\033[0m" # Gray
+
+        print(f"   {t_str:<20} | {tf:<4} | {lid:<5} | {evt:<24} | {det}")
+    print("\n")
 
 # -------------------------------------------------------------------------
 # Test Runner
@@ -4709,26 +4780,20 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
 async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     print(f"🚀 Launching In-Memory Test Server with {csv_path}...")
 
-    # Construct Base URL based on args
     base_url = f"http://{APP_HOST}:{args.port}"
-
-    # Event to know when Flask is ready
     server_ready = Event()
 
-    # Spawn the server process
     server_proc = Process(
         target=run_test_server, 
         args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready)
     )
     server_proc.start()
 
-    # Wait for ready signal
     if not server_ready.wait(timeout=10):
         print("❌ Server failed to start within timeout.")
         server_proc.terminate()
         return
 
-    # Wait for HTTP 200 (double check)
     try:
         wait_http_ok(f"{base_url}/api/pair")
     except TimeoutError:
@@ -4736,38 +4801,14 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         server_proc.terminate()
         return
 
-    # 1. Prepare Timezone logic
     pair_resp = requests.get(f"{base_url}/api/pair").json()
     pair_name = pair_resp['pair']
     pair_tz = ZoneInfo(PAIR_TZS.get(pair_name, 'UTC'))
     print(f"✅ Test Server running ({pair_name}) at {base_url}. Timezone: {pair_tz}")
 
-    # 2. Naive CSV read for index mapping (client-side helper)
-    all_dts_naive = []
-    try:
-        with open(csv_path, newline="", encoding="utf-8") as f:
-            sample = f.read(4096); f.seek(0)
-            try: dialect = csv.Sniffer().sniff(sample, delimiters=",;")
-            except: dialect = csv.excel(); dialect.delimiter=";"
-            rdr = csv.DictReader(f, dialect=dialect)
-            for row in rdr:
-                all_dts_naive.append(datetime.strptime(
-                    f"{row['Date']} {row['Time']}".strip(), 
-                    "%d/%m/%Y %H:%M:%S"
-                ))
-    except Exception as e:
-        print(f"⚠️ Error reading CSV for index map: {e}")
-
-    # 3. Build Index Map
-    idx_map = {}
-    for i, dt_naive in enumerate(all_dts_naive):
-        dt_aware = dt_naive.replace(tzinfo=pair_tz)
-        ts = int(dt_aware.timestamp())
-        idx_map[ts] = i
-
+    # Index Map logic
     def get_epoch(dt_str):
-        dt = _parse_yaml_dt(dt_str)
-        # FIX: Only attach pair_tz if the string didn't specify one
+        dt = dtparser.parse(dt_str)
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=pair_tz)
         return int(dt.timestamp())
@@ -4790,36 +4831,26 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 end_ts   = get_epoch(sc["end"])
                 tf       = sc.get("tf", "5m")
 
-                # Reset the In-Memory App
                 if not reset_app_state(base_url, start=start_ts - 172800, end=start_ts - 1):
                     print("❌ Reset failed")
                     continue
                 
-                # Add Lines (HTTP)
                 lines = [parse_line_spec(l) for l in sc.get("lines", [])]
                 for l in lines:
-                    # FIX: Parse 'at' time using the same timezone logic as start/end
                     c_ts = None
                     if l["at_raw"]:
                         c_ts = get_epoch(l["at_raw"])
-                        print(f"   -> Line {l['level']} scheduled at {l['at_raw']} (Epoch: {c_ts})")
-                    
-                    if not add_line_http(base_url, pair_name, l["level"], creation_time=c_ts):
-                        print(f"❌ Failed to add line {l['level']}")
+                    add_line_http(base_url, pair_name, l["level"], creation_time=c_ts)
 
-                # Load Page with keep_closed_trades=true
                 view_start_ts = start_ts - 86400
-                # FIX: Added &keep_closed_trades=true
                 await page.goto(f"{base_url}/?start_time={view_start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}", wait_until="domcontentloaded")
 
-                # Inject Test Listeners
                 await page.evaluate("""
                     window.__done = false;
                     window.__trades = [];
                     const sock = (window.io && window.io()) || window.socket;
                     if (!sock) throw new Error("Socket.IO not found");
                     window.socket = sock;
-
                     sock.on('trade_open', (t) => {
                         window.__trades.push(t);
                         
@@ -4841,23 +4872,27 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     sock.on('stream_end', () => { window.__done = true; });
                 """)
 
-                # Start Stream
                 await page.evaluate(
                     """(p) => window.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
                     {"tf": tf, "start": start_ts, "end": end_ts}
                 )
 
-                # Wait for completion
                 try:
                     await page.wait_for_function("() => window.__done === true", timeout=120000)
                 except Exception as e:
                     print(f"❌ Timeout waiting for stream end: {e}")
 
-                # Check Results
                 captured_trades = await page.evaluate("window.__trades")
                 status, reason, values = check_expectations(sc.get("expect"), captured_trades)
                 summary_results.append({"name": name, "status": status, "reason": reason, "values": values})
                 print(f"   [{status}] {reason} {values}")
+
+                if sc.get("export_summary", False):
+                    try:
+                        logs = requests.get(f"{base_url}/api/debug/logs", timeout=2).json()
+                        print_detailed_summary(logs, pair_tz)
+                    except Exception as e:
+                        print(f"   ⚠️ Failed to fetch summary logs: {e}")
 
                 if sc.get("snapshot", True):
                     try:
@@ -4911,7 +4946,6 @@ def main():
     scenarios = ydoc.get("scenarios", [])
     if not scenarios:
         print(f"⚠️  No 'scenarios' key found in YAML or list is empty.")
-        print(f"   Found keys: {list(ydoc.keys())}")
         return
 
     print(f"✅ Found {len(scenarios)} scenarios. Starting runner...")
