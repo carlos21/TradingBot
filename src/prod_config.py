@@ -2,7 +2,12 @@ from src.strategies.base_liquidity_strategy import BreakevenConfig
 from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
 from src.strategies.entry_context import open_trades_limit_filter, max_bounce_filter
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
-from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger, double_5m_cross_trigger
+from src.strategies.triggers import (
+    three_candle_reversal_trigger, 
+    wick_near_line_trigger,
+    double_5m_cross_trigger,
+    trigger_with_timeframes
+)
 import os
 
 def get_prod_strategy_numbers() -> StrategyNumbers:
@@ -28,9 +33,14 @@ def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
             max_bounce_filter(max_bounce)
         ],
         triggers=[
-            three_candle_reversal_trigger,
-            double_5m_cross_trigger,
-            wick_near_line_trigger
+            # 1. Three Candle Reversal -> ONLY 15m
+            trigger_with_timeframes(three_candle_reversal_trigger, ['5m', '15m','30m', '1h']),
+            
+            # 2. Double Cross -> ONLY 5m
+            trigger_with_timeframes(double_5m_cross_trigger, ['5m']),
+            
+            # 3. Wick Near Line -> 5m AND 15m (Lowest Priority)
+            trigger_with_timeframes(wick_near_line_trigger, ['5m', '15m'])
         ],
         breakeven=BreakevenConfig(
             trigger_rr=2.0, 

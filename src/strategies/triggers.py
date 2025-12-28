@@ -1,5 +1,17 @@
-from typing import Any, Dict, Optional
-from src.strategies.entry_context import EntryContext
+from typing import Any, Dict, Optional, List
+from src.strategies.entry_context import EntryContext, EntryTrigger
+
+def trigger_with_timeframes(trigger_func: EntryTrigger, timeframes: List[str]) -> EntryTrigger:
+    """
+    Returns a new trigger that only executes if the bar's timeframe is in the allowed list.
+    """
+    def wrapper(strategy, line_id, line, bar) -> Optional[EntryContext]:
+        if bar.get('tf') not in timeframes:
+            return None
+        return trigger_func(strategy, line_id, line, bar)
+    
+    wrapper.__name__ = trigger_func.__name__
+    return wrapper
 
 def wick_near_line_trigger(
     strategy: "LiquidityStrategyV2",
@@ -174,58 +186,68 @@ def double_5m_cross_trigger(
 ) -> Optional[EntryContext]:
     """
     Logic:
-    1. First 5m candle breaks back through the line (Stage 1).
-    2. Price comes back down/reverses through the line (Stage 2).
-    3. Another 5m candle breaks back through the line (Trigger).
+    1. Dip below the line (Stage 0 -> 1)
+    2. 5m bar closing above the line (Stage 1 -> 2)
+    3. Dip below the line (Stage 2 -> 3)
+    4. Second 5m bar closing above the line (Stage 3 -> Trigger)
+       * MUST have Open < Level (Body Cross)
     """
     
-    # Only run on 5m bars
-    if bar.get('tf') != '5m':
-        return None
-
+    tf = bar.get('tf', 'unknown')
     dir_ = line.get("direction")
     if dir_ is None: return None
 
     lvl = line["level"]
     close = bar["close"]
+    open_ = bar["open"]
+    low = bar["low"]
+    high = bar["high"]
     
-    # Initialize state if not present
-    # d5_stage: 0=Waiting, 1=FirstBreak, 2=Retest/Dip
+    # State: d5_stage
+    # 0: Waiting for 1st Dip
+    # 1: Waiting for 1st Close Back
+    # 2: Waiting for 2nd Dip
+    # 3: Waiting for 2nd Close Back (Trigger)
+
     if "d5_stage" not in line:
         line["d5_stage"] = 0
 
     stage = line["d5_stage"]
 
     if dir_ == "long":
-        # We are looking for breaks ABOVE the line
+        # --- LONG LOGIC ---
         
+        # 1. Initial Dip
         if stage == 0:
-            # Waiting for FIRST break UP
-            if close > lvl:
+            if low < lvl:
                 line["d5_stage"] = 1
-                strategy.log_decision(bar['time'], "5m", line_id, "D5_STAGE_1", f"First 5m Close > {lvl}")
+                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_1", f"1. Initial Dip < {lvl}")
+                stage = 1 # Allow fallthrough
         
-        elif stage == 1:
-            # Waiting for price to come BACK DOWN (Retest)
-            # We require a 5m CLOSE back below to confirm the 'dip' clearly
-            if close < lvl:
-                line["d5_stage"] = 2
-                strategy.log_decision(bar['time'], "5m", line_id, "D5_STAGE_2", f"Dip: 5m Close < {lvl}")
-            elif close > lvl:
-                # It stayed above. Depending on strictness, we might keep waiting or reset.
-                # For now, we stay in Stage 1 (it's still 'broken out', hasn't dipped yet).
-                pass
-
-        elif stage == 2:
-            # Waiting for SECOND break UP (Trigger)
+        # 2. First Close Above
+        if stage == 1:
             if close > lvl:
+                line["d5_stage"] = 2
+                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_2", f"2. 1st Close > {lvl}")
+                # STOP HERE. Wait for new dip in subsequent bars.
+                return None 
+
+        # 3. Second Dip
+        if stage == 2:
+            if low < lvl:
+                line["d5_stage"] = 3
+                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_3", f"3. 2nd Dip < {lvl}")
+                stage = 3 # Allow fallthrough
+
+        # 4. Second Close Above (Trigger)
+        if stage == 3:
+            # Must Close Above AND Open Below (Body Cross)
+            if close > lvl and open_ < lvl:
                 # TRIGGER
-                true_extreme = min(line['extreme'], bar['low'])
+                true_extreme = min(line['extreme'], low)
                 cross_depth = max(0.0, lvl - true_extreme)
                 
-                # Reset stage in case filter blocks it, so it doesn't trigger immediately next bar
-                # (Unless strategy removes the line, which it usually does on entry)
-                line["d5_stage"] = 0 
+                line["d5_stage"] = 0 # Reset
                 
                 return EntryContext(
                     strategy=strategy,
@@ -234,35 +256,43 @@ def double_5m_cross_trigger(
                     level=lvl,
                     bar=bar,
                     close=close,
-                    low=bar['low'],
-                    high=bar['high'],
+                    low=low,
+                    high=high,
                     extreme=true_extreme,
                     cross_depth=cross_depth
                 )
-            elif close < lvl:
-                # Still down, waiting...
-                pass
 
     elif dir_ == "short":
-        # We are looking for breaks BELOW the line
+        # --- SHORT LOGIC ---
 
+        # 1. Initial Pop
         if stage == 0:
-            # Waiting for FIRST break DOWN
-            if close < lvl:
+            if high > lvl:
                 line["d5_stage"] = 1
-                strategy.log_decision(bar['time'], "5m", line_id, "D5_STAGE_1", f"First 5m Close < {lvl}")
+                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_1", f"1. Initial Pop > {lvl}")
+                stage = 1
 
-        elif stage == 1:
-            # Waiting for price to come BACK UP
-            if close > lvl:
-                line["d5_stage"] = 2
-                strategy.log_decision(bar['time'], "5m", line_id, "D5_STAGE_2", f"Retest: 5m Close > {lvl}")
-        
-        elif stage == 2:
-            # Waiting for SECOND break DOWN (Trigger)
+        # 2. First Close Below
+        if stage == 1:
             if close < lvl:
+                line["d5_stage"] = 2
+                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_2", f"2. 1st Close < {lvl}")
+                # STOP HERE.
+                return None
+
+        # 3. Second Pop
+        if stage == 2:
+            if high > lvl:
+                line["d5_stage"] = 3
+                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_3", f"3. 2nd Pop > {lvl}")
+                stage = 3
+
+        # 4. Second Close Below (Trigger)
+        if stage == 3:
+            # Must Close Below AND Open Above (Body Cross)
+            if close < lvl and open_ > lvl:
                 # TRIGGER
-                true_extreme = max(line['extreme'], bar['high'])
+                true_extreme = max(line['extreme'], high)
                 cross_depth = max(0.0, true_extreme - lvl)
                 
                 line["d5_stage"] = 0
@@ -274,8 +304,8 @@ def double_5m_cross_trigger(
                     level=lvl,
                     bar=bar,
                     close=close,
-                    low=bar['low'],
-                    high=bar['high'],
+                    low=low,
+                    high=high,
                     extreme=true_extreme,
                     cross_depth=cross_depth
                 )

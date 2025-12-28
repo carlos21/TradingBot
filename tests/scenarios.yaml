@@ -27,7 +27,7 @@ scenarios:
 
   - name: "NQ - 2024-04-24"
     pair: "NQ"
-    tf: "15m"
+    tf: "5m"
     start: "2024-04-24 01:00:00Z"
     end:   "2024-04-26 03:00:00Z"
     lines:
@@ -38,6 +38,7 @@ scenarios:
       tp:    17663.75
       tolerance: 0.25
     snapshot: true
+    export_summary: true
 
   - name: "NQ - 2024-05-01"
     pair: "NQ"
@@ -77,7 +78,7 @@ scenarios:
     expect:
       entry: 20216.00
       sl:    20205.00
-      tp:    20260.00
+      tp:    20260
       tolerance: 0.25
     snapshot: true
 
@@ -89,9 +90,8 @@ scenarios:
     lines:
       - { price: 19653.02, at: "2024-07-31 09:00:00Z" }
     expect:
-      entry: 20216.00
-      sl:    20205.00
-      tp:    20260.00
+      entry: 19634.75
+      sl:    19717.00
+      tp:    19305.75
       tolerance: 0.25
     snapshot: true
-    export_summary: true
