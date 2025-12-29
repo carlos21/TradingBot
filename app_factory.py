@@ -242,7 +242,11 @@ def create_app(
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
-            # 4. Reset DataSource history
+            # 4. Clear Trades (Fix for leaking trades between scenarios)
+            if hasattr(repos.trades, 'clear'):
+                repos.trades.clear()
+
+            # 5. Reset DataSource history
             data = request.get_json() or {}
             start_ts = data.get('start_time')
             end_ts   = data.get('end_time')
@@ -253,7 +257,7 @@ def create_app(
                 except TypeError:
                     data_source.reset()
 
-            # 5. WARM UP STRATEGY (Without lines)
+            # 6. WARM UP STRATEGY (Without lines)
             played = getattr(data_source, '_played_bars', [])
             if played:
                 print(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")

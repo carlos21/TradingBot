@@ -14,7 +14,6 @@ class DummySocketIO:
         return target(*args, **kwargs)
 
     def run(self, app, **kwargs):
-        # Allow calling run() in tests, though usually we mock it out
         pass
 
 @dataclass
@@ -30,7 +29,6 @@ class FakeLineRepository:
         self._store = {}
 
     def list_lines(self, pair: str) -> List[LineData]:
-        # Must return LineData objects, not internal _Line dicts
         results = []
         for obj in self._store.values():
             if obj.pair == pair:
@@ -45,7 +43,6 @@ class FakeLineRepository:
     def insert_line(self, pair, price, creation_date=None) -> LineData:
         self._seq += 1
         lid = f"L{self._seq}"
-        # Use passed date or fallback
         c_date = creation_date if creation_date else datetime.utcnow()
         obj = _Line(lid, pair, price, c_date)
         self._store[lid] = obj
@@ -60,7 +57,6 @@ class FakeLineRepository:
     def delete_line(self, line_id):
         if line_id in self._store:
             del self._store[line_id]
-        # Silent ignore if missing, matching some DB behaviors or strict if needed
 
 class FakeTradeRepository:
     def __init__(self):
@@ -68,11 +64,16 @@ class FakeTradeRepository:
         self.inserted = [] 
         self.closed   = [] 
 
+    def clear(self):
+        """Wipe all data for a fresh scenario."""
+        self._seq = 0
+        self.inserted = []
+        self.closed = []
+
     def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None):
         self._seq += 1
         trade_id = f"T{self._seq}"
         
-        # Create a mock object that mimics the SQL Alchemy model return
         class MockTradeData:
             def __init__(self, tid): self.trade_id = tid
 
@@ -84,7 +85,7 @@ class FakeTradeRepository:
             "stop_loss": stop_loss,
             "take_profit": take_profit,
             "risk": risk,
-            "entry_time": entry_time,  # <--- Storing entry_time
+            "entry_time": entry_time,
             "params": params
         })
         return MockTradeData(trade_id)
@@ -99,18 +100,16 @@ class FakeTradeRepository:
         self.closed.append({
             "trade_id": trade_id,
             "exit_price": exit_price,
-            "exit_time": exit_time,    # <--- Storing exit_time
+            "exit_time": exit_time,
             "result": result
         })
 
     def list_trades(self, pair: str) -> List[TradeData]:
-        """Return all trades for a given symbol."""
         results = []
         for t in self.inserted:
             if t['pair'] != pair:
                 continue
             
-            # Check if closed
             closed_info = next((c for c in self.closed if c['trade_id'] == t['trade_id']), None)
             
             exit_price = closed_info['exit_price'] if closed_info else None
