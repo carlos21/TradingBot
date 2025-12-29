@@ -1,6 +1,8 @@
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Callable, Sequence, Optional, Tuple, Dict, Any, List
+from zoneinfo import ZoneInfo
 
 
 @dataclass
@@ -43,169 +45,56 @@ def max_bounce_filter(max_bounce: float) -> EntryFilter:
         return ok, f"depth {ctx.cross_depth:.5f} > max_bounce {max_bounce}"
     return _f
 
+def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: str = "America/Chicago") -> EntryFilter:
+    """
+    Blocks entries outside the specific time range (inclusive).
+    :param start_time_str: "HH:MM" (24-hour format), e.g., "09:30"
+    :param end_time_str: "HH:MM" (24-hour format), e.g., "17:00"
+    :param timezone_str: Timezone to evaluate the bar time in.
+    """
+    tz = ZoneInfo(timezone_str)
+    t_start = datetime.strptime(start_time_str, "%H:%M").time()
+    t_end = datetime.strptime(end_time_str, "%H:%M").time()
 
-def htf_big_body_exception_filter(
-    fetch_htf_bar,      # Callable(pair: str, tf: str) -> Optional[dict]
-    tf: str = '15m',
-    body_ratio: float = 0.7  # body / range threshold to call it “big body”
-) -> EntryFilter:
-    """
-    Blocks longs on strongly bearish HTF bars and blocks shorts on strongly bullish HTF bars.
-    You supply `fetch_htf_bar(pair, tf)` that returns {'open','high','low','close'} or None.
-    """
     def _f(ctx: EntryContext) -> Tuple[bool, str]:
-        h = fetch_htf_bar(ctx.bar['pair'], tf)
-        if not h:
-            return True, "no-htf"
+        # Convert bar timestamp (epoch) to target timezone
+        bar_dt = datetime.fromtimestamp(ctx.bar['time'], tz=tz)
+        bar_time = bar_dt.time()
 
-        rng = (h['high'] - h['low'])
-        if rng <= 0:
-            return True, "zero-range-htf"
-
-        body = abs(h['close'] - h['open'])
-        ratio = body / rng
-
-        # classify bar direction
-        bull = h['close'] > h['open']
-        bear = h['close'] < h['open']
-
-        if ratio >= body_ratio:
-            if ctx.direction == 'long' and bear:
-                return False, f"HTF({tf}) big bearish body ratio={ratio:.2f}"
-            if ctx.direction == 'short' and bull:
-                return False, f"HTF({tf}) big bullish body ratio={ratio:.2f}"
-        return True, "ok"
+        if t_start <= bar_time <= t_end:
+            return True, "ok"
+        
+        return False, f"Time {bar_time} outside {t_start}-{t_end} ({timezone_str})"
     return _f
 
-def retest_cross_trigger(strategy, line_id, line, bar) -> Optional[EntryContext]:
+
+def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str = "America/Chicago") -> EntryFilter:
     """
-    Stateful trigger that:
-      - tracks cross against the level
-      - records the extreme (min for long, max for short) while across the level
-      - proposes an entry when price returns through the level
-    Mirrors existing behavior.
+    Blocks entries if the number of trades taken TODAY (in the given timezone) >= limit.
+    Counts both open and closed trades.
     """
-    lvl       = line['level']
-    dir_      = line['direction']  # 'long' | 'short'
-    close     = bar['close']
-    low, high = bar['low'], bar['high']
+    tz = ZoneInfo(timezone_str)
 
-    if dir_ == 'long':
-        # Track cross + extreme
-        if close < lvl:
-            line['has_crossed'] = True
-            line['extreme']     = min(line['extreme'], low)
-        # Propose when retests back above
-        if line.get('has_crossed') and close >= lvl:
-            depth = lvl - line['extreme']  # how deep below the level
-            return EntryContext(
-                strategy=strategy,
-                line_id=line_id,
-                direction='long',
-                level=lvl,
-                bar=bar,
-                close=close,
-                low=low,
-                high=high,
-                extreme=line['extreme'],
-                cross_depth=depth
-            )
-        return None
+    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+        # 1. Determine the "current day" of the bar being processed
+        current_bar_dt = datetime.fromtimestamp(ctx.bar['time'], tz=tz)
+        current_day_date = current_bar_dt.date()
 
-    else:  # short
-        if close > lvl:
-            line['has_crossed'] = True
-            line['extreme']     = max(line['extreme'], high)
-        if line.get('has_crossed') and close <= lvl:
-            depth = line['extreme'] - lvl  # how deep above the level
-            return EntryContext(
-                strategy=strategy,
-                line_id=line_id,
-                direction='short',
-                level=lvl,
-                bar=bar,
-                close=close,
-                low=low,
-                high=high,
-                extreme=line['extreme'],
-                cross_depth=depth
-            )
-        return None
-    
+        # 2. Fetch all trades from repository (includes open and closed)
+        # Note: This fetches from DB/Memory. If performance is an issue with thousands of trades, 
+        # this logic might need optimization, but for day trading it's usually fine.
+        all_trades = ctx.strategy.trade_repository.list_trades(ctx.bar['pair'])
 
-def candle_pattern_near_line_filter(
-    fetch_htf_bars: Callable[[str, str, int, Optional[int]], List[Dict[str, Any]]],
-    tfs: Sequence[str] = ('5m', '15m', '1h'),
-    proximity_abs: Optional[float] = None,     # if None → falls back to strategy.min_stop_loss
-    strong_body_min_ratio: float = 0.75,       # candle1: body/range ≥ this
-    small_body_max_ratio: float  = 0.25,       # candle2: body/range ≤ this
-    wick_ratio: float            = 0.25,       # candle2: "small" wick / range ≤ this
-) -> 'EntryFilter':
-    """
-    Two-candle pattern near the line, simplified:
+        # 3. Count trades that occurred on this specific day
+        daily_count = 0
+        for t in all_trades:
+            # t.entry_time is UTC-aware datetime. Convert to strategy timezone.
+            trade_local_dt = t.entry_time.astimezone(tz)
+            if trade_local_dt.date() == current_day_date:
+                daily_count += 1
 
-      SHORT:
-        C1 strong bullish body; C2 tiny body; C2 *upper* wick <= wick_ratio (body at top)
-
-      LONG:
-        C1 strong bearish body; C2 tiny body; C2 *lower* wick <= wick_ratio (body at bottom)
-
-    Pattern must appear on any TF in `tfs`, and the second candle must be within `proximity_abs`
-    of the line level (distance to any of O/H/L/C). `fetch_htf_bars(pair, tf, n=2, upto)`
-    returns last 2 bars up to `upto` inclusive.
-    """
-    def _body(o, c): return abs(c - o)
-    def _range(h, l): return max(h - l, 0.0)
-    def _upper_wick(o, h, c): return h - max(o, c)
-    def _lower_wick(o, l, c): return min(o, c) - l
-
-    def _near(level: float, b: Dict[str, Any], prox: float) -> float:
-        # min distance from level to any candle print
-        return min(abs(level - b[k]) for k in ('open', 'high', 'low', 'close'))
-
-    def _strong_c1(direction: str, b: Dict[str, Any]) -> bool:
-        o, h, l, c = b['open'], b['high'], b['low'], b['close']
-        rng = _range(h, l)
-        if rng <= 0: return False
-        bod_ratio = _body(o, c) / rng
-        if direction == 'short':   # want strong bullish first candle
-            return c > o and bod_ratio >= strong_body_min_ratio
-        else:                      # 'long': want strong bearish first candle
-            return c < o and bod_ratio >= strong_body_min_ratio
-
-    def _tiny_c2_with_small_wick(direction: str, b: Dict[str, Any]) -> bool:
-        o, h, l, c = b['open'], b['high'], b['low'], b['close']
-        rng = _range(h, l)
-        if rng <= 0: return False
-        bod_ratio = _body(o, c) / rng
-        if bod_ratio > small_body_max_ratio:
-            return False
-        if direction == 'short':
-            uw_ratio = _upper_wick(o, h, c) / rng
-            return uw_ratio <= wick_ratio
-        else:  # long
-            lw_ratio = _lower_wick(o, l, c) / rng
-            return lw_ratio <= wick_ratio
-
-    def _f(ctx: 'EntryContext') -> Tuple[bool, str]:
-        pair   = ctx.bar['pair']
-        now_ts = ctx.bar['time']
-        level  = ctx.level
-        prox   = proximity_abs if proximity_abs is not None else getattr(ctx.strategy, 'min_stop_loss', 0.0)
-
-        for tf in tfs:
-            bars = fetch_htf_bars(pair, tf, n=2, upto=now_ts) or []
-            if len(bars) < 2:
-                continue
-            c1, c2 = bars[-2], bars[-1]
-
-            if not _strong_c1(ctx.direction, c1):
-                continue
-            if not _tiny_c2_with_small_wick(ctx.direction, c2):
-                continue
-
-            if _near(level, c2, prox) <= prox:
-                return True, f"pattern ok on {tf} within {prox}"
-        return False, "no simple two-candle pattern near line"
-
+        if daily_count < max_trades_per_day:
+            return True, f"daily_count {daily_count} < {max_trades_per_day}"
+        
+        return False, f"Daily limit reached: {daily_count} >= {max_trades_per_day}"
     return _f

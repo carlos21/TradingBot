@@ -521,6 +521,13 @@ class TradesController:
     def list_trades(self, pair: str):
         """Return all trades (open and closed) for the pair."""
         trades = self.trade_manager.trade_repository.list_trades(pair)
+        
+        # --- DEBUG LOG ---
+        print(f"[TradesController] list_trades('{pair}') found {len(trades)} trades.")
+        for i, t in enumerate(trades):
+            print(f"  [{i}] ID={t.trade_id} EntryTime={t.entry_time.timestamp()} ExitTime={t.exit_time.timestamp() if t.exit_time else 'None'}")
+        # -----------------
+
         data = []
         for t in trades:
             data.append({
@@ -563,6 +570,7 @@ class TradesController:
         
         # FIX: Use virtual time so the trade appears on the chart
         entry_time = self._get_virtual_now()
+        print(f"[TradesController] Opening Trade at Virtual Time: {entry_time}")
         
         trade = self.trade_manager.open_trade(
             pair, trade_type, entry_price,
@@ -588,6 +596,7 @@ class TradesController:
 
         # FIX: Use virtual time
         exit_time = self._get_virtual_now()
+        print(f"[TradesController] Closing Trade {trade_id} at Virtual Time: {exit_time}")
 
         payload = self.trade_manager.close_trade(trade_id, exit_price, exit_time)
 
@@ -1617,7 +1626,7 @@ class SQLLineRepository(LineRepository):
 ```python
 from abc import ABC, abstractmethod
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from src.database.database import Trade, Line, get_db_session
 from src.dbexception import DBException, DBNotFoundException
 from src.models import TradeData
@@ -1666,6 +1675,14 @@ class TradeRepository(ABC):
 
 class SQLTradeRepository(TradeRepository):
 
+    def _ensure_utc(self, dt: Optional[datetime]) -> Optional[datetime]:
+        """Helper to ensure a datetime is UTC-aware."""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+
     def insert_trade(
         self,
         pair: str,
@@ -1708,12 +1725,12 @@ class SQLTradeRepository(TradeRepository):
             stop_loss=t.stop_loss,
             take_profit=t.take_profit,
             risk=t.risk,
-            entry_time=t.entry_time,
+            entry_time=self._ensure_utc(t.entry_time),
             exit_price=t.exit_price,
-            exit_time=t.exit_time,
+            exit_time=self._ensure_utc(t.exit_time),
             result=t.result,
             params=t.params,
-            created_at=t.created_at
+            created_at=self._ensure_utc(t.created_at)
         )
 
     def list_trades(self, pair: str) -> List[TradeData]:
@@ -1730,12 +1747,12 @@ class SQLTradeRepository(TradeRepository):
                         stop_loss=t.stop_loss,
                         take_profit=t.take_profit,
                         risk=t.risk,
-                        entry_time=t.entry_time,
+                        entry_time=self._ensure_utc(t.entry_time),
                         exit_price=t.exit_price,
-                        exit_time=t.exit_time,
+                        exit_time=self._ensure_utc(t.exit_time),
                         result=t.result,
                         params=t.params,
-                        created_at=t.created_at
+                        created_at=self._ensure_utc(t.created_at)
                     )
                 )
             db.close()
@@ -1765,12 +1782,12 @@ class SQLTradeRepository(TradeRepository):
             stop_loss=t.stop_loss,
             take_profit=t.take_profit,
             risk=t.risk,
-            entry_time=t.entry_time,
+            entry_time=self._ensure_utc(t.entry_time),
             exit_price=t.exit_price,
-            exit_time=t.exit_time,
+            exit_time=self._ensure_utc(t.exit_time),
             result=t.result,
             params=t.params,
-            created_at=t.created_at
+            created_at=self._ensure_utc(t.created_at)
         )
 
     def close_trade(
@@ -1805,12 +1822,12 @@ class SQLTradeRepository(TradeRepository):
             stop_loss=t.stop_loss,
             take_profit=t.take_profit,
             risk=t.risk,
-            entry_time=t.entry_time,
+            entry_time=self._ensure_utc(t.entry_time),
             exit_price=t.exit_price,
-            exit_time=t.exit_time,
+            exit_time=self._ensure_utc(t.exit_time),
             result=t.result,
             params=t.params,
-            created_at=t.created_at
+            created_at=self._ensure_utc(t.created_at)
         )
 ```
 ===== END FILE: trades_repository.py =====
@@ -1839,6 +1856,47 @@ class TradeManager:
         self.open_trades = []
         self.trade_repository = trade_repository
         self.socketio         = socketio
+        
+        # Track which trades we have already logged as "Active" to avoid spamming logs
+        self._monitored_trades = set()
+        
+        # RESUME: Load any open trades from the DB so we can manage them
+        self._load_open_trades_from_db()
+
+    def _load_open_trades_from_db(self):
+        """
+        Fetch all trades, filter for open ones, and populate self.open_trades.
+        This ensures orphaned trades are picked up and closed properly during replay.
+        """
+        try:
+            all_trades = self.trade_repository.list_trades('NQ')
+            
+            count = 0
+            for t in all_trades:
+                if t.exit_time is None:
+                    # Map TradeData back to the dict structure TradeManager expects
+                    trade_dict = {
+                        'trade_id':    t.trade_id,
+                        'pair':        t.pair,
+                        'type':        t.trade_type,
+                        'entry':       t.entry_price,
+                        'stop_loss':   t.stop_loss,
+                        'take_profit': t.take_profit,
+                        'risk':        t.risk,
+                        'status':      'open',
+                        'entry_time':  t.entry_time.timestamp()
+                    }
+                    self.open_trades.append(trade_dict)
+                    count += 1
+                    print(f"[TradeManager] 📥 LOADED OPEN TRADE: ID={t.trade_id} Entry={t.entry_price} SL={t.stop_loss} TP={t.take_profit} EntryTime={t.entry_time}")
+            
+            if count > 0:
+                print(f"[TradeManager] ♻️ Resumed {count} open trades from DB.")
+            else:
+                print("[TradeManager] No open trades found in DB to resume.")
+                
+        except Exception as e:
+            print(f"[TradeManager] ⚠️ Failed to load open trades on init: {e}")
 
     def handle_new_1m_bar(self, bar: dict):
         """
@@ -1850,19 +1908,39 @@ class TradeManager:
             if trade['pair'] != bar['pair']:
                 continue
             
+            # CRITICAL FIX: Do not evaluate trades that haven't happened yet in this replay timeline
+            if trade['entry_time'] > bar['time']:
+                # Optional: Log once that we are waiting for this trade
+                # if trade['trade_id'] not in self._monitored_trades:
+                #     print(f"[TradeManager] ⏳ Waiting for Trade {trade['trade_id']} (Entry: {trade['entry_time']} > Current: {bar['time']})")
+                continue
+            
+            # Log activation once
+            if trade['trade_id'] not in self._monitored_trades:
+                print(f"[TradeManager] 🟢 ACTIVATING Trade {trade['trade_id']} at {bar['time']} (Replay caught up to Entry)")
+                self._monitored_trades.add(trade['trade_id'])
+
             ttype = trade['type']
             is_buy  = ttype in ('buy', 'long')
             is_sell = ttype in ('sell', 'short')
 
+            hit_sl = False
+            hit_tp = False
+
             if is_buy:
-                hit_sl = bar['low']  <= trade['stop_loss']
-                hit_tp = bar['high'] >= trade['take_profit']
+                if bar['low'] <= trade['stop_loss']:
+                    hit_sl = True
+                    print(f"[TradeManager] 🛑 BUY SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= SL {trade['stop_loss']}")
+                elif bar['high'] >= trade['take_profit']:
+                    hit_tp = True
+                    print(f"[TradeManager] 💰 BUY TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= TP {trade['take_profit']}")
             elif is_sell: 
-                # for sells, SL is above entry and TP is below entry
-                hit_sl = bar['high'] >= trade['stop_loss']
-                hit_tp = bar['low']  <= trade['take_profit']
-            else:
-                continue
+                if bar['high'] >= trade['stop_loss']:
+                    hit_sl = True
+                    print(f"[TradeManager] 🛑 SELL SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= SL {trade['stop_loss']}")
+                elif bar['low'] <= trade['take_profit']:
+                    hit_tp = True
+                    print(f"[TradeManager] 💰 SELL TP HIT! Trade {trade['trade_id']} | Low {bar['low']} <= TP {trade['take_profit']}")
             
             if not hit_sl and not hit_tp:
                 continue
@@ -1882,13 +1960,19 @@ class TradeManager:
             
             result = pnl_points / risk
 
-            # persist the close
-            self.trade_repository.close_trade(
-                trade_id   = trade['trade_id'],
-                exit_price = exit_price,
-                exit_time  = exit_time,
-                result     = result
-            )
+            print(f"[TradeManager] 📉 Closing trade {trade['trade_id']} (Result: {result:.2f}R) at {bar['time']}")
+
+            try:
+                # persist the close
+                self.trade_repository.close_trade(
+                    trade_id   = trade['trade_id'],
+                    exit_price = exit_price,
+                    exit_time  = exit_time,
+                    result     = result
+                )
+                print(f"[TradeManager] 💾 DB Updated for Trade {trade['trade_id']} (Closed)")
+            except Exception as e:
+                print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
 
             # remove from live list
             self.open_trades.remove(trade)
@@ -1932,6 +2016,10 @@ class TradeManager:
         }
         # track in-memory
         self.open_trades.append(trade)
+        self._monitored_trades.add(td.trade_id) # Mark as monitored since we just opened it
+        
+        print(f"[TradeManager] ✅ Registered OPEN trade {trade['trade_id']} @ {entry_time}")
+        
         # notify clients
         self.socketio.emit('trade_open', trade)
 
@@ -1943,9 +2031,26 @@ class TradeManager:
         """
         # find the trade
         trade = next(
-            t for t in self.open_trades
-            if t['trade_id'] == trade_id
+            (t for t in self.open_trades if t['trade_id'] == trade_id),
+            None
         )
+        
+        # If not in memory, try to fetch from DB to calculate PnL, or just close it blindly
+        if not trade:
+            print(f"[TradeManager] ⚠️ Trade {trade_id} not in memory, closing in DB directly.")
+            # Fallback: just close in DB
+            self.trade_repository.close_trade(
+                trade_id=trade_id,
+                exit_price=exit_price,
+                exit_time=datetime.fromtimestamp(exit_time, tz=timezone.utc),
+                result=0.0 
+            )
+            return {
+                'trade_id': trade_id,
+                'exit_price': exit_price,
+                'result': 0.0
+            }
+
         
         # calculate P&L (R-Multiple)
         risk = trade.get('risk', 0)
@@ -1966,7 +2071,9 @@ class TradeManager:
             result=result
         )
         # remove from in-memory
-        self.open_trades.remove(trade)
+        if trade in self.open_trades:
+            self.open_trades.remove(trade)
+            
         # emit close event
         payload = {
             'trade_id':  trade_id,
@@ -2301,44 +2408,55 @@ class BaseLiquidityStrategy:
             risk = t.get("risk", 1.0)
             if risk == 0: risk = 1.0
 
+            closed = False
+            exit_price = 0.0
+            r_result = 0.0
+
             if t["type"] == "long":
                 if low <= t["stop_loss"]:
                     # Hit SL
                     exit_price = t["stop_loss"]
                     pnl = exit_price - t["entry"]
                     r_result = pnl / risk
-                    
-                    t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price)
-                    self.socketio.emit("trade_close", t)
+                    closed = True
                 elif high >= t["take_profit"]:
                     # Hit TP
                     exit_price = t["take_profit"]
                     pnl = exit_price - t["entry"]
                     r_result = pnl / risk
-                    
-                    t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price)
-                    self.socketio.emit("trade_close", t)
-                else:
-                    remaining.append(t)
+                    closed = True
             else:  # short
                 if high >= t["stop_loss"]:
                     # Hit SL
                     exit_price = t["stop_loss"]
                     pnl = t["entry"] - exit_price
                     r_result = pnl / risk
-                    
-                    t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price)
-                    self.socketio.emit("trade_close", t)
+                    closed = True
                 elif low <= t["take_profit"]:
                     # Hit TP
                     exit_price = t["take_profit"]
                     pnl = t["entry"] - exit_price
                     r_result = pnl / risk
-                    
-                    t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price)
-                    self.socketio.emit("trade_close", t)
-                else:
-                    remaining.append(t)
+                    closed = True
+
+            if closed:
+                t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price)
+                
+                # FIX: Persist the close to DB immediately
+                try:
+                    self.trade_repository.close_trade(
+                        trade_id=t["trade_id"],
+                        exit_price=exit_price,
+                        exit_time=self._ts_to_dt(bar["time"]),
+                        result=r_result
+                    )
+                    print(f"[Strategy] 💾 Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R)")
+                except Exception as e:
+                    print(f"[Strategy] ❌ Failed to persist close for {t['trade_id']}: {e}")
+
+                self.socketio.emit("trade_close", t)
+            else:
+                remaining.append(t)
 
         self.open_trades = remaining
 
@@ -2468,172 +2586,6 @@ def max_bounce_filter(max_bounce: float) -> EntryFilter:
         return ok, f"depth {ctx.cross_depth:.5f} > max_bounce {max_bounce}"
     return _f
 
-
-def htf_big_body_exception_filter(
-    fetch_htf_bar,      # Callable(pair: str, tf: str) -> Optional[dict]
-    tf: str = '15m',
-    body_ratio: float = 0.7  # body / range threshold to call it “big body”
-) -> EntryFilter:
-    """
-    Blocks longs on strongly bearish HTF bars and blocks shorts on strongly bullish HTF bars.
-    You supply `fetch_htf_bar(pair, tf)` that returns {'open','high','low','close'} or None.
-    """
-    def _f(ctx: EntryContext) -> Tuple[bool, str]:
-        h = fetch_htf_bar(ctx.bar['pair'], tf)
-        if not h:
-            return True, "no-htf"
-
-        rng = (h['high'] - h['low'])
-        if rng <= 0:
-            return True, "zero-range-htf"
-
-        body = abs(h['close'] - h['open'])
-        ratio = body / rng
-
-        # classify bar direction
-        bull = h['close'] > h['open']
-        bear = h['close'] < h['open']
-
-        if ratio >= body_ratio:
-            if ctx.direction == 'long' and bear:
-                return False, f"HTF({tf}) big bearish body ratio={ratio:.2f}"
-            if ctx.direction == 'short' and bull:
-                return False, f"HTF({tf}) big bullish body ratio={ratio:.2f}"
-        return True, "ok"
-    return _f
-
-def retest_cross_trigger(strategy, line_id, line, bar) -> Optional[EntryContext]:
-    """
-    Stateful trigger that:
-      - tracks cross against the level
-      - records the extreme (min for long, max for short) while across the level
-      - proposes an entry when price returns through the level
-    Mirrors existing behavior.
-    """
-    lvl       = line['level']
-    dir_      = line['direction']  # 'long' | 'short'
-    close     = bar['close']
-    low, high = bar['low'], bar['high']
-
-    if dir_ == 'long':
-        # Track cross + extreme
-        if close < lvl:
-            line['has_crossed'] = True
-            line['extreme']     = min(line['extreme'], low)
-        # Propose when retests back above
-        if line.get('has_crossed') and close >= lvl:
-            depth = lvl - line['extreme']  # how deep below the level
-            return EntryContext(
-                strategy=strategy,
-                line_id=line_id,
-                direction='long',
-                level=lvl,
-                bar=bar,
-                close=close,
-                low=low,
-                high=high,
-                extreme=line['extreme'],
-                cross_depth=depth
-            )
-        return None
-
-    else:  # short
-        if close > lvl:
-            line['has_crossed'] = True
-            line['extreme']     = max(line['extreme'], high)
-        if line.get('has_crossed') and close <= lvl:
-            depth = line['extreme'] - lvl  # how deep above the level
-            return EntryContext(
-                strategy=strategy,
-                line_id=line_id,
-                direction='short',
-                level=lvl,
-                bar=bar,
-                close=close,
-                low=low,
-                high=high,
-                extreme=line['extreme'],
-                cross_depth=depth
-            )
-        return None
-    
-
-def candle_pattern_near_line_filter(
-    fetch_htf_bars: Callable[[str, str, int, Optional[int]], List[Dict[str, Any]]],
-    tfs: Sequence[str] = ('5m', '15m', '1h'),
-    proximity_abs: Optional[float] = None,     # if None → falls back to strategy.min_stop_loss
-    strong_body_min_ratio: float = 0.75,       # candle1: body/range ≥ this
-    small_body_max_ratio: float  = 0.25,       # candle2: body/range ≤ this
-    wick_ratio: float            = 0.25,       # candle2: "small" wick / range ≤ this
-) -> 'EntryFilter':
-    """
-    Two-candle pattern near the line, simplified:
-
-      SHORT:
-        C1 strong bullish body; C2 tiny body; C2 *upper* wick <= wick_ratio (body at top)
-
-      LONG:
-        C1 strong bearish body; C2 tiny body; C2 *lower* wick <= wick_ratio (body at bottom)
-
-    Pattern must appear on any TF in `tfs`, and the second candle must be within `proximity_abs`
-    of the line level (distance to any of O/H/L/C). `fetch_htf_bars(pair, tf, n=2, upto)`
-    returns last 2 bars up to `upto` inclusive.
-    """
-    def _body(o, c): return abs(c - o)
-    def _range(h, l): return max(h - l, 0.0)
-    def _upper_wick(o, h, c): return h - max(o, c)
-    def _lower_wick(o, l, c): return min(o, c) - l
-
-    def _near(level: float, b: Dict[str, Any], prox: float) -> float:
-        # min distance from level to any candle print
-        return min(abs(level - b[k]) for k in ('open', 'high', 'low', 'close'))
-
-    def _strong_c1(direction: str, b: Dict[str, Any]) -> bool:
-        o, h, l, c = b['open'], b['high'], b['low'], b['close']
-        rng = _range(h, l)
-        if rng <= 0: return False
-        bod_ratio = _body(o, c) / rng
-        if direction == 'short':   # want strong bullish first candle
-            return c > o and bod_ratio >= strong_body_min_ratio
-        else:                      # 'long': want strong bearish first candle
-            return c < o and bod_ratio >= strong_body_min_ratio
-
-    def _tiny_c2_with_small_wick(direction: str, b: Dict[str, Any]) -> bool:
-        o, h, l, c = b['open'], b['high'], b['low'], b['close']
-        rng = _range(h, l)
-        if rng <= 0: return False
-        bod_ratio = _body(o, c) / rng
-        if bod_ratio > small_body_max_ratio:
-            return False
-        if direction == 'short':
-            uw_ratio = _upper_wick(o, h, c) / rng
-            return uw_ratio <= wick_ratio
-        else:  # long
-            lw_ratio = _lower_wick(o, l, c) / rng
-            return lw_ratio <= wick_ratio
-
-    def _f(ctx: 'EntryContext') -> Tuple[bool, str]:
-        pair   = ctx.bar['pair']
-        now_ts = ctx.bar['time']
-        level  = ctx.level
-        prox   = proximity_abs if proximity_abs is not None else getattr(ctx.strategy, 'min_stop_loss', 0.0)
-
-        for tf in tfs:
-            bars = fetch_htf_bars(pair, tf, n=2, upto=now_ts) or []
-            if len(bars) < 2:
-                continue
-            c1, c2 = bars[-2], bars[-1]
-
-            if not _strong_c1(ctx.direction, c1):
-                continue
-            if not _tiny_c2_with_small_wick(ctx.direction, c2):
-                continue
-
-            if _near(level, c2, prox) <= prox:
-                return True, f"pattern ok on {tf} within {prox}"
-        return False, "no simple two-candle pattern near line"
-
-    return _f
 ```
 ===== END FILE: entry_context.py =====
 
@@ -3614,7 +3566,7 @@ def build_prod():
     bps       = float(os.environ.get("BARS_PER_SECOND", 10.0))
 
     initial_start = datetime.fromisoformat(start_iso) if start_iso else datetime.fromisoformat("2024-04-01T00:00:00+00:00")
-    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-04-30T17:15:00+00:00")
+    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-04-24T16:35:00+00:00")
 
     # 3. Data Source
     ds = CSVDataSource(
@@ -5352,6 +5304,7 @@ export class ChartViewer {
   async _initTrades() {
     try {
       this.allTrades = await this.dataService.fetchTrades(this.pair);
+      console.log(`[ChartViewer] Loaded ${this.allTrades.length} trades from API.`);
       this._updateMarkers();
     } catch (e) {
       console.error('[ChartViewer] Failed to load trades:', e);
@@ -5362,11 +5315,27 @@ export class ChartViewer {
   // Core Logic: Markers & PnL
   // --------------------------------------------------------------------------
 
+  /**
+   * Helper to find the bar time that contains the given timestamp.
+   * This ensures markers snap to the correct bar on any timeframe.
+   */
+  _getBarTimeForTimestamp(timestamp) {
+    if (!this.historicalBars || this.historicalBars.length === 0) return null;
+    
+    // Find the first bar that ends after or at the timestamp.
+    // Note: historicalBars are sorted by time.
+    const bar = this.historicalBars.find(b => b.time >= timestamp);
+    return bar ? bar.time : null;
+  }
+
   _updateMarkers() {
     if (!this.historicalBars.length) return;
 
     const markers = [];
     let win = 0, loss = 0, pnl = 0;
+
+    // DEBUG: Group logs to avoid spamming
+    console.groupCollapsed(`[ChartViewer] _updateMarkers (Trades: ${this.allTrades.length}, Bars: ${this.historicalBars.length}, LastTime: ${this.lastTime})`);
 
     this.allTrades.forEach(t => {
       const entryTime = t.entry_time || t.entryTime;
@@ -5375,13 +5344,13 @@ export class ChartViewer {
       const isClosed  = t.status === 'closed' || (!!exitTime);
 
       // --- 1. ENTRY MARKER ---
-      if (entryTime && entryTime <= this.lastTime) {
-        // Snap to the bar that covers this time
-        const entryBar = this.historicalBars.find(b => b.time >= entryTime);
+      if (entryTime) {
+        const barTime = this._getBarTimeForTimestamp(entryTime);
         
-        if (entryBar && entryBar.time <= this.lastTime) {
+        // Only show if the bar exists in current data and isn't in the future relative to replay
+        if (barTime && barTime <= this.lastTime) {
           markers.push({
-            time:     entryBar.time,
+            time:     barTime,
             position: isLong ? 'belowBar' : 'aboveBar',
             shape:    isLong ? 'arrowUp' : 'arrowDown',
             color:    '#2962FF', // Blue
@@ -5389,22 +5358,24 @@ export class ChartViewer {
             size:     1,
             id:       `entry_${t.trade_id}`
           });
+        } else {
+            // Log why it was skipped
+            if (!barTime) console.warn(`Trade ${t.trade_id} ENTRY skipped: No matching bar for ${entryTime}`);
+            else console.log(`Trade ${t.trade_id} ENTRY skipped: BarTime ${barTime} > LastTime ${this.lastTime}`);
         }
       }
 
       // --- 2. EXIT MARKER ---
-      if (isClosed && exitTime && exitTime <= this.lastTime) {
-        
+      if (isClosed && exitTime) {
         // Calculate PnL stats
         if (t.result !== null && t.result !== undefined) {
           if (t.result > 0) win++; else loss++;
           pnl += t.result;
         }
 
-        // Snap to exit bar
-        const exitBar = this.historicalBars.find(b => b.time >= exitTime);
-        
-        if (exitBar && exitBar.time <= this.lastTime) {
+        const barTime = this._getBarTimeForTimestamp(exitTime);
+
+        if (barTime && barTime <= this.lastTime) {
           const isWin = t.result > 0;
           
           // Format text: "+4.00R" or "-1.00R"
@@ -5415,7 +5386,7 @@ export class ChartViewer {
           }
 
           markers.push({
-            time:     exitBar.time,
+            time:     barTime,
             position: isLong ? 'aboveBar' : 'belowBar',
             shape:    isLong ? 'arrowDown' : 'arrowUp',
             color:    isWin ? '#00E676' : '#FF1744', // Green or Red
@@ -5423,15 +5394,20 @@ export class ChartViewer {
             size:     2, 
             id:       `exit_${t.trade_id}` 
           });
+        } else {
+             // Log why it was skipped
+            if (!barTime) console.warn(`Trade ${t.trade_id} EXIT skipped: No matching bar for ${exitTime}`);
+            else console.log(`Trade ${t.trade_id} EXIT skipped: BarTime ${barTime} > LastTime ${this.lastTime}`);
         }
       }
     });
+    
+    console.groupEnd();
 
     // Markers must be sorted by time for Lightweight Charts
     markers.sort((a, b) => {
         if (a.time !== b.time) return a.time - b.time;
-        // If times are equal, ensure Entry comes before Exit visually if needed, 
-        // though Lightweight Charts just stacks them.
+        if (a.text === 'Entry' && b.text !== 'Entry') return -1;
         return 0; 
     });
 
@@ -5653,6 +5629,19 @@ export class ChartViewer {
   // --------------------------------------------------------------------------
 
   startReplay(tf = this.currentTF, fromTime = this.lastTime) {
+    // If seeking backwards, clean up history to prevent unsorted array issues
+    if (fromTime < this.lastTime) {
+       const idx = this.historicalBars.findIndex(b => b.time >= fromTime);
+       if (idx !== -1) {
+           this.historicalBars = this.historicalBars.slice(0, idx);
+           this.displayChart(this.historicalBars);
+       } else if (this.historicalBars.length > 0 && fromTime < this.historicalBars[0].time) {
+           // If jumping to a time before any loaded data, clear everything
+           this.historicalBars = [];
+           this.displayChart([]);
+       }
+    }
+
     this.lastTime = fromTime - 1;
     this.socket.emit('start_stream', { timeframe: tf, pair: this.pair, fromTime: fromTime });
     this.isPlaying = true;
@@ -5692,16 +5681,12 @@ export class ChartViewer {
   jumpToDay(direction = 1) {
     if (!this.lastTime) return;
     const ONE_DAY = 86400;
-    const fromTime = this.lastTime;
-    const stopAt = direction === 1
-      ? this.lastTime + ONE_DAY
-      : Math.max(0, this.lastTime - ONE_DAY);
-
-    this.socket.emit('start_stream', {
-      timeframe: this.currentTF || '5m',
-      fromTime,
-      stopAt
-    });
+    
+    // Calculate target time based on current lastTime
+    const targetTime = this.lastTime + (direction * ONE_DAY);
+    
+    // Use startReplay to handle the jump and potential history slicing
+    this.startReplay(this.currentTF, targetTime);
   }
 }
 ```

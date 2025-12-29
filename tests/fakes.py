@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
-from src.models import LineData  # Import strict model
+from src.models import LineData, TradeData
 
 class DummySocketIO:
     def __init__(self):
@@ -83,7 +83,9 @@ class FakeTradeRepository:
             "entry": entry_price,
             "stop_loss": stop_loss,
             "take_profit": take_profit,
-            "risk": risk
+            "risk": risk,
+            "entry_time": entry_time,  # <--- Storing entry_time
+            "params": params
         })
         return MockTradeData(trade_id)
 
@@ -97,5 +99,37 @@ class FakeTradeRepository:
         self.closed.append({
             "trade_id": trade_id,
             "exit_price": exit_price,
+            "exit_time": exit_time,    # <--- Storing exit_time
             "result": result
         })
+
+    def list_trades(self, pair: str) -> List[TradeData]:
+        """Return all trades for a given symbol."""
+        results = []
+        for t in self.inserted:
+            if t['pair'] != pair:
+                continue
+            
+            # Check if closed
+            closed_info = next((c for c in self.closed if c['trade_id'] == t['trade_id']), None)
+            
+            exit_price = closed_info['exit_price'] if closed_info else None
+            exit_time  = closed_info['exit_time']  if closed_info else None
+            result     = closed_info['result']     if closed_info else None
+            
+            results.append(TradeData(
+                trade_id=t['trade_id'],
+                pair=t['pair'],
+                trade_type=t['type'],
+                entry_price=t['entry'],
+                stop_loss=t['stop_loss'],
+                take_profit=t['take_profit'],
+                risk=t['risk'],
+                entry_time=t['entry_time'],
+                exit_price=exit_price,
+                exit_time=exit_time,
+                result=result,
+                params=t.get('params'),
+                created_at=datetime.utcnow()
+            ))
+        return results

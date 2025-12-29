@@ -5,11 +5,11 @@ from flask import jsonify, abort
 from src.bars_loader import BarsLoader
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
-from src.strategies.liquidity_strategy import LiquidityStrategy
+from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 
 class LinesController:
 
-    def __init__(self, line_repository: LineRepository, bars_loader: BarsLoader, liquidity_strategy: LiquidityStrategy):
+    def __init__(self, line_repository: LineRepository, bars_loader: BarsLoader, liquidity_strategy: LiquidityStrategyV2):
         self.line_repository = line_repository
         self.bars_loader = bars_loader
         self.liquidity_strategy = liquidity_strategy

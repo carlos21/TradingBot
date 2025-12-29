@@ -13,7 +13,7 @@ from src.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
 from src.data_sources.combined_datasource import CombinedDataSource
 from src.services.trade_manager import TradeManager
-from src.strategies.liquidity_strategy import StrategyOptions
+from src.strategies.base_liquidity_strategy import StrategyOptions
 from src.strategies.entry_context import (
     open_trades_limit_filter, max_bounce_filter
 )
