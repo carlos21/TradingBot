@@ -159,6 +159,13 @@ def create_app(
     def delete_line(line_id):
         return lines_controller.delete_line(line_id)
 
+    @app.route('/api/trades', methods=['GET'])
+    def list_trades():
+        pair = request.args.get('pair')
+        if not pair:
+            abort(400, "Query param 'pair' is required")
+        return trades_controller.list_trades(pair)
+
     @app.route('/api/trades', methods=['POST'])
     def open_trade():
         data = request.get_json() or {}

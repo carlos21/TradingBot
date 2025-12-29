@@ -26,6 +26,14 @@ export class DataService {
     return res.json();
   }
 
+  // Fetch all trades for the pair
+  async fetchTrades(pair) {
+    if (!pair) throw new Error("fetchTrades(pair): 'pair' is required.");
+    const res = await fetch(`${this.baseUrl}/api/trades?pair=${pair}`);
+    if (!res.ok) throw new Error(`Error fetching trades: ${res.status}`);
+    return res.json();
+  }
+
   // Add a new line with `pair` and `price`
   async addLine(pair, price, creationTime = null) {
     const resp = await fetch(`${this.baseUrl}/api/lines`, {

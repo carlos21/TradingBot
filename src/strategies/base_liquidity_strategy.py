@@ -192,9 +192,6 @@ class BaseLiquidityStrategy:
             if trade['type'] == 'long':
                 trigger_price = entry + (risk * cfg.trigger_rr)
                 
-                # DEBUG PRINT
-                # print(f"[Strategy] Check Long BE: High={bar['high']} >= Trigger={trigger_price} (Risk={risk})")
-
                 if bar['high'] >= trigger_price:
                     proposed_sl = entry + (risk * cfg.move_to_rr)
                     if proposed_sl > current_sl:
@@ -203,9 +200,6 @@ class BaseLiquidityStrategy:
 
             elif trade['type'] in ('short', 'sell'):
                 trigger_price = entry - (risk * cfg.trigger_rr)
-
-                # DEBUG PRINT
-                # print(f"[Strategy] Check Short BE: Low={bar['low']} <= Trigger={trigger_price} (Risk={risk})")
 
                 if bar['low'] <= trigger_price:
                     proposed_sl = entry - (risk * cfg.move_to_rr)
@@ -303,25 +297,60 @@ class BaseLiquidityStrategy:
             if t["status"] != "open":
                 continue
             low, high = bar["low"], bar["high"]
+            
+            # Calculate R-multiple dynamically
+            risk = t.get("risk", 1.0)
+            if risk == 0: risk = 1.0
+
+            closed = False
+            exit_price = 0.0
+            r_result = 0.0
 
             if t["type"] == "long":
                 if low <= t["stop_loss"]:
-                    t.update(status="closed", result=-1, exit_time=bar["time"], exit_price=low)
-                    self.socketio.emit("trade_close", t)
+                    # Hit SL
+                    exit_price = t["stop_loss"]
+                    pnl = exit_price - t["entry"]
+                    r_result = pnl / risk
+                    closed = True
                 elif high >= t["take_profit"]:
-                    t.update(status="closed", result=4, exit_time=bar["time"], exit_price=high)
-                    self.socketio.emit("trade_close", t)
-                else:
-                    remaining.append(t)
+                    # Hit TP
+                    exit_price = t["take_profit"]
+                    pnl = exit_price - t["entry"]
+                    r_result = pnl / risk
+                    closed = True
             else:  # short
                 if high >= t["stop_loss"]:
-                    t.update(status="closed", result=-1, exit_time=bar["time"], exit_price=high)
-                    self.socketio.emit("trade_close", t)
+                    # Hit SL
+                    exit_price = t["stop_loss"]
+                    pnl = t["entry"] - exit_price
+                    r_result = pnl / risk
+                    closed = True
                 elif low <= t["take_profit"]:
-                    t.update(status="closed", result=4, exit_time=bar["time"], exit_price=low)
-                    self.socketio.emit("trade_close", t)
-                else:
-                    remaining.append(t)
+                    # Hit TP
+                    exit_price = t["take_profit"]
+                    pnl = t["entry"] - exit_price
+                    r_result = pnl / risk
+                    closed = True
+
+            if closed:
+                t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price)
+                
+                # FIX: Persist the close to DB immediately
+                try:
+                    self.trade_repository.close_trade(
+                        trade_id=t["trade_id"],
+                        exit_price=exit_price,
+                        exit_time=self._ts_to_dt(bar["time"]),
+                        result=r_result
+                    )
+                    print(f"[Strategy] 💾 Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R)")
+                except Exception as e:
+                    print(f"[Strategy] ❌ Failed to persist close for {t['trade_id']}: {e}")
+
+                self.socketio.emit("trade_close", t)
+            else:
+                remaining.append(t)
 
         self.open_trades = remaining
 

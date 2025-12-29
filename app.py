@@ -31,7 +31,7 @@ def build_prod():
     bps       = float(os.environ.get("BARS_PER_SECOND", 10.0))
 
     initial_start = datetime.fromisoformat(start_iso) if start_iso else datetime.fromisoformat("2024-04-01T00:00:00+00:00")
-    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-04-30T17:15:00+00:00")
+    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-04-24T16:35:00+00:00")
 
     # 3. Data Source
     ds = CSVDataSource(

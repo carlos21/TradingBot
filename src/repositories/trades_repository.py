@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from src.database.database import Trade, Line, get_db_session
 from src.dbexception import DBException, DBNotFoundException
 from src.models import TradeData
@@ -49,6 +49,14 @@ class TradeRepository(ABC):
 
 class SQLTradeRepository(TradeRepository):
 
+    def _ensure_utc(self, dt: Optional[datetime]) -> Optional[datetime]:
+        """Helper to ensure a datetime is UTC-aware."""
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+
     def insert_trade(
         self,
         pair: str,
@@ -91,12 +99,12 @@ class SQLTradeRepository(TradeRepository):
             stop_loss=t.stop_loss,
             take_profit=t.take_profit,
             risk=t.risk,
-            entry_time=t.entry_time,
+            entry_time=self._ensure_utc(t.entry_time),
             exit_price=t.exit_price,
-            exit_time=t.exit_time,
+            exit_time=self._ensure_utc(t.exit_time),
             result=t.result,
             params=t.params,
-            created_at=t.created_at
+            created_at=self._ensure_utc(t.created_at)
         )
 
     def list_trades(self, pair: str) -> List[TradeData]:
@@ -113,12 +121,12 @@ class SQLTradeRepository(TradeRepository):
                         stop_loss=t.stop_loss,
                         take_profit=t.take_profit,
                         risk=t.risk,
-                        entry_time=t.entry_time,
+                        entry_time=self._ensure_utc(t.entry_time),
                         exit_price=t.exit_price,
-                        exit_time=t.exit_time,
+                        exit_time=self._ensure_utc(t.exit_time),
                         result=t.result,
                         params=t.params,
-                        created_at=t.created_at
+                        created_at=self._ensure_utc(t.created_at)
                     )
                 )
             db.close()
@@ -148,12 +156,12 @@ class SQLTradeRepository(TradeRepository):
             stop_loss=t.stop_loss,
             take_profit=t.take_profit,
             risk=t.risk,
-            entry_time=t.entry_time,
+            entry_time=self._ensure_utc(t.entry_time),
             exit_price=t.exit_price,
-            exit_time=t.exit_time,
+            exit_time=self._ensure_utc(t.exit_time),
             result=t.result,
             params=t.params,
-            created_at=t.created_at
+            created_at=self._ensure_utc(t.created_at)
         )
 
     def close_trade(
@@ -188,10 +196,10 @@ class SQLTradeRepository(TradeRepository):
             stop_loss=t.stop_loss,
             take_profit=t.take_profit,
             risk=t.risk,
-            entry_time=t.entry_time,
+            entry_time=self._ensure_utc(t.entry_time),
             exit_price=t.exit_price,
-            exit_time=t.exit_time,
+            exit_time=self._ensure_utc(t.exit_time),
             result=t.result,
             params=t.params,
-            created_at=t.created_at
+            created_at=self._ensure_utc(t.created_at)
         )

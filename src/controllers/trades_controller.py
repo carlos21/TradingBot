@@ -10,20 +10,80 @@ class TradesController:
         self.bars_loader = bars_loader
         self.trade_manager = trade_manager
 
+    def _get_virtual_now(self) -> float:
+        """
+        Resolve the current 'virtual' timestamp.
+        1. Loader's last played tick (during replay).
+        2. Last bar in data source history (if paused/stopped).
+        3. System time (fallback).
+        """
+        # 1. Active Replay Time
+        if self.bars_loader._last_played_ts > 0:
+            return self.bars_loader._last_played_ts
+        
+        # 2. Data Source History End (if we are just viewing a static chart)
+        ds = self.bars_loader.data_source
+        played = getattr(ds, '_played_bars', [])
+        if played:
+            return played[-1]['time']
+            
+        # 3. System Time (Fallback)
+        return datetime.now(timezone.utc).timestamp()
+
+    def list_trades(self, pair: str):
+        """Return all trades (open and closed) for the pair."""
+        trades = self.trade_manager.trade_repository.list_trades(pair)
+        
+        # --- DEBUG LOG ---
+        print(f"[TradesController] list_trades('{pair}') found {len(trades)} trades.")
+        for i, t in enumerate(trades):
+            print(f"  [{i}] ID={t.trade_id} EntryTime={t.entry_time.timestamp()} ExitTime={t.exit_time.timestamp() if t.exit_time else 'None'}")
+        # -----------------
+
+        data = []
+        for t in trades:
+            data.append({
+                'trade_id':    t.trade_id,
+                'pair':        t.pair,
+                'type':        t.trade_type,
+                'entry':       t.entry_price,
+                'stop_loss':   t.stop_loss,
+                'take_profit': t.take_profit,
+                'risk':        t.risk,
+                'entry_time':  t.entry_time.timestamp(),
+                'exit_price':  t.exit_price,
+                'exit_time':   t.exit_time.timestamp() if t.exit_time else None,
+                'result':      t.result,
+                'status':      'closed' if t.exit_time else 'open'
+            })
+        return jsonify(data), 200
+
     def open_trade(self, pair, stop_loss, trade_type):
         # compute entry & risk based on last 1m
         idx = self.bars_loader.current_1m_index.get(pair, 0)
-        if idx == 0:
-            abort(400, f"No price data for pair {pair}")
-        entry_price = self.bars_loader.all_1m_data[pair][idx-1]['close']
+        
+        # Resolve entry price from the loader's buffer or datasource
+        entry_price = 0.0
+        if self.bars_loader._1m_buffer:
+            entry_price = self.bars_loader._1m_buffer[-1]['close']
+        elif hasattr(self.bars_loader.data_source, '_played_bars') and self.bars_loader.data_source._played_bars:
+            entry_price = self.bars_loader.data_source._played_bars[-1]['close']
+        else:
+            abort(400, f"No price data available to open trade for {pair}")
+
         risk = abs(entry_price - stop_loss)
         if risk <= 0:
             abort(400, 'Invalid stop loss; must be different from entry')
+        
         take_profit = (
             entry_price + 4 * risk if trade_type == 'buy'
             else entry_price - 4 * risk
         )
-        entry_time = datetime.now(timezone.utc).timestamp()
+        
+        # FIX: Use virtual time so the trade appears on the chart
+        entry_time = self._get_virtual_now()
+        print(f"[TradesController] Opening Trade at Virtual Time: {entry_time}")
+        
         trade = self.trade_manager.open_trade(
             pair, trade_type, entry_price,
             stop_loss, take_profit, risk, entry_time
@@ -31,17 +91,24 @@ class TradesController:
         return jsonify(trade), 201
     
     def close_trade(self, trade_id):
-        # validate exists
         if not any(t['trade_id'] == trade_id for t in self.trade_manager.open_trades):
             abort(404, f"Trade id={trade_id} not found or already closed")
-        # compute exit params
+        
         trade = next(t for t in self.trade_manager.open_trades if t['trade_id'] == trade_id)
         pair = trade['pair']
-        idx  = self.bars_loader.current_1m_index.get(pair, 0)
-        if idx == 0:
-            abort(400, f"No price data for pair {pair}")
-        exit_price = self.bars_loader.all_1m_data[pair][idx-1]['close']
-        exit_time  = datetime.now(timezone.utc).timestamp()
+        
+        # Resolve exit price
+        exit_price = 0.0
+        if self.bars_loader._1m_buffer:
+            exit_price = self.bars_loader._1m_buffer[-1]['close']
+        elif hasattr(self.bars_loader.data_source, '_played_bars') and self.bars_loader.data_source._played_bars:
+            exit_price = self.bars_loader.data_source._played_bars[-1]['close']
+        else:
+            abort(400, f"No price data available to close trade {pair}")
+
+        # FIX: Use virtual time
+        exit_time = self._get_virtual_now()
+        print(f"[TradesController] Closing Trade {trade_id} at Virtual Time: {exit_time}")
 
         payload = self.trade_manager.close_trade(trade_id, exit_price, exit_time)
 
