@@ -20,8 +20,6 @@ def get_prod_candle_config() -> CandleConfig:
     return CandleConfig()
 
 def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
-    # Allow env override for testing specific behaviors if needed, 
-    # but default to production settings.
     removal_mode_env = os.environ.get("LINE_REMOVAL_MODE", "ON_EVALUATE").upper()
     removal_mode = LineRemovalMode.NEVER if removal_mode_env == "NEVER" else LineRemovalMode.ON_EVALUATE
 
@@ -30,8 +28,9 @@ def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
         entry_filters=[
             open_trades_limit_filter(1), 
             max_bounce_filter(max_bounce),
-            # time_range_filter("09:30", "17:00", timezone_str="America/Chicago"),
-            # daily_trades_limit_filter(1, timezone_str="America/Chicago")
+            # It will now automatically detect NQ -> America/New_York
+            time_range_filter("09:30", "14:00"),
+            daily_trades_limit_filter(max_trades_per_day=1)
         ],
         triggers=[
             trigger_with_timeframes(three_candle_reversal_trigger, ['5m', '15m','30m', '1h']),

@@ -1,0 +1,15 @@
+scenarios:
+  - name: "NQ - 2024-04-25"
+    pair: "NQ"
+    tf: "5m"
+    start: "2024-04-23 05:10:00Z"
+    end:   "2024-04-25 23:45:00Z"
+    lines:
+      - { price: 17359.10, at: "2024-04-25 08:25:00Z" }
+    expect:
+      entry: 17371.25
+      sl:    17308.25
+      tp:    17623.25
+      tolerance: 0.25
+    snapshot: true
+    export_summary: true

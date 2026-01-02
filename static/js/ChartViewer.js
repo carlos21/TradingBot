@@ -20,9 +20,9 @@ export class ChartViewer {
     this.activeTrade  = null;
     
     // Data Caches
-    this.historicalBars = []; // Local cache of bars for snapping markers
-    this.allTrades      = []; // Local cache of all fetched trades
-    this.tradeMarkers   = []; // Current markers on chart
+    this.historicalBars = []; 
+    this.allTrades      = []; 
+    this.tradeMarkers   = []; 
     
     // Config
     this.keepClosedTradeLines = opts.keepClosedTradeLines || false;
@@ -56,15 +56,47 @@ export class ChartViewer {
     // --- Chart Initialization ---
     this.chartElement.addEventListener('contextmenu', e => e.preventDefault());
 
+    // Helper to format time in New York Timezone
+    const formatTimeNY = (timestamp) => {
+      const date = new Date(timestamp * 1000);
+      return date.toLocaleTimeString('en-US', {
+        timeZone: 'America/New_York',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+    };
+
+    // FIX: Create a reusable formatter for session logic (performance optimization)
+    this.nyTimeFormatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false
+    });
+
     this.chartOptions = {
       layout: { background: { type: 'solid', color: 'white' }, textColor: 'black' },
       grid:   { vertLines: { color: '#e1e1e1' }, horzLines: { color: '#e1e1e1' } },
       crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      
+      // Force TimeScale to use NY Time for axis labels
       timeScale: {
         visible: true,
         timeVisible: true,
         shiftVisibleRangeOnNewBar: true,
+        tickMarkFormatter: (time, tickMarkType, locale) => {
+          return formatTimeNY(time);
+        },
       },
+      
+      // Force Crosshair to use NY Time
+      localization: {
+        timeFormatter: (timestamp) => {
+          return formatTimeNY(timestamp);
+        }
+      },
+
       width: chartElement.clientWidth,
       height: chartElement.clientHeight
     };
@@ -107,6 +139,8 @@ export class ChartViewer {
 
     this.londonSeries = this.chart.addHistogramSeries({ priceScaleId: '', scaleMargins: { top:0, bottom:0 }, lineWidth:0, overlay:true, color:'rgba(0,255,0,0.1)' });
     this.nySeries     = this.chart.addHistogramSeries({ priceScaleId: '', scaleMargins: { top:0, bottom:0 }, lineWidth:0, overlay:true, color:'rgba(255,0,0,0.1)' });
+    
+    // Session definition (NY Time)
     this.sessions = [
        { series: this.nySeries,     from: { h:8,  m:30 }, to: { h:16, m:0  } }
     ];
@@ -169,15 +203,8 @@ export class ChartViewer {
   // Core Logic: Markers & PnL
   // --------------------------------------------------------------------------
 
-  /**
-   * Helper to find the bar time that contains the given timestamp.
-   * This ensures markers snap to the correct bar on any timeframe.
-   */
   _getBarTimeForTimestamp(timestamp) {
     if (!this.historicalBars || this.historicalBars.length === 0) return null;
-    
-    // Find the first bar that ends after or at the timestamp.
-    // Note: historicalBars are sorted by time.
     const bar = this.historicalBars.find(b => b.time >= timestamp);
     return bar ? bar.time : null;
   }
@@ -188,7 +215,6 @@ export class ChartViewer {
     const markers = [];
     let win = 0, loss = 0, pnl = 0;
 
-    // DEBUG: Group logs to avoid spamming
     console.groupCollapsed(`[ChartViewer] _updateMarkers (Trades: ${this.allTrades.length}, Bars: ${this.historicalBars.length}, LastTime: ${this.lastTime})`);
 
     this.allTrades.forEach(t => {
@@ -197,42 +223,30 @@ export class ChartViewer {
       const isLong    = t.type === 'long' || t.type === 'buy';
       const isClosed  = t.status === 'closed' || (!!exitTime);
 
-      // --- 1. ENTRY MARKER ---
       if (entryTime) {
         const barTime = this._getBarTimeForTimestamp(entryTime);
-        
-        // Only show if the bar exists in current data and isn't in the future relative to replay
         if (barTime && barTime <= this.lastTime) {
           markers.push({
             time:     barTime,
             position: isLong ? 'belowBar' : 'aboveBar',
             shape:    isLong ? 'arrowUp' : 'arrowDown',
-            color:    '#2962FF', // Blue
+            color:    '#2962FF',
             text:     'Entry',
             size:     1,
             id:       `entry_${t.trade_id}`
           });
-        } else {
-            // Log why it was skipped
-            if (!barTime) console.warn(`Trade ${t.trade_id} ENTRY skipped: No matching bar for ${entryTime}`);
-            else console.log(`Trade ${t.trade_id} ENTRY skipped: BarTime ${barTime} > LastTime ${this.lastTime}`);
         }
       }
 
-      // --- 2. EXIT MARKER ---
       if (isClosed && exitTime) {
-        // Calculate PnL stats
         if (t.result !== null && t.result !== undefined) {
           if (t.result > 0) win++; else loss++;
           pnl += t.result;
         }
 
         const barTime = this._getBarTimeForTimestamp(exitTime);
-
         if (barTime && barTime <= this.lastTime) {
           const isWin = t.result > 0;
-          
-          // Format text: "+4.00R" or "-1.00R"
           let text = 'Exit';
           if (t.result !== null && t.result !== undefined) {
              const sign = t.result > 0 ? '+' : '';
@@ -243,22 +257,17 @@ export class ChartViewer {
             time:     barTime,
             position: isLong ? 'aboveBar' : 'belowBar',
             shape:    isLong ? 'arrowDown' : 'arrowUp',
-            color:    isWin ? '#00E676' : '#FF1744', // Green or Red
+            color:    isWin ? '#00E676' : '#FF1744',
             text:     text,
             size:     2, 
             id:       `exit_${t.trade_id}` 
           });
-        } else {
-             // Log why it was skipped
-            if (!barTime) console.warn(`Trade ${t.trade_id} EXIT skipped: No matching bar for ${exitTime}`);
-            else console.log(`Trade ${t.trade_id} EXIT skipped: BarTime ${barTime} > LastTime ${this.lastTime}`);
         }
       }
     });
     
     console.groupEnd();
 
-    // Markers must be sorted by time for Lightweight Charts
     markers.sort((a, b) => {
         if (a.time !== b.time) return a.time - b.time;
         if (a.text === 'Entry' && b.text !== 'Entry') return -1;
@@ -283,7 +292,6 @@ export class ChartViewer {
       if (bar.time >= this.lastTime) {
         this.series.update(bar);
         
-        // Update Local Cache
         const lastIdx = this.historicalBars.length - 1;
         if (lastIdx >= 0 && this.historicalBars[lastIdx].time === bar.time) {
             this.historicalBars[lastIdx] = bar; 
@@ -318,7 +326,6 @@ export class ChartViewer {
       
       const idx = this.allTrades.findIndex(t => t.trade_id === trade.trade_id);
       if (idx !== -1) {
-          // Merge to keep any existing props, but overwrite with close info
           this.allTrades[idx] = { ...this.allTrades[idx], ...trade, status: 'closed' };
       } else {
           this.allTrades.push(trade);
@@ -356,12 +363,25 @@ export class ChartViewer {
   // --------------------------------------------------------------------------
 
   _shadeBar(bar) {
-    const d = new Date(bar.time * 1000), h = d.getUTCHours(), m = d.getUTCMinutes();
+    // Convert UTC timestamp to NY time components using the formatter created in constructor
+    const parts = this.nyTimeFormatter.formatToParts(new Date(bar.time * 1000));
+    let h, m;
+    
+    for (const part of parts) {
+      if (part.type === 'hour') h = parseInt(part.value, 10);
+      if (part.type === 'minute') m = parseInt(part.value, 10);
+    }
+
+    // Check if the NY time falls within the session limits (08:30 - 16:00)
     this.sessions.forEach(s => {
+      // Handle 24h wrap-around if necessary, though standard session is usually within one day
       const inSession =
         (h > s.from.h || (h === s.from.h && m >= s.from.m)) &&
         (h < s.to.h   || (h === s.to.h   && m <= s.to.m));
-      if (inSession) s.series.update({ time: bar.time, value: 1 });
+      
+      if (inSession) {
+        s.series.update({ time: bar.time, value: 1 });
+      }
     });
   }
 
@@ -483,14 +503,12 @@ export class ChartViewer {
   // --------------------------------------------------------------------------
 
   startReplay(tf = this.currentTF, fromTime = this.lastTime) {
-    // If seeking backwards, clean up history to prevent unsorted array issues
     if (fromTime < this.lastTime) {
        const idx = this.historicalBars.findIndex(b => b.time >= fromTime);
        if (idx !== -1) {
            this.historicalBars = this.historicalBars.slice(0, idx);
            this.displayChart(this.historicalBars);
        } else if (this.historicalBars.length > 0 && fromTime < this.historicalBars[0].time) {
-           // If jumping to a time before any loaded data, clear everything
            this.historicalBars = [];
            this.displayChart([]);
        }
@@ -518,28 +536,17 @@ export class ChartViewer {
     this.londonSeries.setData([]);
     this.nySeries.setData([]);
 
-    // 1. Fetch new bars
     const bars = await this.dataService.fetchBars(this.pair, tf, this.startTime);
-    
-    // 2. Update local cache
     this.historicalBars = bars;
-    
-    // 3. Display
     this.displayChart(bars);
     bars.forEach(bar => this._shadeBar(bar));
-    
-    // 4. Re-fetch trades to ensure we have the latest state
     await this._initTrades();
   }
 
   jumpToDay(direction = 1) {
     if (!this.lastTime) return;
     const ONE_DAY = 86400;
-    
-    // Calculate target time based on current lastTime
     const targetTime = this.lastTime + (direction * ONE_DAY);
-    
-    // Use startReplay to handle the jump and potential history slicing
     this.startReplay(this.currentTF, targetTime);
   }
 }

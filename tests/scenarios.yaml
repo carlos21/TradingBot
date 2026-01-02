@@ -25,20 +25,6 @@ scenarios:
       tolerance: 0.25
     snapshot: true
 
-  - name: "NQ - 2024-04-24"
-    pair: "NQ"
-    tf: "5m"
-    start: "2024-04-24 01:00:00Z"
-    end:   "2024-04-26 03:00:00Z"
-    lines:
-      - { price: 17515.59, at: "2024-04-25 18:15:00Z" }
-    expect:
-      entry: 17526.75
-      sl:    17492.50
-      tp:    17663.75
-      tolerance: 0.25
-    snapshot: true
-
   - name: "NQ - 2024-04-25"
     pair: "NQ"
     tf: "5m"
@@ -52,7 +38,6 @@ scenarios:
       tp:    17623.25
       tolerance: 0.25
     snapshot: true
-    export_summary: true
 
   - name: "NQ - 2024-05-01"
     pair: "NQ"
@@ -62,10 +47,7 @@ scenarios:
     lines:
       - { price: 17756.50, at: "2024-05-01 10:20:00Z" }
     expect:
-      entry: 17744.00
-      sl:    17793.00
-      tp:    17547.00
-      tolerance: 0.25
+      none: true
     snapshot: true
 
   - name: "NQ - 2024-05-06"
@@ -88,13 +70,11 @@ scenarios:
     start: "2024-07-02 15:45:00Z"
     end:   "2024-07-03 15:25:00Z"
     lines:
-      - { price: 20207.87, at: "2024-07-03 10:50:00Z" }
+      - { price: 20207.87, at: "2024-07-03 08:00:00Z" }
     expect:
-      entry: 20216.00
-      sl:    20205.00
-      tp:    20260
-      tolerance: 0.25
+      none: true
     snapshot: true
+    export_summary: true
 
   - name: "NQ - 2024-08-01"
     pair: "NQ"
@@ -104,8 +84,5 @@ scenarios:
     lines:
       - { price: 19653.02, at: "2024-07-31 09:00:00Z" }
     expect:
-      entry: 19634.75
-      sl:    19717.00
-      tp:    19305.75
-      tolerance: 0.25
+      none: true
     snapshot: true

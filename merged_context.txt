@@ -410,11 +410,11 @@ from flask import jsonify, abort
 from src.bars_loader import BarsLoader
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
-from src.strategies.liquidity_strategy import LiquidityStrategy
+from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 
 class LinesController:
 
-    def __init__(self, line_repository: LineRepository, bars_loader: BarsLoader, liquidity_strategy: LiquidityStrategy):
+    def __init__(self, line_repository: LineRepository, bars_loader: BarsLoader, liquidity_strategy: LiquidityStrategyV2):
         self.line_repository = line_repository
         self.bars_loader = bars_loader
         self.liquidity_strategy = liquidity_strategy
@@ -1462,9 +1462,8 @@ class TradeData:
 ===== BEGIN FILE: prod_config.py =====
 (path: src/prod_config.py)
 ```python
-from src.strategies.base_liquidity_strategy import BreakevenConfig
-from src.strategies.liquidity_strategy import StrategyOptions, LineRemovalMode
-from src.strategies.entry_context import open_trades_limit_filter, max_bounce_filter
+from src.strategies.base_liquidity_strategy import BreakevenConfig, StrategyOptions, LineRemovalMode
+from src.strategies.entry_context import daily_trades_limit_filter, open_trades_limit_filter, max_bounce_filter, time_range_filter
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.strategies.triggers import (
     three_candle_reversal_trigger, 
@@ -1494,16 +1493,13 @@ def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
         line_removal_mode=removal_mode,
         entry_filters=[
             open_trades_limit_filter(1), 
-            max_bounce_filter(max_bounce)
+            max_bounce_filter(max_bounce),
+            time_range_filter("09:30", "17:00", timezone_str="America/Chicago"),
+            # daily_trades_limit_filter(1, timezone_str="America/Chicago")
         ],
         triggers=[
-            # 1. Three Candle Reversal -> ONLY 15m
             trigger_with_timeframes(three_candle_reversal_trigger, ['5m', '15m','30m', '1h']),
-            
-            # 2. Double Cross -> ONLY 5m
             trigger_with_timeframes(double_5m_cross_trigger, ['5m']),
-            
-            # 3. Wick Near Line -> 5m AND 15m (Lowest Priority)
             trigger_with_timeframes(wick_near_line_trigger, ['5m', '15m'])
         ],
         breakeven=BreakevenConfig(
@@ -2542,8 +2538,10 @@ class BaseLiquidityStrategy:
 (path: src/strategies/entry_context.py)
 ```python
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Callable, Sequence, Optional, Tuple, Dict, Any, List
+from zoneinfo import ZoneInfo
 
 
 @dataclass
@@ -2586,6 +2584,59 @@ def max_bounce_filter(max_bounce: float) -> EntryFilter:
         return ok, f"depth {ctx.cross_depth:.5f} > max_bounce {max_bounce}"
     return _f
 
+def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: str = "America/Chicago") -> EntryFilter:
+    """
+    Blocks entries outside the specific time range (inclusive).
+    :param start_time_str: "HH:MM" (24-hour format), e.g., "09:30"
+    :param end_time_str: "HH:MM" (24-hour format), e.g., "17:00"
+    :param timezone_str: Timezone to evaluate the bar time in.
+    """
+    tz = ZoneInfo(timezone_str)
+    t_start = datetime.strptime(start_time_str, "%H:%M").time()
+    t_end = datetime.strptime(end_time_str, "%H:%M").time()
+
+    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+        # Convert bar timestamp (epoch) to target timezone
+        bar_dt = datetime.fromtimestamp(ctx.bar['time'], tz=tz)
+        bar_time = bar_dt.time()
+
+        if t_start <= bar_time <= t_end:
+            return True, "ok"
+        
+        return False, f"Time {bar_time} outside {t_start}-{t_end} ({timezone_str})"
+    return _f
+
+
+def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str = "America/Chicago") -> EntryFilter:
+    """
+    Blocks entries if the number of trades taken TODAY (in the given timezone) >= limit.
+    Counts both open and closed trades.
+    """
+    tz = ZoneInfo(timezone_str)
+
+    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+        # 1. Determine the "current day" of the bar being processed
+        current_bar_dt = datetime.fromtimestamp(ctx.bar['time'], tz=tz)
+        current_day_date = current_bar_dt.date()
+
+        # 2. Fetch all trades from repository (includes open and closed)
+        # Note: This fetches from DB/Memory. If performance is an issue with thousands of trades, 
+        # this logic might need optimization, but for day trading it's usually fine.
+        all_trades = ctx.strategy.trade_repository.list_trades(ctx.bar['pair'])
+
+        # 3. Count trades that occurred on this specific day
+        daily_count = 0
+        for t in all_trades:
+            # t.entry_time is UTC-aware datetime. Convert to strategy timezone.
+            trade_local_dt = t.entry_time.astimezone(tz)
+            if trade_local_dt.date() == current_day_date:
+                daily_count += 1
+
+        if daily_count < max_trades_per_day:
+            return True, f"daily_count {daily_count} < {max_trades_per_day}"
+        
+        return False, f"Daily limit reached: {daily_count} >= {max_trades_per_day}"
+    return _f
 ```
 ===== END FILE: entry_context.py =====
 
@@ -2804,49 +2855,6 @@ class LiquidityDualM1Strategy:
         )
 ```
 ===== END FILE: liquidity_m1dual_strategy.py =====
-
-===== BEGIN FILE: liquidity_strategy.py =====
-(path: src/strategies/liquidity_strategy.py)
-```python
-from __future__ import annotations
-
-from typing import List
-
-from src.strategies.base_liquidity_strategy import (
-    BaseLiquidityStrategy,
-    StrategyOptions,
-    LineRemovalMode,
-)
-from src.strategies.entry_context import retest_cross_trigger, EntryTrigger
-
-
-__all__ = [
-    "LiquidityStrategy",
-    # Re-export to preserve old imports:
-    "StrategyOptions",
-    "LineRemovalMode",
-]
-
-
-class LiquidityStrategy(BaseLiquidityStrategy):
-    """
-    Original behavior:
-      - waits for a retest CLOSE back through the line
-      - uses the 'extreme' tracked while price was across the level
-      - entries at bar close, 4R TP, min SL guard
-
-    Triggers can be overridden via options.triggers; otherwise uses default below.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Use user-provided triggers if given; otherwise our default
-        self.triggers = list(self.options.triggers or self.default_triggers())
-
-    def default_triggers(self) -> List[EntryTrigger]:
-        return [retest_cross_trigger]
-```
-===== END FILE: liquidity_strategy.py =====
 
 ===== BEGIN FILE: liquidity_strategy_v2.py =====
 (path: src/strategies/liquidity_strategy_v2.py)
@@ -3429,7 +3437,7 @@ def double_5m_cross_trigger(
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
-from src.models import LineData  # Import strict model
+from src.models import LineData, TradeData
 
 class DummySocketIO:
     def __init__(self):
@@ -3442,7 +3450,6 @@ class DummySocketIO:
         return target(*args, **kwargs)
 
     def run(self, app, **kwargs):
-        # Allow calling run() in tests, though usually we mock it out
         pass
 
 @dataclass
@@ -3458,7 +3465,6 @@ class FakeLineRepository:
         self._store = {}
 
     def list_lines(self, pair: str) -> List[LineData]:
-        # Must return LineData objects, not internal _Line dicts
         results = []
         for obj in self._store.values():
             if obj.pair == pair:
@@ -3473,7 +3479,6 @@ class FakeLineRepository:
     def insert_line(self, pair, price, creation_date=None) -> LineData:
         self._seq += 1
         lid = f"L{self._seq}"
-        # Use passed date or fallback
         c_date = creation_date if creation_date else datetime.utcnow()
         obj = _Line(lid, pair, price, c_date)
         self._store[lid] = obj
@@ -3488,7 +3493,6 @@ class FakeLineRepository:
     def delete_line(self, line_id):
         if line_id in self._store:
             del self._store[line_id]
-        # Silent ignore if missing, matching some DB behaviors or strict if needed
 
 class FakeTradeRepository:
     def __init__(self):
@@ -3496,11 +3500,16 @@ class FakeTradeRepository:
         self.inserted = [] 
         self.closed   = [] 
 
+    def clear(self):
+        """Wipe all data for a fresh scenario."""
+        self._seq = 0
+        self.inserted = []
+        self.closed = []
+
     def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None):
         self._seq += 1
         trade_id = f"T{self._seq}"
         
-        # Create a mock object that mimics the SQL Alchemy model return
         class MockTradeData:
             def __init__(self, tid): self.trade_id = tid
 
@@ -3511,7 +3520,9 @@ class FakeTradeRepository:
             "entry": entry_price,
             "stop_loss": stop_loss,
             "take_profit": take_profit,
-            "risk": risk
+            "risk": risk,
+            "entry_time": entry_time,
+            "params": params
         })
         return MockTradeData(trade_id)
 
@@ -3525,8 +3536,38 @@ class FakeTradeRepository:
         self.closed.append({
             "trade_id": trade_id,
             "exit_price": exit_price,
+            "exit_time": exit_time,
             "result": result
         })
+
+    def list_trades(self, pair: str) -> List[TradeData]:
+        results = []
+        for t in self.inserted:
+            if t['pair'] != pair:
+                continue
+            
+            closed_info = next((c for c in self.closed if c['trade_id'] == t['trade_id']), None)
+            
+            exit_price = closed_info['exit_price'] if closed_info else None
+            exit_time  = closed_info['exit_time']  if closed_info else None
+            result     = closed_info['result']     if closed_info else None
+            
+            results.append(TradeData(
+                trade_id=t['trade_id'],
+                pair=t['pair'],
+                trade_type=t['type'],
+                entry_price=t['entry'],
+                stop_loss=t['stop_loss'],
+                take_profit=t['take_profit'],
+                risk=t['risk'],
+                entry_time=t['entry_time'],
+                exit_price=exit_price,
+                exit_time=exit_time,
+                result=result,
+                params=t.get('params'),
+                created_at=datetime.utcnow()
+            ))
+        return results
 ```
 ===== END FILE: fakes.py =====
 
@@ -3566,7 +3607,7 @@ def build_prod():
     bps       = float(os.environ.get("BARS_PER_SECOND", 10.0))
 
     initial_start = datetime.fromisoformat(start_iso) if start_iso else datetime.fromisoformat("2024-04-01T00:00:00+00:00")
-    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-04-24T16:35:00+00:00")
+    initial_end   = datetime.fromisoformat(end_iso) if end_iso else datetime.fromisoformat("2024-04-25T12:00:00+00:00")
 
     # 3. Data Source
     ds = CSVDataSource(
@@ -3618,7 +3659,7 @@ from src.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
 from src.data_sources.combined_datasource import CombinedDataSource
 from src.services.trade_manager import TradeManager
-from src.strategies.liquidity_strategy import StrategyOptions
+from src.strategies.base_liquidity_strategy import StrategyOptions
 from src.strategies.entry_context import (
     open_trades_limit_filter, max_bounce_filter
 )
@@ -3847,7 +3888,11 @@ def create_app(
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
-            # 4. Reset DataSource history
+            # 4. Clear Trades (Fix for leaking trades between scenarios)
+            if hasattr(repos.trades, 'clear'):
+                repos.trades.clear()
+
+            # 5. Reset DataSource history
             data = request.get_json() or {}
             start_ts = data.get('start_time')
             end_ts   = data.get('end_time')
@@ -3858,7 +3903,7 @@ def create_app(
                 except TypeError:
                     data_source.reset()
 
-            # 5. WARM UP STRATEGY (Without lines)
+            # 6. WARM UP STRATEGY (Without lines)
             played = getattr(data_source, '_played_bars', [])
             if played:
                 print(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")
