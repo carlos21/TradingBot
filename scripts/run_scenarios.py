@@ -38,10 +38,58 @@ from src.prod_config import (
 from tests.fakes import FakeLineRepository, FakeTradeRepository
 
 APP_HOST = "127.0.0.1"
+
+# --- TIMEZONE CONFIGURATION ---
 PAIR_TZS = {
     'EURUSD': 'Europe/London',
-    'NQ':     'America/Chicago',
+    'NQ':     'America/New_York', 
+    'ES':     'America/New_York',
 }
+
+# -------------------------------------------------------------------------
+# Data Verification Helper
+# -------------------------------------------------------------------------
+def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
+    print(f"🔍 Verifying data in {csv_path.name}...")
+    print(f"   Requested Range: {start_ts} -> {end_ts}")
+    
+    csv_tz_name = 'America/Chicago' if pair in ('NQ', 'ES') else 'UTC'
+    csv_tz = ZoneInfo(csv_tz_name)
+    utc = ZoneInfo("UTC")
+    
+    count = 0
+    last_ts = 0
+    
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            sample = f.read(1024); f.seek(0)
+            dialect = csv.Sniffer().sniff(sample, delimiters=",;")
+            reader = csv.DictReader(f, dialect=dialect)
+            for row in reader:
+                try:
+                    ts_str = f"{row['Date']} {row['Time']}"
+                    try: dt = datetime.strptime(ts_str, '%d/%m/%Y %H:%M:%S')
+                    except: dt = dtparser.parse(ts_str)
+                    dt = dt.replace(tzinfo=csv_tz)
+                    row_ts = int(dt.astimezone(utc).timestamp())
+                    
+                    if row_ts > last_ts: last_ts = row_ts
+                    
+                    if start_ts <= row_ts <= end_ts:
+                        count += 1
+                except: continue
+                
+        print(f"   ✅ Found {count} bars in requested range.")
+        if count == 0:
+            print(f"   ⚠️  WARNING: ZERO bars found!")
+            print(f"       Last bar in CSV is at: {last_ts} ({datetime.fromtimestamp(last_ts, tz=utc)})")
+            if end_ts > last_ts:
+                print(f"       Requested End {end_ts} is AFTER the CSV data ends.")
+            else:
+                print(f"       Data might be missing (Weekend/Holiday?).")
+                
+    except Exception as e:
+        print(f"   ❌ Could not verify CSV data: {e}")
 
 # -------------------------------------------------------------------------
 # Server Process Logic
@@ -224,13 +272,11 @@ def print_detailed_summary(logs: List[Dict], pair_tz: ZoneInfo):
         return
 
     print("\n   📋 SCENARIO DECISION LOG:")
-    # CHANGED: Header now indicates UTC
     print(f"   {'TIME (UTC)':<20} | {'TF':<4} | {'LINE':<5} | {'EVENT':<15} | {'DETAILS'}")
     print("   " + "-"*110)
 
     for log in logs:
         ts = log.get("time", 0)
-        # CHANGED: Use UTC directly, do not convert to pair_tz
         dt = datetime.fromtimestamp(ts, tz=timezone.utc)
         t_str = dt.strftime("%Y-%m-%d %H:%M:%S")
         
@@ -239,7 +285,6 @@ def print_detailed_summary(logs: List[Dict], pair_tz: ZoneInfo):
         evt = log.get("event", "")
         det = log.get("details", "")
 
-        # Color coding for console
         if evt == "ENTRY":
             evt = f"\033[92m{evt}\033[0m" # Green
         elif evt == "FILTER_BLOCK":
@@ -299,6 +344,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
             page = await ctx.new_page()
 
+            # --- CAPTURE BROWSER LOGS ---
+            page.on("console", lambda msg: print(f"   [BROWSER] {msg.text}"))
+            page.on("pageerror", lambda exc: print(f"   [BROWSER ERROR] {exc}"))
+
             for i, sc in enumerate(scenarios):
                 name = sc.get("name", f"scenario_{i}")
                 print(f"▶️  Running: {name}")
@@ -310,7 +359,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 end_ts   = get_epoch(sc["end"])
                 tf       = sc.get("tf", "5m")
 
-                if not reset_app_state(base_url, start=start_ts - 172800, end=start_ts - 1):
+                # --- PRE-FLIGHT DATA CHECK ---
+                verify_csv_data(csv_path, pair_name, start_ts, end_ts)
+
+                print(f"   [DEBUG] Scenario Start: {start_ts} | End: {end_ts}")
+
+                # 1. Reset App State (Start fresh at start_ts)
+                if not reset_app_state(base_url, start=start_ts, end=start_ts):
                     print("❌ Reset failed")
                     continue
                 
@@ -321,19 +376,25 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         c_ts = get_epoch(l["at_raw"])
                     add_line_http(base_url, pair_name, l["level"], creation_time=c_ts)
 
-                view_start_ts = start_ts - 86400
-                await page.goto(f"{base_url}/?start_time={view_start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}", wait_until="domcontentloaded")
+                # 2. Load Page starting at start_ts
+                await page.goto(f"{base_url}/?start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}", wait_until="domcontentloaded")
 
+                # Wait for ChartViewer to be fully ready
+                try:
+                    await page.wait_for_function("() => window.__chartReady === true", timeout=10000)
+                except Exception as e:
+                    print(f"⚠️ Timeout waiting for chart init: {e}")
+
+                # 3. Start Stream (using existing socket)
                 await page.evaluate("""
                     window.__done = false;
                     window.__trades = [];
-                    const sock = (window.io && window.io()) || window.socket;
-                    if (!sock) throw new Error("Socket.IO not found");
-                    window.socket = sock;
+                    
+                    const sock = window.chartViewer.socket;
+                    if (!sock) throw new Error("ChartViewer socket not found");
+                    
                     sock.on('trade_open', (t) => {
                         window.__trades.push(t);
-                        
-                        // Optional: Draw persistent "Orig SL" line for debugging
                         if (window.chartViewer && window.chartViewer.series) {
                             const sl = t.stop_loss ?? t.sl ?? t.stopLoss;
                             if (typeof sl === 'number') {
@@ -352,7 +413,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 """)
 
                 await page.evaluate(
-                    """(p) => window.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
+                    """(p) => window.chartViewer.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
                     {"tf": tf, "start": start_ts, "end": end_ts}
                 )
 
@@ -375,11 +436,36 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
                 if sc.get("snapshot", True):
                     try:
+                        # 1. Wait for data
+                        await page.wait_for_function(
+                            "() => window.chartViewer.series.data().length > 0", 
+                            timeout=5000
+                        )
+                        
+                        # 2. STRICTLY set the visible range and remove right offset
+                        await page.evaluate(
+                            """(range) => {
+                                console.log("Setting visible range:", range);
+                                window.chartViewer.chart.timeScale().applyOptions({
+                                    shiftVisibleRangeOnNewBar: false,
+                                    rightOffset: 0
+                                });
+                                window.chartViewer.chart.timeScale().setVisibleRange({
+                                    from: range.start,
+                                    to: range.end
+                                });
+                            }""",
+                            {"start": start_ts, "end": end_ts}
+                        )
+                        
+                        # 3. Small buffer for canvas rendering
+                        await page.wait_for_timeout(500) 
+                        
                         chart = page.locator(args.chart_selector)
                         await chart.wait_for(state="visible", timeout=2000)
                         await chart.screenshot(path=str(sdir / f"snapshot_{tf}.png"))
-                    except:
-                        pass
+                    except Exception as e:
+                        print(f"   ⚠️ Snapshot failed (Empty Chart?): {e}")
 
             await browser.close()
 

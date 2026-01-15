@@ -50,7 +50,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 "buf": [],
                 "start": None
             }
-            self._tf_histories[tf] = deque(maxlen=10)
+            self._tf_histories[tf] = deque(maxlen=100)
 
     def reset(self):
         with self.lock:

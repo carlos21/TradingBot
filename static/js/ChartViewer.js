@@ -56,11 +56,36 @@ export class ChartViewer {
     // --- Chart Initialization ---
     this.chartElement.addEventListener('contextmenu', e => e.preventDefault());
 
-    // Helper to format time in New York Timezone
+    // --- Time Formatting Helpers (NY Time) ---
+    
+    // 1. Time Only (e.g. "09:30")
     const formatTimeNY = (timestamp) => {
       const date = new Date(timestamp * 1000);
       return date.toLocaleTimeString('en-US', {
         timeZone: 'America/New_York',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      });
+    };
+
+    // 2. Date Only (e.g. "Jan 14")
+    const formatDateNY = (timestamp) => {
+      const date = new Date(timestamp * 1000);
+      return date.toLocaleDateString('en-US', {
+        timeZone: 'America/New_York',
+        month: 'short',
+        day: 'numeric',
+      });
+    };
+
+    // 3. Full Date + Time (e.g. "Jan 14, 09:30")
+    const formatDateTimeNY = (timestamp) => {
+      const date = new Date(timestamp * 1000);
+      return date.toLocaleString('en-US', {
+        timeZone: 'America/New_York',
+        month: 'short',
+        day: 'numeric',
         hour: '2-digit',
         minute: '2-digit',
         hour12: false
@@ -86,14 +111,18 @@ export class ChartViewer {
         timeVisible: true,
         shiftVisibleRangeOnNewBar: true,
         tickMarkFormatter: (time, tickMarkType, locale) => {
+          // tickMarkType: 0=Year, 1=Month, 2=DayOfMonth, 3=Time, 4=TimeWithSeconds
+          if (tickMarkType < 3) {
+            return formatDateNY(time);
+          }
           return formatTimeNY(time);
         },
       },
       
-      // Force Crosshair to use NY Time
+      // Force Crosshair to use NY Time (Date + Time)
       localization: {
         timeFormatter: (timestamp) => {
-          return formatTimeNY(timestamp);
+          return formatDateTimeNY(timestamp);
         }
       },
 
@@ -456,6 +485,8 @@ export class ChartViewer {
       this.lastTime  = last.time;
       this.lastPrice = last.close;
     }
+    // FIX: Ensure chart fits content when data is loaded
+    this.chart.timeScale().fitContent();
     this.onDisplay();
   }
 

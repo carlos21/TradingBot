@@ -2,7 +2,8 @@ from src.strategies.base_liquidity_strategy import BreakevenConfig, StrategyOpti
 from src.strategies.entry_context import daily_trades_limit_filter, open_trades_limit_filter, max_bounce_filter, time_range_filter
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.strategies.triggers import (
-    three_candle_reversal_trigger, 
+    three_candle_reversal_trigger,
+    tsi_cross_trigger, 
     wick_near_line_trigger,
     double_5m_cross_trigger,
     trigger_with_timeframes
@@ -29,13 +30,14 @@ def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
             open_trades_limit_filter(1), 
             max_bounce_filter(max_bounce),
             # It will now automatically detect NQ -> America/New_York
-            time_range_filter("09:30", "14:00"),
+            time_range_filter("08:00", "14:00"),
             daily_trades_limit_filter(max_trades_per_day=1)
         ],
         triggers=[
-            trigger_with_timeframes(three_candle_reversal_trigger, ['5m', '15m','30m', '1h']),
-            trigger_with_timeframes(double_5m_cross_trigger, ['5m']),
-            trigger_with_timeframes(wick_near_line_trigger, ['5m', '15m'])
+            trigger_with_timeframes(tsi_cross_trigger, ['5m', '15m']),
+            # trigger_with_timeframes(three_candle_reversal_trigger, ['5m', '15m','30m', '1h']),
+            # trigger_with_timeframes(double_5m_cross_trigger, ['5m']),
+            # trigger_with_timeframes(wick_near_line_trigger, ['5m', '15m'])
         ],
         breakeven=BreakevenConfig(
             trigger_rr=2.0, 
