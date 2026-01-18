@@ -1,17 +1,11 @@
 export class ChartViewer {
-  /**
-   * @param {HTMLElement} chartElement
-   * @param {DataService} dataService
-   * @param {Socket} socket
-   * @param {Object} opts
-   */
   constructor(chartElement, dataService, socket, opts = {}) {
     this.chartElement = chartElement;
     this.dataService  = dataService;
     this.socket = socket;
     this.onDisplay = opts.onDisplay || (() => {});
     
-    // State
+    // --- State ---
     this.lastTime     = -Infinity;
     this.lastPrice    = null;
     this.pair         = null;
@@ -19,12 +13,11 @@ export class ChartViewer {
     this.isPlaying    = false;
     this.activeTrade  = null;
     
-    // Data Caches
     this.historicalBars = []; 
     this.allTrades      = []; 
-    this.tradeMarkers   = []; 
-    
-    // Config
+    this.pinnedLines    = []; 
+
+    // --- Config ---
     this.keepClosedTradeLines = opts.keepClosedTradeLines || false;
     this.startTime = opts.startTime || null;
     this.keepStrategyLines = opts.keepStrategyLines || false;
@@ -34,149 +27,168 @@ export class ChartViewer {
       EURUSD: { precision: 5,    minMove: 0.00001 }
     };
 
-    // PnL / UI Elements
-    this.winCount     = 0;
-    this.lossCount    = 0;
-    this.totalPnL     = 0;
+    // --- UI DOM ---
     this.winCounter   = document.getElementById('winCount');
     this.lossCounter  = document.getElementById('lossCount');
     this.pnlCounter   = document.getElementById('pnlCounter');
-    
     if (this.pnlCounter) this.pnlCounter.textContent = 'Total PnL: 0.00R';
 
-    // Line Handles
-    this.tradeEntryLine = null;
-    this.tradeSLLine    = null;
-    this.tradeTPLine    = null;
-    this.previewEntryLine = null;
-    this.previewSLLine    = null;
-    this.previewTPLine    = null;
-    this.pinnedLines      = [];
-
-    // --- Chart Initialization ---
-    this.chartElement.addEventListener('contextmenu', e => e.preventDefault());
-
-    // --- Time Formatting Helpers (NY Time) ---
+    // ========================================================================
+    // 1. SHARED CONFIGURATION
+    // ========================================================================
     
-    // 1. Time Only (e.g. "09:30")
-    const formatTimeNY = (timestamp) => {
-      const date = new Date(timestamp * 1000);
-      return date.toLocaleTimeString('en-US', {
-        timeZone: 'America/New_York',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      });
-    };
+    const PRICE_SCALE_WIDTH = 75; // Fixed width for alignment
 
-    // 2. Date Only (e.g. "Jan 14")
-    const formatDateNY = (timestamp) => {
-      const date = new Date(timestamp * 1000);
-      return date.toLocaleDateString('en-US', {
-        timeZone: 'America/New_York',
-        month: 'short',
-        day: 'numeric',
-      });
-    };
-
-    // 3. Full Date + Time (e.g. "Jan 14, 09:30")
-    const formatDateTimeNY = (timestamp) => {
-      const date = new Date(timestamp * 1000);
-      return date.toLocaleString('en-US', {
-        timeZone: 'America/New_York',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      });
-    };
-
-    // FIX: Create a reusable formatter for session logic (performance optimization)
-    this.nyTimeFormatter = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/New_York',
-      hour: 'numeric',
-      minute: 'numeric',
-      hour12: false
-    });
-
-    this.chartOptions = {
+    const commonOptions = {
       layout: { background: { type: 'solid', color: 'white' }, textColor: 'black' },
-      grid:   { vertLines: { color: '#e1e1e1' }, horzLines: { color: '#e1e1e1' } },
-      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-      
-      // Force TimeScale to use NY Time for axis labels
+      grid:   { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
+      crosshair: { 
+          mode: LightweightCharts.CrosshairMode.Normal,
+          // We handle crosshair sync manually, but this keeps the native feel
+          vertLine: { visible: true, labelVisible: true },
+          horzLine: { visible: true, labelVisible: true }
+      },
+      rightPriceScale: {
+        visible: true,
+        borderColor: '#d1d5db',
+        minimumWidth: PRICE_SCALE_WIDTH, 
+      },
       timeScale: {
         visible: true,
         timeVisible: true,
         shiftVisibleRangeOnNewBar: true,
-        tickMarkFormatter: (time, tickMarkType, locale) => {
-          // tickMarkType: 0=Year, 1=Month, 2=DayOfMonth, 3=Time, 4=TimeWithSeconds
-          if (tickMarkType < 3) {
-            return formatDateNY(time);
-          }
-          return formatTimeNY(time);
-        },
-      },
-      
-      // Force Crosshair to use NY Time (Date + Time)
-      localization: {
-        timeFormatter: (timestamp) => {
-          return formatDateTimeNY(timestamp);
+        tickMarkFormatter: (time) => {
+             const date = new Date(time * 1000);
+             return date.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour12: false, hour: '2-digit', minute: '2-digit'});
         }
-      },
-
-      width: chartElement.clientWidth,
-      height: chartElement.clientHeight
+      }
     };
+
+    // ========================================================================
+    // 2. MAIN CHART (PRICE)
+    // ========================================================================
+    this.chart = LightweightCharts.createChart(chartElement, {
+      ...commonOptions,
+      width: chartElement.clientWidth || 800,
+      height: chartElement.clientHeight || 400,
+      timeScale: { 
+          ...commonOptions.timeScale, 
+          visible: false // Hide dates on top chart
+      } 
+    });
+
+    this.series = this.chart.addCandlestickSeries({
+        upColor: 'white', borderUpColor: 'black', wickUpColor: 'black',
+        downColor: 'black', borderDownColor: 'black', wickDownColor: 'black',
+        priceFormat: { type: 'price', precision: 2, minMove: 1 },
+    });
+
+    // ========================================================================
+    // 3. INDICATOR CHART (TSI)
+    // ========================================================================
+    this.indicatorElement = document.getElementById('indicatorContainer');
+    if (!this.indicatorElement) console.error("CRITICAL: #indicatorContainer not found.");
     
-    this.chart  = LightweightCharts.createChart(chartElement, this.chartOptions);
-    this.series = this.chart.addCandlestickSeries();
-    this.series.applyOptions({
-        upColor:         'white',
-        borderUpColor:   'black',
-        wickUpColor:     'black',
-        downColor:       'black',
-        borderDownColor: 'black',
-        wickDownColor:   'black',
-        priceFormat:     { type: 'price', precision: 2, minMove: 1 },
-    });
-    this.series.setData([]);
-
-    // Keyboard listeners for 'R' key
-    this.isRPressed = false;
-    window.addEventListener('keydown', (e) => {
-      if (e.key.toLowerCase() === 'r') this.isRPressed = true;
-    });
-    window.addEventListener('keyup', (e) => {
-      if (e.key.toLowerCase() === 'r') this.isRPressed = false;
-    });
-
-    this.chart.subscribeClick(param => {
-      if (!this.isRPressed) return;
-      if (param && param.time) {
-        this._onChartClick(param.time);
+    this.indicatorChart = LightweightCharts.createChart(this.indicatorElement, {
+      ...commonOptions,
+      width: this.indicatorElement?.clientWidth || 800,
+      height: this.indicatorElement?.clientHeight || 200,
+      timeScale: { 
+          ...commonOptions.timeScale, 
+          visible: true // Show dates on bottom chart
       }
     });
 
-    new ResizeObserver(() => {
-      this.chart.resize(
-        this.chartElement.clientWidth,
-        this.chartElement.clientHeight
-      );
-    }).observe(this.chartElement);
+    this.tsiSeries = this.indicatorChart.addLineSeries({ color: 'blue', lineWidth: 2, title: 'TSI' });
+    this.sigSeries = this.indicatorChart.addLineSeries({ color: 'red',  lineWidth: 2, title: 'Signal' });
+    
+    const zeroLine = { price: 0, color: '#999', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false };
+    this.tsiSeries.createPriceLine(zeroLine);
 
+
+    // ========================================================================
+    // 4. SYNCHRONIZATION (Zoom & Crosshair)
+    // ========================================================================
+    
+    // --- Zoom/Scroll Sync ---
+    let isSyncingRange = false;
+    const syncRange = (source, target) => {
+        const range = source.timeScale().getVisibleLogicalRange();
+        if (range && !isSyncingRange) {
+            isSyncingRange = true;
+            // Protect against null range errors
+            if (range.from !== null && range.to !== null) {
+                try { target.timeScale().setVisibleLogicalRange(range); } catch(e) {}
+            }
+            isSyncingRange = false;
+        }
+    };
+
+    this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => syncRange(this.chart, this.indicatorChart));
+    this.indicatorChart.timeScale().subscribeVisibleLogicalRangeChange(() => syncRange(this.indicatorChart, this.chart));
+
+    // --- Crosshair Sync (The Vertical Line) ---
+    // We update the other chart's crosshair position based on the time of the hover.
+    
+    const syncCrosshair = (sourceChart, targetChart, targetSeries) => {
+        sourceChart.subscribeCrosshairMove(param => {
+            if (!param.point || !param.time) {
+                targetChart.clearCrosshairPosition();
+                return;
+            }
+            // Pass NaN for price to hide the horizontal line on the target chart
+            // (or pass a valid price if you wanted to sync price levels, but that doesn't make sense for TSI)
+            targetChart.setCrosshairPosition(NaN, param.time, targetSeries);
+        });
+    };
+
+    // Sync Price -> Indicator
+    syncCrosshair(this.chart, this.indicatorChart, this.tsiSeries);
+    
+    // Sync Indicator -> Price
+    syncCrosshair(this.indicatorChart, this.chart, this.series);
+
+
+    // ========================================================================
+    // 5. RESIZE & EVENTS
+    // ========================================================================
+    
+    const resizer = new ResizeObserver(entries => {
+        for (let entry of entries) {
+            if (entry.target === this.chartElement) {
+                this.chart.resize(entry.contentRect.width, entry.contentRect.height);
+            } else if (entry.target === this.indicatorElement) {
+                this.indicatorChart.resize(entry.contentRect.width, entry.contentRect.height);
+            }
+        }
+    });
+    resizer.observe(this.chartElement);
+    if(this.indicatorElement) resizer.observe(this.indicatorElement);
+
+    setTimeout(() => {
+        if(this.chartElement) this.chart.resize(this.chartElement.clientWidth, this.chartElement.clientHeight);
+        if(this.indicatorElement) this.indicatorChart.resize(this.indicatorElement.clientWidth, this.indicatorElement.clientHeight);
+    }, 100);
+
+    // Event Listeners
+    this.chartElement.addEventListener('contextmenu', e => e.preventDefault());
+    this.chartElement.addEventListener('mousedown', this._onMouseDown.bind(this));
+    
+    this.isRPressed = false;
+    window.addEventListener('keydown', e => { if (e.key.toLowerCase() === 'r') this.isRPressed = true; });
+    window.addEventListener('keyup', e => { if (e.key.toLowerCase() === 'r') this.isRPressed = false; });
+    
+    this.chart.subscribeClick(param => {
+      if (this.isRPressed && param && param.time) this._onChartClick(param.time);
+    });
+
+    // Session shading
     this.londonSeries = this.chart.addHistogramSeries({ priceScaleId: '', scaleMargins: { top:0, bottom:0 }, lineWidth:0, overlay:true, color:'rgba(0,255,0,0.1)' });
     this.nySeries     = this.chart.addHistogramSeries({ priceScaleId: '', scaleMargins: { top:0, bottom:0 }, lineWidth:0, overlay:true, color:'rgba(255,0,0,0.1)' });
-    
-    // Session definition (NY Time)
-    this.sessions = [
-       { series: this.nySeries,     from: { h:8,  m:30 }, to: { h:16, m:0  } }
-    ];
+    this.sessions = [{ series: this.nySeries, from: { h:8, m:30 }, to: { h:16, m:0 } }];
+    this.nyTimeFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false });
 
-    this.chartElement.addEventListener('mousedown', this._onMouseDown.bind(this));
-
-    // --- Start Initialization Chain ---
+    // Start Init
     this._initPair()
       .then(() => this._initBars())
       .then(() => this._initLines())
@@ -189,130 +201,115 @@ export class ChartViewer {
   }
 
   // --------------------------------------------------------------------------
-  // Initialization Methods
+  // Initialization
   // --------------------------------------------------------------------------
 
   async _initPair() {
     this.pair = await this.dataService.getPair();
-    this._applyPriceFormat();
-  }
-
-  _applyPriceFormat() {
     const f = this.formats[this.pair] || { precision: 2, minMove: 1 };
-    this.series.applyOptions({
-      priceFormat: { type: 'price', precision: f.precision, minMove: f.minMove }
-    });
+    this.series.applyOptions({ priceFormat: { type: 'price', precision: f.precision, minMove: f.minMove } });
   }
 
   async _initBars() {
+    console.log(`[ChartViewer] Fetching bars for ${this.currentTF}...`);
     const bars = await this.dataService.fetchBars(this.pair, this.currentTF, this.startTime);
-    this.historicalBars = bars; 
+    this.historicalBars = bars;
+    
+    // 1. Calculate Indicators FIRST
+    this._calculateAndDrawTSI(bars);
+
+    // 2. Draw Price Chart
     this.displayChart(bars);
+    
+    // 3. Shading
     bars.forEach(bar => this._shadeBar(bar));
   }
 
   async _initLines() {
     const lines = await this.dataService.fetchLines(this.pair);
-    lines.forEach(ld => {
-      this._createLineOnChart(ld);
-    });
+    lines.forEach(ld => this._createLineOnChart(ld));
   }
 
   async _initTrades() {
     try {
       this.allTrades = await this.dataService.fetchTrades(this.pair);
-      console.log(`[ChartViewer] Loaded ${this.allTrades.length} trades from API.`);
       this._updateMarkers();
-    } catch (e) {
-      console.error('[ChartViewer] Failed to load trades:', e);
+    } catch (e) { console.error(e); }
+  }
+
+  // --------------------------------------------------------------------------
+  // TSI Calculation
+  // --------------------------------------------------------------------------
+  _calculateAndDrawTSI(bars) {
+      // Relaxed constraint: Need at least 14 bars for minimal calc (Long length=6 + Short=13 + Signal=4)
+      if (!bars || bars.length < 14) {
+          console.warn(`[TSI] Not enough bars (${bars ? bars.length : 0}) for calculation.`);
+          this.tsiSeries.setData([]);
+          this.sigSeries.setData([]);
+          return;
+      }
+
+      const closes = bars.map(b => b.close);
+      const times  = bars.map(b => b.time);
+
+      const TSI_LONG = 6, TSI_SHORT = 13, TSI_SIGNAL = 4;
+
+      const ema = (vals, len) => {
+          const k = 2 / (len + 1);
+          const res = new Array(vals.length).fill(0);
+          res[0] = vals[0];
+          for(let i=1; i<vals.length; i++) res[i] = (vals[i] * k) + (res[i-1] * (1 - k));
+          return res;
+      };
+
+      const pc = [0], abs_pc = [0];
+      for(let i=1; i<closes.length; i++) {
+          const diff = closes[i] - closes[i-1];
+          pc.push(diff);
+          abs_pc.push(Math.abs(diff));
+      }
+
+      const ema_pc_2  = ema(ema(pc, TSI_LONG), TSI_SHORT);
+      const ema_apc_2 = ema(ema(abs_pc, TSI_LONG), TSI_SHORT);
+
+      const tsiData = [], tsiRawValues = [];
+
+      for(let i=0; i<ema_pc_2.length; i++) {
+          const val = ema_pc_2[i];
+          const absVal = ema_apc_2[i];
+          let tsi = 0;
+          if (absVal !== 0) tsi = 100 * (val / absVal);
+          if (!isFinite(tsi)) tsi = 0;
+          tsiRawValues.push(tsi);
+          tsiData.push({ time: times[i], value: tsi });
+      }
+
+      const signalValues = ema(tsiRawValues, TSI_SIGNAL);
+      const signalData = signalValues.map((val, i) => ({ time: times[i], value: val }));
+
+      try {
+          this.tsiSeries.setData(tsiData);
+          this.sigSeries.setData(signalData);
+          this.indicatorChart.timeScale().fitContent(); 
+      } catch (err) {
+          console.error(err);
+      }
+  }
+
+  // --------------------------------------------------------------------------
+  // Core Display
+  // --------------------------------------------------------------------------
+
+  displayChart(bars) {
+    this.series.setData(bars);
+    if (bars.length) {
+      const last = bars[bars.length - 1];
+      this.lastTime  = last.time;
+      this.lastPrice = last.close;
     }
+    this.chart.timeScale().fitContent();
+    this.onDisplay();
   }
-
-  // --------------------------------------------------------------------------
-  // Core Logic: Markers & PnL
-  // --------------------------------------------------------------------------
-
-  _getBarTimeForTimestamp(timestamp) {
-    if (!this.historicalBars || this.historicalBars.length === 0) return null;
-    const bar = this.historicalBars.find(b => b.time >= timestamp);
-    return bar ? bar.time : null;
-  }
-
-  _updateMarkers() {
-    if (!this.historicalBars.length) return;
-
-    const markers = [];
-    let win = 0, loss = 0, pnl = 0;
-
-    console.groupCollapsed(`[ChartViewer] _updateMarkers (Trades: ${this.allTrades.length}, Bars: ${this.historicalBars.length}, LastTime: ${this.lastTime})`);
-
-    this.allTrades.forEach(t => {
-      const entryTime = t.entry_time || t.entryTime;
-      const exitTime  = t.exit_time  || t.exitTime;
-      const isLong    = t.type === 'long' || t.type === 'buy';
-      const isClosed  = t.status === 'closed' || (!!exitTime);
-
-      if (entryTime) {
-        const barTime = this._getBarTimeForTimestamp(entryTime);
-        if (barTime && barTime <= this.lastTime) {
-          markers.push({
-            time:     barTime,
-            position: isLong ? 'belowBar' : 'aboveBar',
-            shape:    isLong ? 'arrowUp' : 'arrowDown',
-            color:    '#2962FF',
-            text:     'Entry',
-            size:     1,
-            id:       `entry_${t.trade_id}`
-          });
-        }
-      }
-
-      if (isClosed && exitTime) {
-        if (t.result !== null && t.result !== undefined) {
-          if (t.result > 0) win++; else loss++;
-          pnl += t.result;
-        }
-
-        const barTime = this._getBarTimeForTimestamp(exitTime);
-        if (barTime && barTime <= this.lastTime) {
-          const isWin = t.result > 0;
-          let text = 'Exit';
-          if (t.result !== null && t.result !== undefined) {
-             const sign = t.result > 0 ? '+' : '';
-             text = `${sign}${t.result.toFixed(2)}R`;
-          }
-
-          markers.push({
-            time:     barTime,
-            position: isLong ? 'aboveBar' : 'belowBar',
-            shape:    isLong ? 'arrowDown' : 'arrowUp',
-            color:    isWin ? '#00E676' : '#FF1744',
-            text:     text,
-            size:     2, 
-            id:       `exit_${t.trade_id}` 
-          });
-        }
-      }
-    });
-    
-    console.groupEnd();
-
-    markers.sort((a, b) => {
-        if (a.time !== b.time) return a.time - b.time;
-        if (a.text === 'Entry' && b.text !== 'Entry') return -1;
-        return 0; 
-    });
-
-    this.series.setMarkers(markers);
-
-    if (this.winCounter) this.winCounter.textContent = win;
-    if (this.lossCounter) this.lossCounter.textContent = loss;
-    if (this.pnlCounter) this.pnlCounter.textContent = `Total PnL: ${pnl.toFixed(2)}R`;
-  }
-
-  // --------------------------------------------------------------------------
-  // Socket Handling
-  // --------------------------------------------------------------------------
 
   _setupSocket() {
     this.socket.on('connect', () => console.log('[ChartViewer] socket connected'));
@@ -331,40 +328,35 @@ export class ChartViewer {
         this.lastTime  = bar.time;
         this.lastPrice = bar.close;
         this._shadeBar(bar);
-        
         this._updateMarkers();
       }
+    });
+
+    this.socket.on('indicator_update', (data) => {
+        if (data.time >= this.lastTime) {
+            this.tsiSeries.update({ time: data.time, value: data.tsi });
+            this.sigSeries.update({ time: data.time, value: data.signal });
+        }
     });
 
     this.socket.on('trade_open', trade => {
       this.activeTrade = trade;
       this._drawTradeLines(trade);
-      
       const existingIdx = this.allTrades.findIndex(t => t.trade_id === trade.trade_id);
-      if (existingIdx !== -1) {
-          this.allTrades[existingIdx] = trade;
-      } else {
-          this.allTrades.push(trade);
-      }
-      
+      if (existingIdx !== -1) this.allTrades[existingIdx] = trade;
+      else this.allTrades.push(trade);
       this._updateMarkers(); 
     });
 
     this.socket.on('trade_close', (trade) => {
       this.activeTrade = null;
-      
       const idx = this.allTrades.findIndex(t => t.trade_id === trade.trade_id);
-      if (idx !== -1) {
-          this.allTrades[idx] = { ...this.allTrades[idx], ...trade, status: 'closed' };
-      } else {
-          this.allTrades.push(trade);
-      }
+      if (idx !== -1) this.allTrades[idx] = { ...this.allTrades[idx], ...trade, status: 'closed' };
+      else this.allTrades.push(trade);
 
       if (!this.keepClosedTradeLines) {
-        [ this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine ]
-          .forEach(h => h && this.series.removePriceLine(h));
+        [ this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine ].forEach(h => h && this.series.removePriceLine(h));
       }
-      
       this._updateMarkers();
     });
 
@@ -384,34 +376,48 @@ export class ChartViewer {
     });
 
     this.socket.on('stream_end', () => { window.__done = true; });
-    this.socket.on('jump_result', (payload) => { /* ... */ });
   }
 
-  // --------------------------------------------------------------------------
-  // Chart Interaction & Drawing
-  // --------------------------------------------------------------------------
+  _updateMarkers() {
+    if (!this.historicalBars.length) return;
+    const markers = [];
+    let win = 0, loss = 0, pnl = 0;
 
-  _shadeBar(bar) {
-    // Convert UTC timestamp to NY time components using the formatter created in constructor
-    const parts = this.nyTimeFormatter.formatToParts(new Date(bar.time * 1000));
-    let h, m;
-    
-    for (const part of parts) {
-      if (part.type === 'hour') h = parseInt(part.value, 10);
-      if (part.type === 'minute') m = parseInt(part.value, 10);
-    }
+    this.allTrades.forEach(t => {
+      const entryTime = t.entry_time || t.entryTime;
+      const exitTime  = t.exit_time  || t.exitTime;
+      const isLong    = t.type === 'long' || t.type === 'buy';
 
-    // Check if the NY time falls within the session limits (08:30 - 16:00)
-    this.sessions.forEach(s => {
-      // Handle 24h wrap-around if necessary, though standard session is usually within one day
-      const inSession =
-        (h > s.from.h || (h === s.from.h && m >= s.from.m)) &&
-        (h < s.to.h   || (h === s.to.h   && m <= s.to.m));
-      
-      if (inSession) {
-        s.series.update({ time: bar.time, value: 1 });
+      if (entryTime && entryTime <= this.lastTime) {
+          markers.push({ time: entryTime, position: isLong ? 'belowBar' : 'aboveBar', shape: isLong ? 'arrowUp' : 'arrowDown', color: '#2962FF', text: 'Entry', size: 1 });
+      }
+
+      if (t.status === 'closed' && exitTime && exitTime <= this.lastTime) {
+          const res = t.result || 0;
+          if (res > 0) win++; else loss++;
+          pnl += res;
+          markers.push({ 
+              time: exitTime, 
+              position: isLong ? 'aboveBar' : 'belowBar', 
+              shape: isLong ? 'arrowDown' : 'arrowUp', 
+              color: res > 0 ? '#00E676' : '#FF1744', 
+              text: (res > 0 ? '+' : '') + res.toFixed(2) + 'R',
+              size: 2 
+          });
       }
     });
+
+    const uniqueMarkers = [];
+    const seen = new Set();
+    markers.sort((a,b) => a.time - b.time).forEach(m => {
+        const k = `${m.time}_${m.text}`;
+        if(!seen.has(k)) { seen.add(k); uniqueMarkers.push(m); }
+    });
+
+    this.series.setMarkers(uniqueMarkers);
+    if (this.winCounter) this.winCounter.textContent = win;
+    if (this.lossCounter) this.lossCounter.textContent = loss;
+    if (this.pnlCounter) this.pnlCounter.textContent = `Total PnL: ${pnl.toFixed(2)}R`;
   }
 
   _onMouseDown(e) {
@@ -424,43 +430,30 @@ export class ChartViewer {
 
   _onChartClick(clickedTime) {
     this.pauseReplay();
-    
     let idx = this.historicalBars.findIndex(b => b.time === clickedTime);
     if (idx === -1) {
-      idx = this.historicalBars
-        .map((b, i) => ({ b, i }))
-        .filter(x => x.b.time < clickedTime)
-        .sort((a, b) => b.b.time - a.b.time)[0]?.i;
-      if (idx === undefined) return;
+      idx = this.historicalBars.findIndex(b => b.time > clickedTime);
+      if(idx > 0) idx--; 
     }
-
-    const slice = this.historicalBars.slice(0, idx + 1);
-    this.displayChart(slice);
-    
-    this.historicalBars = slice; 
-    
-    const bar = slice[slice.length - 1];
-    this.lastTime  = bar.time;
-    this.lastPrice = bar.close;
-    
-    this._updateMarkers();
-    this.socket.emit('seek', { fromTime: this.lastTime });
+    if (idx !== -1) {
+        const slice = this.historicalBars.slice(0, idx + 1);
+        this.displayChart(slice);
+        this.historicalBars = slice;
+        this._calculateAndDrawTSI(slice); 
+        this._updateMarkers();
+        this.socket.emit('seek', { fromTime: this.lastTime });
+    }
   }
 
   async _addLine(price) {
-    const line = this.series.createPriceLine({
-      price, color: 'blue', lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Dotted,
-      axisLabelVisible: true,
-      title: `Line ${this.pinnedLines.length + 1}`
-    });
+    const line = this.series.createPriceLine({ price, color: 'blue', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: 'Line' });
     try {
       const creationTime = (this.lastTime > 0) ? this.lastTime : null;
       const saved = await this.dataService.addLine(this.pair, price, creationTime);
       this.pinnedLines.push({ line, id: saved.id });
     } catch (err) {
       this.series.removePriceLine(line);
-      console.error('Error adding line:', err);
+      console.error(err);
     }
   }
 
@@ -478,28 +471,9 @@ export class ChartViewer {
     }
   }
 
-  displayChart(bars) {
-    this.series.setData(bars);
-    if (bars.length) {
-      const last = bars[bars.length - 1];
-      this.lastTime  = last.time;
-      this.lastPrice = last.close;
-    }
-    // FIX: Ensure chart fits content when data is loaded
-    this.chart.timeScale().fitContent();
-    this.onDisplay();
-  }
-
   _createLineOnChart(ld) {
     if (this.pinnedLines.find(x => x.id === ld.id)) return;
-    const line = this.series.createPriceLine({
-      price: ld.price,
-      color: 'blue',
-      lineWidth: 1,
-      lineStyle: LightweightCharts.LineStyle.Dotted,
-      axisLabelVisible: true,
-      title: 'Line'
-    });
+    const line = this.series.createPriceLine({ price: ld.price, color: 'blue', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: true, title: 'Line' });
     this.pinnedLines.push({ line, id: ld.id });
   }
 
@@ -509,42 +483,35 @@ export class ChartViewer {
     this.tradeSLLine    = this.series.createPriceLine({ price: trade.stop_loss || trade.stopLoss, color: 'red',   lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'SL'    });
     this.tradeTPLine    = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP'    });
   }
-
-  _drawPreviews({ entry, stop_loss, take_profit }) {
-    this.clearPreviews();
-    this.previewEntryLine = this.series.createPriceLine({
-      price: entry, color: 'rgba(0, 128, 255, 0.8)', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Entry (preview)'
-    });
-    this.previewSLLine = this.series.createPriceLine({
-      price: stop_loss, color: 'rgba(255, 64, 64, 0.8)', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'SL (preview)'
-    });
-    this.previewTPLine = this.series.createPriceLine({
-      price: take_profit, color: 'rgba(64, 255, 64, 0.8)', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'TP (preview)'
-    });
-  }
-
+  
   clearPreviews() {
-    [ this.previewEntryLine, this.previewSLLine, this.previewTPLine ]
-      .forEach(l => l && this.series.removePriceLine(l));
+    [ this.previewEntryLine, this.previewSLLine, this.previewTPLine ].forEach(l => l && this.series.removePriceLine(l));
     this.previewEntryLine = this.previewSLLine = this.previewTPLine = null;
   }
 
-  // --------------------------------------------------------------------------
-  // Controls
-  // --------------------------------------------------------------------------
+  _shadeBar(bar) {
+    const parts = this.nyTimeFormatter.formatToParts(new Date(bar.time * 1000));
+    let h, m;
+    for (const part of parts) {
+      if (part.type === 'hour') h = parseInt(part.value, 10);
+      if (part.type === 'minute') m = parseInt(part.value, 10);
+    }
+    this.sessions.forEach(s => {
+      const inSession = (h > s.from.h || (h === s.from.h && m >= s.from.m)) && (h < s.to.h || (h === s.to.h && m <= s.to.m));
+      if (inSession) s.series.update({ time: bar.time, value: 1 });
+    });
+  }
 
+  // --- Controls ---
   startReplay(tf = this.currentTF, fromTime = this.lastTime) {
     if (fromTime < this.lastTime) {
        const idx = this.historicalBars.findIndex(b => b.time >= fromTime);
        if (idx !== -1) {
            this.historicalBars = this.historicalBars.slice(0, idx);
            this.displayChart(this.historicalBars);
-       } else if (this.historicalBars.length > 0 && fromTime < this.historicalBars[0].time) {
-           this.historicalBars = [];
-           this.displayChart([]);
+           this._calculateAndDrawTSI(this.historicalBars); 
        }
     }
-
     this.lastTime = fromTime - 1;
     this.socket.emit('start_stream', { timeframe: tf, pair: this.pair, fromTime: fromTime });
     this.isPlaying = true;
@@ -563,13 +530,25 @@ export class ChartViewer {
   async changeTimeframe(tf) {
     this.currentTF = tf;
     this.pauseReplay();
+    
+    // Explicitly Clear Data to prevent "Gap/Space" artifacts
     this.series.setData([]);
+    this.tsiSeries.setData([]);
+    this.sigSeries.setData([]);
     this.londonSeries.setData([]);
     this.nySeries.setData([]);
 
     const bars = await this.dataService.fetchBars(this.pair, tf, this.startTime);
     this.historicalBars = bars;
+    
+    // Recalculate and Draw
+    this._calculateAndDrawTSI(bars);
     this.displayChart(bars);
+    
+    // Reset Zoom to fit new data
+    this.chart.timeScale().fitContent();
+    this.indicatorChart.timeScale().fitContent();
+
     bars.forEach(bar => this._shadeBar(bar));
     await this._initTrades();
   }

@@ -5,6 +5,7 @@ from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy, StrategyOptions
 from src.strategies.entry_context import EntryContext, EntryTrigger
 from src.strategies.strategy_config import CandleConfig
+from src.strategies.triggers import _calculate_tsi_series
 
 
 class LiquidityStrategyV2(BaseLiquidityStrategy):
@@ -182,6 +183,26 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
     def _on_strategy_bar(self, bar: Dict[str, Any]):
         with self.lock:
+            # Calculate and Emit TSI for Visualization ---
+            tf = bar.get('tf')
+            if tf:
+                # 1. Get history exactly like the trigger does
+                history = self.get_history(tf, 100)
+                
+                # 2. Extract closes
+                closes = [b['close'] for b in history]
+                
+                # 3. Calculate TSI (Same settings as trigger: 6, 13, 4)
+                tsi_vals, sig_vals = _calculate_tsi_series(closes, 6, 13, 4)
+                
+                # 4. Emit if we have data
+                if tsi_vals and sig_vals:
+                    self.socketio.emit('indicator_update', {
+                        'time': bar['time'],
+                        'tsi': tsi_vals[-1],
+                        'signal': sig_vals[-1]
+                    })
+
             for sid, line in list(self.strategy_lines.items()):
                 if line.get('creation_ts', 0) > bar['time']:
                     continue
