@@ -330,7 +330,6 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     pair_tz = ZoneInfo(PAIR_TZS.get(pair_name, 'UTC'))
     print(f"✅ Test Server running ({pair_name}) at {base_url}. Timezone: {pair_tz}")
 
-    # Index Map logic
     def get_epoch(dt_str):
         dt = dtparser.parse(dt_str)
         if dt.tzinfo is None:
@@ -344,7 +343,6 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             ctx = await browser.new_context(viewport={"width": 1400, "height": 900})
             page = await ctx.new_page()
 
-            # --- CAPTURE BROWSER LOGS ---
             page.on("console", lambda msg: print(f"   [BROWSER] {msg.text}"))
             page.on("pageerror", lambda exc: print(f"   [BROWSER ERROR] {exc}"))
 
@@ -359,12 +357,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 end_ts   = get_epoch(sc["end"])
                 tf       = sc.get("tf", "5m")
 
-                # --- PRE-FLIGHT DATA CHECK ---
                 verify_csv_data(csv_path, pair_name, start_ts, end_ts)
 
                 print(f"   [DEBUG] Scenario Start: {start_ts} | End: {end_ts}")
 
-                # 1. Reset App State (Start fresh at start_ts)
                 if not reset_app_state(base_url, start=start_ts, end=start_ts):
                     print("❌ Reset failed")
                     continue
@@ -376,16 +372,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         c_ts = get_epoch(l["at_raw"])
                     add_line_http(base_url, pair_name, l["level"], creation_time=c_ts)
 
-                # 2. Load Page starting at start_ts
                 await page.goto(f"{base_url}/?start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}", wait_until="domcontentloaded")
 
-                # Wait for ChartViewer to be fully ready
                 try:
                     await page.wait_for_function("() => window.__chartReady === true", timeout=10000)
                 except Exception as e:
                     print(f"⚠️ Timeout waiting for chart init: {e}")
 
-                # 3. Start Stream (using existing socket)
                 await page.evaluate("""
                     window.__done = false;
                     window.__trades = [];
@@ -442,30 +435,47 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                             timeout=5000
                         )
                         
-                        # 2. STRICTLY set the visible range and remove right offset
+                        # 2. FORCE Alignment on BOTH charts explicitly
                         await page.evaluate(
                             """(range) => {
                                 console.log("Setting visible range:", range);
-                                window.chartViewer.chart.timeScale().applyOptions({
+                                
+                                const viewer = window.chartViewer;
+                                
+                                // Explicitly lock options to remove offset and prevent drift
+                                const opts = {
                                     shiftVisibleRangeOnNewBar: false,
-                                    rightOffset: 0
-                                });
-                                window.chartViewer.chart.timeScale().setVisibleRange({
-                                    from: range.start,
-                                    to: range.end
-                                });
+                                    rightOffset: 0,
+                                    fixLeftEdge: true,
+                                    fixRightEdge: true
+                                };
+                                
+                                viewer.chart.timeScale().applyOptions(opts);
+                                viewer.indicatorChart.timeScale().applyOptions(opts);
+
+                                // Set range on BOTH explicitly to force alignment
+                                const rangeObj = { from: range.start, to: range.end };
+                                viewer.chart.timeScale().setVisibleRange(rangeObj);
+                                viewer.indicatorChart.timeScale().setVisibleRange(rangeObj);
                             }""",
                             {"start": start_ts, "end": end_ts}
                         )
                         
-                        # 3. Small buffer for canvas rendering
+                        # 3. Buffer for repaint
                         await page.wait_for_timeout(500) 
                         
-                        chart = page.locator(args.chart_selector)
-                        await chart.wait_for(state="visible", timeout=2000)
-                        await chart.screenshot(path=str(sdir / f"snapshot_{tf}.png"))
+                        # 4. Fallback Selector Logic to ensure we capture the whole column
+                        # Try 'main' (which contains both), then fallback to specific containers if needed
+                        chart_locator = page.locator("main")
+                        
+                        if await chart_locator.count() == 0:
+                            print("   ⚠️ Selector 'main' not found, defaulting to body capture")
+                            chart_locator = page.locator("body")
+                            
+                        await chart_locator.wait_for(state="visible", timeout=2000)
+                        await chart_locator.screenshot(path=str(sdir / f"snapshot_{tf}.png"))
                     except Exception as e:
-                        print(f"   ⚠️ Snapshot failed (Empty Chart?): {e}")
+                        print(f"   ⚠️ Snapshot failed: {e}")
 
             await browser.close()
 
@@ -488,7 +498,10 @@ def main():
     ap.add_argument("--source-csv", required=True)
     ap.add_argument("--outdir", required=True)
     ap.add_argument("--bars-per-second", type=int, default=5000)
-    ap.add_argument("--chart-selector", default="#chartContainer")
+    
+    # We default to "main" to capture the flex container holding both charts
+    ap.add_argument("--chart-selector", default="main") 
+    
     ap.add_argument("--port", type=int, default=5001)
     args = ap.parse_args()
 
