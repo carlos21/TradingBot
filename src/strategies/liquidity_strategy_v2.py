@@ -42,7 +42,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         self._tf_aggregators = {}
         self._tf_histories = {}
         
-        # NEW: Decision Logs for debugging/testing
         self.decision_logs = []
 
         for tf in self.timeframes:
@@ -58,7 +57,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             self.strategy_lines.clear()
             self.open_trades.clear()
             self.trade_manager.open_trades.clear()
-            self.decision_logs.clear()  # Clear logs on reset
+            self.decision_logs.clear()
             for tf in self.timeframes:
                 self._tf_aggregators[tf] = {
                     "seconds": self._parse_tf_seconds(tf),
@@ -69,9 +68,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             print("[StrategyV2] 🧹 Internal state fully reset.")
 
     def _reset_line_state(self, line_state: Dict[str, Any]):
-        """If we keep the line, reset so it can trigger again in the future."""
         super()._reset_line_state(line_state)
-        # Reset the double 5m cross stage
         if "d5_stage" in line_state:
             line_state["d5_stage"] = 0
 
@@ -90,7 +87,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         return list(hist)[-count:]
 
     def log_decision(self, bar_time: int, tf: str, line_id: str, event: str, details: str):
-        """Public helper to record decision logic."""
         self.decision_logs.append({
             "time": bar_time,
             "tf": tf,
@@ -134,7 +130,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         self.log_decision(bar_time, "1m", sid, "REMOVE", msg)
                         lines_to_remove.add(sid)
 
-            # Next Line Breach Check
             short_lines = [l for l in self.strategy_lines.values() if l['direction'] == 'short']
             long_lines  = [l for l in self.strategy_lines.values() if l['direction'] == 'long']
 
@@ -186,21 +181,31 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             # Calculate and Emit TSI for Visualization ---
             tf = bar.get('tf')
             if tf:
-                # 1. Get history exactly like the trigger does
                 history = self.get_history(tf, 100)
-                
-                # 2. Extract closes
                 closes = [b['close'] for b in history]
-                
-                # 3. Calculate TSI (Same settings as trigger: 6, 13, 4)
                 tsi_vals, sig_vals = _calculate_tsi_series(closes, 6, 13, 4)
                 
-                # 4. Emit if we have data
                 if tsi_vals and sig_vals:
+                    # --- NEW: Detect Crossover ---
+                    cross_type = None
+                    if len(tsi_vals) >= 2:
+                        curr_tsi = tsi_vals[-1]
+                        curr_sig = sig_vals[-1]
+                        prev_tsi = tsi_vals[-2]
+                        prev_sig = sig_vals[-2]
+
+                        # Bullish Cross: Blue crosses ABOVE Red
+                        if prev_tsi <= prev_sig and curr_tsi > curr_sig:
+                            cross_type = 'bullish'
+                        # Bearish Cross: Blue crosses BELOW Red
+                        elif prev_tsi >= prev_sig and curr_tsi < curr_sig:
+                            cross_type = 'bearish'
+
                     self.socketio.emit('indicator_update', {
                         'time': bar['time'],
                         'tsi': tsi_vals[-1],
-                        'signal': sig_vals[-1]
+                        'signal': sig_vals[-1],
+                        'cross_type': cross_type 
                     })
 
             for sid, line in list(self.strategy_lines.items()):
@@ -211,7 +216,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 proposed_ctx: Optional[EntryContext] = None
                 trigger_name = "None"
 
-                # 1. Check Triggers
                 for trig in self.triggers:
                     proposed_ctx = trig(self, sid, line, bar)
                     if proposed_ctx is not None:
@@ -221,7 +225,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 if proposed_ctx is None:
                     continue
 
-                # 2. Check Filters
                 allow, reason = self._filters_allow_entry(proposed_ctx)
                 
                 if allow:

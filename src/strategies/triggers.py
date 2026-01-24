@@ -328,22 +328,35 @@ def tsi_cross_trigger(
     dir_ = line.get("direction")
     if dir_ is None: return None
 
+    lvl = line["level"]
+    
+    # 1. Interaction Check: Ensure price has actually crossed the level
+    # 'extreme' tracks the lowest low (for long) or highest high (for short) 
+    # seen since the line was latched.
+    if dir_ == "long":
+        # If the lowest price seen so far is still above the level, 
+        # we haven't grabbed liquidity yet.
+        if line['extreme'] > lvl:
+            return None
+    elif dir_ == "short":
+        # If the highest price seen so far is still below the level,
+        # we haven't grabbed liquidity yet.
+        if line['extreme'] < lvl:
+            return None
+
     tf = bar.get('tf')
     if not tf: return None
 
-    # 1. Fetch History
+    # 2. Fetch History
     # We need enough bars for EMA convergence. 
-    # Strategy buffer is now 100, which is sufficient.
     history = strategy.get_history(tf, 100) 
     if len(history) < 30: 
         return None
 
-    # 2. Prepare Data
+    # 3. Prepare Data
     closes = [b['close'] for b in history]
     
     # User Config: tsi_long=6, tsi_short=13, tsi_signal=4
-    # Note: Standard TSI usually has Long > Short (e.g. 25, 13), 
-    # but we strictly follow the requested variables.
     TSI_LONG = 6
     TSI_SHORT = 13
     TSI_SIGNAL = 4
@@ -358,15 +371,12 @@ def tsi_cross_trigger(
     curr_sig = sig_line[-1]
     prev_tsi = tsi_line[-2]
     prev_sig = sig_line[-2]
-
-    lvl = line["level"]
     
-    # 3. Check Logic
+    # 4. Check Logic
     if dir_ == "long":
         # We are looking for a Bullish Cross (Blue crosses ABOVE Red)
-        # AND the price must have dipped below the line (handled by strategy latching)
         
-        # Check Cross: Previous TSI < Signal AND Current TSI > Signal
+        # Check Cross: Previous TSI <= Signal AND Current TSI > Signal
         bullish_cross = (prev_tsi <= prev_sig) and (curr_tsi > curr_sig)
         
         if bullish_cross:
@@ -394,7 +404,7 @@ def tsi_cross_trigger(
     elif dir_ == "short":
         # We are looking for a Bearish Cross (Blue crosses BELOW Red)
         
-        # Check Cross: Previous TSI > Signal AND Current TSI < Signal
+        # Check Cross: Previous TSI >= Signal AND Current TSI < Signal
         bearish_cross = (prev_tsi >= prev_sig) and (curr_tsi < curr_sig)
 
         if bearish_cross:

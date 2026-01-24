@@ -435,7 +435,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                             timeout=5000
                         )
                         
-                        # 2. FORCE Alignment on BOTH charts explicitly
+                        # 2. FORCE Alignment on SINGLE chart
                         await page.evaluate(
                             """(range) => {
                                 console.log("Setting visible range:", range);
@@ -450,13 +450,12 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                                     fixRightEdge: true
                                 };
                                 
+                                // Apply to the single chart instance
                                 viewer.chart.timeScale().applyOptions(opts);
-                                viewer.indicatorChart.timeScale().applyOptions(opts);
 
-                                // Set range on BOTH explicitly to force alignment
+                                // Set range
                                 const rangeObj = { from: range.start, to: range.end };
                                 viewer.chart.timeScale().setVisibleRange(rangeObj);
-                                viewer.indicatorChart.timeScale().setVisibleRange(rangeObj);
                             }""",
                             {"start": start_ts, "end": end_ts}
                         )
@@ -464,12 +463,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         # 3. Buffer for repaint
                         await page.wait_for_timeout(500) 
                         
-                        # 4. Fallback Selector Logic to ensure we capture the whole column
-                        # Try 'main' (which contains both), then fallback to specific containers if needed
-                        chart_locator = page.locator("main")
+                        # 4. Capture the chart container specifically
+                        chart_locator = page.locator("#chartContainer")
                         
                         if await chart_locator.count() == 0:
-                            print("   ⚠️ Selector 'main' not found, defaulting to body capture")
+                            print("   ⚠️ #chartContainer not found, defaulting to body capture")
                             chart_locator = page.locator("body")
                             
                         await chart_locator.wait_for(state="visible", timeout=2000)

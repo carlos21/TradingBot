@@ -19,12 +19,14 @@ document.addEventListener("DOMContentLoaded", () => {
     const keepClosedTrades = urlParams.get('keep_closed_trades') === 'true';
     
     const tfParam = urlParams.get('tf');
+    const showTSI = urlParams.get('show_tsi') || false;
 
     const chartViewer = new ChartViewer(chartContainer, service, socket, {
         startTime: startTime,
         keepStrategyLines: keepStrategyLines,
-        keepClosedTradeLines: keepClosedTrades, // Pass this to constructor
-        timeframe: tfParam
+        keepClosedTradeLines: keepClosedTrades,
+        timeframe: tfParam,
+        showTSI: showTSI
     });
     window.chartViewer = chartViewer;
     const controlsView = new ControlsView(chartViewer, socket, service);

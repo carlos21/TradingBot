@@ -16,11 +16,13 @@ export class ChartViewer {
     this.historicalBars = []; 
     this.allTrades      = []; 
     this.pinnedLines    = []; 
+    this.tsiMarkers     = []; 
 
     // --- Config ---
     this.keepClosedTradeLines = opts.keepClosedTradeLines || false;
     this.startTime = opts.startTime || null;
     this.keepStrategyLines = opts.keepStrategyLines || false;
+    this.showTSI = opts.showTSI !== false;
 
     this.formats = {
       NQ:     { precision: 2,    minMove: 0.01    },
@@ -34,143 +36,107 @@ export class ChartViewer {
     if (this.pnlCounter) this.pnlCounter.textContent = 'Total PnL: 0.00R';
 
     // ========================================================================
-    // 1. SHARED CONFIGURATION
+    // 1. TIME FORMATTING (NY TIME)
     // ========================================================================
     
-    const PRICE_SCALE_WIDTH = 75; // Fixed width for alignment
+    // Create a reusable formatter for New York time WITH DATE
+    this.nyTimeFormatter = new Intl.DateTimeFormat('en-US', { 
+        timeZone: 'America/New_York', 
+        month: 'short',  // <--- Added
+        day: 'numeric',  // <--- Added
+        hour12: false, 
+        hour: '2-digit', 
+        minute: '2-digit' 
+    });
 
-    const commonOptions = {
+    const formatTime = (time) => {
+        const date = new Date(time * 1000);
+        return this.nyTimeFormatter.format(date);
+    };
+
+    // ========================================================================
+    // 2. SINGLE CHART CONFIGURATION
+    // ========================================================================
+    
+    const PRICE_SCALE_WIDTH = 75; 
+
+    const chartOptions = {
       layout: { background: { type: 'solid', color: 'white' }, textColor: 'black' },
       grid:   { vertLines: { color: '#f0f0f0' }, horzLines: { color: '#f0f0f0' } },
       crosshair: { 
           mode: LightweightCharts.CrosshairMode.Normal,
-          // We handle crosshair sync manually, but this keeps the native feel
           vertLine: { visible: true, labelVisible: true },
           horzLine: { visible: true, labelVisible: true }
       },
+      // Fix Crosshair Label to show NY Time
+      localization: {
+        locale: 'en-US',
+        timeFormatter: formatTime, 
+      },
+      // Default Right Scale (For Price) - Occupies Top 75%
       rightPriceScale: {
         visible: true,
         borderColor: '#d1d5db',
-        minimumWidth: PRICE_SCALE_WIDTH, 
+        minimumWidth: PRICE_SCALE_WIDTH,
+        scaleMargins: {
+            top: 0.05,    // Leave 5% padding at top
+            bottom: this.showTSI ? 0.25 : 0.05, // Leave 25% space at bottom for TSI
+        }
       },
       timeScale: {
         visible: true,
         timeVisible: true,
         shiftVisibleRangeOnNewBar: true,
-        tickMarkFormatter: (time) => {
-             const date = new Date(time * 1000);
-             return date.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour12: false, hour: '2-digit', minute: '2-digit'});
-        }
+        // Fix Axis Labels to show NY Time
+        tickMarkFormatter: formatTime
       }
     };
 
-    // ========================================================================
-    // 2. MAIN CHART (PRICE)
-    // ========================================================================
     this.chart = LightweightCharts.createChart(chartElement, {
-      ...commonOptions,
+      ...chartOptions,
       width: chartElement.clientWidth || 800,
-      height: chartElement.clientHeight || 400,
-      timeScale: { 
-          ...commonOptions.timeScale, 
-          visible: false // Hide dates on top chart
-      } 
+      height: chartElement.clientHeight || 600,
     });
 
+    // Price Series (Default Scale)
     this.series = this.chart.addCandlestickSeries({
         upColor: 'white', borderUpColor: 'black', wickUpColor: 'black',
         downColor: 'black', borderDownColor: 'black', wickDownColor: 'black',
         priceFormat: { type: 'price', precision: 2, minMove: 1 },
     });
 
-    // ========================================================================
-    // 3. INDICATOR CHART (TSI)
-    // ========================================================================
-    this.indicatorElement = document.getElementById('indicatorContainer');
-    if (!this.indicatorElement) console.error("CRITICAL: #indicatorContainer not found.");
-    
-    this.indicatorChart = LightweightCharts.createChart(this.indicatorElement, {
-      ...commonOptions,
-      width: this.indicatorElement?.clientWidth || 800,
-      height: this.indicatorElement?.clientHeight || 200,
-      timeScale: { 
-          ...commonOptions.timeScale, 
-          visible: true // Show dates on bottom chart
-      }
-    });
-
-    this.tsiSeries = this.indicatorChart.addLineSeries({ color: 'blue', lineWidth: 2, title: 'TSI' });
-    this.sigSeries = this.indicatorChart.addLineSeries({ color: 'red',  lineWidth: 2, title: 'Signal' });
-    
-    const zeroLine = { price: 0, color: '#999', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false };
-    this.tsiSeries.createPriceLine(zeroLine);
-
-
-    // ========================================================================
-    // 4. SYNCHRONIZATION (Zoom & Crosshair)
-    // ========================================================================
-    
-    // --- Zoom/Scroll Sync ---
-    let isSyncingRange = false;
-    const syncRange = (source, target) => {
-        const range = source.timeScale().getVisibleLogicalRange();
-        if (range && !isSyncingRange) {
-            isSyncingRange = true;
-            // Protect against null range errors
-            if (range.from !== null && range.to !== null) {
-                try { target.timeScale().setVisibleLogicalRange(range); } catch(e) {}
-            }
-            isSyncingRange = false;
-        }
-    };
-
-    this.chart.timeScale().subscribeVisibleLogicalRangeChange(() => syncRange(this.chart, this.indicatorChart));
-    this.indicatorChart.timeScale().subscribeVisibleLogicalRangeChange(() => syncRange(this.indicatorChart, this.chart));
-
-    // --- Crosshair Sync (The Vertical Line) ---
-    // We update the other chart's crosshair position based on the time of the hover.
-    
-    const syncCrosshair = (sourceChart, targetChart, targetSeries) => {
-        sourceChart.subscribeCrosshairMove(param => {
-            if (!param.point || !param.time) {
-                targetChart.clearCrosshairPosition();
-                return;
-            }
-            // Pass NaN for price to hide the horizontal line on the target chart
-            // (or pass a valid price if you wanted to sync price levels, but that doesn't make sense for TSI)
-            targetChart.setCrosshairPosition(NaN, param.time, targetSeries);
+    if (this.showTSI) {
+        this.chart.priceScale('tsi').applyOptions({
+            scaleMargins: { top: 0.8, bottom: 0 },
+            visible: true,
+            borderVisible: false,
         });
-    };
 
-    // Sync Price -> Indicator
-    syncCrosshair(this.chart, this.indicatorChart, this.tsiSeries);
-    
-    // Sync Indicator -> Price
-    syncCrosshair(this.indicatorChart, this.chart, this.series);
+        this.tsiSeries = this.chart.addLineSeries({ color: 'blue', lineWidth: 2, priceScaleId: 'tsi', title: 'TSI' });
+        this.sigSeries = this.chart.addLineSeries({ color: 'red', lineWidth: 2, priceScaleId: 'tsi', title: 'Signal' });
+        
+        const zeroLine = { price: 0, color: '#999', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dotted, axisLabelVisible: false };
+        this.tsiSeries.createPriceLine(zeroLine);
+    }
 
 
     // ========================================================================
-    // 5. RESIZE & EVENTS
+    // 4. RESIZE & EVENTS
     // ========================================================================
     
     const resizer = new ResizeObserver(entries => {
         for (let entry of entries) {
             if (entry.target === this.chartElement) {
                 this.chart.resize(entry.contentRect.width, entry.contentRect.height);
-            } else if (entry.target === this.indicatorElement) {
-                this.indicatorChart.resize(entry.contentRect.width, entry.contentRect.height);
             }
         }
     });
     resizer.observe(this.chartElement);
-    if(this.indicatorElement) resizer.observe(this.indicatorElement);
 
     setTimeout(() => {
         if(this.chartElement) this.chart.resize(this.chartElement.clientWidth, this.chartElement.clientHeight);
-        if(this.indicatorElement) this.indicatorChart.resize(this.indicatorElement.clientWidth, this.indicatorElement.clientHeight);
     }, 100);
 
-    // Event Listeners
     this.chartElement.addEventListener('contextmenu', e => e.preventDefault());
     this.chartElement.addEventListener('mousedown', this._onMouseDown.bind(this));
     
@@ -182,13 +148,12 @@ export class ChartViewer {
       if (this.isRPressed && param && param.time) this._onChartClick(param.time);
     });
 
-    // Session shading
     this.londonSeries = this.chart.addHistogramSeries({ priceScaleId: '', scaleMargins: { top:0, bottom:0 }, lineWidth:0, overlay:true, color:'rgba(0,255,0,0.1)' });
     this.nySeries     = this.chart.addHistogramSeries({ priceScaleId: '', scaleMargins: { top:0, bottom:0 }, lineWidth:0, overlay:true, color:'rgba(255,0,0,0.1)' });
     this.sessions = [{ series: this.nySeries, from: { h:8, m:30 }, to: { h:16, m:0 } }];
-    this.nyTimeFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: 'numeric', hour12: false });
+    
+    // REMOVED: Duplicate this.nyTimeFormatter definition that was here
 
-    // Start Init
     this._initPair()
       .then(() => this._initBars())
       .then(() => this._initLines())
@@ -215,13 +180,9 @@ export class ChartViewer {
     const bars = await this.dataService.fetchBars(this.pair, this.currentTF, this.startTime);
     this.historicalBars = bars;
     
-    // 1. Calculate Indicators FIRST
     this._calculateAndDrawTSI(bars);
-
-    // 2. Draw Price Chart
     this.displayChart(bars);
     
-    // 3. Shading
     bars.forEach(bar => this._shadeBar(bar));
   }
 
@@ -238,10 +199,11 @@ export class ChartViewer {
   }
 
   // --------------------------------------------------------------------------
-  // TSI Calculation
+  // TSI Calculation & Marker Generation
   // --------------------------------------------------------------------------
   _calculateAndDrawTSI(bars) {
-      // Relaxed constraint: Need at least 14 bars for minimal calc (Long length=6 + Short=13 + Signal=4)
+      // if (!this.showTSI) return;
+
       if (!bars || bars.length < 14) {
           console.warn(`[TSI] Not enough bars (${bars ? bars.length : 0}) for calculation.`);
           this.tsiSeries.setData([]);
@@ -287,10 +249,41 @@ export class ChartViewer {
       const signalValues = ema(tsiRawValues, TSI_SIGNAL);
       const signalData = signalValues.map((val, i) => ({ time: times[i], value: val }));
 
+      // --- Detect Historical Crosses for Price Chart Markers ---
+      this.tsiMarkers = []; 
+      for (let i = 1; i < tsiRawValues.length; i++) {
+          const prevTsi = tsiRawValues[i-1];
+          const currTsi = tsiRawValues[i];
+          const prevSig = signalValues[i-1];
+          const currSig = signalValues[i];
+          const time    = times[i];
+
+          // Bullish Cross (Blue crosses UP over Red)
+          if (prevTsi <= prevSig && currTsi > currSig) {
+              this.tsiMarkers.push({
+                  time: time,
+                  position: 'belowBar',
+                  color: '#00E676', // Green
+                  shape: 'arrowUp',
+                  size: 1
+              });
+          }
+          // Bearish Cross (Blue crosses DOWN under Red)
+          else if (prevTsi >= prevSig && currTsi < currSig) {
+              this.tsiMarkers.push({
+                  time: time,
+                  position: 'aboveBar',
+                  color: '#FF1744', // Red
+                  shape: 'arrowDown',
+                  size: 1
+              });
+          }
+      }
+
       try {
           this.tsiSeries.setData(tsiData);
           this.sigSeries.setData(signalData);
-          this.indicatorChart.timeScale().fitContent(); 
+          this._updateMarkers(); // Update markers on the price chart
       } catch (err) {
           console.error(err);
       }
@@ -336,6 +329,27 @@ export class ChartViewer {
         if (data.time >= this.lastTime) {
             this.tsiSeries.update({ time: data.time, value: data.tsi });
             this.sigSeries.update({ time: data.time, value: data.signal });
+
+            // --- Handle Live Cross Markers ---
+            if (data.cross_type) {
+                const marker = {
+                    time: data.time,
+                    size: 1
+                };
+
+                if (data.cross_type === 'bullish') {
+                    marker.position = 'belowBar';
+                    marker.color = '#00E676';
+                    marker.shape = 'arrowUp';
+                } else if (data.cross_type === 'bearish') {
+                    marker.position = 'aboveBar';
+                    marker.color = '#FF1744';
+                    marker.shape = 'arrowDown';
+                }
+
+                this.tsiMarkers.push(marker);
+                this._updateMarkers();
+            }
         }
     });
 
@@ -380,9 +394,13 @@ export class ChartViewer {
 
   _updateMarkers() {
     if (!this.historicalBars.length) return;
-    const markers = [];
+    
+    // 1. Start with TSI Markers
+    const markers = [...this.tsiMarkers];
+    
     let win = 0, loss = 0, pnl = 0;
 
+    // 2. Add Trade Markers
     this.allTrades.forEach(t => {
       const entryTime = t.entry_time || t.entryTime;
       const exitTime  = t.exit_time  || t.exitTime;
@@ -407,14 +425,24 @@ export class ChartViewer {
       }
     });
 
+    // 3. Deduplicate and Sort
     const uniqueMarkers = [];
     const seen = new Set();
-    markers.sort((a,b) => a.time - b.time).forEach(m => {
-        const k = `${m.time}_${m.text}`;
-        if(!seen.has(k)) { seen.add(k); uniqueMarkers.push(m); }
+    
+    // Sort by time first
+    markers.sort((a,b) => a.time - b.time);
+    
+    markers.forEach(m => {
+        // Create a unique key based on time and text (or shape if text is empty)
+        const k = `${m.time}_${m.text || m.shape}`;
+        if(!seen.has(k)) { 
+            seen.add(k); 
+            uniqueMarkers.push(m); 
+        }
     });
 
     this.series.setMarkers(uniqueMarkers);
+    
     if (this.winCounter) this.winCounter.textContent = win;
     if (this.lossCounter) this.lossCounter.textContent = loss;
     if (this.pnlCounter) this.pnlCounter.textContent = `Total PnL: ${pnl.toFixed(2)}R`;
@@ -531,23 +559,23 @@ export class ChartViewer {
     this.currentTF = tf;
     this.pauseReplay();
     
-    // Explicitly Clear Data to prevent "Gap/Space" artifacts
     this.series.setData([]);
-    this.tsiSeries.setData([]);
-    this.sigSeries.setData([]);
+
+    if (this.showTSI) {
+      this.tsiSeries.setData([]);
+      this.sigSeries.setData([]);
+    }
+
     this.londonSeries.setData([]);
     this.nySeries.setData([]);
 
     const bars = await this.dataService.fetchBars(this.pair, tf, this.startTime);
     this.historicalBars = bars;
     
-    // Recalculate and Draw
     this._calculateAndDrawTSI(bars);
     this.displayChart(bars);
     
-    // Reset Zoom to fit new data
     this.chart.timeScale().fitContent();
-    this.indicatorChart.timeScale().fitContent();
 
     bars.forEach(bar => this._shadeBar(bar));
     await this._initTrades();
