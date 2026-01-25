@@ -103,7 +103,7 @@ def build_prod():
         numbers=numbers,
         options=options,
         candle_config=candle_config,
-        timeframes=["5m", "15m", "30m", "1h"],
+        timeframes=["3m", "5m", "15m", "30m", "1h"],
         bootstrap_existing_lines=True,
     )
 

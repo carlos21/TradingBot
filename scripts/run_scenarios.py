@@ -372,7 +372,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         c_ts = get_epoch(l["at_raw"])
                     add_line_http(base_url, pair_name, l["level"], creation_time=c_ts)
 
-                await page.goto(f"{base_url}/?start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}", wait_until="domcontentloaded")
+                await page.goto(f"{base_url}/?start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}&show_tsi=true", wait_until="domcontentloaded")
 
                 try:
                     await page.wait_for_function("() => window.__chartReady === true", timeout=10000)

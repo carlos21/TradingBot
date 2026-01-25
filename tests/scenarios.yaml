@@ -1,4 +1,16 @@
 scenarios:
+  - name: "NQ - 2024-04-03"
+    pair: "NQ"
+    tf: "5m"
+    start: "2024-04-01 05:05:00Z"
+    end:   "2024-04-03 17:30:00Z"
+    lines:
+      - { price: 18414.00, at: "2024-04-03 14:00:00Z" }
+    expect:
+      none: true
+    snapshot: true
+    export_summary: true
+
   - name: "NQ - 2024-04-10"
     pair: "NQ"
     tf: "15m"
@@ -74,7 +86,6 @@ scenarios:
     expect:
       none: true
     snapshot: true
-    export_summary: true
 
   - name: "NQ - 2024-08-01"
     pair: "NQ"

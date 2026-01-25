@@ -152,8 +152,6 @@ export class ChartViewer {
     this.nySeries     = this.chart.addHistogramSeries({ priceScaleId: '', scaleMargins: { top:0, bottom:0 }, lineWidth:0, overlay:true, color:'rgba(255,0,0,0.1)' });
     this.sessions = [{ series: this.nySeries, from: { h:8, m:30 }, to: { h:16, m:0 } }];
     
-    // REMOVED: Duplicate this.nyTimeFormatter definition that was here
-
     this._initPair()
       .then(() => this._initBars())
       .then(() => this._initLines())
@@ -202,12 +200,12 @@ export class ChartViewer {
   // TSI Calculation & Marker Generation
   // --------------------------------------------------------------------------
   _calculateAndDrawTSI(bars) {
-      // if (!this.showTSI) return;
-
+      // We always calculate TSI to generate markers, even if the chart is hidden.
+      
       if (!bars || bars.length < 14) {
-          console.warn(`[TSI] Not enough bars (${bars ? bars.length : 0}) for calculation.`);
-          this.tsiSeries.setData([]);
-          this.sigSeries.setData([]);
+          // console.warn(`[TSI] Not enough bars (${bars ? bars.length : 0}) for calculation.`);
+          if (this.tsiSeries) this.tsiSeries.setData([]);
+          if (this.sigSeries) this.sigSeries.setData([]);
           return;
       }
 
@@ -281,9 +279,12 @@ export class ChartViewer {
       }
 
       try {
-          this.tsiSeries.setData(tsiData);
-          this.sigSeries.setData(signalData);
-          this._updateMarkers(); // Update markers on the price chart
+          // Only update the TSI chart lines if they exist (showTSI=true)
+          if (this.tsiSeries) this.tsiSeries.setData(tsiData);
+          if (this.sigSeries) this.sigSeries.setData(signalData);
+          
+          // Always update markers on the main chart
+          this._updateMarkers(); 
       } catch (err) {
           console.error(err);
       }
@@ -327,8 +328,8 @@ export class ChartViewer {
 
     this.socket.on('indicator_update', (data) => {
         if (data.time >= this.lastTime) {
-            this.tsiSeries.update({ time: data.time, value: data.tsi });
-            this.sigSeries.update({ time: data.time, value: data.signal });
+            if (this.tsiSeries) this.tsiSeries.update({ time: data.time, value: data.tsi });
+            if (this.sigSeries) this.sigSeries.update({ time: data.time, value: data.signal });
 
             // --- Handle Live Cross Markers ---
             if (data.cross_type) {

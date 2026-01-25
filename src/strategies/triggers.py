@@ -1,6 +1,10 @@
 from typing import Any, Dict, Optional, List
 from src.strategies.entry_context import EntryContext, EntryTrigger
 
+# --- CONFIGURATION ---
+FAST_MOVE_LOOKBACK  = 5    # Check the last 5 bars (15m)
+FAST_MOVE_THRESHOLD = 3.0  # Fast if price moved > 120pts (assuming 40pt avg)
+
 def trigger_with_timeframes(trigger_func: EntryTrigger, timeframes: List[str]) -> EntryTrigger:
     """
     Returns a new trigger that only executes if the bar's timeframe is in the allowed list.
@@ -13,6 +17,210 @@ def trigger_with_timeframes(trigger_func: EntryTrigger, timeframes: List[str]) -
     wrapper.__name__ = trigger_func.__name__
     return wrapper
 
+def _calculate_velocity_score(history: List[Dict[str, Any]], lookback: int) -> float:
+    """
+    Calculates a 'Velocity Score' to detect fast moves.
+    Score = (Net Displacement) / (Average Candle Range)
+    """
+    if len(history) < lookback:
+        return 0.0
+    
+    subset = history[-lookback:]
+    total_range = sum(b['high'] - b['low'] for b in subset)
+    avg_range = total_range / lookback if lookback > 0 else 1.0
+    
+    if avg_range == 0: return 0.0
+
+    start_open = subset[0]['open']
+    end_close  = subset[-1]['close']
+    displacement = end_close - start_open
+    
+    return displacement / avg_range
+
+def tsi_cross_trigger(
+    strategy: "LiquidityStrategyV2",
+    line_id: Any,
+    line: Dict[str, Any],
+    bar: Dict[str, Any],
+) -> Optional[EntryContext]:
+    """
+    TSI Trigger with "Fast Move" Protection.
+    
+    Stages:
+    0: Waiting for initial TSI Cross.
+    1: Protection Mode (Fast Move Detected).
+       Exit via:
+       A) Sweep of Ref Price -> Go to Stage 2.
+       B) 3m TSI Cross -> Trigger Entry Immediately.
+    2: Swept -> Waiting for Reclaim (price to close back inside).
+    """
+    dir_ = line.get("direction")
+    if dir_ is None: return None
+
+    lvl = line["level"]
+    
+    if "tsi_stage" not in line:
+        line["tsi_stage"] = 0       
+        line["tsi_ref_price"] = 0.0 
+
+    # 1. Interaction Check
+    if dir_ == "long":
+        if line['extreme'] > lvl: return None
+    elif dir_ == "short":
+        if line['extreme'] < lvl: return None
+
+    tf = bar.get('tf')
+    if not tf: return None
+
+    # 2. Fetch History & Calculate TSI (Current Timeframe)
+    history = strategy.get_history(tf, 100) 
+    if len(history) < 30: return None
+
+    closes = [b['close'] for b in history]
+    tsi_line, sig_line = _calculate_tsi_series(closes, 6, 13, 4)
+
+    if len(tsi_line) < 2 or len(sig_line) < 2: return None
+
+    curr_tsi = tsi_line[-1]
+    curr_sig = sig_line[-1]
+    prev_tsi = tsi_line[-2]
+    prev_sig = sig_line[-2]
+
+    # --- LOGIC FLOW ---
+
+    # STAGE 0: Waiting for the Cross
+    if line["tsi_stage"] == 0:
+        has_crossed = False
+        
+        if dir_ == "long":
+            if (prev_tsi <= prev_sig) and (curr_tsi > curr_sig): has_crossed = True
+        elif dir_ == "short":
+            if (prev_tsi >= prev_sig) and (curr_tsi < curr_sig): has_crossed = True
+        
+        if has_crossed:
+            # Fast Move Check
+            hist_15m = strategy.get_history("15m", FAST_MOVE_LOOKBACK + 5)
+            velocity_score = _calculate_velocity_score(hist_15m, FAST_MOVE_LOOKBACK)
+            
+            is_fast = False
+            if dir_ == "long" and velocity_score < -FAST_MOVE_THRESHOLD: is_fast = True
+            elif dir_ == "short" and velocity_score > FAST_MOVE_THRESHOLD: is_fast = True
+
+            if is_fast:
+                line["tsi_stage"] = 1
+                line["tsi_ref_price"] = bar["low"] if dir_ == "long" else bar["high"]
+                strategy.log_decision(bar['time'], tf, line_id, "TSI_FAST", 
+                    f"Fast Move ({velocity_score:.2f}). Protection Mode ON. Wait for Sweep OR 3m TSI.")
+                return None
+            else:
+                return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
+
+    # STAGE 1: Protection Mode (Wait for Sweep OR 3m TSI Rescue)
+    elif line["tsi_stage"] == 1:
+        
+        # --- A) CHECK 3m TSI RESCUE ---
+        hist_3m = strategy.get_history("3m", 50)
+        # Only proceed if we have enough 3m data
+        if len(hist_3m) >= 30:
+            closes_3m = [b['close'] for b in hist_3m]
+            tsi_3m, sig_3m = _calculate_tsi_series(closes_3m, 6, 13, 4)
+            
+            if len(tsi_3m) >= 2:
+                t3_curr, t3_prev = tsi_3m[-1], tsi_3m[-2]
+                s3_curr, s3_prev = sig_3m[-1], sig_3m[-2]
+                
+                rescue = False
+                if dir_ == "long":
+                    # 3m Blue crosses ABOVE Orange
+                    if t3_prev <= s3_prev and t3_curr > s3_curr: rescue = True
+                elif dir_ == "short":
+                    # 3m Blue crosses BELOW Orange
+                    if t3_prev >= s3_prev and t3_curr < s3_curr: rescue = True
+                
+                if rescue:
+                    strategy.log_decision(bar['time'], tf, line_id, "TSI_3M_RESCUE", 
+                        f"3m TSI Cross detected in Protection Mode. Triggering Entry.")
+                    
+                    line["tsi_stage"] = 0
+                    line["tsi_ref_price"] = 0.0
+                    return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
+
+        # --- B) CHECK SWEEP (Existing Logic) ---
+        ref = line["tsi_ref_price"]
+        
+        if dir_ == "long":
+            if bar["low"] < ref:
+                line["tsi_stage"] = 2
+                strategy.log_decision(bar['time'], tf, line_id, "TSI_SWEEP", 
+                    f"Swept previous low {ref}. Now waiting for reclaim.")
+        
+        elif dir_ == "short":
+            if bar["high"] > ref:
+                line["tsi_stage"] = 2
+                strategy.log_decision(bar['time'], tf, line_id, "TSI_SWEEP", 
+                    f"Swept previous high {ref}. Now waiting for reclaim.")
+
+    # STAGE 2: Waiting for Reclaim
+    elif line["tsi_stage"] == 2:
+        ref = line["tsi_ref_price"]
+        should_enter = False
+        
+        if dir_ == "long":
+            if bar["close"] > ref: should_enter = True
+        elif dir_ == "short":
+            if bar["close"] < ref: should_enter = True
+        
+        if should_enter:
+            strategy.log_decision(bar['time'], tf, line_id, "TSI_RECLAIM", 
+                f"Price reclaimed {ref}. Triggering Entry.")
+            
+            line["tsi_stage"] = 0
+            line["tsi_ref_price"] = 0.0
+            return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
+
+    return None
+
+def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val):
+    if dir_ == "long":
+        true_extreme = min(line['extreme'], bar['low'])
+        cross_depth = max(0.0, lvl - true_extreme)
+        strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_CROSS", f"Long Trigger: TSI({tsi_val:.2f}) > Sig({sig_val:.2f})")
+        return EntryContext(strategy, line_id, "long", lvl, bar, bar['close'], bar['low'], bar['high'], true_extreme, cross_depth)
+    else:
+        true_extreme = max(line['extreme'], bar['high'])
+        cross_depth = max(0.0, true_extreme - lvl)
+        strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_CROSS", f"Short Trigger: TSI({tsi_val:.2f}) < Sig({sig_val:.2f})")
+        return EntryContext(strategy, line_id, "short", lvl, bar, bar['close'], bar['low'], bar['high'], true_extreme, cross_depth)
+
+# --- HELPER FUNCTIONS FOR TSI ---
+
+def _calculate_ema(values: List[float], length: int) -> List[float]:
+    if not values: return []
+    alpha = 2 / (length + 1)
+    ema_values = [values[0]]
+    for price in values[1:]:
+        prev_ema = ema_values[-1]
+        new_ema = (price * alpha) + (prev_ema * (1 - alpha))
+        ema_values.append(new_ema)
+    return ema_values
+
+def _calculate_tsi_series(closes: List[float], long_len: int, short_len: int, sig_len: int):
+    if len(closes) < long_len + short_len + sig_len: return [], []
+    pc = [0.0] * len(closes)
+    abs_pc = [0.0] * len(closes)
+    for i in range(1, len(closes)):
+        diff = closes[i] - closes[i-1]
+        pc[i] = diff
+        abs_pc[i] = abs(diff)
+    ema_pc_2  = _calculate_ema(_calculate_ema(pc, long_len), short_len)
+    ema_apc_2 = _calculate_ema(_calculate_ema(abs_pc, long_len), short_len)
+    tsi_values = []
+    for val, abs_val in zip(ema_pc_2, ema_apc_2):
+        tsi_values.append(100.0 * (val / abs_val) if abs_val != 0 else 0.0)
+    signal_values = _calculate_ema(tsi_values, sig_len)
+    return tsi_values, signal_values
+
+# ... (wick_near_line_trigger, three_candle_reversal_trigger, double_5m_cross_trigger remain unchanged) ...
 def wick_near_line_trigger(
     strategy: "LiquidityStrategyV2",
     line_id: Any,
@@ -311,177 +519,3 @@ def double_5m_cross_trigger(
                 )
 
     return None
-
-def tsi_cross_trigger(
-    strategy: "LiquidityStrategyV2",
-    line_id: Any,
-    line: Dict[str, Any],
-    bar: Dict[str, Any],
-) -> Optional[EntryContext]:
-    """
-    TSI Trigger:
-    - Long: Price dipped below line -> Wait for TSI (Blue) to cross ABOVE Signal (Red).
-    - Short: Price popped above line -> Wait for TSI (Blue) to cross BELOW Signal (Red).
-    
-    Config: Long=6, Short=13, Signal=4
-    """
-    dir_ = line.get("direction")
-    if dir_ is None: return None
-
-    lvl = line["level"]
-    
-    # 1. Interaction Check: Ensure price has actually crossed the level
-    # 'extreme' tracks the lowest low (for long) or highest high (for short) 
-    # seen since the line was latched.
-    if dir_ == "long":
-        # If the lowest price seen so far is still above the level, 
-        # we haven't grabbed liquidity yet.
-        if line['extreme'] > lvl:
-            return None
-    elif dir_ == "short":
-        # If the highest price seen so far is still below the level,
-        # we haven't grabbed liquidity yet.
-        if line['extreme'] < lvl:
-            return None
-
-    tf = bar.get('tf')
-    if not tf: return None
-
-    # 2. Fetch History
-    # We need enough bars for EMA convergence. 
-    history = strategy.get_history(tf, 100) 
-    if len(history) < 30: 
-        return None
-
-    # 3. Prepare Data
-    closes = [b['close'] for b in history]
-    
-    # User Config: tsi_long=6, tsi_short=13, tsi_signal=4
-    TSI_LONG = 6
-    TSI_SHORT = 13
-    TSI_SIGNAL = 4
-
-    tsi_line, sig_line = _calculate_tsi_series(closes, TSI_LONG, TSI_SHORT, TSI_SIGNAL)
-
-    if len(tsi_line) < 2 or len(sig_line) < 2:
-        return None
-
-    # Current values (index -1) and Previous values (index -2)
-    curr_tsi = tsi_line[-1]
-    curr_sig = sig_line[-1]
-    prev_tsi = tsi_line[-2]
-    prev_sig = sig_line[-2]
-    
-    # 4. Check Logic
-    if dir_ == "long":
-        # We are looking for a Bullish Cross (Blue crosses ABOVE Red)
-        
-        # Check Cross: Previous TSI <= Signal AND Current TSI > Signal
-        bullish_cross = (prev_tsi <= prev_sig) and (curr_tsi > curr_sig)
-        
-        if bullish_cross:
-            # Calculate Risk/Extreme
-            # For long, extreme is the lowest low seen since the line was latched
-            true_extreme = min(line['extreme'], bar['low'])
-            cross_depth = max(0.0, lvl - true_extreme)
-            
-            strategy.log_decision(bar['time'], tf, line_id, "TSI_CROSS", 
-                f"Long Trigger: TSI({curr_tsi:.2f}) > Sig({curr_sig:.2f})")
-
-            return EntryContext(
-                strategy=strategy,
-                line_id=line_id,
-                direction="long",
-                level=lvl,
-                bar=bar,
-                close=bar['close'],
-                low=bar['low'],
-                high=bar['high'],
-                extreme=true_extreme,
-                cross_depth=cross_depth
-            )
-
-    elif dir_ == "short":
-        # We are looking for a Bearish Cross (Blue crosses BELOW Red)
-        
-        # Check Cross: Previous TSI >= Signal AND Current TSI < Signal
-        bearish_cross = (prev_tsi >= prev_sig) and (curr_tsi < curr_sig)
-
-        if bearish_cross:
-            true_extreme = max(line['extreme'], bar['high'])
-            cross_depth = max(0.0, true_extreme - lvl)
-
-            strategy.log_decision(bar['time'], tf, line_id, "TSI_CROSS", 
-                f"Short Trigger: TSI({curr_tsi:.2f}) < Sig({curr_sig:.2f})")
-
-            return EntryContext(
-                strategy=strategy,
-                line_id=line_id,
-                direction="short",
-                level=lvl,
-                bar=bar,
-                close=bar['close'],
-                low=bar['low'],
-                high=bar['high'],
-                extreme=true_extreme,
-                cross_depth=cross_depth
-            )
-
-    return None
-
-
-# --- HELPER FUNCTIONS FOR TSI ---
-
-def _calculate_ema(values: List[float], length: int) -> List[float]:
-    """Calculates EMA for a list of floats."""
-    if not values:
-        return []
-    
-    alpha = 2 / (length + 1)
-    ema_values = [values[0]] # Seed with first value (simple SMA equivalent for 1 item)
-    
-    for price in values[1:]:
-        prev_ema = ema_values[-1]
-        new_ema = (price * alpha) + (prev_ema * (1 - alpha))
-        ema_values.append(new_ema)
-        
-    return ema_values
-
-def _calculate_tsi_series(closes: List[float], long_len: int, short_len: int, sig_len: int):
-    """
-    Returns tuple of lists: (tsi_values, signal_values)
-    TSI = 100 * (DoubleSmoothedPC / DoubleSmoothedAbsPC)
-    """
-    if len(closes) < long_len + short_len + sig_len:
-        return [], []
-
-    # 1. Momentum (Price Change)
-    pc = [0.0] * len(closes)
-    abs_pc = [0.0] * len(closes)
-    
-    for i in range(1, len(closes)):
-        diff = closes[i] - closes[i-1]
-        pc[i] = diff
-        abs_pc[i] = abs(diff)
-
-    # 2. Double Smoothing
-    # First Smoothing (Long Length)
-    ema_pc_1 = _calculate_ema(pc, long_len)
-    ema_apc_1 = _calculate_ema(abs_pc, long_len)
-
-    # Second Smoothing (Short Length)
-    ema_pc_2 = _calculate_ema(ema_pc_1, short_len)
-    ema_apc_2 = _calculate_ema(ema_apc_1, short_len)
-
-    # 3. Calculate TSI
-    tsi_values = []
-    for val, abs_val in zip(ema_pc_2, ema_apc_2):
-        if abs_val == 0:
-            tsi_values.append(0.0)
-        else:
-            tsi_values.append(100.0 * (val / abs_val))
-
-    # 4. Calculate Signal Line
-    signal_values = _calculate_ema(tsi_values, sig_len)
-
-    return tsi_values, signal_values
