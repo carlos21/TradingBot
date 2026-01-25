@@ -1,9 +1,13 @@
+# (path: src/strategies/triggers.py)
+
 from typing import Any, Dict, Optional, List
 from src.strategies.entry_context import EntryContext, EntryTrigger
 
 # --- CONFIGURATION ---
-FAST_MOVE_LOOKBACK  = 5    # Check the last 5 bars (15m)
-FAST_MOVE_THRESHOLD = 3.0  # Fast if price moved > 120pts (assuming 40pt avg)
+FAST_MOVE_LOOKBACK   = 5      # Check the last 5 bars (15m)
+FAST_MOVE_THRESHOLD  = 3.0    # Fast if price moved > 120pts (assuming 40pt avg)
+RESCUE_TSI_TIMEFRAME = "5m"   # Timeframe to check for "Rescue" cross
+PROTECTION_INVALIDATION_DIST = 40.0 # Points against trade to invalidate line
 
 def trigger_with_timeframes(trigger_func: EntryTrigger, timeframes: List[str]) -> EntryTrigger:
     """
@@ -37,6 +41,72 @@ def _calculate_velocity_score(history: List[Dict[str, Any]], lookback: int) -> f
     
     return displacement / avg_range
 
+def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig, tf):
+    """
+    Handles the 'Rescue' logic:
+    1. Wait for TSI to Reset (go against trade direction).
+    2. Wait for TSI to Cross back (in trade direction).
+    
+    Updates line["tsi_reset_occurred"] state.
+    Returns EntryContext if rescue triggers, else None.
+    """
+    rescue_tf = RESCUE_TSI_TIMEFRAME
+    hist = strategy.get_history(rescue_tf, 50)
+    
+    if len(hist) < 30:
+        return None
+
+    closes = [b['close'] for b in hist]
+    tsi_vals, sig_vals = _calculate_tsi_series(closes, 6, 13, 4)
+    
+    if len(tsi_vals) < 2:
+        return None
+
+    # Check the latest closed bar
+    t_curr, t_prev = tsi_vals[-1], tsi_vals[-2]
+    s_curr, s_prev = sig_vals[-1], sig_vals[-2]
+    
+    # 1. CHECK FOR RESET
+    # If we haven't reset yet, check if the lines are currently in the "bad" direction
+    if not line.get("tsi_reset_occurred", False):
+        if dir_ == "long":
+            # Reset condition: Blue is BELOW Orange (Bearish state)
+            if t_curr < s_curr:
+                line["tsi_reset_occurred"] = True
+                strategy.log_decision(bar['time'], tf, line_id, "TSI_RESET", 
+                    f"TSI Reset detected (Blue < Orange). Ready for Rescue Cross.")
+        elif dir_ == "short":
+            # Reset condition: Blue is ABOVE Orange (Bullish state)
+            if t_curr > s_curr:
+                line["tsi_reset_occurred"] = True
+                strategy.log_decision(bar['time'], tf, line_id, "TSI_RESET", 
+                    f"TSI Reset detected (Blue > Orange). Ready for Rescue Cross.")
+
+    # 2. CHECK FOR TRIGGER (Only if Reset has occurred)
+    if line.get("tsi_reset_occurred", False):
+        rescue = False
+        if dir_ == "long":
+            # Rescue Long: Blue crosses ABOVE Orange
+            if t_prev <= s_prev and t_curr > s_curr: 
+                rescue = True
+        elif dir_ == "short":
+            # Rescue Short: Blue crosses BELOW Orange
+            if t_prev >= s_prev and t_curr < s_curr: 
+                rescue = True
+        
+        if rescue:
+            strategy.log_decision(bar['time'], tf, line_id, f"TSI_{rescue_tf}_RESCUE", 
+                f"{rescue_tf} TSI Rescue Cross detected. Triggering Entry.")
+            
+            # Reset internal state
+            line["tsi_stage"] = 0
+            line["tsi_ref_price"] = 0.0
+            line["tsi_reset_occurred"] = False
+            
+            return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
+    
+    return None
+
 def tsi_cross_trigger(
     strategy: "LiquidityStrategyV2",
     line_id: Any,
@@ -49,10 +119,10 @@ def tsi_cross_trigger(
     Stages:
     0: Waiting for initial TSI Cross.
     1: Protection Mode (Fast Move Detected).
-       Exit via:
-       A) Sweep of Ref Price -> Go to Stage 2.
-       B) 3m TSI Cross -> Trigger Entry Immediately.
-    2: Swept -> Waiting for Reclaim (price to close back inside).
+       - Wait for SWEEP of the fast candle's extreme.
+    2: Post-Sweep Mode.
+       - Wait for TSI RESCUE (Reset + Cross).
+    -1: Invalidated/Dead.
     """
     dir_ = line.get("direction")
     if dir_ is None: return None
@@ -62,6 +132,11 @@ def tsi_cross_trigger(
     if "tsi_stage" not in line:
         line["tsi_stage"] = 0       
         line["tsi_ref_price"] = 0.0 
+        line["tsi_reset_occurred"] = False
+
+    # If line is dead, ignore
+    if line["tsi_stage"] == -1:
+        return None
 
     # 1. Interaction Check
     if dir_ == "long":
@@ -98,7 +173,7 @@ def tsi_cross_trigger(
             if (prev_tsi >= prev_sig) and (curr_tsi < curr_sig): has_crossed = True
         
         if has_crossed:
-            # Fast Move Check
+            # Fast Move Check (15m)
             hist_15m = strategy.get_history("15m", FAST_MOVE_LOOKBACK + 5)
             velocity_score = _calculate_velocity_score(hist_15m, FAST_MOVE_LOOKBACK)
             
@@ -109,74 +184,64 @@ def tsi_cross_trigger(
             if is_fast:
                 line["tsi_stage"] = 1
                 line["tsi_ref_price"] = bar["low"] if dir_ == "long" else bar["high"]
+                line["tsi_reset_occurred"] = False 
+                
                 strategy.log_decision(bar['time'], tf, line_id, "TSI_FAST", 
-                    f"Fast Move ({velocity_score:.2f}). Protection Mode ON. Wait for Sweep OR 3m TSI.")
+                    f"Fast Move ({velocity_score:.2f}). Protection Mode ON. Wait for Sweep of {line['tsi_ref_price']}.")
                 return None
             else:
                 return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
 
-    # STAGE 1: Protection Mode (Wait for Sweep OR 3m TSI Rescue)
+    # STAGE 1: Protection Mode (Wait for Sweep)
     elif line["tsi_stage"] == 1:
         
-        # --- A) CHECK 3m TSI RESCUE ---
-        hist_3m = strategy.get_history("3m", 50)
-        # Only proceed if we have enough 3m data
-        if len(hist_3m) >= 30:
-            closes_3m = [b['close'] for b in hist_3m]
-            tsi_3m, sig_3m = _calculate_tsi_series(closes_3m, 6, 13, 4)
-            
-            if len(tsi_3m) >= 2:
-                t3_curr, t3_prev = tsi_3m[-1], tsi_3m[-2]
-                s3_curr, s3_prev = sig_3m[-1], sig_3m[-2]
-                
-                rescue = False
-                if dir_ == "long":
-                    # 3m Blue crosses ABOVE Orange
-                    if t3_prev <= s3_prev and t3_curr > s3_curr: rescue = True
-                elif dir_ == "short":
-                    # 3m Blue crosses BELOW Orange
-                    if t3_prev >= s3_prev and t3_curr < s3_curr: rescue = True
-                
-                if rescue:
-                    strategy.log_decision(bar['time'], tf, line_id, "TSI_3M_RESCUE", 
-                        f"3m TSI Cross detected in Protection Mode. Triggering Entry.")
-                    
-                    line["tsi_stage"] = 0
-                    line["tsi_ref_price"] = 0.0
-                    return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
+        # A) CHECK INVALIDATION
+        invalidated = False
+        if dir_ == "long":
+            if bar['close'] < (lvl - PROTECTION_INVALIDATION_DIST): invalidated = True
+        elif dir_ == "short":
+            if bar['close'] > (lvl + PROTECTION_INVALIDATION_DIST): invalidated = True
+        
+        if invalidated:
+            strategy.log_decision(bar['time'], tf, line_id, "TSI_INVALID", 
+                f"Price moved > {PROTECTION_INVALIDATION_DIST}pts against trade. Line Invalidated.")
+            line["tsi_stage"] = -1
+            return None
 
-        # --- B) CHECK SWEEP (Existing Logic) ---
+        # B) CHECK SWEEP
         ref = line["tsi_ref_price"]
+        swept = False
         
         if dir_ == "long":
-            if bar["low"] < ref:
-                line["tsi_stage"] = 2
-                strategy.log_decision(bar['time'], tf, line_id, "TSI_SWEEP", 
-                    f"Swept previous low {ref}. Now waiting for reclaim.")
-        
+            if bar["low"] < ref: swept = True
         elif dir_ == "short":
-            if bar["high"] > ref:
-                line["tsi_stage"] = 2
-                strategy.log_decision(bar['time'], tf, line_id, "TSI_SWEEP", 
-                    f"Swept previous high {ref}. Now waiting for reclaim.")
+            if bar["high"] > ref: swept = True
+            
+        if swept:
+            line["tsi_stage"] = 2
+            line["tsi_reset_occurred"] = False # Ensure reset logic starts fresh
+            strategy.log_decision(bar['time'], tf, line_id, "TSI_SWEEP", 
+                f"Swept previous extreme {ref}. Now waiting for {RESCUE_TSI_TIMEFRAME} TSI Rescue.")
 
-    # STAGE 2: Waiting for Reclaim
+    # STAGE 2: Post-Sweep (Wait for TSI Rescue)
     elif line["tsi_stage"] == 2:
-        ref = line["tsi_ref_price"]
-        should_enter = False
         
+        # A) CHECK INVALIDATION (Still applies)
+        invalidated = False
         if dir_ == "long":
-            if bar["close"] > ref: should_enter = True
+            if bar['close'] < (lvl - PROTECTION_INVALIDATION_DIST): invalidated = True
         elif dir_ == "short":
-            if bar["close"] < ref: should_enter = True
+            if bar['close'] > (lvl + PROTECTION_INVALIDATION_DIST): invalidated = True
         
-        if should_enter:
-            strategy.log_decision(bar['time'], tf, line_id, "TSI_RECLAIM", 
-                f"Price reclaimed {ref}. Triggering Entry.")
-            
-            line["tsi_stage"] = 0
-            line["tsi_ref_price"] = 0.0
-            return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
+        if invalidated:
+            strategy.log_decision(bar['time'], tf, line_id, "TSI_INVALID", 
+                f"Price moved > {PROTECTION_INVALIDATION_DIST}pts against trade. Line Invalidated.")
+            line["tsi_stage"] = -1
+            return None
+
+        # B) CHECK RESCUE
+        rescue_ctx = _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig, tf)
+        if rescue_ctx: return rescue_ctx
 
     return None
 

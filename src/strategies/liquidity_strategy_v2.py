@@ -1,3 +1,5 @@
+# (path: src/strategies/liquidity_strategy_v2.py)
+
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from collections import deque
@@ -5,7 +7,7 @@ from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy, StrategyOptions
 from src.strategies.entry_context import EntryContext, EntryTrigger
 from src.strategies.strategy_config import CandleConfig
-from src.strategies.triggers import _calculate_tsi_series
+from src.strategies.triggers import _calculate_tsi_series, RESCUE_TSI_TIMEFRAME
 
 
 class LiquidityStrategyV2(BaseLiquidityStrategy):
@@ -25,6 +27,12 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
     ):
         self.timeframes = timeframes or ["5m"]
         
+        # Internal: Ensure we always aggregate 15m (for velocity) and the configured RESCUE_TSI_TIMEFRAME
+        self._internal_timeframes = list(self.timeframes)
+        for req in ["15m", RESCUE_TSI_TIMEFRAME]:
+            if req not in self._internal_timeframes:
+                self._internal_timeframes.append(req)
+
         super().__init__(
             min_stop_loss=min_stop_loss,
             max_bounce=max_bounce,
@@ -44,7 +52,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         
         self.decision_logs = []
 
-        for tf in self.timeframes:
+        for tf in self._internal_timeframes:
             self._tf_aggregators[tf] = {
                 "seconds": self._parse_tf_seconds(tf),
                 "buf": [],
@@ -58,7 +66,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             self.open_trades.clear()
             self.trade_manager.open_trades.clear()
             self.decision_logs.clear()
-            for tf in self.timeframes:
+            for tf in self._internal_timeframes:
                 self._tf_aggregators[tf] = {
                     "seconds": self._parse_tf_seconds(tf),
                     "buf": [],
@@ -71,6 +79,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         super()._reset_line_state(line_state)
         if "d5_stage" in line_state:
             line_state["d5_stage"] = 0
+        if "tsi_stage" in line_state:
+            line_state["tsi_stage"] = 0
+            line_state["tsi_ref_price"] = 0.0
 
     def _parse_tf_seconds(self, tf: str) -> int:
         unit = tf[-1].lower()
@@ -154,6 +165,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 self.remove_strategy_line(sid)
 
         ts = bar["time"]
+        # Iterate over ALL internal aggregators (including 3m/15m)
         for tf, state in self._tf_aggregators.items():
             window_secs = state["seconds"]
             window_start = (ts // window_secs) * window_secs
@@ -202,6 +214,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             cross_type = 'bearish'
 
                     self.socketio.emit('indicator_update', {
+                        'tf': tf,
                         'time': bar['time'],
                         'tsi': tsi_vals[-1],
                         'signal': sig_vals[-1],

@@ -19,7 +19,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const keepClosedTrades = urlParams.get('keep_closed_trades') === 'true';
     
     const tfParam = urlParams.get('tf');
-    const showTSI = urlParams.get('show_tsi') || false;
+    const showTSI = urlParams.get('show_tsi') === 'true';
 
     const chartViewer = new ChartViewer(chartContainer, service, socket, {
         startTime: startTime,

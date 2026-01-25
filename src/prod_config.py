@@ -12,7 +12,7 @@ import os
 
 def get_prod_strategy_numbers() -> StrategyNumbers:
     return StrategyNumbers(
-        min_stop_loss=10.0,
+        min_stop_loss=20.0,
         max_bounce=65.0,
         extra_sl_space=0.0,
     )

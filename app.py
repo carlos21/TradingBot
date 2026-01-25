@@ -67,7 +67,7 @@ def build_prod():
     # --- HARDCODED DATES (Based on INPUT_TZ) ---
     # You can now enter dates exactly as you see them on the chart (NY Time).
     start_str = "2024-03-01 08:00:00"
-    end_str   = "2024-04-03 20:00:00"
+    end_str   = "2024-04-14 16:00:00"
 
     # Convert Input -> UTC Epochs
     initial_start = parse_input_to_epoch(start_str, INPUT_TZ)

@@ -327,6 +327,9 @@ export class ChartViewer {
     });
 
     this.socket.on('indicator_update', (data) => {
+        // FILTER: Only accept updates for the currently viewed timeframe
+        if (data.tf && data.tf !== this.currentTF) return;
+
         if (data.time >= this.lastTime) {
             if (this.tsiSeries) this.tsiSeries.update({ time: data.time, value: data.tsi });
             if (this.sigSeries) this.sigSeries.update({ time: data.time, value: data.signal });
