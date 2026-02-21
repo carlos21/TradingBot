@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 @dataclass
 class StrategyConfig:
@@ -16,6 +16,8 @@ class StrategyNumbers:
     min_stop_loss: float
     max_bounce: float
     extra_sl_space: float
+    fixed_stop_loss: Optional[float] = None
+    max_stop_loss: Optional[float] = None
 
 @dataclass
 class CandleConfig:

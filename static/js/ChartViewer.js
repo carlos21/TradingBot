@@ -312,6 +312,7 @@ export class ChartViewer {
       if (bar.time >= this.lastTime) {
         this.series.update(bar);
         
+        // Update local history buffer
         const lastIdx = this.historicalBars.length - 1;
         if (lastIdx >= 0 && this.historicalBars[lastIdx].time === bar.time) {
             this.historicalBars[lastIdx] = bar; 
@@ -322,7 +323,11 @@ export class ChartViewer {
         this.lastTime  = bar.time;
         this.lastPrice = bar.close;
         this._shadeBar(bar);
-        this._updateMarkers();
+
+        // Instead of just calling _updateMarkers(), we recalculate the TSI 
+        // from the updated history. This generates the arrows locally, 
+        // ensuring they appear exactly as they do in historical data.
+        this._calculateAndDrawTSI(this.historicalBars);
       }
     });
 

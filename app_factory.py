@@ -20,7 +20,7 @@ from src.strategies.entry_context import (
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
-from src.strategies.strategy_config import CandleConfig
+from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
 
 
@@ -28,12 +28,6 @@ from src.strategies.triggers import three_candle_reversal_trigger, wick_near_lin
 class Repositories:
     lines: LineRepository
     trades: TradeRepository
-
-@dataclass
-class StrategyNumbers:
-    min_stop_loss: float
-    max_bounce: float
-    extra_sl_space: float
 
 @dataclass
 class AppWiring:
@@ -74,6 +68,8 @@ def create_app(
         min_stop_loss   = numbers.min_stop_loss,
         max_bounce      = numbers.max_bounce,
         extra_sl_space  = numbers.extra_sl_space,
+        fixed_stop_loss = numbers.fixed_stop_loss,
+        max_stop_loss   = numbers.max_stop_loss,
         socketio        = socketio,
         line_repository = repos.lines,
         trade_repository= repos.trades,

@@ -58,6 +58,8 @@ class BaseLiquidityStrategy:
         trade_repository: TradeRepository,
         trade_manager: TradeManager,
         extra_sl_space: float,
+        fixed_stop_loss: Optional[float] = None,
+        max_stop_loss: Optional[float] = None,
         strategy_tf: str = "5m",
         options: Optional[StrategyOptions] = None,
         htf_fetcher: Optional[Callable[..., Optional[dict]]] = None,
@@ -69,6 +71,8 @@ class BaseLiquidityStrategy:
         self.trade_repository = trade_repository
         self.trade_manager = trade_manager
         self.extra_sl_space = float(extra_sl_space)
+        self.fixed_stop_loss = fixed_stop_loss
+        self.max_stop_loss = max_stop_loss
 
         self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, has_crossed, extreme }
         self.open_trades: List[Dict[str, Any]] = []
@@ -357,24 +361,31 @@ class BaseLiquidityStrategy:
     # ----- Trade creation & persistence -----
 
     def _build_trade_from_context(self, ctx: EntryContext) -> Dict[str, Any]:
-        """
-        Generic R-based construction using ctx.extreme:
-          - entry = bar close
-          - risk = max(distance to extreme, min_stop_loss) + extra_sl_space
-          - 4R take-profit
-        """
         entry = ctx.close
-        extra = self.extra_sl_space
+        
+        if self.fixed_stop_loss and self.fixed_stop_loss > 0:
+            # Use Fixed Risk
+            eff_risk = self.fixed_stop_loss
+        else:
+            # Use Dynamic Risk (Distance to Extreme + Extra Space)
+            extra = self.extra_sl_space
+            if ctx.direction == "long":
+                raw_risk = max(entry - ctx.extreme, self.min_stop_loss)
+            else:
+                raw_risk = max(ctx.extreme - entry, self.min_stop_loss)
+            eff_risk = raw_risk + extra
+
+        # Apply Max Cap (if configured)
+        if self.max_stop_loss and self.max_stop_loss > 0:
+            if eff_risk > self.max_stop_loss:
+                print(f"[Strategy] ⚠️ Risk {eff_risk:.2f} exceeds Max {self.max_stop_loss}. Capping it.")
+                eff_risk = self.max_stop_loss
 
         if ctx.direction == "long":
-            raw_risk = max(entry - ctx.extreme, self.min_stop_loss)
-            eff_risk = raw_risk + extra
             sl = entry - eff_risk
             tp = entry + 4 * eff_risk
             return self._make_trade_dict(ctx.bar, "long", entry, sl, tp, eff_risk)
         else:
-            raw_risk = max(ctx.extreme - entry, self.min_stop_loss)
-            eff_risk = raw_risk + extra
             sl = entry + eff_risk
             tp = entry - 4 * eff_risk
             return self._make_trade_dict(ctx.bar, "short", entry, sl, tp, eff_risk)
