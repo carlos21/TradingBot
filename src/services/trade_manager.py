@@ -12,9 +12,8 @@ class TradeManager:
 
     def __init__(self, trade_repository: TradeRepository, socketio):
         """
-        :param strategy:        your LiquidityStrategy instance (must have `open_trades` list)
-        :param trade_repository:SQLTradeRepository instance (must have close_trade)
-        :param socketio:        flask_socketio.SocketIO instance
+        :param trade_repository: SQLTradeRepository instance (must have close_trade)
+        :param socketio:         flask_socketio.SocketIO instance
         """
         self.open_trades = []
         self.trade_repository = trade_repository

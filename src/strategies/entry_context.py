@@ -92,7 +92,7 @@ def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: Opti
     return _f
 
 
-def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str = "America/Chicago") -> EntryFilter:
+def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str = "America/New_York") -> EntryFilter:
     """
     Blocks entries if the number of trades taken TODAY (in the given timezone) >= limit.
     Counts both open and closed trades.

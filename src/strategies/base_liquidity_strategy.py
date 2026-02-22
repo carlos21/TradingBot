@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from enum import Enum
 from threading import RLock
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -74,7 +75,7 @@ class BaseLiquidityStrategy:
         self.fixed_stop_loss = fixed_stop_loss
         self.max_stop_loss = max_stop_loss
 
-        self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, has_crossed, extreme }
+        self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
         self.open_trades: List[Dict[str, Any]] = []
         self.total_pnl = 0.0
         self.lock = RLock()
@@ -116,9 +117,8 @@ class BaseLiquidityStrategy:
             self.strategy_lines[id] = {
                 "level":       float(level),
                 "direction":   None,
-                "has_crossed": False,
                 "extreme":     0.0,
-                "creation_ts": float(creation_timestamp)
+                "creation_ts": float(creation_timestamp),
             }
 
     def remove_strategy_line(self, id: Any):
@@ -132,7 +132,6 @@ class BaseLiquidityStrategy:
 
     def _reset_line_state(self, line_state: Dict[str, Any]):
         """If we keep the line, reset so it can trigger again in the future."""
-        line_state["has_crossed"] = False
         line_state["extreme"] = 0.0
 
     # ----- Aggregation -----
@@ -438,5 +437,4 @@ class BaseLiquidityStrategy:
 
     @staticmethod
     def _ts_to_dt(ts):
-        from datetime import datetime, timezone
         return datetime.fromtimestamp(ts, tz=timezone.utc)

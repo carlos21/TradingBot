@@ -57,6 +57,24 @@ class SQLTradeRepository(TradeRepository):
             return dt.replace(tzinfo=timezone.utc)
         return dt
 
+    def _make_trade_data(self, t: 'Trade') -> TradeData:
+        """Convert an ORM Trade row to a TradeData DTO."""
+        return TradeData(
+            trade_id=t.trade_id,
+            pair=t.pair,
+            trade_type=t.trade_type,
+            entry_price=t.entry_price,
+            stop_loss=t.stop_loss,
+            take_profit=t.take_profit,
+            risk=t.risk,
+            entry_time=self._ensure_utc(t.entry_time),
+            exit_price=t.exit_price,
+            exit_time=self._ensure_utc(t.exit_time),
+            result=t.result,
+            params=t.params,
+            created_at=self._ensure_utc(t.created_at),
+        )
+
     def insert_trade(
         self,
         pair: str,
@@ -90,45 +108,14 @@ class SQLTradeRepository(TradeRepository):
             finally:
                 db.close()
 
-        # manual TradeData construction
-        return TradeData(
-            trade_id=t.trade_id,
-            pair=t.pair,
-            trade_type=t.trade_type,
-            entry_price=t.entry_price,
-            stop_loss=t.stop_loss,
-            take_profit=t.take_profit,
-            risk=t.risk,
-            entry_time=self._ensure_utc(t.entry_time),
-            exit_price=t.exit_price,
-            exit_time=self._ensure_utc(t.exit_time),
-            result=t.result,
-            params=t.params,
-            created_at=self._ensure_utc(t.created_at)
-        )
+        return self._make_trade_data(t)
 
     def list_trades(self, pair: str) -> List[TradeData]:
         with get_db_session() as db:
             rows = db.query(Trade).filter(Trade.pair == pair).all()
             result: List[TradeData] = []
             for t in rows:
-                result.append(
-                    TradeData(
-                        trade_id=t.trade_id,
-                        pair=t.pair,
-                        trade_type=t.trade_type,
-                        entry_price=t.entry_price,
-                        stop_loss=t.stop_loss,
-                        take_profit=t.take_profit,
-                        risk=t.risk,
-                        entry_time=self._ensure_utc(t.entry_time),
-                        exit_price=t.exit_price,
-                        exit_time=self._ensure_utc(t.exit_time),
-                        result=t.result,
-                        params=t.params,
-                        created_at=self._ensure_utc(t.created_at)
-                    )
-                )
+                result.append(self._make_trade_data(t))
             db.close()
             return result
 
@@ -148,21 +135,7 @@ class SQLTradeRepository(TradeRepository):
             finally:
                 db.close()
 
-        return TradeData(
-            trade_id=t.trade_id,
-            pair=t.pair,
-            trade_type=t.trade_type,
-            entry_price=t.entry_price,
-            stop_loss=t.stop_loss,
-            take_profit=t.take_profit,
-            risk=t.risk,
-            entry_time=self._ensure_utc(t.entry_time),
-            exit_price=t.exit_price,
-            exit_time=self._ensure_utc(t.exit_time),
-            result=t.result,
-            params=t.params,
-            created_at=self._ensure_utc(t.created_at)
-        )
+        return self._make_trade_data(t)
 
     def close_trade(
         self,
@@ -188,18 +161,4 @@ class SQLTradeRepository(TradeRepository):
             finally:
                 db.close()
 
-        return TradeData(
-            trade_id=t.trade_id,
-            pair=t.pair,
-            trade_type=t.trade_type,
-            entry_price=t.entry_price,
-            stop_loss=t.stop_loss,
-            take_profit=t.take_profit,
-            risk=t.risk,
-            entry_time=self._ensure_utc(t.entry_time),
-            exit_price=t.exit_price,
-            exit_time=self._ensure_utc(t.exit_time),
-            result=t.result,
-            params=t.params,
-            created_at=self._ensure_utc(t.created_at)
-        )
+        return self._make_trade_data(t)
