@@ -3,10 +3,11 @@ from src.strategies.entry_context import daily_trades_limit_filter, open_trades_
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.strategies.triggers import (
     three_candle_reversal_trigger,
-    tsi_cross_trigger, 
+    tsi_cross_trigger,
     wick_near_line_trigger,
     double_5m_cross_trigger,
-    trigger_with_timeframes
+    trigger_with_timeframes,
+    velocity_adaptive_tsi_trigger,
 )
 import os
 
@@ -36,7 +37,8 @@ def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
             daily_trades_limit_filter(max_trades_per_day=1)
         ],
         triggers=[
-            trigger_with_timeframes(tsi_cross_trigger, ['5m', '15m']),
+            velocity_adaptive_tsi_trigger,
+            # trigger_with_timeframes(tsi_cross_trigger, ['5m', '15m']),
             # trigger_with_timeframes(three_candle_reversal_trigger, ['5m', '15m','30m', '1h']),
             # trigger_with_timeframes(double_5m_cross_trigger, ['5m']),
             # trigger_with_timeframes(wick_near_line_trigger, ['5m', '15m'])

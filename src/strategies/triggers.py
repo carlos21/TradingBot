@@ -9,6 +9,10 @@ FAST_MOVE_THRESHOLD  = 3.0    # Fast if price moved > 120pts (assuming 40pt avg)
 RESCUE_TSI_TIMEFRAME = "5m"   # Timeframe to check for "Rescue" cross
 PROTECTION_INVALIDATION_DIST = 40.0 # Points against trade to invalidate line
 
+# Velocity-based adaptive trigger thresholds
+VELOCITY_FAST_THRESHOLD = 3.0  # |velocity| > this → fast move → need 2x 5m TSI cross
+VELOCITY_SLOW_THRESHOLD = 1.0  # |velocity| < this → slow move → 1m TSI cross; between → 3m TSI cross
+
 def trigger_with_timeframes(trigger_func: EntryTrigger, timeframes: List[str]) -> EntryTrigger:
     """
     Returns a new trigger that only executes if the bar's timeframe is in the allowed list.
@@ -244,6 +248,153 @@ def tsi_cross_trigger(
         if rescue_ctx: return rescue_ctx
 
     return None
+
+def _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf):
+    """Check for a single TSI cross on the given timeframe."""
+    history = strategy.get_history(tf, 50)
+    if len(history) < 30:
+        return None
+
+    closes = [b['close'] for b in history]
+    tsi_line, sig_line = _calculate_tsi_series(closes, 6, 13, 4)
+    if len(tsi_line) < 2:
+        return None
+
+    curr_tsi, prev_tsi = tsi_line[-1], tsi_line[-2]
+    curr_sig, prev_sig = sig_line[-1], sig_line[-2]
+
+    if dir_ == "long" and prev_tsi <= prev_sig and curr_tsi > curr_sig:
+        return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
+    if dir_ == "short" and prev_tsi >= prev_sig and curr_tsi < curr_sig:
+        return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
+    return None
+
+
+def _handle_double_tsi_cross_5m(strategy, line_id, line, bar, lvl, dir_):
+    """
+    Require two TSI crosses on 5m with a reset in between.
+    State per-line:
+      vat_5m_stage: 0 = waiting for 1st cross, 1 = got 1st cross waiting for reset + 2nd
+      vat_5m_reset: bool, True once TSI has reset (gone against trade direction) after 1st cross
+    """
+    tf = "5m"
+    history = strategy.get_history(tf, 50)
+    if len(history) < 30:
+        return None
+
+    closes = [b['close'] for b in history]
+    tsi_line, sig_line = _calculate_tsi_series(closes, 6, 13, 4)
+    if len(tsi_line) < 2:
+        return None
+
+    curr_tsi, prev_tsi = tsi_line[-1], tsi_line[-2]
+    curr_sig, prev_sig = sig_line[-1], sig_line[-2]
+
+    stage = line.get("vat_5m_stage", 0)
+
+    if stage == 0:
+        crossed = (
+            (dir_ == "long"  and prev_tsi <= prev_sig and curr_tsi > curr_sig) or
+            (dir_ == "short" and prev_tsi >= prev_sig and curr_tsi < curr_sig)
+        )
+        if crossed:
+            line["vat_5m_stage"] = 1
+            line["vat_5m_reset"] = False
+            strategy.log_decision(bar['time'], tf, line_id, "VAT_CROSS_1",
+                f"1st 5m TSI cross ({dir_}). Waiting for reset then 2nd cross.")
+        return None
+
+    elif stage == 1:
+        # Step A: check for reset (TSI going against trade direction)
+        if not line.get("vat_5m_reset", False):
+            reset = (
+                (dir_ == "long"  and curr_tsi < curr_sig) or
+                (dir_ == "short" and curr_tsi > curr_sig)
+            )
+            if reset:
+                line["vat_5m_reset"] = True
+                strategy.log_decision(bar['time'], tf, line_id, "VAT_RESET",
+                    "5m TSI reset. Ready for 2nd cross.")
+
+        # Step B: once reset, look for 2nd cross
+        if line.get("vat_5m_reset", False):
+            crossed2 = (
+                (dir_ == "long"  and prev_tsi <= prev_sig and curr_tsi > curr_sig) or
+                (dir_ == "short" and prev_tsi >= prev_sig and curr_tsi < curr_sig)
+            )
+            if crossed2:
+                line["vat_5m_stage"] = 0
+                line["vat_5m_reset"] = False
+                strategy.log_decision(bar['time'], tf, line_id, "VAT_CROSS_2",
+                    f"2nd 5m TSI cross ({dir_}). Triggering entry.")
+                return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
+
+    return None
+
+
+def velocity_adaptive_tsi_trigger(
+    strategy: "LiquidityStrategyV2",
+    line_id: Any,
+    line: Dict[str, Any],
+    bar: Dict[str, Any],
+) -> Optional[EntryContext]:
+    """
+    Adaptive TSI trigger that picks confirmation timeframe based on how fast
+    price is moving toward the line (measured as a velocity score on 15m bars).
+
+    Long trades (price dropping toward support):
+      - Fast drop  (score < -FAST_THRESHOLD) : need 2x TSI cross on 5m
+      - Moderate   (-FAST <= score < -SLOW)  : need 1x TSI cross on 3m
+      - Slow        (score >= -SLOW)         : need 1x TSI cross on 1m
+
+    Short trades (price rising toward resistance): same logic, inverted sign.
+    Max bounce is always enforced by the outer entry_filters pipeline.
+    """
+    dir_ = line.get("direction")
+    if dir_ is None:
+        return None
+
+    lvl = line["level"]
+    tf = bar.get('tf')
+    if not tf:
+        return None
+
+    # Interaction check: price must have touched the line
+    if dir_ == "long" and line['extreme'] > lvl:
+        return None
+    if dir_ == "short" and line['extreme'] < lvl:
+        return None
+
+    # Initialise double-cross state if absent
+    if "vat_5m_stage" not in line:
+        line["vat_5m_stage"] = 0
+        line["vat_5m_reset"] = False
+
+    # Compute velocity on 15m history
+    hist_15m = strategy.get_history("15m", FAST_MOVE_LOOKBACK + 5)
+    velocity_score = _calculate_velocity_score(hist_15m, FAST_MOVE_LOOKBACK)
+
+    # Classify regime
+    if dir_ == "long":
+        is_fast     = velocity_score < -VELOCITY_FAST_THRESHOLD
+        is_moderate = not is_fast and velocity_score < -VELOCITY_SLOW_THRESHOLD
+    else:  # short
+        is_fast     = velocity_score > VELOCITY_FAST_THRESHOLD
+        is_moderate = not is_fast and velocity_score > VELOCITY_SLOW_THRESHOLD
+
+    if is_fast:
+        if tf != "5m":
+            return None
+        return _handle_double_tsi_cross_5m(strategy, line_id, line, bar, lvl, dir_)
+    elif is_moderate:
+        if tf != "3m":
+            return None
+        return _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf)
+    else:  # slow
+        if tf != "1m":
+            return None
+        return _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf)
+
 
 def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val):
     if dir_ == "long":

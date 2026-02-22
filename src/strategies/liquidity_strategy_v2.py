@@ -29,9 +29,11 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
     ):
         self.timeframes = timeframes or ["5m"]
         
-        # Internal: Ensure we always aggregate 15m (for velocity) and the configured RESCUE_TSI_TIMEFRAME
+        # Internal: Ensure we always aggregate required timeframes.
+        # 15m: velocity scoring; RESCUE_TSI_TIMEFRAME (5m): rescue logic;
+        # 1m / 3m: velocity-adaptive trigger (slow / moderate regimes).
         self._internal_timeframes = list(self.timeframes)
-        for req in ["15m", RESCUE_TSI_TIMEFRAME]:
+        for req in ["15m", RESCUE_TSI_TIMEFRAME, "1m", "3m"]:
             if req not in self._internal_timeframes:
                 self._internal_timeframes.append(req)
 
@@ -86,6 +88,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         if "tsi_stage" in line_state:
             line_state["tsi_stage"] = 0
             line_state["tsi_ref_price"] = 0.0
+        if "vat_5m_stage" in line_state:
+            line_state["vat_5m_stage"] = 0
+            line_state["vat_5m_reset"] = False
 
     def _parse_tf_seconds(self, tf: str) -> int:
         unit = tf[-1].lower()
