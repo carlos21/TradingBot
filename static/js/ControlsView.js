@@ -31,6 +31,7 @@ export class ControlsView {
     this.openButton             = document.getElementById('open-trade-button');
     this.closeButton            = document.getElementById('close-trade-button');
     this.toggleBtn              = document.getElementById('toggleReplayBtn');
+    this.stepBtn                = document.getElementById('stepBarBtn');
     this.prevBtn = document.getElementById('prevDayBtn');
     this.nextBtn = document.getElementById('nextDayBtn');
     this.currentDayLabel   = document.getElementById('currentDayLabel');
@@ -99,6 +100,15 @@ export class ControlsView {
     this.toggleBtn.addEventListener('click', () => {
       this.chartViewer.toggleReplay();
       this.toggleBtn.textContent = this.chartViewer.isPlaying ? 'Pause' : 'Play';
+    });
+
+    this.stepBtn.addEventListener('click', () => {
+      this.chartViewer.stepReplay();
+      this.toggleBtn.textContent = 'Play';
+    });
+
+    this.socket.on('stream_status', ({ playing }) => {
+      if (!playing) this.toggleBtn.textContent = 'Play';
     });
 
     this.prevBtn.addEventListener('click', () => {

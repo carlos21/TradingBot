@@ -296,6 +296,7 @@ export class ChartViewer {
 
   displayChart(bars) {
     this.series.setData(bars);
+    this.sessions.forEach(s => s.series.setData([]));
     if (bars.length) {
       const last = bars[bars.length - 1];
       this.lastTime  = last.time;
@@ -399,6 +400,10 @@ export class ChartViewer {
     });
 
     this.socket.on('stream_end', () => { window.__done = true; });
+
+    this.socket.on('stream_status', ({ playing }) => {
+      if (!playing) this.isPlaying = false;
+    });
   }
 
   _updateMarkers() {
@@ -562,6 +567,12 @@ export class ChartViewer {
   toggleReplay() {
     if (this.isPlaying) this.pauseReplay();
     else                this.startReplay();
+  }
+
+  stepReplay() {
+    if (this.isPlaying) this.pauseReplay();
+    this.socket.emit('step_stream', { timeframe: this.currentTF, pair: this.pair, fromTime: this.lastTime });
+    this.isPlaying = false;
   }
 
   async changeTimeframe(tf) {

@@ -40,6 +40,7 @@ class BarsLoader:
         self._default_emit_delay = self._emit_delay
         self._fast_jump_mode  = False
         self._last_played_ts  = 0
+        self._step_mode       = False
 
     def reset(self):
         self._last_played_ts = 0
@@ -49,6 +50,7 @@ class BarsLoader:
         self.streaming = False
         self._stop_event.clear()
         self._reached_stop_at = False
+        self._step_mode = False
 
     def set_timeframe(self, tf: str):
         self._stop_event.set()
@@ -102,6 +104,7 @@ class BarsLoader:
     def pause(self):
         self._stop_event.set()
         self._stop_at = None
+        self._step_mode = False
         if hasattr(self.data_source, 'pause'):
             try: self.data_source.pause()
             except Exception: pass
@@ -111,7 +114,26 @@ class BarsLoader:
         self._from_time           = from_time
         self._1m_buffer           = []
         self._current_group_start = None
-        self._last_played_ts      = from_time 
+        self._last_played_ts      = from_time
+
+    def step(self):
+        """Advance exactly one bar (or one aggregated candle) then pause."""
+        self._stop_event.set()
+        time.sleep(0.05)
+
+        self._step_mode = True
+        self._stop_at = None
+        self._reached_stop_at = False
+        self._fast_jump_mode = False
+        self._emit_delay = self._default_emit_delay
+
+        self.streaming = True
+        self._stop_event.clear()
+
+        if hasattr(self.data_source, "_stop_event"):
+            self.data_source._stop_event.clear()
+
+        self.socketio.start_background_task(self._run_subscription, self._from_time)
 
     def _handle_message(self, msg: dict):
         if isinstance(msg, dict) and msg.get('_end'):
@@ -142,10 +164,18 @@ class BarsLoader:
             self.socketio.emit('stream_end', {'reason': 'day_end', 'stop_at': self._stop_at})
             return
 
+    def _stop_after_step(self):
+        self._step_mode = False
+        self._stop_event.set()
+        self.streaming = False
+        self.socketio.emit('stream_status', {'playing': False})
+
     def _process_bar(self, bar: dict):
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
             self.socketio.emit('bar', bar)
             time.sleep(self._emit_delay)
+            if self._step_mode:
+                self._stop_after_step()
             return
 
         window_secs  = self.group_size * 60
@@ -162,6 +192,8 @@ class BarsLoader:
                 agg = self._aggregate_time_window(self._1m_buffer, self._current_group_start, window_secs)
                 self.socketio.emit('bar', agg)
                 time.sleep(self._emit_delay)
+                if self._step_mode:
+                    self._stop_after_step()
             self._1m_buffer = [bar]
             self._current_group_start = window_start
 
@@ -177,7 +209,7 @@ class BarsLoader:
         volume = sum(b['volume'] for b in bars)
         pair   = bars[0]['pair']
         return {
-            'time':   window_start + window_secs,
+            'time':   window_start,
             'open':   open_, 'high': high, 'low': low, 'close': close_,
             'volume': volume, 'pair': pair
         }

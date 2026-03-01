@@ -202,6 +202,15 @@ def create_app(
         loader.pause()
         emit('stream_status', {'playing': False})
 
+    @socketio.on('step_stream')
+    def on_step_stream(payload):
+        tf = payload.get('timeframe', '1m')
+        from_time = payload.get('fromTime', 0)
+        loader.seek(from_time)
+        loader.set_timeframe(tf)
+        loader.step()
+        emit('stream_status', {'playing': True})
+
     @socketio.on('seek')
     def on_seek(payload):
         loader.seek(payload.get('fromTime', 0))

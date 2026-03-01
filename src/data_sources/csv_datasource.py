@@ -343,7 +343,7 @@ class CSVDataSource(CombinedDataSource):
         low    = min(b['low']  for b in bars)
         volume = sum(b['volume'] for b in bars)
         return {
-            'time':   window_start + window_secs,
+            'time':   window_start,
             'open':   open_,
             'high':   high,
             'low':    low,
