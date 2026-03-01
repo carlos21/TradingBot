@@ -26,7 +26,7 @@ INPUT_TZ = 'America/New_York'
 # Your CSV has 10:00 for an event that is 09:00 NY (13:00 UTC).
 # This means your CSV is UTC-3 (10:00 + 3h = 13:00).
 # 'Etc/GMT+3' is the standard ZoneInfo code for UTC-3 (Fixed Offset).
-FILE_TZ = 'Etc/GMT+3'
+FILE_TZ = 'America/Chicago'
 
 def parse_input_to_epoch(date_str: str, tz_name: str) -> int:
     """
@@ -61,13 +61,12 @@ def build_prod():
     )
 
     # 2. Configuration
-    csv_file = os.environ.get("CSV_FILE", "csvs/NQ_21-24.csv")
+    csv_file = os.environ.get("CSV_FILE", "csvs/NQ_live.csv")
     bps      = float(os.environ.get("BARS_PER_SECOND", 10.0))
 
-    # --- HARDCODED DATES (Based on INPUT_TZ) ---
     # You can now enter dates exactly as you see them on the chart (NY Time).
-    start_str = "2024-03-01 08:00:00"
-    end_str   = "2024-04-18 06:45:00"
+    start_str = "2026-02-22 17:00:00"
+    end_str   = "2026-10-18 06:45:00"
 
     # Convert Input -> UTC Epochs
     initial_start = parse_input_to_epoch(start_str, INPUT_TZ)

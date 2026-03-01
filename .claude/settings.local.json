@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(poetry run:*)",
+      "Bash(ls:*)",
+      "Bash(chmod +x:*)",
+      "Bash(./fetch_data.sh:*)"
+    ]
+  }
+}
