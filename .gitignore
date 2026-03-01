@@ -162,4 +162,5 @@ cython_debug/
 inference_result
 cdk.out/
 database.db
-csvs/
+csvs/*
+!csvs/NQ_live.csv

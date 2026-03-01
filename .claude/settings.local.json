@@ -5,7 +5,8 @@
       "Bash(poetry run:*)",
       "Bash(ls:*)",
       "Bash(chmod +x:*)",
-      "Bash(./fetch_data.sh:*)"
+      "Bash(./fetch_data.sh:*)",
+      "Bash(git check-ignore:*)"
     ]
   }
 }
