@@ -7,7 +7,9 @@ from src.strategies.triggers import (
     wick_near_line_trigger,
     double_5m_cross_trigger,
     trigger_with_timeframes,
-    velocity_adaptive_tsi_trigger,
+    make_velocity_adaptive_tsi_trigger,
+    VelocityTriggerConfig,
+    TsiCrossCondition,
 )
 import os
 
@@ -37,7 +39,14 @@ def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
             daily_trades_limit_filter(max_trades_per_day=1)
         ],
         triggers=[
-            velocity_adaptive_tsi_trigger,
+            make_velocity_adaptive_tsi_trigger(VelocityTriggerConfig(
+                fast_threshold=3.0,
+                slow_threshold=1.0,
+                lookback=5,
+                fast=    [TsiCrossCondition("5m", 2)],
+                moderate=[TsiCrossCondition("1m", 2), TsiCrossCondition("3m", 1)],
+                slow=    [TsiCrossCondition("1m", 2), TsiCrossCondition("3m", 1)],
+            )),
             # trigger_with_timeframes(tsi_cross_trigger, ['5m', '15m']),
             # trigger_with_timeframes(three_candle_reversal_trigger, ['5m', '15m','30m', '1h']),
             # trigger_with_timeframes(double_5m_cross_trigger, ['5m']),

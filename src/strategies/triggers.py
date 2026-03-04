@@ -1,5 +1,6 @@
 # (path: src/strategies/triggers.py)
 
+from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List
 from src.strategies.entry_context import EntryContext, EntryTrigger
 
@@ -12,6 +13,42 @@ PROTECTION_INVALIDATION_DIST = 40.0 # Points against trade to invalidate line
 # Velocity-based adaptive trigger thresholds
 VELOCITY_FAST_THRESHOLD = 3.0  # |velocity| > this → fast move → need 2x 5m TSI cross
 VELOCITY_SLOW_THRESHOLD = 1.0  # |velocity| < this → slow move → 1m TSI cross; between → 3m TSI cross
+
+
+# ---------------------------------------------------------------------------
+# Velocity-adaptive trigger configuration
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TsiCrossCondition:
+    """
+    A single confirmaton requirement: N TSI crosses on a given timeframe.
+
+    count=1 → single cross (stateless, fires on any qualifying crossover bar)
+    count=2 → double cross with a reset in between (stateful, tracked per line)
+    """
+    timeframe: str   # e.g. "1m", "3m", "5m"
+    count: int = 1   # 1 or 2
+
+
+@dataclass
+class VelocityTriggerConfig:
+    """
+    Configures velocity_adaptive_tsi_trigger regime thresholds and
+    the list of acceptable entry conditions per regime.
+
+    Each regime holds a list of TsiCrossConditions that are tried in order;
+    the first one that returns an EntryContext wins (OR logic).
+
+    Example – slow regime accepts either a double-1m cross or a single-1m cross:
+        slow=[TsiCrossCondition("1m", 2), TsiCrossCondition("1m", 1)]
+    """
+    fast_threshold: float = 3.0
+    slow_threshold: float = 1.0
+    lookback: int = 5
+    fast:     List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("5m", 2)])
+    moderate: List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("3m", 1)])
+    slow:     List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("1m", 1)])
 
 def trigger_with_timeframes(trigger_func: EntryTrigger, timeframes: List[str]) -> EntryTrigger:
     """
@@ -267,17 +304,20 @@ def _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf):
         return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
     if dir_ == "short" and prev_tsi >= prev_sig and curr_tsi < curr_sig:
         return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
+
+    # No cross – record values so we can see how far TSI is from crossing
+    gap = curr_tsi - curr_sig
+    strategy.log_decision(bar['time'], tf, line_id, "TSI_CHECK",
+        f"TSI {prev_tsi:+.2f}→{curr_tsi:+.2f} | Sig {prev_sig:+.2f}→{curr_sig:+.2f} | gap={gap:+.2f} (no cross)")
     return None
 
 
-def _handle_double_tsi_cross_5m(strategy, line_id, line, bar, lvl, dir_):
+def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_prefix):
     """
-    Require two TSI crosses on 5m with a reset in between.
-    State per-line:
-      vat_5m_stage: 0 = waiting for 1st cross, 1 = got 1st cross waiting for reset + 2nd
-      vat_5m_reset: bool, True once TSI has reset (gone against trade direction) after 1st cross
+    Require two TSI crosses on *tf* with a reset in between.
+    State is stored in line under keys derived from *state_prefix* so that
+    different (timeframe, count) combinations don't collide.
     """
-    tf = "5m"
     history = strategy.get_history(tf, 50)
     if len(history) < 30:
         return None
@@ -290,7 +330,9 @@ def _handle_double_tsi_cross_5m(strategy, line_id, line, bar, lvl, dir_):
     curr_tsi, prev_tsi = tsi_line[-1], tsi_line[-2]
     curr_sig, prev_sig = sig_line[-1], sig_line[-2]
 
-    stage = line.get("vat_5m_stage", 0)
+    stage_key = f"{state_prefix}_stage"
+    reset_key = f"{state_prefix}_reset"
+    stage = line.get(stage_key, 0)
 
     if stage == 0:
         crossed = (
@@ -298,102 +340,147 @@ def _handle_double_tsi_cross_5m(strategy, line_id, line, bar, lvl, dir_):
             (dir_ == "short" and prev_tsi >= prev_sig and curr_tsi < curr_sig)
         )
         if crossed:
-            line["vat_5m_stage"] = 1
-            line["vat_5m_reset"] = False
+            line[stage_key] = 1
+            line[reset_key] = False
             strategy.log_decision(bar['time'], tf, line_id, "VAT_CROSS_1",
-                f"1st 5m TSI cross ({dir_}). Waiting for reset then 2nd cross.")
+                f"1st {tf} TSI cross ({dir_}). Waiting for reset then 2nd cross.")
         return None
 
     elif stage == 1:
         # Step A: check for reset (TSI going against trade direction)
-        if not line.get("vat_5m_reset", False):
+        if not line.get(reset_key, False):
             reset = (
                 (dir_ == "long"  and curr_tsi < curr_sig) or
                 (dir_ == "short" and curr_tsi > curr_sig)
             )
             if reset:
-                line["vat_5m_reset"] = True
+                line[reset_key] = True
                 strategy.log_decision(bar['time'], tf, line_id, "VAT_RESET",
-                    "5m TSI reset. Ready for 2nd cross.")
+                    f"{tf} TSI reset. Ready for 2nd cross.")
 
         # Step B: once reset, look for 2nd cross
-        if line.get("vat_5m_reset", False):
+        if line.get(reset_key, False):
             crossed2 = (
                 (dir_ == "long"  and prev_tsi <= prev_sig and curr_tsi > curr_sig) or
                 (dir_ == "short" and prev_tsi >= prev_sig and curr_tsi < curr_sig)
             )
             if crossed2:
-                line["vat_5m_stage"] = 0
-                line["vat_5m_reset"] = False
+                line[stage_key] = 0
+                line[reset_key] = False
                 strategy.log_decision(bar['time'], tf, line_id, "VAT_CROSS_2",
-                    f"2nd 5m TSI cross ({dir_}). Triggering entry.")
+                    f"2nd {tf} TSI cross ({dir_}). Triggering entry.")
                 return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
 
     return None
 
 
-def velocity_adaptive_tsi_trigger(
-    strategy: "LiquidityStrategyV2",
-    line_id: Any,
-    line: Dict[str, Any],
-    bar: Dict[str, Any],
-) -> Optional[EntryContext]:
+def _check_tsi_condition(strategy, line_id, line, bar, lvl, dir_, cond: TsiCrossCondition):
     """
-    Adaptive TSI trigger that picks confirmation timeframe based on how fast
-    price is moving toward the line (measured as a velocity score on 15m bars).
-
-    Long trades (price dropping toward support):
-      - Fast drop  (score < -FAST_THRESHOLD) : need 2x TSI cross on 5m
-      - Moderate   (-FAST <= score < -SLOW)  : need 1x TSI cross on 3m
-      - Slow        (score >= -SLOW)         : need 1x TSI cross on 1m
-
-    Short trades (price rising toward resistance): same logic, inverted sign.
-    Max bounce is always enforced by the outer entry_filters pipeline.
+    Evaluate one TsiCrossCondition against the current bar.
+    Returns an EntryContext if the condition fires, otherwise None.
+    Only runs when bar['tf'] matches cond.timeframe.
     """
-    dir_ = line.get("direction")
-    if dir_ is None:
+    if bar.get('tf') != cond.timeframe:
         return None
+    if cond.count == 1:
+        return _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, cond.timeframe)
+    else:
+        state_prefix = f"vat_{cond.timeframe}_{cond.count}x"
+        return _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, cond.timeframe, state_prefix)
 
-    lvl = line["level"]
-    tf = bar.get('tf')
-    if not tf:
-        return None
 
-    # Interaction check: price must have touched the line
-    if dir_ == "long" and line['extreme'] > lvl:
-        return None
-    if dir_ == "short" and line['extreme'] < lvl:
-        return None
+def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
+    """
+    Factory that returns a velocity-adaptive TSI trigger function.
 
-    # Initialise double-cross state if absent
-    if "vat_5m_stage" not in line:
-        line["vat_5m_stage"] = 0
-        line["vat_5m_reset"] = False
+    The returned trigger classifies the current velocity into slow / moderate / fast
+    and tries each TsiCrossCondition in the matching regime list (OR logic: first
+    condition that fires wins).
 
-    # Compute velocity on 15m history
-    hist_15m = strategy.get_history("15m", FAST_MOVE_LOOKBACK + 5)
-    velocity_score = _calculate_velocity_score(hist_15m, FAST_MOVE_LOOKBACK)
+    Usage in prod_config.py:
+        triggers=[
+            make_velocity_adaptive_tsi_trigger(VelocityTriggerConfig(
+                fast_threshold=3.0,
+                slow_threshold=1.0,
+                lookback=5,
+                fast=    [TsiCrossCondition("5m", 2)],
+                moderate=[TsiCrossCondition("3m", 1)],
+                slow=    [TsiCrossCondition("1m", 1)],
+                # e.g. to also allow a single-1m as fallback on slow regime:
+                # slow=[TsiCrossCondition("1m", 2), TsiCrossCondition("1m", 1)],
+            ))
+        ]
+    """
+    if config is None:
+        config = VelocityTriggerConfig()
 
-    # Classify regime
-    if dir_ == "long":
-        is_fast     = velocity_score < -VELOCITY_FAST_THRESHOLD
-        is_moderate = not is_fast and velocity_score < -VELOCITY_SLOW_THRESHOLD
-    else:  # short
-        is_fast     = velocity_score > VELOCITY_FAST_THRESHOLD
-        is_moderate = not is_fast and velocity_score > VELOCITY_SLOW_THRESHOLD
-
-    if is_fast:
-        if tf != "5m":
+    def trigger(
+        strategy: "LiquidityStrategyV2",
+        line_id: Any,
+        line: Dict[str, Any],
+        bar: Dict[str, Any],
+    ) -> Optional[EntryContext]:
+        dir_ = line.get("direction")
+        if dir_ is None:
             return None
-        return _handle_double_tsi_cross_5m(strategy, line_id, line, bar, lvl, dir_)
-    elif is_moderate:
-        if tf != "3m":
+
+        lvl = line["level"]
+        if not bar.get('tf'):
             return None
-        return _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf)
-    else:  # slow
-        if tf != "1m":
+
+        # Interaction check: price must have touched the line
+        if dir_ == "long"  and line['extreme'] > lvl:
             return None
-        return _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf)
+        if dir_ == "short" and line['extreme'] < lvl:
+            return None
+
+        tf = bar['tf']
+
+        # Lock regime on first touch; reuse on all subsequent bars
+        if 'vat_regime' not in line:
+            hist_15m = strategy.get_history("15m", config.lookback + 5)
+            velocity_score = _calculate_velocity_score(hist_15m, config.lookback)
+
+            if dir_ == "long":
+                is_fast     = velocity_score < -config.fast_threshold
+                is_moderate = not is_fast and velocity_score < -config.slow_threshold
+            else:
+                is_fast     = velocity_score > config.fast_threshold
+                is_moderate = not is_fast and velocity_score > config.slow_threshold
+
+            regime_label = "FAST" if is_fast else ("MODERATE" if is_moderate else "SLOW")
+            line['vat_regime']   = regime_label
+            line['vat_velocity'] = velocity_score
+
+            regime_conditions = config.fast if is_fast else (config.moderate if is_moderate else config.slow)
+            conds_str = " OR ".join(f"{c.timeframe}×{c.count}" for c in regime_conditions)
+            strategy.log_decision(bar['time'], tf, line_id, "VAT_REGIME",
+                f"vel={velocity_score:+.2f} → {regime_label} | need [{conds_str}] (locked at touch)")
+        else:
+            regime_label = line['vat_regime']
+            is_fast      = regime_label == "FAST"
+            is_moderate  = regime_label == "MODERATE"
+
+        if is_fast:
+            regime_conditions = config.fast
+        elif is_moderate:
+            regime_conditions = config.moderate
+        else:
+            regime_conditions = config.slow
+
+        # Try each condition in order; return the first that fires
+        for cond in regime_conditions:
+            result = _check_tsi_condition(strategy, line_id, line, bar, lvl, dir_, cond)
+            if result is not None:
+                return result
+        return None
+
+    trigger.__name__ = "velocity_adaptive_tsi_trigger"
+    return trigger
+
+
+# Backward-compatible default instance (uses VelocityTriggerConfig defaults)
+velocity_adaptive_tsi_trigger = make_velocity_adaptive_tsi_trigger()
 
 
 def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val):

@@ -206,6 +206,12 @@ def create_app(
     def on_step_stream(payload):
         tf = payload.get('timeframe', '1m')
         from_time = payload.get('fromTime', 0)
+        # Advance from_time by one full timeframe window so the step lands on
+        # the *next* bar, not the current one (which is already displayed).
+        unit = tf[-1]
+        num = int(tf[:-1])
+        group_size = num if unit == 'm' else num * 60
+        from_time = from_time + group_size * 60
         loader.seek(from_time)
         loader.set_timeframe(tf)
         loader.step()

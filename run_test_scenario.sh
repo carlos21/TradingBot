@@ -1,6 +1,6 @@
 poetry run python scripts/run_scenarios.py \
   --yaml tests/test_scenario.yaml \
-  --source-csv csvs/NQ_21-24.csv \
+  --source-csv csvs/NQ_live.csv \
   --outdir ./scenarios_out \
   --port 5001 \
   --bars-per-second 800 \

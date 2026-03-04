@@ -578,7 +578,7 @@ export class ChartViewer {
   async changeTimeframe(tf) {
     this.currentTF = tf;
     this.pauseReplay();
-    
+
     this.series.setData([]);
 
     if (this.showTSI) {
@@ -589,14 +589,24 @@ export class ChartViewer {
     this.londonSeries.setData([]);
     this.nySeries.setData([]);
 
-    const bars = await this.dataService.fetchBars(this.pair, tf, this.startTime);
+    // Remember where we are in the replay before fetching
+    const replayPos = isFinite(this.lastTime) ? this.lastTime : null;
+
+    let bars = await this.dataService.fetchBars(this.pair, tf, this.startTime);
+
+    // If mid-replay, trim to bars that have started by the current position
+    if (replayPos !== null) {
+      bars = bars.filter(b => b.time <= replayPos);
+    }
+
     this.historicalBars = bars;
-    
     this._calculateAndDrawTSI(bars);
     this.displayChart(bars);
-    
-    this.chart.timeScale().fitContent();
 
+    // Sync backend to the new effective position
+    this.socket.emit('seek', { fromTime: this.lastTime });
+
+    this.chart.timeScale().fitContent();
     bars.forEach(bar => this._shadeBar(bar));
     await this._initTrades();
   }

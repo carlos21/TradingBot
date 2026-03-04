@@ -91,6 +91,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         if "vat_5m_stage" in line_state:
             line_state["vat_5m_stage"] = 0
             line_state["vat_5m_reset"] = False
+        line_state.pop("vat_regime", None)
+        line_state.pop("vat_velocity", None)
 
     def _parse_tf_seconds(self, tf: str) -> int:
         unit = tf[-1].lower()
@@ -102,9 +104,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
     def get_history(self, tf: str, count: int) -> List[Dict[str, Any]]:
         hist = self._tf_histories.get(tf, [])
-        if len(hist) < count:
-            return []
-        return list(hist)[-count:]
+        return list(hist)[-count:] if hist else []
 
     def log_decision(self, bar_time: int, tf: str, line_id: str, event: str, details: str):
         self.decision_logs.append({

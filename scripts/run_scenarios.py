@@ -267,35 +267,125 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
 # -------------------------------------------------------------------------
 
 def print_detailed_summary(logs: List[Dict], pair_tz: ZoneInfo):
+    # ANSI colours
+    RST   = '\033[0m';  BOLD  = '\033[1m'
+    GREEN = '\033[92m'; RED   = '\033[91m'; YELLOW = '\033[93m'
+    CYAN  = '\033[96m'; BLUE  = '\033[94m'; GRAY   = '\033[90m'
+    WHITE = '\033[97m'
+    W = 108  # line width
+
+    def ts_str(ts):
+        return datetime.fromtimestamp(ts, tz=pair_tz).strftime("%m-%d %H:%M:%S")
+
+    def row(t, tf, evt, det, color="", bold=False):
+        b = BOLD if bold else ""
+        print(f"   {color}{b}{t:<14}  {(tf or '--'):<3}  {evt:<15}  {det}{RST}")
+
     if not logs:
         print("   ℹ️  No decision logs recorded.")
         return
 
-    print("\n   📋 SCENARIO DECISION LOG:")
-    print(f"   {'TIME (UTC)':<20} | {'TF':<4} | {'LINE':<5} | {'EVENT':<15} | {'DETAILS'}")
-    print("   " + "-"*110)
+    # Group entries by line_id, preserving insertion order
+    from collections import defaultdict
+    lines_map: Dict[str, List[Dict]] = defaultdict(list)
+    for entry in logs:
+        lines_map[entry.get("line_id", "?")].append(entry)
+    line_order = list(dict.fromkeys(e.get("line_id", "?") for e in logs))
 
-    for log in logs:
-        ts = log.get("time", 0)
-        dt = datetime.fromtimestamp(ts, tz=timezone.utc)
-        t_str = dt.strftime("%Y-%m-%d %H:%M:%S")
-        
-        tf = log.get("tf", "--")
-        lid = log.get("line_id", "")
-        evt = log.get("event", "")
-        det = log.get("details", "")
+    print(f"\n   {BOLD}{'═' * W}{RST}")
+    print(f"   {BOLD}  SCENARIO DECISION LOG{RST}")
+    print(f"   {BOLD}{'═' * W}{RST}\n")
 
-        if evt == "ENTRY":
-            evt = f"\033[92m{evt}\033[0m" # Green
-        elif evt == "FILTER_BLOCK":
-            evt = f"\033[93m{evt}\033[0m" # Yellow
-        elif evt == "REMOVE":
-            evt = f"\033[91m{evt}\033[0m" # Red
-        elif "FAIL" in evt:
-            evt = f"\033[90m{evt}\033[0m" # Gray
+    entry_count = 0
+    filter_block_count = 0
+    last_event = None
 
-        print(f"   {t_str:<20} | {tf:<4} | {lid:<5} | {evt:<24} | {det}")
-    print("\n")
+    for lid in line_order:
+        entries = lines_map[lid]
+        print(f"   {CYAN}{BOLD}── LINE: {lid}  {'─' * (W - 10)}{RST}")
+
+        i = 0
+        while i < len(entries):
+            e = entries[i]
+            t   = ts_str(e.get("time", 0))
+            tf  = e.get("tf") or "--"
+            evt = e.get("event", "")
+            det = e.get("details", "")
+            last_event = e
+
+            # Collapse consecutive TSI_CHECK (verbose, collapse all but first+last)
+            if evt == "TSI_CHECK":
+                j = i + 1
+                while j < len(entries) and entries[j].get("event") == "TSI_CHECK":
+                    j += 1
+                skipped = j - i - 1
+                row(t, tf, evt, det, GRAY)
+                if skipped:
+                    last_det = entries[j - 1].get("details", "")
+                    last_t   = ts_str(entries[j - 1].get("time", 0))
+                    print(f"   {GRAY}               ... ({skipped} more, no cross)"
+                          f"  last @ {last_t}: {last_det}{RST}")
+                i = j
+                continue
+
+            # Collapse consecutive VAT_REGIME with the same regime label
+            if evt == "VAT_REGIME":
+                def _regime(d):
+                    return d.split("→")[1].split("|")[0].strip() if "→" in d else d
+                cur_regime = _regime(det)
+                j = i + 1
+                while j < len(entries) and entries[j].get("event") == "VAT_REGIME" \
+                        and _regime(entries[j].get("details", "")) == cur_regime:
+                    j += 1
+                skipped = j - i - 1
+                row(t, tf, evt, det, BLUE)
+                if skipped:
+                    print(f"   {BLUE}               ... ({skipped} more bars, same regime){RST}")
+                i = j
+                continue
+
+            # Key milestone events
+            if evt == "ENTRY":
+                entry_count += 1
+                print(f"   {GREEN}{BOLD}{'─' * W}{RST}")
+                print(f"   {GREEN}{BOLD}  ✅ ENTRY   {t}  {tf:<3}  {det}{RST}")
+                print(f"   {GREEN}{BOLD}{'─' * W}{RST}")
+
+            elif evt == "FILTER_BLOCK":
+                filter_block_count += 1
+                print(f"   {YELLOW}{BOLD}  ⚠  FILTER_BLOCK  {t}  {tf:<3}  {det}{RST}")
+
+            elif evt in ("REMOVE", "TSI_INVALID"):
+                row(t, tf, evt, det, RED)
+
+            elif evt in ("VAT_CROSS_1", "VAT_RESET", "VAT_CROSS_2",
+                         "TSI_CROSS", "TSI_RESCUE", "TSI_SWEEP", "TSI_FAST"):
+                row(t, tf, evt, det, CYAN, bold=True)
+
+            elif "FAIL" in evt:
+                row(t, tf, evt, det, GRAY)
+
+            else:
+                row(t, tf, evt, det, WHITE)
+
+            i += 1
+
+        print()
+
+    # Outcome summary
+    print(f"   {BOLD}{'═' * W}{RST}")
+    if entry_count > 0:
+        print(f"   {GREEN}{BOLD}  OUTCOME: {entry_count} trade(s) opened{RST}")
+    else:
+        if filter_block_count > 0:
+            reason = f"trigger fired {filter_block_count}x but blocked by filters every time"
+        elif last_event:
+            reason = (f"no trigger fired — last event: "
+                      f"{last_event.get('event')} | {last_event.get('details', '')}")
+        else:
+            reason = "no events recorded"
+        print(f"   {RED}{BOLD}  OUTCOME: NO TRADE | {reason}{RST}")
+    print(f"   {BOLD}{'═' * W}{RST}\n")
 
 # -------------------------------------------------------------------------
 # Test Runner
@@ -332,8 +422,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
     def get_epoch(dt_str):
         dt = dtparser.parse(dt_str)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=pair_tz)
+        dt = dt.replace(tzinfo=pair_tz)  # always interpret in pair's local TZ
         return int(dt.timestamp())
 
     try:
@@ -361,7 +450,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
                 print(f"   [DEBUG] Scenario Start: {start_ts} | End: {end_ts}")
 
-                if not reset_app_state(base_url, start=start_ts, end=start_ts):
+                # Pre-seed 2 hours of warmup so 5m/15m TSI is fully warmed up by start
+                WARMUP_SECONDS = 2 * 3600
+                warmup_start_ts = start_ts - WARMUP_SECONDS
+                if not reset_app_state(base_url, start=warmup_start_ts, end=start_ts):
                     print("❌ Reset failed")
                     continue
                 
@@ -372,7 +464,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         c_ts = get_epoch(l["at_raw"])
                     add_line_http(base_url, pair_name, l["level"], creation_time=c_ts)
 
-                await page.goto(f"{base_url}/?start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}&show_tsi=false", wait_until="domcontentloaded")
+                show_tsi = "true" if sc.get("show_tsi", False) else "false"
+                await page.goto(f"{base_url}/?start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}&show_tsi={show_tsi}", wait_until="domcontentloaded")
 
                 try:
                     await page.wait_for_function("() => window.__chartReady === true", timeout=10000)
@@ -435,27 +528,17 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                             timeout=5000
                         )
                         
-                        # 2. FORCE Alignment on SINGLE chart
+                        # 2. Center chart on scenario range
                         await page.evaluate(
                             """(range) => {
-                                console.log("Setting visible range:", range);
-                                
                                 const viewer = window.chartViewer;
-                                
-                                // Explicitly lock options to remove offset and prevent drift
-                                const opts = {
+                                viewer.chart.timeScale().applyOptions({
                                     shiftVisibleRangeOnNewBar: false,
                                     rightOffset: 0,
-                                    fixLeftEdge: true,
-                                    fixRightEdge: true
-                                };
-                                
-                                // Apply to the single chart instance
-                                viewer.chart.timeScale().applyOptions(opts);
-
-                                // Set range
-                                const rangeObj = { from: range.start, to: range.end };
-                                viewer.chart.timeScale().setVisibleRange(rangeObj);
+                                    fixLeftEdge: false,
+                                    fixRightEdge: false,
+                                });
+                                viewer.chart.timeScale().setVisibleRange({ from: range.start, to: range.end });
                             }""",
                             {"start": start_ts, "end": end_ts}
                         )
