@@ -226,18 +226,19 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
     
     trade = trades[0]
     entry = trade.get("entry") or trade.get("entry_price")
-    
-    values_str = f"(Entry: {entry}, Orig SL: {trade.get('stop_loss')}, TP: {trade.get('take_profit')})"
+    orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+
+    values_str = f"(Entry: {entry}, Orig SL: {orig_sl}, TP: {trade.get('take_profit')})"
 
     if not expect:
         return "PASS", "Matches expectations", values_str
-    
+
     tol = float(expect.get("tolerance", 1.0))
     errors = []
 
     checks = {
         "entry": ["entry", "entry_price"],
-        "sl":    ["stop_loss", "stopLoss", "sl"],
+        "sl":    ["orig_sl", "stop_loss", "stopLoss", "sl"],
         "tp":    ["take_profit", "takeProfit", "tp"]
     }
 

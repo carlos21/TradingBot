@@ -25,7 +25,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         timeframes: List[str] = None,
         options: Optional[StrategyOptions] = None,
         htf_fetcher=None,
-        candle_config: Optional[CandleConfig] = None, 
+        candle_config: Optional[CandleConfig] = None,
+        sl_levels: Optional[List[float]] = None,
     ):
         self.timeframes = timeframes or ["5m"]
         
@@ -47,9 +48,10 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             extra_sl_space=extra_sl_space,
             fixed_stop_loss=fixed_stop_loss,
             max_stop_loss=max_stop_loss,
-            strategy_tf=self.timeframes[0], 
+            strategy_tf=self.timeframes[0],
             options=options,
             htf_fetcher=htf_fetcher,
+            sl_levels=sl_levels,
         )
 
         self.candle_config = candle_config

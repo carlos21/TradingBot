@@ -101,6 +101,20 @@ scenarios:
       none: true
     snapshot: true
 
+  - name: "NQ - 2026-02-24"
+    pair: "NQ"
+    tf: "3m"
+    start: "2026-02-24 07:00:00Z"
+    end:   "2026-02-24 13:00:00Z"
+    lines:
+      - { price: 24714.60, at: "2026-02-24 06:30:00Z" }
+    expect:
+      entry: 24797.00
+      sl:    24757.00
+      tp:    24957.00
+      tolerance: 0.25
+    snapshot: true
+
   - name: "NQ - 2026-02-26"
     pair: "NQ"
     tf: "5m"

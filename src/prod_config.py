@@ -18,8 +18,7 @@ def get_prod_strategy_numbers() -> StrategyNumbers:
         min_stop_loss=10.0,
         max_bounce=65.0,
         extra_sl_space=0.0,
-        fixed_stop_loss=20.0,
-        max_stop_loss=40
+        sl_levels=[15.0, 20.0, 30.0, 40.0],
     )
 
 def get_prod_candle_config() -> CandleConfig:

@@ -70,6 +70,7 @@ def create_app(
         extra_sl_space  = numbers.extra_sl_space,
         fixed_stop_loss = numbers.fixed_stop_loss,
         max_stop_loss   = numbers.max_stop_loss,
+        sl_levels       = numbers.sl_levels,
         socketio        = socketio,
         line_repository = repos.lines,
         trade_repository= repos.trades,

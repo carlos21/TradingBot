@@ -64,6 +64,7 @@ class BaseLiquidityStrategy:
         strategy_tf: str = "5m",
         options: Optional[StrategyOptions] = None,
         htf_fetcher: Optional[Callable[..., Optional[dict]]] = None,
+        sl_levels: Optional[List[float]] = None,
     ):
         self.min_stop_loss = float(min_stop_loss)
         self.max_bounce    = float(max_bounce)
@@ -74,6 +75,7 @@ class BaseLiquidityStrategy:
         self.extra_sl_space = float(extra_sl_space)
         self.fixed_stop_loss = fixed_stop_loss
         self.max_stop_loss = max_stop_loss
+        self.sl_levels = sorted(sl_levels) if sl_levels else None
 
         self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
         self.open_trades: List[Dict[str, Any]] = []
@@ -359,10 +361,32 @@ class BaseLiquidityStrategy:
 
     # ----- Trade creation & persistence -----
 
+    def _select_sl_level(self, distance: float) -> float:
+        """Pick the smallest SL tier >= distance. Falls back to the largest tier."""
+        for level in self.sl_levels:  # already sorted ascending
+            if level >= distance:
+                return level
+        return self.sl_levels[-1]
+
     def _build_trade_from_context(self, ctx: EntryContext) -> Dict[str, Any]:
         entry = ctx.close
-        
-        if self.fixed_stop_loss and self.fixed_stop_loss > 0:
+
+        if self.sl_levels:
+            # Tiered SL: compute distance to extreme, then pick smallest tier that covers it
+            if ctx.direction == "long":
+                distance = max(entry - ctx.extreme, self.min_stop_loss)
+            else:
+                distance = max(ctx.extreme - entry, self.min_stop_loss)
+
+            eff_risk = self._select_sl_level(distance)
+            print(
+                f"[Strategy] 📏 SL Selection | Dir: {ctx.direction} | "
+                f"Entry: {entry:.2f} | Extreme: {ctx.extreme:.2f} | "
+                f"Distance: {distance:.2f} pts | Selected SL: {eff_risk:.2f} pts "
+                f"(levels: {self.sl_levels})"
+            )
+
+        elif self.fixed_stop_loss and self.fixed_stop_loss > 0:
             # Use Fixed Risk
             eff_risk = self.fixed_stop_loss
         else:
@@ -374,8 +398,8 @@ class BaseLiquidityStrategy:
                 raw_risk = max(ctx.extreme - entry, self.min_stop_loss)
             eff_risk = raw_risk + extra
 
-        # Apply Max Cap (if configured)
-        if self.max_stop_loss and self.max_stop_loss > 0:
+        # Apply Max Cap (if configured and not using tiered levels)
+        if not self.sl_levels and self.max_stop_loss and self.max_stop_loss > 0:
             if eff_risk > self.max_stop_loss:
                 print(f"[Strategy] ⚠️ Risk {eff_risk:.2f} exceeds Max {self.max_stop_loss}. Capping it.")
                 eff_risk = self.max_stop_loss
@@ -403,6 +427,7 @@ class BaseLiquidityStrategy:
             "type":        trade_type,
             "entry":       entry,
             "stop_loss":   stop_loss,
+            "orig_sl":     stop_loss,
             "take_profit": take_profit,
             "risk":        risk,
             "status":      "open",
@@ -422,7 +447,7 @@ class BaseLiquidityStrategy:
         )
         trade["trade_id"] = td.trade_id
         self.open_trades.append(trade)
-        self.socketio.emit("trade_open", trade)
+        self.socketio.emit("trade_open", {**trade})
 
     def _store_and_emit_close(self, trade: Dict[str, Any]):
         self.socketio.emit("trade_close", trade)
