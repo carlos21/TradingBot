@@ -123,10 +123,22 @@ scenarios:
     lines:
       - { price: 24923.50, at: "2026-02-26 08:00:00Z" }
     expect:
-      entry: 18435.75
-      sl:    18434.75
-      tp:    18355.75
+      entry: 24992.50
+      sl:    24952.50
+      tp:    25152.50
       tolerance: 0.25
     snapshot: true
-    export_summary: true
-    show_tsi: true
+
+  - name: "NQ - 2026-03-02"
+    pair: "NQ"
+    tf: "5m"
+    start: "2026-03-02 07:00:00Z"
+    end:   "2026-03-02 13:00:00Z"
+    lines:
+      - { price: 24942.00, at: "2026-03-02 07:00:00Z" }
+    expect:
+      entry: 24919.75
+      sl:    24949.75
+      tp:    24799.75
+      tolerance: 0.25
+    snapshot: true
