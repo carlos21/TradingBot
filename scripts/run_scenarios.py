@@ -18,6 +18,7 @@ from multiprocessing import Process, Event
 
 import yaml
 import requests
+from collections import defaultdict
 from dateutil import parser as dtparser
 from playwright.async_api import async_playwright
 
@@ -260,8 +261,26 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
 
     if errors:
         return "FAIL", ", ".join(errors), values_str
-    
+
     return "PASS", "Matches expectations", values_str
+
+
+def compute_trade_pnl(trade):
+    """Returns (direction, pnl_pts, risk_pts, pnl_pct, r_multiple) assuming TP is hit."""
+    if not trade:
+        return None
+    entry = trade.get("entry") or trade.get("entry_price")
+    sl    = trade.get("orig_sl") or trade.get("stop_loss")
+    tp    = trade.get("take_profit")
+    if entry is None or sl is None or tp is None:
+        return None
+    entry, sl, tp = float(entry), float(sl), float(tp)
+    direction = "short" if sl > entry else "long"
+    pnl_pts   = (tp - entry) if direction == "long" else (entry - tp)
+    risk_pts  = abs(entry - sl)
+    pnl_pct   = pnl_pts / entry * 100
+    r_multiple = pnl_pts / risk_pts if risk_pts > 0 else 0.0
+    return direction, pnl_pts, risk_pts, pnl_pct, r_multiple
 
 # -------------------------------------------------------------------------
 # Log Printer
@@ -476,10 +495,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 await page.evaluate("""
                     window.__done = false;
                     window.__trades = [];
-                    
+                    window.__closes = {};
+
                     const sock = window.chartViewer.socket;
                     if (!sock) throw new Error("ChartViewer socket not found");
-                    
+
                     sock.on('trade_open', (t) => {
                         window.__trades.push(t);
                         if (window.chartViewer && window.chartViewer.series) {
@@ -496,6 +516,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                             }
                         }
                     });
+                    sock.on('trade_close', (c) => { window.__closes[String(c.trade_id)] = c; });
                     sock.on('stream_end', () => { window.__done = true; });
                 """)
 
@@ -510,8 +531,22 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     print(f"❌ Timeout waiting for stream end: {e}")
 
                 captured_trades = await page.evaluate("window.__trades")
+                captured_closes = await page.evaluate("window.__closes")
+                trade = captured_trades[0] if captured_trades else None
+                trade_id = str(trade.get("trade_id", "")) if trade else None
+                close_data = captured_closes.get(trade_id) if (trade_id and captured_closes) else None
+                won = (close_data.get("result", 0) > 0) if close_data else None
                 status, reason, values = check_expectations(sc.get("expect"), captured_trades)
-                summary_results.append({"name": name, "status": status, "reason": reason, "values": values})
+                summary_results.append({
+                    "name": name,
+                    "status": status,
+                    "reason": reason,
+                    "values": values,
+                    "trade": trade,
+                    "close": close_data,
+                    "won": won,
+                    "date": sc["start"],
+                })
                 print(f"   [{status}] {reason} {values}")
 
                 if sc.get("export_summary", False):
@@ -566,12 +601,126 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         server_proc.terminate()
         server_proc.join()
 
-    print("\n" + "="*100)
-    print(f"{'SCENARIO':<35} | {'STATUS':<6} | {'DETAILS'}")
-    print("-" * 100)
+    # ── ANSI helpers ──────────────────────────────────────────────────────────
+    RST    = '\033[0m';  BOLD   = '\033[1m'
+    GREEN  = '\033[92m'; RED    = '\033[91m'
+    YELLOW = '\033[93m'; GRAY   = '\033[90m'
+    CYAN   = '\033[96m'; WHITE  = '\033[97m'
+    ACCT     = 100_000   # simulated account size
+    RISK_PCT = 1.0       # fixed risk per trade as % of account
+
+    def _col(val, txt):
+        """Colour text green if val > 0, red if < 0, gray if 0 / None."""
+        if val is None:  return f"{GRAY}{txt}{RST}"
+        if val > 0:      return f"{GREEN}{BOLD}{txt}{RST}"
+        if val < 0:      return f"{RED}{BOLD}{txt}{RST}"
+        return txt
+
+    def _actual_pnl(r):
+        """Return (actual_pct, actual_usd, actual_pct) or (None,None,None).
+        Sizes every trade at a fixed RISK_PCT of account; win = RISK_PCT * R."""
+        pnl_info = compute_trade_pnl(r.get("trade")) if r.get("trade") else None
+        if not pnl_info:
+            return None, None, None
+        direction, pnl_pts_tp, risk_pts, _, r_multiple = pnl_info
+        won  = r.get("won")
+        risk_usd = ACCT * RISK_PCT / 100   # e.g. $1,000
+        if won is True:
+            actual_pct = RISK_PCT * r_multiple
+            actual_usd = risk_usd * r_multiple
+        elif won is False:
+            actual_pct = -RISK_PCT
+            actual_usd = -risk_usd
+        else:
+            return None, None, None        # trade still open / no close event
+        return actual_pct, actual_usd, actual_pct
+
+    # ── Per-scenario table ─────────────────────────────────────────────────────
+    W = 112
+    print("\n" + "=" * W)
+    hdr = f"{'SCENARIO':<35} | {'STATUS':<6} | {'RESULT':<6} | {'%':>8} | {'$ PnL':>10} | DETAILS"
+    print(hdr)
+    print("-" * W)
     for r in summary_results:
-        print(f"{r['name']:<35} | {r['status']:<6} | {r['reason']} {r['values']}")
-    print("="*100 + "\n")
+        won   = r.get("won")
+        actual_pct, actual_usd, actual_acct_pct = _actual_pnl(r)
+
+        if won is True:
+            res_str = f"{GREEN}{BOLD}  WON  {RST}"
+        elif won is False:
+            res_str = f"{RED}{BOLD}  LOST {RST}"
+        else:
+            res_str = f"{YELLOW}  OPEN?{RST}"
+
+        if actual_pct is not None:
+            pct_str = _col(actual_pct, f"{actual_pct:>+7.2f}%")
+            usd_str = _col(actual_usd, f"{actual_usd:>+9,.0f}")
+        else:
+            pct_str = f"{GRAY}{'N/A':>8}{RST}"
+            usd_str = f"{GRAY}{'N/A':>10}{RST}"
+
+        status_col = f"{GREEN}{r['status']}{RST}" if r['status'] == 'PASS' else f"{RED}{r['status']}{RST}"
+        print(f"{r['name']:<35} | {status_col:<6} | {res_str} | {pct_str} | {usd_str} | {r['reason']} {r['values']}")
+    print("=" * W)
+
+    # ── Aggregate by day / week / month ────────────────────────────────────────
+    def _new_bucket():
+        return {"usd": 0.0, "pct": 0.0, "wins": 0, "losses": 0, "open": 0}
+
+    daily   = defaultdict(_new_bucket)
+    weekly  = defaultdict(_new_bucket)
+    monthly = defaultdict(_new_bucket)
+
+    for r in summary_results:
+        if r["status"] != "PASS":
+            continue
+        actual_pct, actual_usd, actual_acct_pct = _actual_pnl(r)
+        won = r.get("won")
+        date  = dtparser.parse(r["date"]).date()
+        d_key = str(date)
+        iso   = date.isocalendar()
+        w_key = f"{iso.year}-W{iso.week:02d}"
+        m_key = date.strftime("%Y-%m")
+        for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+            if actual_usd is not None:
+                bucket[key]["usd"] += actual_usd
+                bucket[key]["pct"] += actual_acct_pct
+            if won is True:    bucket[key]["wins"]   += 1
+            elif won is False: bucket[key]["losses"] += 1
+            else:              bucket[key]["open"]   += 1
+
+    def _print_agg(title, data, show_running=False):
+        if not data:
+            return
+        lbl_w  = max(len(k) for k in data) + 2
+        sep    = "-" * (lbl_w + 54)
+        print(f"\n{BOLD}{CYAN}{title}{RST}")
+        print(f"  {'PERIOD':<{lbl_w}} | {'W/L':>5} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11}")
+        print(f"  {sep}")
+        balance = ACCT
+        for key in sorted(data):
+            v       = data[key]
+            balance += v["usd"]
+            wl_str  = f"{GREEN}{v['wins']}W{RST}/{RED}{v['losses']}L{RST}"
+            pct_str = _col(v["pct"],  f"{v['pct']:>+8.2f}%")
+            usd_str = _col(v["usd"],  f"${v['usd']:>+9,.0f}")
+            bal_str = _col(balance - ACCT, f"${balance:>10,.0f}")
+            print(f"  {key:<{lbl_w}} | {wl_str:>5} | {pct_str} | {usd_str} | {bal_str}")
+        # Totals row
+        total_usd = sum(v["usd"] for v in data.values())
+        total_pct = sum(v["pct"] for v in data.values())
+        total_w   = sum(v["wins"] for v in data.values())
+        total_l   = sum(v["losses"] for v in data.values())
+        print(f"  {sep}")
+        tot_pct = _col(total_pct, f"{total_pct:>+8.2f}%")
+        tot_usd = _col(total_usd, f"${total_usd:>+9,.0f}")
+        tot_bal = _col(total_usd, f"${ACCT + total_usd:>10,.0f}")
+        print(f"  {'TOTAL':<{lbl_w}} | {GREEN}{total_w}W{RST}/{RED}{total_l}L{RST} | {tot_pct} | {tot_usd} | {tot_bal}")
+
+    _print_agg("DAILY PnL   — $100K sim, 1% fixed risk per trade", daily)
+    _print_agg("WEEKLY PnL  — $100K sim, 1% fixed risk per trade", weekly)
+    _print_agg("MONTHLY PnL — $100K sim, 1% fixed risk per trade", monthly)
+    print()
 
 
 def main():
