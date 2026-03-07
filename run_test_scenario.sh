@@ -4,4 +4,6 @@ poetry run python scripts/run_scenarios.py \
   --outdir ./scenarios_out \
   --port 5001 \
   --bars-per-second 800 \
-  --chart-selector "#chartContainer"
+  --chart-selector "#chartContainer" \
+  --quiet \
+  "$@"

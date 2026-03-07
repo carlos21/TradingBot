@@ -278,7 +278,7 @@ class BaseLiquidityStrategy:
         for f in self.entry_filters:
             ok, reason = f(ctx)
             if not ok:
-                return False, reason
+                return False, f"{f.__name__}: {reason}"
         return True, "ok"
 
     def _maybe_remove_line(self, line_id: Any, opened: bool):

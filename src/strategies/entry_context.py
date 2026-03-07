@@ -46,6 +46,7 @@ def open_trades_limit_filter(limit: Optional[int] = 1) -> EntryFilter:
             return True, "limit: unlimited"
         count = sum(1 for t in ctx.strategy.open_trades if t['status'] == 'open')
         return (count < limit, f"open-trades {count} >= limit {limit}")
+    _f.__name__ = "open_trades_limit"
     return _f
 
 
@@ -53,7 +54,8 @@ def max_bounce_filter(max_bounce: float) -> EntryFilter:
     """Blocks entries if the cross depth exceeded a maximum bounce."""
     def _f(ctx: EntryContext) -> Tuple[bool, str]:
         ok = ctx.cross_depth <= max_bounce
-        return ok, f"depth {ctx.cross_depth:.5f} > max_bounce {max_bounce}"
+        return ok, f"level={ctx.level}, extreme={ctx.extreme:.2f}, depth={ctx.cross_depth:.2f} > max_bounce={max_bounce}"
+    _f.__name__ = "max_bounce"
     return _f
 
 
@@ -89,6 +91,7 @@ def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: Opti
         # Uncomment the next line to debug blocked trades in console
         # print(f"[Filter] ⛔ BLOCKED: {msg} | UTC Epoch: {ctx.bar['time']}")
         return False, msg
+    _f.__name__ = "time_range"
     return _f
 
 
@@ -119,4 +122,5 @@ def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str = "Amer
             return True, f"daily_count {daily_count} < {max_trades_per_day}"
         
         return False, f"Daily limit reached: {daily_count} >= {max_trades_per_day}"
+    _f.__name__ = "daily_trades_limit"
     return _f
