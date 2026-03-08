@@ -100,6 +100,8 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False):
     if quiet:
         sys.stdout = open(os.devnull, 'w')
+        import logging
+        logging.disable(logging.CRITICAL)
 
     os.environ["LINE_REMOVAL_MODE"] = "ON_EVALUATE"
 

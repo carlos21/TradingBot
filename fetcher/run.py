@@ -60,6 +60,10 @@ def _build_provider(args: argparse.Namespace) -> FetchProvider:
         from fetcher.providers.polygon_provider import PolygonProvider
         return PolygonProvider(api_key=args.polygon_api_key)
 
+    if args.provider == "alpaca":
+        from fetcher.providers.alpaca_provider import AlpacaProvider
+        return AlpacaProvider(api_key=args.alpaca_api_key, secret_key=args.alpaca_secret_key)
+
     raise ValueError(f"Unknown provider: {args.provider!r}")
 
 
@@ -74,11 +78,12 @@ def main() -> None:
     parser.add_argument(
         "--provider",
         default=os.environ.get("FETCH_PROVIDER", "yfinance"),
-        choices=["yfinance", "polygon"],
+        choices=["yfinance", "polygon", "alpaca"],
         help=(
             "Data source to use. "
             "'yfinance' is free but limited to the last 7 days of 1m data. "
             "'polygon' requires POLYGON_API_KEY and supports full history. "
+            "'alpaca' requires ALPACA_API_KEY + ALPACA_SECRET_KEY, supports years of 1m history. "
             "[env: FETCH_PROVIDER, default: yfinance]"
         ),
     )
@@ -131,6 +136,24 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--alpaca-api-key",
+        default=os.environ.get("ALPACA_API_KEY"),
+        metavar="KEY",
+        help=(
+            "Alpaca API key ID. "
+            "[env: ALPACA_API_KEY] — only used when --provider alpaca."
+        ),
+    )
+    parser.add_argument(
+        "--alpaca-secret-key",
+        default=os.environ.get("ALPACA_SECRET_KEY"),
+        metavar="SECRET",
+        help=(
+            "Alpaca secret key. "
+            "[env: ALPACA_SECRET_KEY] — only used when --provider alpaca."
+        ),
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true",
         help="Enable DEBUG-level logging.",
     )
@@ -146,7 +169,12 @@ def main() -> None:
 
     # Apply default symbol per provider when not set in .env or CLI
     if not args.symbol:
-        args.symbol = "NQ=F" if args.provider == "yfinance" else "NQ:XCME"
+        if args.provider == "yfinance":
+            args.symbol = "NQ=F"
+        elif args.provider == "alpaca":
+            args.symbol = "NQ1!"
+        else:
+            args.symbol = "NQ:XCME"
 
     provider = _build_provider(args)
     store    = CSVStore(filepath=args.output, pair=args.pair, tz=args.tz)
