@@ -1,0 +1,341 @@
+{
+  "run_date": "2026-03-08",
+  "mode": "sim",
+  "fixed_params": {
+    "fast_threshold": 3.0,
+    "slow_threshold": 1.0,
+    "lookback": 5
+  },
+  "results": [
+    {
+      "rank": 1,
+      "variant": "B  graduated-single",
+      "fast": [{"tf": "5m", "count": 1}],
+      "moderate": [{"tf": "3m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 24, "wins": 7, "losses": 11, "bes": 6,
+      "win_rate": 38.9, "net_pnl": 18250
+    },
+    {
+      "rank": 2,
+      "variant": "R  3m-grad-single",
+      "fast": [{"tf": "3m", "count": 1}],
+      "moderate": [{"tf": "3m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 24, "wins": 7, "losses": 12, "bes": 5,
+      "win_rate": 36.8, "net_pnl": 18250
+    },
+    {
+      "rank": 3,
+      "variant": "D  fast-strict",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "3m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 24, "wins": 7, "losses": 12, "bes": 5,
+      "win_rate": 36.8, "net_pnl": 16250
+    },
+    {
+      "rank": 4,
+      "variant": "AB 5m-wide-fallback",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "5m", "count": 1}, {"tf": "3m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 24, "wins": 7, "losses": 12, "bes": 5,
+      "win_rate": 36.8, "net_pnl": 16250
+    },
+    {
+      "rank": 5,
+      "variant": "AF 3m-strict-5m-mid",
+      "fast": [{"tf": "3m", "count": 2}],
+      "moderate": [{"tf": "5m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 23, "wins": 7, "losses": 12, "bes": 4,
+      "win_rate": 36.8, "net_pnl": 12100
+    },
+    {
+      "rank": 6,
+      "variant": "AJ scrambled-tf",
+      "fast": [{"tf": "3m", "count": 1}],
+      "moderate": [{"tf": "5m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 23, "wins": 7, "losses": 12, "bes": 4,
+      "win_rate": 36.8, "net_pnl": 12100
+    },
+    {
+      "rank": 7,
+      "variant": "AE 5m-single-3m-all",
+      "fast": [{"tf": "5m", "count": 1}],
+      "moderate": [{"tf": "3m", "count": 1}],
+      "slow": [{"tf": "3m", "count": 1}],
+      "trades": 24, "wins": 8, "losses": 12, "bes": 4,
+      "win_rate": 40.0, "net_pnl": 10150
+    },
+    {
+      "rank": 8,
+      "variant": "J  3m-anchored",
+      "fast": [{"tf": "3m", "count": 2}],
+      "moderate": [{"tf": "3m", "count": 1}],
+      "slow": [{"tf": "3m", "count": 1}],
+      "trades": 24, "wins": 8, "losses": 13, "bes": 3,
+      "win_rate": 38.1, "net_pnl": 10150
+    },
+    {
+      "rank": 9,
+      "variant": "X  3m-heavy-1m-slow",
+      "fast": [{"tf": "3m", "count": 2}],
+      "moderate": [{"tf": "3m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 2}],
+      "trades": 24, "wins": 6, "losses": 14, "bes": 4,
+      "win_rate": 30.0, "net_pnl": 10150
+    },
+    {
+      "rank": 10,
+      "variant": "AH reverse-grad",
+      "fast": [{"tf": "1m", "count": 1}],
+      "moderate": [{"tf": "3m", "count": 1}],
+      "slow": [{"tf": "5m", "count": 1}],
+      "trades": 24, "wins": 5, "losses": 15, "bes": 4,
+      "win_rate": 25.0, "net_pnl": 10150
+    },
+    {
+      "rank": 11,
+      "variant": "K  5m-heavy",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "5m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 23, "wins": 7, "losses": 12, "bes": 4,
+      "win_rate": 36.8, "net_pnl": 10100
+    },
+    {
+      "rank": 12,
+      "variant": "T  5m-fast-3m-slow",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "3m", "count": 1}],
+      "slow": [{"tf": "3m", "count": 1}],
+      "trades": 24, "wins": 8, "losses": 13, "bes": 3,
+      "win_rate": 38.1, "net_pnl": 8150
+    },
+    {
+      "rank": 13,
+      "variant": "A  baseline (current prod)",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "1m", "count": 2}, {"tf": "3m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 2}, {"tf": "3m", "count": 1}],
+      "trades": 24, "wins": 7, "losses": 13, "bes": 4,
+      "win_rate": 35.0, "net_pnl": 8150
+    },
+    {
+      "rank": 14,
+      "variant": "Y  fallback-dbl-slow",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "3m", "count": 1}, {"tf": "1m", "count": 2}],
+      "slow": [{"tf": "1m", "count": 2}],
+      "trades": 24, "wins": 6, "losses": 14, "bes": 4,
+      "win_rate": 30.0, "net_pnl": 8150
+    },
+    {
+      "rank": 15,
+      "variant": "U  1m-dominant",
+      "fast": [{"tf": "1m", "count": 2}],
+      "moderate": [{"tf": "1m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 24, "wins": 7, "losses": 14, "bes": 3,
+      "win_rate": 33.3, "net_pnl": 8100
+    },
+    {
+      "rank": 16,
+      "variant": "P  5m-single-fast",
+      "fast": [{"tf": "5m", "count": 1}],
+      "moderate": [{"tf": "1m", "count": 2}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 23, "wins": 6, "losses": 13, "bes": 4,
+      "win_rate": 31.6, "net_pnl": 8100
+    },
+    {
+      "rank": 17,
+      "variant": "G  lenient-all",
+      "fast": [{"tf": "1m", "count": 1}],
+      "moderate": [{"tf": "1m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 24, "wins": 6, "losses": 15, "bes": 3,
+      "win_rate": 28.6, "net_pnl": 8100
+    },
+    {
+      "rank": 18,
+      "variant": "L  3m-fast-strict",
+      "fast": [{"tf": "3m", "count": 2}],
+      "moderate": [{"tf": "1m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 24, "wins": 6, "losses": 15, "bes": 3,
+      "win_rate": 28.6, "net_pnl": 8100
+    },
+    {
+      "rank": 19,
+      "variant": "H  fast-only-strict",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "1m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 24, "wins": 6, "losses": 15, "bes": 3,
+      "win_rate": 28.6, "net_pnl": 6100
+    },
+    {
+      "rank": 20,
+      "variant": "I  mixed-fallback",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "3m", "count": 1}, {"tf": "1m", "count": 1}],
+      "slow": [{"tf": "1m", "count": 1}],
+      "trades": 24, "wins": 6, "losses": 15, "bes": 3,
+      "win_rate": 28.6, "net_pnl": 6100
+    },
+    {
+      "rank": 21,
+      "variant": "Z  5m-top-3m-bot",
+      "fast": [{"tf": "5m", "count": 1}],
+      "moderate": [{"tf": "5m", "count": 1}],
+      "slow": [{"tf": "3m", "count": 1}],
+      "trades": 23, "wins": 8, "losses": 11, "bes": 4,
+      "win_rate": 42.1, "net_pnl": 4000
+    },
+    {
+      "rank": 22,
+      "variant": "N  5m-single-all",
+      "fast": [{"tf": "5m", "count": 1}],
+      "moderate": [{"tf": "5m", "count": 1}],
+      "slow": [{"tf": "5m", "count": 1}],
+      "trades": 23, "wins": 5, "losses": 13, "bes": 5,
+      "win_rate": 27.8, "net_pnl": 4000
+    },
+    {
+      "rank": 23,
+      "variant": "E  higher-tf",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "5m", "count": 1}],
+      "slow": [{"tf": "3m", "count": 1}],
+      "trades": 23, "wins": 8, "losses": 12, "bes": 3,
+      "win_rate": 40.0, "net_pnl": 2000
+    },
+    {
+      "rank": 24,
+      "variant": "Q  pure-5m",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "5m", "count": 1}],
+      "slow": [{"tf": "5m", "count": 1}],
+      "trades": 23, "wins": 5, "losses": 14, "bes": 4,
+      "win_rate": 26.3, "net_pnl": 2000
+    },
+    {
+      "rank": 25,
+      "variant": "AC 3m-sandwich",
+      "fast": [{"tf": "3m", "count": 2}],
+      "moderate": [{"tf": "1m", "count": 1}],
+      "slow": [{"tf": "3m", "count": 1}],
+      "trades": 24, "wins": 7, "losses": 15, "bes": 2,
+      "win_rate": 31.8, "net_pnl": 0
+    },
+    {
+      "rank": 26,
+      "variant": "M  3m-all-strict",
+      "fast": [{"tf": "3m", "count": 2}],
+      "moderate": [{"tf": "3m", "count": 2}],
+      "slow": [{"tf": "3m", "count": 1}],
+      "trades": 23, "wins": 7, "losses": 16, "bes": 0,
+      "win_rate": 30.4, "net_pnl": 0
+    },
+    {
+      "rank": 27,
+      "variant": "AA 3m-fast-1m-dbl",
+      "fast": [{"tf": "3m", "count": 1}],
+      "moderate": [{"tf": "1m", "count": 2}],
+      "slow": [{"tf": "1m", "count": 2}],
+      "trades": 23, "wins": 6, "losses": 15, "bes": 2,
+      "win_rate": 28.6, "net_pnl": 0
+    },
+    {
+      "rank": 28,
+      "variant": "W  inverse-grad-dbl",
+      "fast": [{"tf": "5m", "count": 1}],
+      "moderate": [{"tf": "3m", "count": 2}],
+      "slow": [{"tf": "1m", "count": 2}],
+      "trades": 23, "wins": 5, "losses": 16, "bes": 2,
+      "win_rate": 23.8, "net_pnl": 0
+    },
+    {
+      "rank": 29,
+      "variant": "AD 5m-1m-3m-mix",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "1m", "count": 2}],
+      "slow": [{"tf": "3m", "count": 1}],
+      "trades": 23, "wins": 8, "losses": 14, "bes": 1,
+      "win_rate": 36.4, "net_pnl": -2000
+    },
+    {
+      "rank": 30,
+      "variant": "S  5m-fast-fallback",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "1m", "count": 1}, {"tf": "3m", "count": 1}],
+      "slow": [{"tf": "3m", "count": 1}],
+      "trades": 24, "wins": 7, "losses": 15, "bes": 2,
+      "win_rate": 31.8, "net_pnl": -2000
+    },
+    {
+      "rank": 31,
+      "variant": "AG 5m-3m-dbl-fallbk",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "3m", "count": 2}, {"tf": "1m", "count": 1}],
+      "slow": [{"tf": "3m", "count": 1}],
+      "trades": 24, "wins": 7, "losses": 15, "bes": 2,
+      "win_rate": 31.8, "net_pnl": -2000
+    },
+    {
+      "rank": 32,
+      "variant": "O  5m-fast-3m-mid",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "3m", "count": 2}],
+      "slow": [{"tf": "3m", "count": 1}],
+      "trades": 23, "wins": 7, "losses": 16, "bes": 0,
+      "win_rate": 30.4, "net_pnl": -2000
+    },
+    {
+      "rank": 33,
+      "variant": "F  very-strict",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "5m", "count": 2}],
+      "slow": [{"tf": "3m", "count": 2}],
+      "trades": 17, "wins": 5, "losses": 12, "bes": 0,
+      "win_rate": 29.4, "net_pnl": -2000
+    },
+    {
+      "rank": 34,
+      "variant": "C  graduated-double",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "3m", "count": 2}],
+      "slow": [{"tf": "1m", "count": 2}],
+      "trades": 23, "wins": 5, "losses": 17, "bes": 1,
+      "win_rate": 22.7, "net_pnl": -2000
+    },
+    {
+      "rank": 35,
+      "variant": "V  ultra-strict-5m",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "5m", "count": 2}],
+      "slow": [{"tf": "5m", "count": 2}],
+      "trades": 16, "wins": 3, "losses": 12, "bes": 1,
+      "win_rate": 20.0, "net_pnl": -2000
+    },
+    {
+      "rank": 36,
+      "variant": "AI 5m-skip-1m-mid",
+      "fast": [{"tf": "5m", "count": 2}],
+      "moderate": [{"tf": "1m", "count": 1}],
+      "slow": [{"tf": "5m", "count": 1}],
+      "trades": 24, "wins": 4, "losses": 17, "bes": 3,
+      "win_rate": 19.0, "net_pnl": -2000
+    }
+  ],
+  "notes": [
+    "Single crosses (×1) consistently outperform double crosses (×2)",
+    "Slow tier with 1m×1 performs best across top configs",
+    "Very strict configs (F, V) reduce trade count but hurt P&L",
+    "Combinations NOT yet tested: varying fast_threshold, slow_threshold, lookback; 15m timeframe; 4+ item condition lists"
+  ]
+}
