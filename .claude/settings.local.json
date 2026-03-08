@@ -7,7 +7,11 @@
       "Bash(chmod +x:*)",
       "Bash(./fetch_data.sh:*)",
       "Bash(git check-ignore:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "WebFetch(domain:docs.alpaca.markets)",
+      "WebFetch(domain:databento.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(poetry add:*)"
     ]
   }
 }

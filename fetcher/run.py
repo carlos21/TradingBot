@@ -64,6 +64,10 @@ def _build_provider(args: argparse.Namespace) -> FetchProvider:
         from fetcher.providers.alpaca_provider import AlpacaProvider
         return AlpacaProvider(api_key=args.alpaca_api_key, secret_key=args.alpaca_secret_key)
 
+    if args.provider == "databento":
+        from fetcher.providers.databento_provider import DatabentoProvider
+        return DatabentoProvider(api_key=args.databento_api_key)
+
     raise ValueError(f"Unknown provider: {args.provider!r}")
 
 
@@ -78,12 +82,13 @@ def main() -> None:
     parser.add_argument(
         "--provider",
         default=os.environ.get("FETCH_PROVIDER", "yfinance"),
-        choices=["yfinance", "polygon", "alpaca"],
+        choices=["yfinance", "polygon", "alpaca", "databento"],
         help=(
             "Data source to use. "
             "'yfinance' is free but limited to the last 7 days of 1m data. "
             "'polygon' requires POLYGON_API_KEY and supports full history. "
             "'alpaca' requires ALPACA_API_KEY + ALPACA_SECRET_KEY, supports years of 1m history. "
+            "'databento' requires DATABENTO_API_KEY, full CME NQ futures history. "
             "[env: FETCH_PROVIDER, default: yfinance]"
         ),
     )
@@ -154,6 +159,15 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--databento-api-key",
+        default=os.environ.get("DATABENTO_API_KEY"),
+        metavar="KEY",
+        help=(
+            "Databento API key. "
+            "[env: DATABENTO_API_KEY] — only used when --provider databento."
+        ),
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true",
         help="Enable DEBUG-level logging.",
     )
@@ -173,6 +187,8 @@ def main() -> None:
             args.symbol = "NQ=F"
         elif args.provider == "alpaca":
             args.symbol = "NQ1!"
+        elif args.provider == "databento":
+            args.symbol = "NQ.c.0"
         else:
             args.symbol = "NQ:XCME"
 
