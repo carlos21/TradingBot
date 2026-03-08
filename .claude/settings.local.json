@@ -11,7 +11,9 @@
       "WebFetch(domain:docs.alpaca.markets)",
       "WebFetch(domain:databento.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
-      "Bash(poetry add:*)"
+      "Bash(poetry add:*)",
+      "Bash(./run_scenarios.sh:*)",
+      "Bash(cat:*)"
     ]
   }
 }

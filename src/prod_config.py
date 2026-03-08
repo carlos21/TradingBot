@@ -44,7 +44,7 @@ def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
                 lookback=5,
                 fast=    [TsiCrossCondition("5m", 2)],
                 moderate=[TsiCrossCondition("1m", 2), TsiCrossCondition("3m", 1)],
-                slow=    [TsiCrossCondition("1m", 2), TsiCrossCondition("3m", 1)],
+                slow=    [TsiCrossCondition("1m", 1), TsiCrossCondition("3m", 1)],
             )),
             # trigger_with_timeframes(tsi_cross_trigger, ['5m', '15m']),
             # trigger_with_timeframes(three_candle_reversal_trigger, ['5m', '15m','30m', '1h']),
