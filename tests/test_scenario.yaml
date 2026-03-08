@@ -1,7 +1,7 @@
 scenarios:
   - name: "NQ - 2026-02-20"
     pair: "NQ"
-    tf: "3m"
+    tf: "1m"
     start: "2026-02-20 06:00:00Z"
     end:   "2026-02-20 12:00:00Z"
     lines:
