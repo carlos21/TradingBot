@@ -147,9 +147,9 @@ scenarios:
     lines:
       - { price: 24774.00, at: "2026-02-17 07:30:00Z" }
     expect:
-      entry: 24688.25
-      sl:    24648.25
-      tp:    24848.25
+      entry: 24700.75
+      sl:    24740.75
+      tp:    24540.75
       tolerance: 0.25
     snapshot: true
 
@@ -161,9 +161,9 @@ scenarios:
     lines:
       - { price: 24771.75, at: "2026-02-18 07:30:00Z" }
     expect:
-      entry: 24688.25
-      sl:    24648.25
-      tp:    24848.25
+      entry: 24825.75
+      sl:    24785.75
+      tp:    24985.75
       tolerance: 0.25
     snapshot: true
 
@@ -175,9 +175,9 @@ scenarios:
     lines:
       - { price: 24941.75, at: "2026-02-19 07:30:00Z" }
     expect:
-      entry: 24688.25
-      sl:    24648.25
-      tp:    24848.25
+      entry: 24908.75
+      sl:    24948.75
+      tp:    24748.75
       tolerance: 0.25
     snapshot: true
 
@@ -189,9 +189,9 @@ scenarios:
     lines:
       - { price: 24748.25, at: "2026-02-19 06:30:00Z" }
     expect:
-      entry: 24688.25
-      sl:    24648.25
-      tp:    24848.25
+      entry: 24748.25
+      sl:    24718.25
+      tp:    24868.25
       tolerance: 0.25
     snapshot: true
 
