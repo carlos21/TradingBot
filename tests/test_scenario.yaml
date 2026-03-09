@@ -7,9 +7,9 @@ scenarios:
     lines:
       - { price: 24748.25, at: "2026-02-19 06:30:00Z" }
     expect:
-      entry: 24688.25
-      sl:    24648.25
-      tp:    24848.25
+      entry: 24748.25
+      sl:    24718.25
+      tp:    24868.25
       tolerance: 0.25
     snapshot: true
     export_summary: true

@@ -35,6 +35,8 @@ class StrategyOptions:
     entry_filters: Optional[List[EntryFilter]] = None
     triggers: Optional[List[EntryTrigger]] = None
     breakeven: Optional[BreakevenConfig] = None
+    reentry_after_sl: bool = False        # re-enter if price comes back after a SL hit
+    reentry_threshold: float = 60.0       # cancel re-entry if price goes this many pts past the line
 
 
 class BaseLiquidityStrategy:
@@ -94,8 +96,16 @@ class BaseLiquidityStrategy:
         # Filters can be taken straight from options
         self.entry_filters: List[EntryFilter] = list(self.options.entry_filters or [])
 
+        # Pending re-entry opportunities created when a SL is hit
+        self._reentry_opportunities: List[Dict[str, Any]] = []
+
         # Optional dependency for multi-TF checks
         self.htf_fetcher = htf_fetcher
+
+    # ----- Decision log (no-op; subclass LiquidityStrategyV2 overrides this) -----
+
+    def log_decision(self, bar_time: int, tf: str, line_id: str, event: str, details: str):
+        pass  # overridden by LiquidityStrategyV2 to write to self.decision_logs
 
     # ----- Public small API for runtime tweaks -----
 
@@ -214,6 +224,79 @@ class BaseLiquidityStrategy:
 
             if should_update and new_sl is not None:
                 self._update_trade_sl(trade, new_sl)
+
+    def _check_reentry_opportunities(self, bar: Dict[str, Any]):
+        """
+        On every 1m bar: update adverse excursion tracking for pending re-entry
+        opportunities and trigger a new trade if price closes back through the line.
+        Bypasses all normal entry filters (including daily trade limit).
+        """
+        threshold = self.options.reentry_threshold
+        has_open = any(t["status"] == "open" for t in self.open_trades)
+
+        remaining = []
+        for opp in self._reentry_opportunities:
+            if opp["pair"] != bar["pair"]:
+                remaining.append(opp)
+                continue
+
+            if has_open:
+                # Keep opportunity alive but don't enter while a trade is open
+                remaining.append(opp)
+                continue
+
+            level = opp["level"]
+            direction = opp["direction"]
+
+            lid = f"reentry@{level:.2f}"
+
+            if direction == "long":
+                opp["extreme_excursion"] = min(opp["extreme_excursion"], bar["low"])
+                adverse = level - opp["extreme_excursion"]
+                if adverse > threshold:
+                    print(f"[ReEntry] ❌ Cancelled LONG re-entry: price went {adverse:.1f} pts below line {level:.2f}")
+                    self.log_decision(bar["time"], "1m", lid, "REENTRY_CANCEL",
+                                      f"Cancelled — price went {adverse:.1f}pts below line={level:.2f} (threshold={threshold:.0f}pts)")
+                    continue  # drop opportunity
+                if bar["close"] > level:
+                    print(f"[ReEntry] ✅ Triggering LONG re-entry at {bar['close']:.2f} (line={level:.2f})")
+                    self.log_decision(bar["time"], "1m", lid, "ENTRY",
+                                      f"Re-entry LONG @ {bar['close']:.2f} — close above line={level:.2f} (max adverse={adverse:.1f}pts)")
+                    ctx = EntryContext(
+                        strategy=self, line_id=None, direction="long", level=level,
+                        bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
+                        extreme=level, cross_depth=0.0,
+                    )
+                    trade = self._build_trade_from_context(ctx)
+                    trade["is_reentry"] = True
+                    self._store_and_emit_open(trade)
+                    continue  # consumed
+
+            else:  # short
+                opp["extreme_excursion"] = max(opp["extreme_excursion"], bar["high"])
+                adverse = opp["extreme_excursion"] - level
+                if adverse > threshold:
+                    print(f"[ReEntry] ❌ Cancelled SHORT re-entry: price went {adverse:.1f} pts above line {level:.2f}")
+                    self.log_decision(bar["time"], "1m", lid, "REENTRY_CANCEL",
+                                      f"Cancelled — price went {adverse:.1f}pts above line={level:.2f} (threshold={threshold:.0f}pts)")
+                    continue  # drop opportunity
+                if bar["close"] < level:
+                    print(f"[ReEntry] ✅ Triggering SHORT re-entry at {bar['close']:.2f} (line={level:.2f})")
+                    self.log_decision(bar["time"], "1m", lid, "ENTRY",
+                                      f"Re-entry SHORT @ {bar['close']:.2f} — close below line={level:.2f} (max adverse={adverse:.1f}pts)")
+                    ctx = EntryContext(
+                        strategy=self, line_id=None, direction="short", level=level,
+                        bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
+                        extreme=level, cross_depth=0.0,
+                    )
+                    trade = self._build_trade_from_context(ctx)
+                    trade["is_reentry"] = True
+                    self._store_and_emit_open(trade)
+                    continue  # consumed
+
+            remaining.append(opp)
+
+        self._reentry_opportunities = remaining
 
     def _update_trade_sl(self, trade: Dict[str, Any], new_sl: float):
         print(f"[Strategy] 🛡️ Moving SL for {trade['trade_id']} to {new_sl}")
@@ -340,7 +423,30 @@ class BaseLiquidityStrategy:
 
             if closed:
                 t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price)
-                
+
+                # Register re-entry opportunity when SL is hit (not on TP, not on re-entry trades)
+                if (
+                    self.options.reentry_after_sl
+                    and r_result < 0
+                    and not t.get("is_reentry", False)
+                ):
+                    level = t.get("line_level")
+                    if level is not None:
+                        direction = t["type"]
+                        self._reentry_opportunities.append({
+                            "level": level,
+                            "direction": direction,
+                            "pair": t["pair"],
+                            # track the most adverse price seen since SL hit
+                            "extreme_excursion": bar["low"] if direction == "long" else bar["high"],
+                        })
+                        print(f"[ReEntry] 🎯 SL hit on {direction} @ {t['pair']}. Watching level={level} for re-entry.")
+                        self.log_decision(
+                            bar["time"], "1m", f"reentry@{level:.2f}",
+                            "REENTRY_WATCH",
+                            f"SL hit on {direction} trade — watching level={level:.2f} for re-entry (threshold={self.options.reentry_threshold:.0f}pts)"
+                        )
+
                 # FIX: Persist the close to DB immediately
                 try:
                     self.trade_repository.close_trade(
@@ -407,11 +513,13 @@ class BaseLiquidityStrategy:
         if ctx.direction == "long":
             sl = entry - eff_risk
             tp = entry + 4 * eff_risk
-            return self._make_trade_dict(ctx.bar, "long", entry, sl, tp, eff_risk)
+            trade = self._make_trade_dict(ctx.bar, "long", entry, sl, tp, eff_risk)
         else:
             sl = entry + eff_risk
             tp = entry - 4 * eff_risk
-            return self._make_trade_dict(ctx.bar, "short", entry, sl, tp, eff_risk)
+            trade = self._make_trade_dict(ctx.bar, "short", entry, sl, tp, eff_risk)
+        trade["line_level"] = ctx.level
+        return trade
 
     def _make_trade_dict(
         self,

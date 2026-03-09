@@ -123,6 +123,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
             if self.options.breakeven:
                 self._check_breakeven(bar)
+
+            if self.options.reentry_after_sl and self._reentry_opportunities:
+                self._check_reentry_opportunities(bar)
             
             current_price = bar['close']
             bar_time = bar['time']

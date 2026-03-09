@@ -381,8 +381,11 @@ def print_detailed_summary(logs: List[Dict], pair_tz: ZoneInfo):
                 filter_block_count += 1
                 print(f"   {YELLOW}{BOLD}  ⚠  FILTER_BLOCK  {t}  {tf:<3}  {det}{RST}")
 
-            elif evt in ("REMOVE", "TSI_INVALID"):
+            elif evt in ("REMOVE", "TSI_INVALID", "REENTRY_CANCEL"):
                 row(t, tf, evt, det, RED)
+
+            elif evt == "REENTRY_WATCH":
+                row(t, tf, evt, det, YELLOW, bold=True)
 
             elif evt in ("VAT_CROSS_1", "VAT_RESET", "VAT_CROSS_2",
                          "TSI_CROSS", "TSI_RESCUE", "TSI_SWEEP", "TSI_FAST"):
@@ -544,10 +547,18 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
                 captured_trades = await page.evaluate("window.__trades")
                 captured_closes = await page.evaluate("window.__closes")
-                trade = captured_trades[0] if captured_trades else None
-                trade_id = str(trade.get("trade_id", "")) if trade else None
-                close_data = captured_closes.get(trade_id) if (trade_id and captured_closes) else None
-                won = (close_data.get("result", 0) > 0) if close_data else None
+                # Build (trade, close) pairs for every trade in this scenario
+                trade_pairs = [
+                    (t, (captured_closes or {}).get(str(t.get("trade_id", ""))))
+                    for t in (captured_trades or [])
+                ]
+                # Net R across all closed trades → determines won/lost for the scenario
+                closed_results = [c["result"] for _, c in trade_pairs if c is not None]
+                net_result = sum(closed_results) if closed_results else None
+                won = (net_result > 0) if net_result is not None else None
+                # First trade is still used for expectation checks (YAML expects first trade)
+                trade      = captured_trades[0] if captured_trades else None
+                close_data = trade_pairs[0][1]  if trade_pairs   else None
                 status, reason, values = check_expectations(sc.get("expect"), captured_trades)
                 summary_results.append({
                     "name": name,
@@ -557,6 +568,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     "trade": trade,
                     "close": close_data,
                     "won": won,
+                    "trade_pairs": trade_pairs,   # all trades for PnL accounting
                     "date": sc["start"],
                 })
                 print(f"   [{status}] {reason} {values}")
@@ -641,72 +653,96 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         return txt
 
     def _actual_pnl_sim(r):
-        """$1,000 fixed risk — always, regardless of SL size."""
-        if not r.get("trade"):
+        """$1,000 fixed risk per trade — sums across all trades in the scenario."""
+        trade_pairs = r.get("trade_pairs") or []
+        if not trade_pairs:
             return None, None, None, ""
-        won   = r.get("won")
-        close = r.get("close")
-        if won is True:
-            actual_r   = close["result"] if close else 0.0
-            actual_usd = RISK_USD * actual_r
-        elif won is False:
-            actual_usd = -RISK_USD
-        else:
+        total_usd = 0.0
+        has_closed = False
+        for _trade, close in trade_pairs:
+            if close is None:
+                continue
+            has_closed = True
+            actual_r = close.get("result", 0.0)
+            total_usd += RISK_USD * actual_r if actual_r > 0 else -RISK_USD
+        if not has_closed:
             return None, None, None, ""
-        actual_pct = actual_usd / ACCT * 100
-        return actual_pct, actual_usd, actual_pct, ""
+        actual_pct = total_usd / ACCT * 100
+        n = len([c for _, c in trade_pairs if c is not None])
+        extra = f"{n} trade(s)" if n > 1 else ""
+        return actual_pct, total_usd, actual_pct, extra
 
     def _actual_pnl_real(r):
-        """Realistic NQ futures: integer contracts ($20/pt), round-trip fees included."""
-        if not r.get("trade"):
+        """Realistic NQ futures: integer contracts ($20/pt), round-trip fees included. Sums all trades."""
+        trade_pairs = r.get("trade_pairs") or []
+        if not trade_pairs:
             return None, None, None, ""
-        won   = r.get("won")
-        close = r.get("close")
-        trade = r.get("trade")
-        entry   = trade.get("entry") or trade.get("entry_price")
-        orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-        if entry is None or orig_sl is None:
+        total_usd = 0.0
+        has_closed = False
+        detail_parts = []
+        for trade, close in trade_pairs:
+            if close is None:
+                continue
+            entry   = trade.get("entry") or trade.get("entry_price")
+            orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+            if entry is None or orig_sl is None:
+                continue
+            sl_pts = round(abs(entry - orig_sl), 4)
+            if sl_pts <= 0:
+                continue
+            contracts = max(1, round(RISK_USD / (sl_pts * NQ_PV)))
+            fees = contracts * FEE_PER_RT
+            actual_r = close.get("result", 0.0)
+            if actual_r > 0:
+                trade_usd = contracts * (actual_r * sl_pts) * NQ_PV - fees
+            else:
+                trade_usd = -(contracts * sl_pts * NQ_PV) - fees
+            total_usd += trade_usd
+            has_closed = True
+            detail_parts.append(f"{contracts}c@{sl_pts:.0f}pt")
+        if not has_closed:
             return None, None, None, ""
-        sl_pts = round(abs(entry - orig_sl), 4)
-        if sl_pts <= 0:
-            return None, None, None, ""
-        contracts = max(1, round(RISK_USD / (sl_pts * NQ_PV)))
-        fees = contracts * FEE_PER_RT
-        if won is True:
-            actual_r   = close["result"] if close else 0.0
-            actual_usd = contracts * (actual_r * sl_pts) * NQ_PV - fees
-        elif won is False:
-            actual_usd = -(contracts * sl_pts * NQ_PV) - fees
-        else:
-            return None, None, None, ""
-        actual_pct = actual_usd / ACCT * 100
-        extra = f"{contracts}c @ {sl_pts:.0f}pt SL  fees ${fees:.0f}"
-        return actual_pct, actual_usd, actual_pct, extra
+        actual_pct = total_usd / ACCT * 100
+        extra = "  ".join(detail_parts)
+        return actual_pct, total_usd, actual_pct, extra
 
-    def _print_results(mode_label, pnl_fn):
+    def _print_results(mode_label, pnl_fn, per_trade_fn):
+        """
+        per_trade_fn(trade, close) → (usd, pct, actual_r)
+        Used so that W/L bucketing counts each individual trade, not the net scenario outcome.
+        """
         # ── Per-scenario table ─────────────────────────────────────────────────
         W = 135
         print(f"\n{'=' * W}")
         print(f"  {BOLD}{CYAN}MODE: {mode_label}{RST}")
         print(f"{'=' * W}")
-        hdr = f"{'SCENARIO':<40} | {'STATUS':^8} | {'RESULT':^8} | {'%':>9} | {'$ PnL':>12} | DETAILS"
+        hdr = f"{'SCENARIO':<40} | {'STATUS':^8} | {'RESULT':^14} | {'%':>9} | {'$ PnL':>12} | DETAILS"
         print(hdr)
         print("-" * W)
         for r in summary_results:
-            won   = r.get("won")
             actual_pct, actual_usd, actual_acct_pct, extra = pnl_fn(r)
 
-            close    = r.get("close")
-            actual_r = close["result"] if close else None
-            is_be    = won is True and actual_r is not None and actual_r < BE_THRESHOLD
-            if is_be:
-                res_str = _center(f"{YELLOW}{BOLD}B/E{RST}",   8)
-            elif won is True:
-                res_str = _center(f"{GREEN}{BOLD}WON{RST}",    8)
-            elif won is False:
-                res_str = _center(f"{RED}{BOLD}LOST{RST}",     8)
+            # Build per-trade result labels (W/L/B/E per trade)
+            trade_pairs = r.get("trade_pairs") or []
+            trade_labels = []
+            for trade, close in trade_pairs:
+                if close is None:
+                    trade_labels.append(f"{YELLOW}OPEN?{RST}")
+                    continue
+                r_val = close.get("result", 0.0)
+                if r_val > 0 and r_val < BE_THRESHOLD:
+                    trade_labels.append(f"{YELLOW}{BOLD}B/E{RST}")
+                elif r_val >= BE_THRESHOLD:
+                    trade_labels.append(f"{GREEN}{BOLD}W{RST}")
+                else:
+                    trade_labels.append(f"{RED}{BOLD}L{RST}")
+
+            if len(trade_labels) == 1:
+                res_str = _center(trade_labels[0], 14)
+            elif trade_labels:
+                res_str = _center(" + ".join(trade_labels), 14)
             else:
-                res_str = _center(f"{YELLOW}OPEN?{RST}",       8)
+                res_str = _center(f"{GRAY}–{RST}", 14)
 
             if actual_pct is not None:
                 pct_str = _col(actual_pct, f"{actual_pct:>+8.2f}%")
@@ -723,7 +759,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             print(f"{r['name']:<40} | {status_col} | {res_str} | {pct_str} | {usd_str} | {details}")
         print("=" * W)
 
-        # ── Aggregate by day / week / month ───────────────────────────────────
+        # ── Aggregate by day / week / month (per individual trade) ─────────────
         def _new_bucket():
             return {"usd": 0.0, "pct": 0.0, "wins": 0, "losses": 0, "be": 0, "open": 0}
 
@@ -734,24 +770,26 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         for r in summary_results:
             if r["status"] != "PASS":
                 continue
-            actual_pct, actual_usd, actual_acct_pct, _ = pnl_fn(r)
-            won      = r.get("won")
-            date     = dtparser.parse(r["date"]).date()
-            d_key    = str(date)
-            iso      = date.isocalendar()
-            w_key    = f"{iso.year}-W{iso.week:02d}"
-            m_key    = date.strftime("%Y-%m")
-            close    = r.get("close")
-            actual_r = close["result"] if close else None
-            is_be    = won is True and actual_r is not None and actual_r < BE_THRESHOLD
-            for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
-                if actual_usd is not None:
-                    bucket[key]["usd"] += actual_usd
-                    bucket[key]["pct"] += actual_acct_pct
-                if is_be:              bucket[key]["be"]     += 1
-                elif won is True:      bucket[key]["wins"]   += 1
-                elif won is False:     bucket[key]["losses"] += 1
-                else:                  bucket[key]["open"]   += 1
+            date  = dtparser.parse(r["date"]).date()
+            d_key = str(date)
+            iso   = date.isocalendar()
+            w_key = f"{iso.year}-W{iso.week:02d}"
+            m_key = date.strftime("%Y-%m")
+            for trade, close in (r.get("trade_pairs") or []):
+                if close is None:
+                    for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                        bucket[key]["open"] += 1
+                    continue
+                t_usd, t_pct, actual_r = per_trade_fn(trade, close)
+                is_be  = actual_r > 0 and actual_r < BE_THRESHOLD
+                is_win = actual_r >= BE_THRESHOLD
+                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                    if t_usd is not None:
+                        bucket[key]["usd"] += t_usd
+                        bucket[key]["pct"] += t_pct
+                    if is_be:    bucket[key]["be"]     += 1
+                    elif is_win: bucket[key]["wins"]   += 1
+                    else:        bucket[key]["losses"] += 1
 
         def _print_agg(title, data):
             if not data:
@@ -795,19 +833,20 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         _print_agg(f"WEEKLY PnL  — {mode_label}", weekly)
         _print_agg(f"MONTHLY PnL — {mode_label}", monthly)
 
-        # ── Overall summary ────────────────────────────────────────────────────
+        # ── Overall summary (count each individual trade) ─────────────────────
         outcomes = []
         for r in summary_results:
-            won      = r.get("won")
-            close    = r.get("close")
-            actual_r = close["result"] if close else None
-            is_be    = won is True and actual_r is not None and actual_r < BE_THRESHOLD
-            if is_be:
-                outcomes.append("be")
-            elif won is True:
-                outcomes.append(True)
-            elif won is False:
-                outcomes.append(False)
+            for trade, close in (r.get("trade_pairs") or []):
+                if close is None:
+                    continue
+                actual_r = close.get("result", 0.0)
+                is_be    = actual_r > 0 and actual_r < BE_THRESHOLD
+                if is_be:
+                    outcomes.append("be")
+                elif actual_r >= BE_THRESHOLD:
+                    outcomes.append(True)
+                else:
+                    outcomes.append(False)
 
         total_t = len(outcomes)
         wins    = outcomes.count(True)
@@ -836,13 +875,33 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         print(f"  Net P&L : {_col(total_usd_all, f'${total_usd_all:+,.0f}')}")
         print()
 
+    def _per_trade_sim(trade, close):
+        actual_r = close.get("result", 0.0)
+        usd = RISK_USD * actual_r if actual_r > 0 else -RISK_USD
+        return usd, usd / ACCT * 100, actual_r
+
+    def _per_trade_real(trade, close):
+        entry   = trade.get("entry") or trade.get("entry_price")
+        orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+        if entry is None or orig_sl is None:
+            return None, None, 0.0
+        sl_pts = round(abs(entry - orig_sl), 4)
+        if sl_pts <= 0:
+            return None, None, 0.0
+        contracts = max(1, round(RISK_USD / (sl_pts * NQ_PV)))
+        fees = contracts * FEE_PER_RT
+        actual_r = close.get("result", 0.0)
+        usd = (contracts * (actual_r * sl_pts) * NQ_PV - fees) if actual_r > 0 else -(contracts * sl_pts * NQ_PV) - fees
+        return usd, usd / ACCT * 100, actual_r
+
     mode = getattr(args, 'mode', 'both')
     if mode in ('sim', 'both'):
-        _print_results(f"SIM — ${ACCT:,.0f} account, ${RISK_USD:,.0f} fixed risk per trade", _actual_pnl_sim)
+        _print_results(f"SIM — ${ACCT:,.0f} account, ${RISK_USD:,.0f} fixed risk per trade", _actual_pnl_sim, _per_trade_sim)
     if mode in ('real', 'both'):
         _print_results(
             f"REAL — MNQ micro futures, ${ACCT:,.0f} account, ~${RISK_USD:,.0f} target risk, ${FEE_PER_RT:.2f}/contract RT fees (Tradovate)",
             _actual_pnl_real,
+            _per_trade_real,
         )
 
 

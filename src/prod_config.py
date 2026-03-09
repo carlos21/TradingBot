@@ -52,7 +52,9 @@ def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
             # trigger_with_timeframes(wick_near_line_trigger, ['5m', '15m'])
         ],
         breakeven=BreakevenConfig(
-            trigger_rr=2.0, 
-            move_to_rr=0.05 
-        )
+            trigger_rr=2.0,
+            move_to_rr=0.05
+        ),
+        reentry_after_sl=False,      # set True to re-enter if price comes back after a SL hit
+        reentry_threshold=90.0,      # cancel re-entry if price goes this many pts past the line
     )
