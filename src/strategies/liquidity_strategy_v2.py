@@ -259,6 +259,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         f"Trigger: {trigger_name} | Dir: {proposed_ctx.direction} | Price: {proposed_ctx.close}")
                     
                     trade = self._build_trade_from_context(proposed_ctx)
+                    trade['tf'] = bar.get('tf', '1m')
                     self._store_and_emit_open(trade)
                     opened = True
                 else:

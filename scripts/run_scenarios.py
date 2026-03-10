@@ -4,6 +4,7 @@ High-Performance Scenario Runner with Dependency Injection.
 """
 
 import re
+import json
 import argparse
 import asyncio
 import csv
@@ -904,6 +905,17 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             _per_trade_real,
         )
 
+    if getattr(args, 'results_json', None):
+        out = [
+            {
+                "name": r["name"],
+                "status": r["status"],
+                "trades": [t for t, _ in (r.get("trade_pairs") or [])],
+            }
+            for r in summary_results
+        ]
+        Path(args.results_json).write_text(json.dumps(out, indent=2))
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -924,6 +936,8 @@ def main():
                     help="Simulated account size in USD (default: 100000)")
     ap.add_argument("--quiet", action="store_true",
                     help="Suppress verbose app output; print only per-scenario results and final summary")
+    ap.add_argument("--results-json", default=None,
+                    help="If set, write scenario results as JSON to this path after all scenarios run")
     args = ap.parse_args()
 
     yaml_path = Path(args.yaml)
