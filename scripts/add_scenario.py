@@ -5,6 +5,7 @@ and tests/test_scenario.yaml by running the scenario and extracting real results
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -48,6 +49,19 @@ def parse_ts(s: str) -> str:
 def ts_date(ts: str) -> str:
     """Extract 'YYYY-MM-DD' from a YAML timestamp string."""
     return ts[:10]
+
+
+def parse_ts_with_date(s: str, session_date: str) -> str:
+    """
+    Like parse_ts() but also accepts bare time strings (HH:MM or HH:MM:SS),
+    prepending session_date automatically.  Full 'YYYY-MM-DD HH:MM' still works
+    as an override (e.g. when a line is from the prior day).
+    """
+    s = s.strip()
+    # Bare time: "HH:MM" or "HH:MM:SS"
+    if len(s) <= 8 and ":" in s and "-" not in s:
+        s = f"{session_date} {s}"
+    return parse_ts(s)
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +157,26 @@ def insert_scenario_in_yaml_file(sc: dict, insert_idx: int, scenarios: list):
         SCENARIOS_YAML.write_text(content.rstrip() + "\n\n" + new_block)
 
 
+def replace_scenario_block(name: str, new_sc: dict) -> bool:
+    """Replace an existing scenario's block in scenarios.yaml in-place."""
+    content = SCENARIOS_YAML.read_text()
+
+    start_pat = re.compile(r'(?m)^  - name: "' + re.escape(name) + r'"')
+    m = start_pat.search(content)
+    if not m:
+        return False
+
+    block_start = m.start()
+
+    # End = the '\n' that immediately precedes the next '  - name: "' line
+    end_pat = re.compile(r'\n  - name: "')
+    m2 = end_pat.search(content, m.end())
+    block_end = m2.start() + 1 if m2 else len(content)
+
+    SCENARIOS_YAML.write_text(content[:block_start] + format_scenario_block(new_sc) + content[block_end:])
+    return True
+
+
 def write_test_scenario_yaml(sc: dict, export_summary: bool = False):
     """Write tests/test_scenario.yaml for the given scenario."""
     extra = ""
@@ -208,9 +242,17 @@ def main():
     scenarios = yaml_doc.get("scenarios", [])
     existing_names = [sc.get("name", "") for sc in scenarios]
 
+    # ── Session date ─────────────────────────────────────────────────────────
+    while True:
+        session_date = prompt("Session date (YYYY-MM-DD)").strip()
+        if len(session_date) == 10 and session_date[4] == "-" and session_date[7] == "-":
+            break
+        print("  Expected format: YYYY-MM-DD")
+
     # ── Collect lines ────────────────────────────────────────────────────────
     lines = []
-    print("Enter support/resistance lines (press Enter with no price to stop):")
+    print(f"\nEnter support/resistance lines (press Enter with no price to stop):")
+    print(f"  'at' time: type HH:MM to use {session_date}, or full YYYY-MM-DD HH:MM to override.")
     while True:
         price_str = prompt("  Line price (or empty to stop)").strip()
         if not price_str:
@@ -225,35 +267,41 @@ def main():
             continue
 
         while True:
-            at_str = prompt(f"  'at' timestamp for {price} (YYYY-MM-DD HH:MM in NY time)")
+            at_str = prompt(f"  'at' time for {price}")
             try:
-                at_ts = parse_ts(at_str)
+                at_ts = parse_ts_with_date(at_str, session_date)
                 break
             except ValueError as e:
                 print(f"  {e}")
 
         lines.append({"price": price, "at": at_ts})
 
-    # ── Start / end ──────────────────────────────────────────────────────────
+    # ── Start / end (always on session_date, user enters only HH:MM) ─────────
+    def parse_time(time_str: str) -> str:
+        t = time_str.strip()
+        if len(t) == 5:   # HH:MM
+            t += ":00"
+        return f"{session_date} {t}Z"
+
     while True:
         try:
-            start_ts = parse_ts(prompt("Start datetime (YYYY-MM-DD HH:MM in NY time)"))
+            start_ts = parse_time(prompt(f"Start time (HH:MM)"))
             break
-        except ValueError as e:
+        except Exception as e:
             print(f"  {e}")
 
     while True:
         try:
-            end_ts = parse_ts(prompt("End datetime (YYYY-MM-DD HH:MM in NY time)"))
+            end_ts = parse_time(prompt(f"End time (HH:MM)"))
             break
-        except ValueError as e:
+        except Exception as e:
             print(f"  {e}")
 
     # ── Derive name & tf ─────────────────────────────────────────────────────
     name = derive_name(start_ts, existing_names)
     print(f"\nScenario name: {name}")
 
-    tf = prompt("Chart timeframe for display (1m/3m/5m/15m/30m/1h)", default="5m")
+    tf = "5m"  # default; overridden by trade result after discovery
 
     # ── Write discovery test_scenario.yaml (no expect) ───────────────────────
     discover_sc = {
@@ -283,7 +331,7 @@ def main():
 
     # ── Run test ─────────────────────────────────────────────────────────────
     results_fd, results_json = tempfile.mkstemp(suffix=".json", prefix="add_scenario_")
-    import os; os.close(results_fd)
+    os.close(results_fd)
 
     print(f"\nRunning test to discover trade...")
     run_discovery(results_json)
@@ -309,10 +357,8 @@ def main():
 
             expect = {"entry": entry, "sl": sl, "tp": tp}
 
-            if trade_tf and trade_tf != tf:
-                ans = prompt(f"Trade triggered on {trade_tf}. Use this as chart tf?", default="y")
-                if ans.lower() in ("y", "yes", ""):
-                    tf = trade_tf
+            # Use the triggering timeframe (fall back to "1m" if not in payload)
+            tf = trade_tf or "1m"
         else:
             print("\nNo trade was found.")
             ans = prompt("Add scenario with 'expect: {none: true}'?", default="y")
@@ -339,6 +385,15 @@ def main():
         "lines": lines,
         "expect": expect,
     }
+
+    # ── Re-run with correct tf if it differs from discovery tf ("5m") ────────
+    if tf != "5m":
+        print(f"\nRe-running with tf={tf} to generate correct snapshot...")
+        write_test_scenario_yaml(sc, export_summary=False)
+        results_fd2, results_json2 = tempfile.mkstemp(suffix=".json", prefix="add_scenario_snap_")
+        os.close(results_fd2)
+        run_discovery(results_json2)
+        Path(results_json2).unlink(missing_ok=True)
 
     # ── Insert into scenarios.yaml ───────────────────────────────────────────
     insert_idx = find_insert_position(scenarios, start_ts)
