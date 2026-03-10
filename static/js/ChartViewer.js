@@ -421,7 +421,9 @@ export class ChartViewer {
       const isLong    = t.type === 'long' || t.type === 'buy';
 
       if (entryTime && entryTime <= this.lastTime) {
-          markers.push({ time: entryTime, position: isLong ? 'belowBar' : 'aboveBar', shape: isLong ? 'arrowUp' : 'arrowDown', color: '#2962FF', text: 'Entry', size: 1 });
+          const regime = t.velocity_regime || '';
+          const entryText = regime ? `Entry · ${regime}` : 'Entry';
+          markers.push({ time: entryTime, position: isLong ? 'belowBar' : 'aboveBar', shape: isLong ? 'arrowUp' : 'arrowDown', color: '#2962FF', text: entryText, size: 1 });
       }
 
       if (t.status === 'closed' && exitTime && exitTime <= this.lastTime) {

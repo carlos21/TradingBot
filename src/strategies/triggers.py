@@ -45,7 +45,7 @@ class VelocityTriggerConfig:
     """
     fast_threshold: float = 3.0
     slow_threshold: float = 1.0
-    lookback: int = 5
+    lookback: int = 10
     fast:     List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("5m", 2)])
     moderate: List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("3m", 1)])
     slow:     List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("1m", 1)])
@@ -438,7 +438,7 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
 
         # Lock regime on first touch; reuse on all subsequent bars
         if 'vat_regime' not in line:
-            hist_15m = strategy.get_history("15m", config.lookback + 5)
+            hist_15m = strategy.get_history("15m", config.lookback + 10)
             velocity_score = _calculate_velocity_score(hist_15m, config.lookback)
 
             if dir_ == "long":

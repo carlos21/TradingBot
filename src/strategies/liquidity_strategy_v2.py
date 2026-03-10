@@ -260,6 +260,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     
                     trade = self._build_trade_from_context(proposed_ctx)
                     trade['tf'] = bar.get('tf', '1m')
+                    trade['velocity_regime'] = line.get('vat_regime', '')
                     self._store_and_emit_open(trade)
                     opened = True
                 else:
