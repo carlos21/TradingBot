@@ -67,9 +67,11 @@ class BaseLiquidityStrategy:
         options: Optional[StrategyOptions] = None,
         htf_fetcher: Optional[Callable[..., Optional[dict]]] = None,
         sl_levels: Optional[List[float]] = None,
+        min_cross_depth: float = 0.0,
     ):
         self.min_stop_loss = float(min_stop_loss)
         self.max_bounce    = float(max_bounce)
+        self.min_cross_depth = float(min_cross_depth)
         self.socketio      = socketio
         self.line_repository  = line_repository
         self.trade_repository = trade_repository

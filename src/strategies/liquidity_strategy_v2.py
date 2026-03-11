@@ -27,6 +27,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         htf_fetcher=None,
         candle_config: Optional[CandleConfig] = None,
         sl_levels: Optional[List[float]] = None,
+        min_cross_depth: float = 0.0,
     ):
         self.timeframes = timeframes or ["5m"]
         
@@ -52,6 +53,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             options=options,
             htf_fetcher=htf_fetcher,
             sl_levels=sl_levels,
+            min_cross_depth=min_cross_depth,
         )
 
         self.candle_config = candle_config
@@ -137,9 +139,41 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     continue
 
                 if line['direction'] is None:
-                    line['direction'] = "short" if current_price < line['level'] else "long"
-                    line['extreme'] = float("-inf") if line['direction'] == "short" else float("inf")
-                    self.log_decision(bar_time, "1m", sid, "LATCH", f"Latched {line['direction']} @ {current_price}")
+                    lvl = line['level']
+                    if current_price < lvl:
+                        # Potential short: close is below the line.
+                        # Accumulate the highest high seen while close stays below the line.
+                        if line.get('_pending_dir') != 'short':
+                            line['_pending_dir'] = 'short'
+                            line['_pending_extreme'] = bar['high']
+                        else:
+                            line['_pending_extreme'] = max(line['_pending_extreme'], bar['high'])
+                        pending_ext = line['_pending_extreme']
+                        # If high never crossed the line (price was already below when line drawn),
+                        # latch immediately. Otherwise require min_cross_depth penetration.
+                        if pending_ext <= lvl or pending_ext - lvl >= self.min_cross_depth:
+                            line['direction'] = 'short'
+                            line['extreme'] = line.pop('_pending_extreme')
+                            line.pop('_pending_dir', None)
+                            depth = pending_ext - lvl if pending_ext > lvl else 0.0
+                            self.log_decision(bar_time, "1m", sid, "LATCH", f"Latched short @ {current_price} (depth={depth:.2f})")
+                    elif current_price > lvl:
+                        # Potential long: close is above the line.
+                        # Accumulate the lowest low seen while close stays above the line.
+                        if line.get('_pending_dir') != 'long':
+                            line['_pending_dir'] = 'long'
+                            line['_pending_extreme'] = bar['low']
+                        else:
+                            line['_pending_extreme'] = min(line['_pending_extreme'], bar['low'])
+                        pending_ext = line['_pending_extreme']
+                        # If low never crossed the line (bounce-off support or price already above),
+                        # latch immediately. Otherwise require min_cross_depth penetration.
+                        if pending_ext >= lvl or lvl - pending_ext >= self.min_cross_depth:
+                            line['direction'] = 'long'
+                            line['extreme'] = line.pop('_pending_extreme')
+                            line.pop('_pending_dir', None)
+                            depth = lvl - pending_ext if pending_ext < lvl else 0.0
+                            self.log_decision(bar_time, "1m", sid, "LATCH", f"Latched long @ {current_price} (depth={depth:.2f})")
                 
                 elif line['direction'] == 'short':
                     line['extreme'] = max(line['extreme'], bar['high'])

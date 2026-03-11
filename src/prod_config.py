@@ -19,6 +19,7 @@ def get_prod_strategy_numbers() -> StrategyNumbers:
         max_bounce=90.0,
         extra_sl_space=0.0,
         sl_levels=[15.0, 20.0, 30.0, 40.0],
+        min_cross_depth=10.0,
     )
 
 def get_prod_candle_config() -> CandleConfig:
@@ -31,7 +32,7 @@ def get_prod_strategy_options(max_bounce: float) -> StrategyOptions:
     return StrategyOptions(
         line_removal_mode=removal_mode,
         entry_filters=[
-            open_trades_limit_filter(1), 
+            open_trades_limit_filter(1),
             max_bounce_filter(max_bounce),
             # It will now automatically detect NQ -> America/New_York
             time_range_filter("08:00", "14:00"),
