@@ -45,8 +45,8 @@ APP_HOST = "127.0.0.1"
 # --- TIMEZONE CONFIGURATION ---
 PAIR_TZS = {
     'EURUSD': 'Europe/London',
-    'NQ':     'America/Chicago',
-    'ES':     'America/Chicago',
+    'NQ':     'Etc/GMT+5',   # fixed UTC-5, matches TradingView "UTC-5" (no DST shift)
+    'ES':     'Etc/GMT+5',
 }
 
 # -------------------------------------------------------------------------

@@ -36,12 +36,12 @@ export class ChartViewer {
     if (this.pnlCounter) this.pnlCounter.textContent = 'Total PnL: 0.00R';
 
     // ========================================================================
-    // 1. TIME FORMATTING (Chicago / CT time — matches TradingView UTC-5/UTC-6)
+    // 1. TIME FORMATTING
     // ========================================================================
 
-    // Create a reusable formatter for Chicago time WITH DATE
-    this.nyTimeFormatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: 'America/Chicago',
+    // Display formatter: fixed UTC-5 (matches TradingView "UTC-5" — no DST shift)
+    this.displayFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Etc/GMT+5',
         month: 'short',
         day: 'numeric',
         hour12: false,
@@ -49,9 +49,18 @@ export class ChartViewer {
         minute: '2-digit'
     });
 
+    // Session formatter: America/New_York (IANA, DST-aware) — used only for
+    // session shading boundary checks so NYSE 09:30–16:00 ET is always correct.
+    this.nyTimeFormatter = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+
     const formatTime = (time) => {
         const date = new Date(time * 1000);
-        return this.nyTimeFormatter.format(date);
+        return this.displayFormatter.format(date);
     };
 
     // ========================================================================
@@ -150,7 +159,7 @@ export class ChartViewer {
 
     this.londonSeries = this.chart.addHistogramSeries({ priceScaleId: '', scaleMargins: { top:0, bottom:0 }, lineWidth:0, overlay:true, color:'rgba(0,255,0,0.1)' });
     this.nySeries     = this.chart.addHistogramSeries({ priceScaleId: '', scaleMargins: { top:0, bottom:0 }, lineWidth:0, overlay:true, color:'rgba(255,0,0,0.1)' });
-    this.sessions = [{ series: this.nySeries, from: { h:8, m:30 }, to: { h:15, m:0 } }];
+    this.sessions = [{ series: this.nySeries, from: { h:9, m:30 }, to: { h:16, m:0 } }];
     
     this._initPair()
       .then(() => this._initBars())

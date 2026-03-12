@@ -19,7 +19,7 @@ def get_prod_strategy_numbers() -> StrategyNumbers:
         max_bounce=90.0,
         extra_sl_space=0.0,
         sl_levels=[15.0, 20.0, 30.0, 40.0],
-        min_cross_depth=10.0,
+        min_cross_depth=5.0,
     )
 
 def get_prod_candle_config() -> CandleConfig:
