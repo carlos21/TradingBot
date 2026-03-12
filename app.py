@@ -92,7 +92,7 @@ def build_prod():
     # 4. Strategy Logic
     numbers = get_prod_strategy_numbers()
     candle_config = get_prod_candle_config()
-    options = get_prod_strategy_options(numbers.max_bounce)
+    options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
 
     # 5. Build App
     return create_app(

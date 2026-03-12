@@ -50,6 +50,17 @@ def open_trades_limit_filter(limit: Optional[int] = 1) -> EntryFilter:
     return _f
 
 
+def min_cross_depth_filter(min_depth: float) -> EntryFilter:
+    """Blocks entries where price has not crossed the line by at least min_depth points.
+    Marked as a hold filter: the line is kept alive so it can re-trigger once depth is sufficient."""
+    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+        ok = ctx.cross_depth >= min_depth
+        return ok, f"level={ctx.level}, extreme={ctx.extreme:.2f}, depth={ctx.cross_depth:.2f} < min_depth={min_depth}"
+    _f.__name__ = "min_cross_depth"
+    _f._hold_on_block = True  # do not remove line when this filter blocks; let depth accumulate
+    return _f
+
+
 def max_bounce_filter(max_bounce: float) -> EntryFilter:
     """Blocks entries if the cross depth exceeded a maximum bounce."""
     def _f(ctx: EntryContext) -> Tuple[bool, str]:

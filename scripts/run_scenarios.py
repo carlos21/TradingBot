@@ -121,7 +121,7 @@ def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_even
 
     numbers = get_prod_strategy_numbers()
     candle_config = get_prod_candle_config()
-    options = get_prod_strategy_options(numbers.max_bounce)
+    options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
 
     wiring = create_app(
         pair="NQ",

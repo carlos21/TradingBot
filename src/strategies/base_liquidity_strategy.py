@@ -349,22 +349,34 @@ class BaseLiquidityStrategy:
                     continue
 
                 # 3) run filters
-                allow, _reason = self._filters_allow_entry(proposed_ctx)
+                allow, _reason, hold = self._filters_allow_entry(proposed_ctx)
                 if allow:
                     trade = self._build_trade_from_context(proposed_ctx)
                     self._store_and_emit_open(trade)
                     opened = True
+                elif hold:
+                    # depth too shallow — reset trigger state so it can re-fire, keep line alive
+                    self._reset_trigger_state(line)
+                    continue
 
                 # line removal policy
                 self._maybe_remove_line(sid, opened)
 
-    def _filters_allow_entry(self, ctx: EntryContext) -> Tuple[bool, str]:
-        """Run all pluggable entry filters. If any returns (False, reason), block the entry."""
+    def _filters_allow_entry(self, ctx: EntryContext) -> Tuple[bool, str, bool]:
+        """Run all pluggable entry filters.
+        Returns (allowed, reason, hold) where hold=True means the line should stay alive
+        and re-evaluate (used by filters that need more depth/time rather than a hard block)."""
         for f in self.entry_filters:
             ok, reason = f(ctx)
             if not ok:
-                return False, f"{f.__name__}: {reason}"
-        return True, "ok"
+                hold = getattr(f, '_hold_on_block', False)
+                return False, f"{f.__name__}: {reason}", hold
+        return True, "ok", False
+
+    def _reset_trigger_state(self, line_state: Dict[str, Any]):
+        """Reset only trigger-specific state, keeping direction and extreme intact.
+        Overridden by subclasses that manage additional trigger state (tsi_stage etc.)."""
+        pass
 
     def _maybe_remove_line(self, line_id: Any, opened: bool):
         """Remove the evaluated strategy line depending on removal mode."""

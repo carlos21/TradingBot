@@ -85,18 +85,23 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 self._tf_histories[tf].clear()
             print("[StrategyV2] 🧹 Internal state fully reset.")
 
-    def _reset_line_state(self, line_state: Dict[str, Any]):
-        super()._reset_line_state(line_state)
+    def _reset_trigger_state(self, line_state: Dict[str, Any]):
+        """Reset trigger-specific state only, preserving direction and extreme."""
         if "d5_stage" in line_state:
             line_state["d5_stage"] = 0
         if "tsi_stage" in line_state:
             line_state["tsi_stage"] = 0
             line_state["tsi_ref_price"] = 0.0
+            line_state.pop("tsi_reset_occurred", None)
         if "vat_5m_stage" in line_state:
             line_state["vat_5m_stage"] = 0
             line_state["vat_5m_reset"] = False
         line_state.pop("vat_regime", None)
         line_state.pop("vat_velocity", None)
+
+    def _reset_line_state(self, line_state: Dict[str, Any]):
+        super()._reset_line_state(line_state)
+        self._reset_trigger_state(line_state)
 
     def _parse_tf_seconds(self, tf: str) -> int:
         unit = tf[-1].lower()
@@ -286,19 +291,23 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 if proposed_ctx is None:
                     continue
 
-                allow, reason = self._filters_allow_entry(proposed_ctx)
-                
+                allow, reason, hold = self._filters_allow_entry(proposed_ctx)
+
                 if allow:
-                    self.log_decision(bar['time'], bar.get('tf'), sid, "ENTRY", 
+                    self.log_decision(bar['time'], bar.get('tf'), sid, "ENTRY",
                         f"Trigger: {trigger_name} | Dir: {proposed_ctx.direction} | Price: {proposed_ctx.close}")
-                    
+
                     trade = self._build_trade_from_context(proposed_ctx)
                     trade['tf'] = bar.get('tf', '1m')
                     trade['velocity_regime'] = line.get('vat_regime', '')
                     self._store_and_emit_open(trade)
                     opened = True
                 else:
-                    self.log_decision(bar['time'], bar.get('tf'), sid, "FILTER_BLOCK", 
+                    self.log_decision(bar['time'], bar.get('tf'), sid, "FILTER_BLOCK",
                         f"Trigger: {trigger_name} | Reason: {reason}")
-                
+                    if hold:
+                        # depth insufficient — reset trigger so it can re-fire, keep line alive
+                        self._reset_trigger_state(line)
+                        continue
+
                 self._maybe_remove_line(sid, opened)
