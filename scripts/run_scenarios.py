@@ -572,7 +572,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     "trade_pairs": trade_pairs,   # all trades for PnL accounting
                     "date": sc["start"],
                 })
-                print(f"   [{status}] {reason} {values}")
+                date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
+                print(f"   [{status}] {date_label}  {reason} {values}")
 
                 if sc.get("export_summary", False):
                     try:
@@ -928,7 +929,7 @@ def main():
     ap.add_argument("--chart-selector", default="main") 
     
     ap.add_argument("--port", type=int, default=5001)
-    ap.add_argument("--mode", choices=["sim", "real", "both"], default="both",
+    ap.add_argument("--mode", choices=["sim", "real", "both"], default="real",
                     help="Simulation mode: sim=fixed risk, real=MNQ integer contracts+fees, both=show both")
     ap.add_argument("--risk", type=float, default=1000.0,
                     help="Fixed risk per trade in USD (default: 1000)")

@@ -58,9 +58,78 @@ scenarios:
     lines:
       - { price: 25701.50, at: "2026-01-09 08:00:00Z" }
     expect:
-      entry: 25719.25
-      sl:    25699.25
-      tp:    25799.25
+      entry: 25684.75
+      sl:    25644.75
+      tp:    25844.75
+      tolerance: 0.25
+    snapshot: true
+  - name: "NQ - 2026-01-12"
+    pair: "NQ"
+    tf: "5m"
+    start: "2026-01-12 07:00:00Z"
+    end:   "2026-01-12 13:00:00Z"
+    lines:
+      - { price: 25922.50, at: "2026-01-12 07:00:00Z" }
+    expect:
+      entry: 25891.50
+      sl:    25931.50
+      tp:    25731.50
+      tolerance: 0.25
+    snapshot: true
+
+  - name: "NQ - 2026-01-13"
+    pair: "NQ"
+    tf: "3m"
+    start: "2026-01-13 07:00:00Z"
+    end:   "2026-01-13 11:00:00Z"
+    lines:
+      - { price: 26021.00, at: "2026-01-13 06:30:00Z" }
+    expect:
+      entry: 25989.00
+      sl:    26029.00
+      tp:    25829.00
+      tolerance: 0.25
+    snapshot: true
+
+  - name: "NQ - 2026-01-14"
+    pair: "NQ"
+    tf: "3m"
+    start: "2026-01-14 07:00:00Z"
+    end:   "2026-01-14 15:00:00Z"
+    lines:
+      - { price: 25483.75, at: "2026-01-14 08:00:00Z" }
+    expect:
+      entry: 25514.75
+      sl:    25474.75
+      tp:    25674.75
+      tolerance: 0.25
+    snapshot: true
+
+  - name: "NQ - 2026-01-15"
+    pair: "NQ"
+    tf: "3m"
+    start: "2026-01-15 07:30:00Z"
+    end:   "2026-01-15 14:00:00Z"
+    lines:
+      - { price: 25926.50, at: "2026-01-15 07:00:00Z" }
+    expect:
+      entry: 25924.50
+      sl:    25954.50
+      tp:    25804.50
+      tolerance: 0.25
+    snapshot: true
+
+  - name: "NQ - 2026-01-16"
+    pair: "NQ"
+    tf: "1m"
+    start: "2026-01-16 07:00:00Z"
+    end:   "2026-01-16 11:00:00Z"
+    lines:
+      - { price: 25877.75, at: "2026-01-16 08:00:00Z" }
+    expect:
+      entry: 25864.25
+      sl:    25894.25
+      tp:    25744.25
       tolerance: 0.25
     snapshot: true
 
@@ -165,9 +234,9 @@ scenarios:
     lines:
       - { price: 25146.00, at: "2026-02-11 07:30:00Z" }
     expect:
-      entry: 25188.25
-      sl:    25148.25
-      tp:    25348.25
+      entry: 25101.50
+      sl:    25061.50
+      tp:    25261.50
       tolerance: 0.25
     snapshot: true
   - name: "NQ - 2026-02-12"
