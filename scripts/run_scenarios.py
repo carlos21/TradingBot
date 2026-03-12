@@ -45,8 +45,8 @@ APP_HOST = "127.0.0.1"
 # --- TIMEZONE CONFIGURATION ---
 PAIR_TZS = {
     'EURUSD': 'Europe/London',
-    'NQ':     'America/New_York', 
-    'ES':     'America/New_York',
+    'NQ':     'America/Chicago',
+    'ES':     'America/Chicago',
 }
 
 # -------------------------------------------------------------------------

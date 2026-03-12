@@ -97,8 +97,8 @@ def main() -> None:
         default=os.environ.get("FETCH_SYMBOL"),
         help=(
             "Provider-specific symbol. "
-            "Defaults: 'NQ=F' for yfinance, 'NQ:XCME' for polygon. "
-            "[env: FETCH_SYMBOL]"
+            "If not set, falls back to FETCH_SYMBOL_<PROVIDER> then a built-in default. "
+            "[env: FETCH_SYMBOL | FETCH_SYMBOL_YFINANCE | FETCH_SYMBOL_DATABENTO | ...]"
         ),
     )
     parser.add_argument(
@@ -181,16 +181,16 @@ def main() -> None:
         stream=sys.stdout,
     )
 
-    # Apply default symbol per provider when not set in .env or CLI
+    # Apply default symbol per provider when not set via --symbol / FETCH_SYMBOL
     if not args.symbol:
-        if args.provider == "yfinance":
-            args.symbol = "NQ=F"
-        elif args.provider == "alpaca":
-            args.symbol = "NQ1!"
-        elif args.provider == "databento":
-            args.symbol = "NQ.c.0"
-        else:
-            args.symbol = "NQ:XCME"
+        _provider_defaults = {
+            "yfinance":  "NQ=F",
+            "alpaca":    "NQ1!",
+            "databento": "NQ.c.0",
+            "polygon":   "NQ:XCME",
+        }
+        env_key = f"FETCH_SYMBOL_{args.provider.upper()}"
+        args.symbol = os.environ.get(env_key) or _provider_defaults.get(args.provider, "NQ=F")
 
     provider = _build_provider(args)
     store    = CSVStore(filepath=args.output, pair=args.pair, tz=args.tz)
