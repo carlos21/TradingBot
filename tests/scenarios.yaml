@@ -698,3 +698,14 @@ scenarios:
       tp:    24955.25
       tolerance: 0.25
     snapshot: true
+
+  - name: "NQ - 2026-03-13"
+    pair: "NQ"
+    tf: "5m"
+    start: "2026-03-13 07:00:00Z"
+    end:   "2026-03-13 12:00:00Z"
+    lines:
+      - { price: 24734.50, at: "2026-03-13 06:00:00Z" }
+    expect:
+      none: true
+    snapshot: true
