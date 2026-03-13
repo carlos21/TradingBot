@@ -49,6 +49,10 @@ class VelocityTriggerConfig:
     fast:     List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("5m", 2)])
     moderate: List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("3m", 1)])
     slow:     List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("1m", 1)])
+    # After the 1st TSI cross in a double-cross setup, if price moves this many points
+    # away from the line (in the trade direction), the setup is invalidated and the
+    # line is removed. 0.0 = disabled.
+    post_cross1_max_dist: float = 0.0
 
 def trigger_with_timeframes(trigger_func: EntryTrigger, timeframes: List[str]) -> EntryTrigger:
     """
@@ -312,11 +316,14 @@ def _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf):
     return None
 
 
-def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_prefix):
+def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_prefix, max_dist: float = 0.0):
     """
     Require two TSI crosses on *tf* with a reset in between.
     State is stored in line under keys derived from *state_prefix* so that
     different (timeframe, count) combinations don't collide.
+
+    max_dist: if > 0, invalidate and remove the line when price moves more than
+    this many points away from the line (in trade direction) after the 1st cross.
     """
     history = strategy.get_history(tf, 50)
     if len(history) < 30:
@@ -347,6 +354,21 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
         return None
 
     elif stage == 1:
+        # Check if price has moved too far from the line after the 1st cross
+        if max_dist > 0:
+            too_far = (
+                (dir_ == "long"  and bar['close'] > lvl + max_dist) or
+                (dir_ == "short" and bar['close'] < lvl - max_dist)
+            )
+            if too_far:
+                dist = abs(bar['close'] - lvl)
+                strategy.log_decision(bar['time'], tf, line_id, "VAT_CROSS1_TOO_FAR",
+                    f"Price {bar['close']} moved {dist:.1f}pts from line {lvl} after 1st cross (max={max_dist}). Invalidated.")
+                line[stage_key] = 0
+                line[reset_key] = False
+                strategy.remove_strategy_line(line_id)
+                return None
+
         # Step A: check for reset (TSI going against trade direction)
         if not line.get(reset_key, False):
             reset = (
@@ -374,7 +396,7 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
     return None
 
 
-def _check_tsi_condition(strategy, line_id, line, bar, lvl, dir_, cond: TsiCrossCondition):
+def _check_tsi_condition(strategy, line_id, line, bar, lvl, dir_, cond: TsiCrossCondition, max_dist: float = 0.0):
     """
     Evaluate one TsiCrossCondition against the current bar.
     Returns an EntryContext if the condition fires, otherwise None.
@@ -386,7 +408,7 @@ def _check_tsi_condition(strategy, line_id, line, bar, lvl, dir_, cond: TsiCross
         return _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, cond.timeframe)
     else:
         state_prefix = f"vat_{cond.timeframe}_{cond.count}x"
-        return _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, cond.timeframe, state_prefix)
+        return _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, cond.timeframe, state_prefix, max_dist)
 
 
 def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
@@ -470,7 +492,7 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
 
         # Try each condition in order; return the first that fires
         for cond in regime_conditions:
-            result = _check_tsi_condition(strategy, line_id, line, bar, lvl, dir_, cond)
+            result = _check_tsi_condition(strategy, line_id, line, bar, lvl, dir_, cond, config.post_cross1_max_dist)
             if result is not None:
                 return result
         return None

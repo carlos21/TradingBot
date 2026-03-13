@@ -14,7 +14,9 @@
       "Bash(poetry add:*)",
       "Bash(./run_scenarios.sh:*)",
       "Bash(cat:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "Bash(./run_test_scenario.sh 2>&1 | tail -30)",
+      "Bash(./run_test_scenario.sh 2>&1 | tail -20)"
     ]
   }
 }

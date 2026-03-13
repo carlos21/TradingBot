@@ -1,16 +1,13 @@
 scenarios:
-  - name: "NQ - 2025-12-05"
+  - name: "NQ - 2025-12-08"
     pair: "NQ"
     tf: "5m"
-    start: "2025-12-05 05:00:00Z"
-    end:   "2025-12-05 14:00:00Z"
+    start: "2025-12-08 08:00:00Z"
+    end:   "2025-12-08 17:00:00Z"
     lines:
-      - { price: 25594.00, at: "2025-12-05 06:00:00Z" }
+      - { price: 25579.25, at: "2025-12-08 09:00:00Z" }
     expect:
-      entry: 25705.50
-      sl:    25665.50
-      tp:    25865.50
-      tolerance: 0.25
+      none: true
     snapshot: true
     export_summary: true
     show_tsi: false
