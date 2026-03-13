@@ -47,7 +47,7 @@ def get_prod_strategy_options(max_bounce: float, min_cross_depth: float = 0.0) -
                 fast=    [TsiCrossCondition("5m", 2)],
                 moderate=[TsiCrossCondition("1m", 2), TsiCrossCondition("3m", 1)],
                 slow=    [TsiCrossCondition("1m", 1), TsiCrossCondition("3m", 1)],
-                post_cross1_max_dist=100.0,  # invalidate if price moves >80pts from line after 1st cross
+                post_cross1_max_dist=80.0,  # invalidate if price moves >80pts from line after 1st cross
             )),
             # trigger_with_timeframes(tsi_cross_trigger, ['5m', '15m']),
             # trigger_with_timeframes(three_candle_reversal_trigger, ['5m', '15m','30m', '1h']),
