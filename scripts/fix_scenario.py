@@ -46,7 +46,7 @@ def _expect_summary(expect: dict) -> str:
 
 
 def write_discovery_yaml(sc: dict):
-    """Write test_scenario.yaml for a discovery run (no expect, export_summary on)."""
+    """Write test_scenario.yaml for a discovery run (no expect)."""
     content = (
         f'scenarios:\n'
         f'  - name: "{sc["name"]}"\n'
@@ -56,15 +56,13 @@ def write_discovery_yaml(sc: dict):
         f'    end:   "{sc["end"]}"\n'
         f'    lines:\n'
         f'{_format_lines_block(sc["lines"])}'
-        f'    snapshot: false\n'
-        f'    export_summary: true\n'
         f'    show_tsi: false\n'
     )
     TEST_SCENARIO_YAML.write_text(content)
 
 
 def write_snapshot_yaml(sc: dict):
-    """Write test_scenario.yaml for a snapshot-only re-run (with expect, no summary)."""
+    """Write test_scenario.yaml for a snapshot re-run (with expect)."""
     content = (
         f'scenarios:\n'
         f'  - name: "{sc["name"]}"\n'
@@ -74,8 +72,6 @@ def write_snapshot_yaml(sc: dict):
         f'    end:   "{sc["end"]}"\n'
         f'    lines:\n'
         f'{_format_lines_block(sc["lines"])}'
-        f'    snapshot: true\n'
-        f'    export_summary: false\n'
         f'    show_tsi: false\n'
     )
     TEST_SCENARIO_YAML.write_text(content)
@@ -203,7 +199,7 @@ def main():
 
     if not changes:
         print("\n✅ No changes needed — scenario is already correct.")
-        write_test_scenario_yaml(sc, export_summary=True)
+        write_test_scenario_yaml(sc)
         return
 
     print("\n  Changes:")
@@ -228,7 +224,7 @@ def main():
         write_snapshot_yaml(updated_sc)
         _run_and_discard()
 
-    write_test_scenario_yaml(updated_sc, export_summary=True)
+    write_test_scenario_yaml(updated_sc)
 
     print(f"\n✅ Done! '{sc['name']}' updated.")
     print(f"   scenarios.yaml     — updated")

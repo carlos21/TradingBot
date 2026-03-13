@@ -10,6 +10,7 @@ RST='\033[0m'
 options=(
   "Run ALL scenarios              (run_scenarios.sh)"
   "Run TEST scenario              (run_test_scenario.sh)"
+  "Run integration tests          (run_integration_tests.sh)"
   "Add scenario                   (add_scenario.sh)"
   "Fix scenario                   (fix_scenario.sh)"
   "Fix ALL scenarios              (fix_all_scenarios.sh)"
@@ -19,6 +20,7 @@ options=(
 commands=(
   "./run_scenarios.sh"
   "./run_test_scenario.sh"
+  "./run_integration_tests.sh"
   "./add_scenario.sh"
   "./fix_scenario.sh"
   "./fix_all_scenarios.sh"

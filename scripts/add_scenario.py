@@ -177,12 +177,8 @@ def replace_scenario_block(name: str, new_sc: dict) -> bool:
     return True
 
 
-def write_test_scenario_yaml(sc: dict, export_summary: bool = False):
+def write_test_scenario_yaml(sc: dict):
     """Write tests/test_scenario.yaml for the given scenario."""
-    extra = ""
-    if export_summary:
-        extra = "    export_summary: true\n    show_tsi: false\n"
-
     content = (
         f'scenarios:\n'
         f'  - name: "{sc["name"]}"\n'
@@ -193,8 +189,7 @@ def write_test_scenario_yaml(sc: dict, export_summary: bool = False):
         f'    lines:\n'
         f'{_format_lines_block(sc["lines"])}'
         f'{_format_expect_block(sc["expect"])}'
-        f'    snapshot: true\n'
-        f'{extra}'
+        f'    show_tsi: false\n'
     )
     TEST_SCENARIO_YAML.write_text(content)
 
@@ -323,8 +318,6 @@ def main():
         f'    end:   "{end_ts}"\n'
         f'    lines:\n'
         f'{_format_lines_block(lines)}'
-        f'    snapshot: true\n'
-        f'    export_summary: true\n'
         f'    show_tsi: false\n'
     )
     TEST_SCENARIO_YAML.write_text(discovery_content)
@@ -389,7 +382,7 @@ def main():
     # ── Re-run with correct tf if it differs from discovery tf ("5m") ────────
     if tf != "5m":
         print(f"\nRe-running with tf={tf} to generate correct snapshot...")
-        write_test_scenario_yaml(sc, export_summary=False)
+        write_test_scenario_yaml(sc)
         results_fd2, results_json2 = tempfile.mkstemp(suffix=".json", prefix="add_scenario_snap_")
         os.close(results_fd2)
         run_discovery(results_json2)
@@ -401,7 +394,7 @@ def main():
     insert_scenario_in_yaml_file(sc, insert_idx, scenarios)
 
     # ── Write final test_scenario.yaml ───────────────────────────────────────
-    write_test_scenario_yaml(sc, export_summary=True)
+    write_test_scenario_yaml(sc)
 
     print(f"\n✅ Done! Scenario '{name}' added.")
     print(f"   scenarios.yaml     — updated")

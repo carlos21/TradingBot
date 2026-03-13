@@ -16,7 +16,8 @@
       "Bash(cat:*)",
       "Bash(grep:*)",
       "Bash(./run_test_scenario.sh 2>&1 | tail -30)",
-      "Bash(./run_test_scenario.sh 2>&1 | tail -20)"
+      "Bash(./run_test_scenario.sh 2>&1 | tail -20)",
+      "Bash(poetry show:*)"
     ]
   }
 }

@@ -575,14 +575,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
                 print(f"   [{status}] {date_label}  {reason} {values}")
 
-                if sc.get("export_summary", False):
-                    try:
-                        logs = requests.get(f"{base_url}/api/debug/logs", timeout=2).json()
-                        print_detailed_summary(logs, pair_tz)
-                    except Exception as e:
-                        print(f"   ⚠️ Failed to fetch summary logs: {e}")
+                try:
+                    logs = requests.get(f"{base_url}/api/debug/logs", timeout=2).json()
+                    print_detailed_summary(logs, pair_tz)
+                except Exception as e:
+                    print(f"   ⚠️ Failed to fetch summary logs: {e}")
 
-                if sc.get("snapshot", True):
+                if args.snapshot:
                     try:
                         # 1. Wait for data
                         await page.wait_for_function(
@@ -937,6 +936,10 @@ def main():
                     help="Simulated account size in USD (default: 100000)")
     ap.add_argument("--quiet", action="store_true",
                     help="Suppress verbose app output; print only per-scenario results and final summary")
+    ap.add_argument("--snapshot", action="store_true", default=True,
+                    help="Take a chart snapshot for each scenario (default: true)")
+    ap.add_argument("--no-snapshot", dest="snapshot", action="store_false",
+                    help="Skip chart snapshots")
     ap.add_argument("--results-json", default=None,
                     help="If set, write scenario results as JSON to this path after all scenarios run")
     args = ap.parse_args()

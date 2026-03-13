@@ -8,6 +8,4 @@ scenarios:
       - { price: 24734.50, at: "2026-03-13 06:00:00Z" }
     expect:
       none: true
-    snapshot: true
-    export_summary: true
     show_tsi: false

@@ -11,7 +11,7 @@ scenarios:
       sl:    25617.50
       tp:    25467.50
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2025-12-03"
     pair: "NQ"
@@ -25,7 +25,7 @@ scenarios:
       sl:    25626.00
       tp:    25551.00
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2025-12-04"
     pair: "NQ"
@@ -39,7 +39,7 @@ scenarios:
       sl:    25735.75
       tp:    25660.75
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2025-12-05"
     pair: "NQ"
@@ -50,7 +50,7 @@ scenarios:
       - { price: 25594.00, at: "2025-12-05 06:00:00Z" }
     expect:
       none: true
-    snapshot: true
+
 
   - name: "NQ - 2025-12-08"
     pair: "NQ"
@@ -64,7 +64,7 @@ scenarios:
       sl:    25556.75
       tp:    25706.75
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2025-12-10"
     pair: "NQ"
     tf: "3m"
@@ -77,7 +77,7 @@ scenarios:
       sl:    25528.50
       tp:    25728.50
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-02"
     pair: "NQ"
@@ -88,7 +88,7 @@ scenarios:
       - { price: 25338.00, at: "2026-01-02 07:00:00Z" }
     expect:
       none: true
-    snapshot: true
+
   - name: "NQ - 2026-01-05"
     pair: "NQ"
     tf: "1m"
@@ -101,7 +101,7 @@ scenarios:
       sl:    25670.50
       tp:    25470.50
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-06"
     pair: "NQ"
@@ -115,7 +115,7 @@ scenarios:
       sl:    25826.00
       tp:    25751.00
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-01-07"
     pair: "NQ"
     tf: "1m"
@@ -128,7 +128,7 @@ scenarios:
       sl:    25983.00
       tp:    25908.00
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-01-09"
     pair: "NQ"
     tf: "1m"
@@ -141,7 +141,7 @@ scenarios:
       sl:    25644.75
       tp:    25844.75
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-01-12"
     pair: "NQ"
     tf: "5m"
@@ -154,7 +154,7 @@ scenarios:
       sl:    25931.50
       tp:    25731.50
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-13"
     pair: "NQ"
@@ -168,7 +168,7 @@ scenarios:
       sl:    26029.00
       tp:    25829.00
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-14"
     pair: "NQ"
@@ -182,7 +182,7 @@ scenarios:
       sl:    25474.75
       tp:    25674.75
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-15"
     pair: "NQ"
@@ -196,7 +196,7 @@ scenarios:
       sl:    25954.50
       tp:    25804.50
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-16"
     pair: "NQ"
@@ -210,7 +210,7 @@ scenarios:
       sl:    25894.25
       tp:    25744.25
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-19"
     pair: "NQ"
@@ -224,7 +224,7 @@ scenarios:
       sl:    25242.75
       tp:    25317.75
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-20"
     pair: "NQ"
@@ -238,7 +238,7 @@ scenarios:
       sl:    25331.00
       tp:    25131.00
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-21"
     pair: "NQ"
@@ -249,7 +249,7 @@ scenarios:
       - { price: 25438.75, at: "2026-01-21 07:00:00Z" }
     expect:
       none: true
-    snapshot: true
+
 
   - name: "NQ - 2026-01-23"
     pair: "NQ"
@@ -263,7 +263,7 @@ scenarios:
       sl:    25854.75
       tp:    25704.75
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-23 - 2"
     pair: "NQ"
@@ -277,7 +277,7 @@ scenarios:
       sl:    25854.75
       tp:    25704.75
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-26"
     pair: "NQ"
@@ -291,7 +291,7 @@ scenarios:
       sl:    25836.50
       tp:    25761.50
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-27"
     pair: "NQ"
@@ -305,7 +305,7 @@ scenarios:
       sl:    25953.50
       tp:    26153.50
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-01-29"
     pair: "NQ"
@@ -317,7 +317,7 @@ scenarios:
       - { price: 25742.25, at: "2026-01-29 07:00:00Z" }
     expect:
       none: true
-    snapshot: true
+
 
   - name: "NQ - 2026-01-30"
     pair: "NQ"
@@ -331,7 +331,7 @@ scenarios:
       sl:    25610.50
       tp:    25810.50
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-02-02"
     pair: "NQ"
@@ -342,7 +342,7 @@ scenarios:
       - { price: 26085.00, at: "2026-02-02 07:00:00Z" }
     expect:
       none: true
-    snapshot: true
+
 
   - name: "NQ - 2026-02-03"
     pair: "NQ"
@@ -357,7 +357,7 @@ scenarios:
       sl:    25506.00
       tp:    25706.00
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-02-04"
     pair: "NQ"
@@ -369,7 +369,7 @@ scenarios:
       - { price: 25142.75, at: "2026-02-04 07:00:00Z" }
     expect:
       none: true
-    snapshot: true
+
   - name: "NQ - 2026-02-05"
     pair: "NQ"
     tf: "1m"
@@ -382,7 +382,7 @@ scenarios:
       sl:    24912.75
       tp:    24712.75
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-02-06"
     pair: "NQ"
@@ -397,7 +397,7 @@ scenarios:
       sl:    25003.25
       tp:    24928.25
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-02-09"
     pair: "NQ"
@@ -411,7 +411,7 @@ scenarios:
       sl:    25364.75
       tp:    25264.75
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-02-10"
     pair: "NQ"
@@ -425,7 +425,7 @@ scenarios:
       sl:    25450.25
       tp:    25375.25
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-02-11"
     pair: "NQ"
     tf: "1m"
@@ -438,7 +438,7 @@ scenarios:
       sl:    25061.50
       tp:    25261.50
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-02-12"
     pair: "NQ"
     tf: "1m"
@@ -451,7 +451,7 @@ scenarios:
       sl:    25426.75
       tp:    25351.75
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-02-13"
     pair: "NQ"
     tf: "1m"
@@ -464,7 +464,7 @@ scenarios:
       sl:    24648.25
       tp:    24848.25
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-02-17"
     pair: "NQ"
     tf: "1m"
@@ -477,7 +477,7 @@ scenarios:
       sl:    24816.50
       tp:    24616.50
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-02-18"
     pair: "NQ"
     tf: "3m"
@@ -490,7 +490,7 @@ scenarios:
       sl:    24785.75
       tp:    24985.75
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-02-19"
     pair: "NQ"
@@ -504,7 +504,7 @@ scenarios:
       sl:    24948.75
       tp:    24748.75
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-02-20"
     pair: "NQ"
     tf: "1m"
@@ -517,7 +517,7 @@ scenarios:
       sl:    24720.50
       tp:    24795.50
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-02-23"
     pair: "NQ"
     tf: "1m"
@@ -530,7 +530,7 @@ scenarios:
       sl:    25016.75
       tp:    24816.75
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-02-24"
     pair: "NQ"
     tf: "1m"
@@ -543,7 +543,7 @@ scenarios:
       sl:    24699.00
       tp:    24899.00
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-02-25"
     pair: "NQ"
     tf: "5m"
@@ -556,7 +556,7 @@ scenarios:
       sl:    25361.25
       tp:    25161.25
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-02-26"
     pair: "NQ"
     tf: "5m"
@@ -566,7 +566,7 @@ scenarios:
       - { price: 24923.50, at: "2026-02-26 08:00:00Z" }
     expect:
       none: true
-    snapshot: true
+
   - name: "NQ - 2026-02-27"
     pair: "NQ"
     tf: "3m"
@@ -579,7 +579,7 @@ scenarios:
       sl:    24799.75
       tp:    24999.75
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-03-02"
     pair: "NQ"
     tf: "3m"
@@ -592,7 +592,7 @@ scenarios:
       sl:    24949.75
       tp:    24799.75
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-03-03"
     pair: "NQ"
     tf: "3m"
@@ -605,7 +605,7 @@ scenarios:
       sl:    24371.25
       tp:    24571.25
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-03-04"
     pair: "NQ"
     tf: "3m"
@@ -618,7 +618,7 @@ scenarios:
       sl:    25143.50
       tp:    24943.50
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-03-05"
     pair: "NQ"
     tf: "3m"
@@ -631,7 +631,7 @@ scenarios:
       sl:    24958.50
       tp:    25058.50
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-03-05 - 2"
     pair: "NQ"
@@ -645,7 +645,7 @@ scenarios:
       sl:    24923.50
       tp:    25073.50
       tolerance: 0.25
-    snapshot: true
+
   - name: "NQ - 2026-03-06"
     pair: "NQ"
     tf: "5m"
@@ -656,7 +656,7 @@ scenarios:
       - { price: 24645.00, at: "2026-03-06 07:00:00Z" }
     expect:
       none: true
-    snapshot: true
+
   - name: "NQ - 2026-03-09"
     pair: "NQ"
     tf: "1m"
@@ -669,7 +669,7 @@ scenarios:
       sl:    24499.00
       tp:    24299.00
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-03-10"
     pair: "NQ"
@@ -683,7 +683,7 @@ scenarios:
       sl:    25044.00
       tp:    24844.00
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-03-11"
     pair: "NQ"
@@ -697,7 +697,7 @@ scenarios:
       sl:    25155.25
       tp:    24955.25
       tolerance: 0.25
-    snapshot: true
+
 
   - name: "NQ - 2026-03-13"
     pair: "NQ"
@@ -708,4 +708,4 @@ scenarios:
       - { price: 24734.50, at: "2026-03-13 06:00:00Z" }
     expect:
       none: true
-    snapshot: true
+
