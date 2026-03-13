@@ -39,6 +39,7 @@ from src.prod_config import (
     get_prod_strategy_options
 )
 from tests.fakes import FakeLineRepository, FakeTradeRepository
+from scripts.html_report import generate_html_report
 
 APP_HOST = "127.0.0.1"
 
@@ -575,11 +576,12 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
                 print(f"   [{status}] {date_label}  {reason} {values}")
 
-                try:
-                    logs = requests.get(f"{base_url}/api/debug/logs", timeout=2).json()
-                    print_detailed_summary(logs, pair_tz)
-                except Exception as e:
-                    print(f"   ⚠️ Failed to fetch summary logs: {e}")
+                if args.decision_log:
+                    try:
+                        logs = requests.get(f"{base_url}/api/debug/logs", timeout=2).json()
+                        print_detailed_summary(logs, pair_tz)
+                    except Exception as e:
+                        print(f"   ⚠️ Failed to fetch summary logs: {e}")
 
                 if args.snapshot:
                     try:
@@ -916,6 +918,21 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         ]
         Path(args.results_json).write_text(json.dumps(out, indent=2))
 
+    if getattr(args, 'html_report', False):
+        html_mode = "real" if mode in ("real", "both") else "sim"
+        html_path = Path(args.outdir) / "report.html"
+        generate_html_report(
+            summary_results,
+            account=ACCT,
+            risk=RISK_USD,
+            mode=html_mode,
+            output_path=str(html_path),
+            nq_pv=NQ_PV,
+            fee_per_rt=FEE_PER_RT,
+            be_threshold=BE_THRESHOLD,
+        )
+        print(f"\n📄 HTML report: {html_path.resolve()}")
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -942,6 +959,10 @@ def main():
                     help="Skip chart snapshots")
     ap.add_argument("--results-json", default=None,
                     help="If set, write scenario results as JSON to this path after all scenarios run")
+    ap.add_argument("--html-report", action="store_true", default=False,
+                    help="Generate an HTML report with monthly view in the output directory")
+    ap.add_argument("--decision-log", action="store_true", default=False,
+                    help="Print detailed decision log for each scenario")
     args = ap.parse_args()
 
     yaml_path = Path(args.yaml)

@@ -79,6 +79,61 @@ scenarios:
       tolerance: 0.25
 
 
+  - name: "NQ - 2025-12-12"
+    pair: "NQ"
+    tf: "3m"
+    start: "2025-12-12 07:00:00Z"
+    end:   "2025-12-12 14:00:00Z"
+    lines:
+      - { price: 25384.00, at: "2025-12-12 07:00:00Z" }
+    expect:
+      entry: 25327.00
+      sl:    25287.00
+      tp:    25487.00
+      tolerance: 0.25
+    snapshot: true
+
+  - name: "NQ - 2025-12-15"
+    pair: "NQ"
+    tf: "1m"
+    start: "2025-12-15 07:00:00Z"
+    end:   "2025-12-15 12:00:00Z"
+    lines:
+      - { price: 25389.50, at: "2025-12-15 07:00:00Z" }
+    expect:
+      entry: 25389.75
+      sl:    25404.75
+      tp:    25329.75
+      tolerance: 0.25
+    snapshot: true
+
+  - name: "NQ - 2025-12-17"
+    pair: "NQ"
+    tf: "1m"
+    start: "2025-12-17 06:00:00Z"
+    end:   "2025-12-17 15:00:00Z"
+    lines:
+      - { price: 25502.25, at: "2025-12-17 07:00:00Z" }
+      - { price: 25146.00, at: "2025-12-17 07:00:00Z" }
+      - { price: 25034.75, at: "2025-12-17 07:00:00Z" }
+    expect:
+      entry: 25078.75
+      sl:    25058.75
+      tp:    25158.75
+      tolerance: 0.25
+    snapshot: true
+
+  - name: "NQ - 2025-12-18"
+    pair: "NQ"
+    tf: "5m"
+    start: "2025-12-18 08:00:00Z"
+    end:   "2025-12-18 11:00:00Z"
+    lines:
+      - { price: 25294.00, at: "2025-12-18 07:00:00Z" }
+    expect:
+      none: true
+    snapshot: true
+
   - name: "NQ - 2026-01-02"
     pair: "NQ"
     tf: "5m"

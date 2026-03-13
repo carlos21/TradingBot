@@ -7,3 +7,4 @@ poetry run python scripts/run_scenarios.py \
   --chart-selector "#chartContainer" \
   --quiet \
   "$@"
+# To generate an HTML report with monthly view, add: --html-report

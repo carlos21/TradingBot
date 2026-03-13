@@ -1,0 +1,1168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trading Strategy Report</title>
+<style>
+:root {
+    --bg: #0f172a;
+    --bg-card: #1e293b;
+    --bg-header: #0c1222;
+    --border: #334155;
+    --text: #e2e8f0;
+    --text-muted: #94a3b8;
+    --text-dim: #64748b;
+    --green: #22c55e;
+    --red: #ef4444;
+    --yellow: #eab308;
+    --blue: #3b82f6;
+    --blue-dim: #1e40af;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+    min-height: 100vh;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px;
+}
+
+/* ── Header ── */
+header {
+    background: var(--bg-header);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 0;
+    margin-bottom: 24px;
+}
+
+header .container {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+h1 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text);
+}
+
+h1 span {
+    color: var(--text-muted);
+    font-weight: 400;
+    font-size: 0.9rem;
+    margin-left: 12px;
+}
+
+.overall-stats {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+}
+
+.stat-box {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px 20px;
+    min-width: 140px;
+}
+
+.stat-box .label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin-bottom: 2px;
+}
+
+.stat-box .value {
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+
+/* ── Equity curve ── */
+.equity-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 24px;
+}
+
+.equity-section h3 {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+}
+
+.equity-chart {
+    width: 100%;
+    height: auto;
+    max-height: 200px;
+}
+
+/* ── Month navigation ── */
+.month-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.month-pill {
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+}
+
+.month-pill:hover {
+    border-color: var(--blue);
+    color: var(--text);
+}
+
+.month-pill.active {
+    background: var(--blue);
+    border-color: var(--blue);
+    color: #fff;
+    font-weight: 600;
+}
+
+.nav-arrow {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text);
+    font-size: 1.1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    font-family: inherit;
+    flex-shrink: 0;
+}
+
+.nav-arrow:hover {
+    border-color: var(--blue);
+    background: var(--blue-dim);
+}
+
+.nav-arrow:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+/* ── Month scroller ── */
+.month-scroller {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    gap: 20px;
+    padding-bottom: 12px;
+    scroll-behavior: smooth;
+    -webkit-overflow-scrolling: touch;
+}
+
+.month-scroller::-webkit-scrollbar {
+    height: 6px;
+}
+
+.month-scroller::-webkit-scrollbar-track {
+    background: var(--bg);
+    border-radius: 3px;
+}
+
+.month-scroller::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+}
+
+.month-card {
+    scroll-snap-align: start;
+    min-width: 100%;
+    flex-shrink: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.month-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.month-header h2 {
+    font-size: 1.2rem;
+    font-weight: 700;
+}
+
+.month-stats {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.stat-pill {
+    font-size: 0.85rem;
+    padding: 4px 12px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.05);
+    white-space: nowrap;
+}
+
+/* ── Trades table ── */
+.trades-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
+
+.trades-table th {
+    text-align: left;
+    padding: 10px 16px;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.15);
+}
+
+.trades-table td {
+    padding: 10px 16px;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+}
+
+.trades-table tr:last-child td {
+    border-bottom: none;
+}
+
+.trades-table tr:hover td {
+    background: rgba(255,255,255,0.03);
+}
+
+.date-col { width: 60px; color: var(--text-muted); white-space: nowrap; }
+.name-col { font-weight: 500; }
+.status-col { width: 60px; text-align: center; }
+.result-col { width: 80px; }
+.pnl-col { width: 90px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+
+/* ── Badges & colors ── */
+.badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+}
+
+.badge-win  { background: rgba(34,197,94,0.15); color: var(--green); }
+.badge-loss { background: rgba(239,68,68,0.15); color: var(--red); }
+.badge-be   { background: rgba(234,179,8,0.15); color: var(--yellow); }
+.badge-open { background: rgba(148,163,184,0.15); color: var(--text-muted); }
+
+.positive { color: var(--green); }
+.negative { color: var(--red); }
+.neutral  { color: var(--text-muted); }
+.text-yellow { color: var(--yellow); }
+.text-muted  { color: var(--text-muted); }
+
+.status-pass { color: var(--green); font-weight: 600; }
+.status-fail { color: var(--red); font-weight: 600; }
+
+/* ── View toggle ── */
+.view-toggle {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 3px;
+    margin-right: 12px;
+}
+
+.view-btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    cursor: pointer;
+    font-family: inherit;
+    transition: all 0.2s;
+}
+
+.view-btn:hover {
+    color: var(--text);
+}
+
+.view-btn.active {
+    background: var(--blue);
+    color: #fff;
+    font-weight: 600;
+}
+
+/* ── Calendar view ── */
+.calendar-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.cal-grid {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.cal-grid th {
+    padding: 10px 4px;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    background: rgba(0,0,0,0.15);
+}
+
+.cal-cell {
+    vertical-align: top;
+    padding: 8px;
+    height: 100px;
+    border: 1px solid var(--border);
+    overflow: hidden;
+}
+
+.cal-empty {
+    background: rgba(0,0,0,0.1);
+    border-color: rgba(255,255,255,0.04);
+}
+
+.cal-has-trade {
+    background: rgba(59,130,246,0.08);
+}
+
+.cal-day-num {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    margin-bottom: 4px;
+    font-weight: 500;
+}
+
+.cal-has-trade .cal-day-num {
+    color: var(--text);
+    font-weight: 700;
+}
+
+.cal-trade {
+    margin-top: 4px;
+}
+
+.cal-trade .badge {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+}
+
+.cal-pnl {
+    font-size: 0.8rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    margin-top: 3px;
+}
+
+/* ── Footer ── */
+footer {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    text-align: center;
+}
+
+@media (max-width: 768px) {
+    .overall-stats { gap: 12px; }
+    .stat-box { min-width: 100px; padding: 8px 12px; }
+    .stat-box .value { font-size: 1rem; }
+    .month-header { flex-direction: column; align-items: flex-start; }
+}
+</style>
+</head>
+<body>
+
+<header>
+    <div class="container">
+        <h1>Trading Strategy Report <span>REAL (MNQ) &mdash; $100,000 account, $1,000 risk/trade</span></h1>
+        <div class="overall-stats">
+            <div class="stat-box">
+                <div class="label">Trades</div>
+                <div class="value">44</div>
+            </div>
+            <div class="stat-box">
+                <div class="label">Record</div>
+                <div class="value"><span class="positive">15W</span> / <span class="negative">21L</span> / <span class="text-yellow">8B</span></div>
+            </div>
+            <div class="stat-box">
+                <div class="label">Win Rate</div>
+                <div class="value negative">41.7%</div>
+            </div>
+            <div class="stat-box">
+                <div class="label">Net P&amp;L</div>
+                <div class="value positive">$+37,742</div>
+            </div>
+            <div class="stat-box">
+                <div class="label">Return</div>
+                <div class="value positive">+37.74%</div>
+            </div>
+            <div class="stat-box">
+                <div class="label">Max Consec W / L</div>
+                <div class="value"><span class="positive">6</span> / <span class="negative">9</span></div>
+            </div>
+        </div>
+    </div>
+</header>
+
+<div class="container">
+    
+    <div class="equity-section">
+        <h3>Equity Curve</h3>
+        
+        <svg viewBox="0 0 800 200" class="equity-chart">
+            <line x1="40" y1="40.0" x2="760" y2="40.0" stroke="var(--border)" stroke-dasharray="4,4" /><text x="35" y="40.0" text-anchor="end" fill="var(--text-muted)" font-size="11" dominant-baseline="middle">$137,742</text><line x1="40" y1="70.0" x2="760" y2="70.0" stroke="var(--border)" stroke-dasharray="4,4" /><text x="35" y="70.0" text-anchor="end" fill="var(--text-muted)" font-size="11" dominant-baseline="middle">$128,045</text><line x1="40" y1="100.0" x2="760" y2="100.0" stroke="var(--border)" stroke-dasharray="4,4" /><text x="35" y="100.0" text-anchor="end" fill="var(--text-muted)" font-size="11" dominant-baseline="middle">$118,348</text><line x1="40" y1="130.0" x2="760" y2="130.0" stroke="var(--border)" stroke-dasharray="4,4" /><text x="35" y="130.0" text-anchor="end" fill="var(--text-muted)" font-size="11" dominant-baseline="middle">$108,651</text><line x1="40" y1="160.0" x2="760" y2="160.0" stroke="var(--border)" stroke-dasharray="4,4" /><text x="35" y="160.0" text-anchor="end" fill="var(--text-muted)" font-size="11" dominant-baseline="middle">$98,954</text>
+            <polygon points="40.0,156.8 56.7,160.0 73.5,147.9 90.2,135.8 107.0,123.3 123.7,111.4 140.5,111.3 157.2,114.6 174.0,117.8 190.7,117.7 207.4,120.7 224.2,123.7 240.9,126.8 257.7,126.7 274.4,114.1 291.2,117.4 307.9,120.4 324.7,120.3 341.4,120.2 358.1,123.4 374.9,126.5 391.6,129.5 408.4,132.5 425.1,135.5 441.9,138.8 458.6,142.0 475.3,129.9 492.1,118.0 508.8,105.9 525.6,94.1 542.3,82.3 559.1,70.5 575.8,73.5 592.6,76.5 609.3,79.5 626.0,82.6 642.8,82.5 659.5,70.7 676.3,73.7 693.0,61.4 709.8,48.9 726.5,48.8 743.3,51.8 760.0,40.0 760.0,160.0 40.0,160.0" fill="var(--green)" opacity="0.1" />
+            <polyline points="40.0,156.8 56.7,160.0 73.5,147.9 90.2,135.8 107.0,123.3 123.7,111.4 140.5,111.3 157.2,114.6 174.0,117.8 190.7,117.7 207.4,120.7 224.2,123.7 240.9,126.8 257.7,126.7 274.4,114.1 291.2,117.4 307.9,120.4 324.7,120.3 341.4,120.2 358.1,123.4 374.9,126.5 391.6,129.5 408.4,132.5 425.1,135.5 441.9,138.8 458.6,142.0 475.3,129.9 492.1,118.0 508.8,105.9 525.6,94.1 542.3,82.3 559.1,70.5 575.8,73.5 592.6,76.5 609.3,79.5 626.0,82.6 642.8,82.5 659.5,70.7 676.3,73.7 693.0,61.4 709.8,48.9 726.5,48.8 743.3,51.8 760.0,40.0" fill="none" stroke="var(--green)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
+        </svg>
+    </div>
+    
+
+    <div class="month-nav">
+        <div class="view-toggle">
+            <button class="view-btn active" onclick="switchView('list')">List</button>
+            <button class="view-btn" onclick="switchView('calendar')">Calendar</button>
+        </div>
+        <button class="nav-arrow" id="prevBtn" onclick="navigate(-1)">&larr;</button>
+        <button class="month-pill active" data-index="0" onclick="scrollToMonth(0)">Dec 2025</button> <button class="month-pill" data-index="1" onclick="scrollToMonth(1)">Jan 2026</button> <button class="month-pill" data-index="2" onclick="scrollToMonth(2)">Feb 2026</button> <button class="month-pill" data-index="3" onclick="scrollToMonth(3)">Mar 2026</button>
+        <button class="nav-arrow" id="nextBtn" onclick="navigate(1)">&rarr;</button>
+    </div>
+
+    <div class="month-scroller" id="scroller">
+        
+        <div class="month-card" data-month="2025-12" id="month-0">
+            <div class="month-header">
+                <h2>December 2025</h2>
+                <div class="month-stats">
+                    <div class="stat-pill"><span class="positive">4W</span> / <span class="negative">1L</span></div>
+                    <div class="stat-pill positive">Net: $+14,652</div>
+                    <div class="stat-pill">Balance: $114,652</div>
+                </div>
+            </div>
+            <table class="trades-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Scenario</th>
+                        <th>Status</th>
+                        <th>Result</th>
+                        <th>%</th>
+                        <th>$ PnL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    
+                <tr>
+                    <td class="date-col">12/02</td>
+                    <td class="name-col">NQ - 2025-12-02</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-1.05%</td>
+                    <td class="pnl-col negative">$-1,046</td>
+                </tr>
+                <tr>
+                    <td class="date-col">12/03</td>
+                    <td class="name-col">NQ - 2025-12-03</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.91%</td>
+                    <td class="pnl-col positive">$+3,910</td>
+                </tr>
+                <tr>
+                    <td class="date-col">12/04</td>
+                    <td class="name-col">NQ - 2025-12-04</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.91%</td>
+                    <td class="pnl-col positive">$+3,910</td>
+                </tr>
+                <tr>
+                    <td class="date-col">12/05</td>
+                    <td class="name-col">NQ - 2025-12-05</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="text-muted">--</span></td>
+                    <td class="pnl-col neutral">+0.00%</td>
+                    <td class="pnl-col neutral">$+0</td>
+                </tr>
+                <tr>
+                    <td class="date-col">12/08</td>
+                    <td class="name-col">NQ - 2025-12-08</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+4.05%</td>
+                    <td class="pnl-col positive">$+4,054</td>
+                </tr>
+                <tr>
+                    <td class="date-col">12/10</td>
+                    <td class="name-col">NQ - 2025-12-10</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.82%</td>
+                    <td class="pnl-col positive">$+3,822</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="month-card" data-month="2026-01" id="month-1">
+            <div class="month-header">
+                <h2>January 2026</h2>
+                <div class="month-stats">
+                    <div class="stat-pill"><span class="positive">1W</span> / <span class="negative">10L</span> / <span class="text-yellow">5B/E</span></div>
+                    <div class="stat-pill negative">Net: $-5,835</div>
+                    <div class="stat-pill">Balance: $108,817</div>
+                </div>
+            </div>
+            <table class="trades-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Scenario</th>
+                        <th>Status</th>
+                        <th>Result</th>
+                        <th>%</th>
+                        <th>$ PnL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    
+                <tr>
+                    <td class="date-col">01/02</td>
+                    <td class="name-col">NQ - 2026-01-02</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="text-muted">--</span></td>
+                    <td class="pnl-col neutral">+0.00%</td>
+                    <td class="pnl-col neutral">$+0</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/05</td>
+                    <td class="name-col">NQ - 2026-01-05</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-be">B/E</span></td>
+                    <td class="pnl-col positive">+0.03%</td>
+                    <td class="pnl-col positive">$+30</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/06</td>
+                    <td class="name-col">NQ - 2026-01-06</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-1.04%</td>
+                    <td class="pnl-col negative">$-1,040</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/07</td>
+                    <td class="name-col">NQ - 2026-01-07</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-1.04%</td>
+                    <td class="pnl-col negative">$-1,040</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/09</td>
+                    <td class="name-col">NQ - 2026-01-09</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-be">B/E</span></td>
+                    <td class="pnl-col positive">+0.03%</td>
+                    <td class="pnl-col positive">$+30</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/12</td>
+                    <td class="name-col">NQ - 2026-01-12</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/13</td>
+                    <td class="name-col">NQ - 2026-01-13</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/14</td>
+                    <td class="name-col">NQ - 2026-01-14</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/15</td>
+                    <td class="name-col">NQ - 2026-01-15</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-be">B/E</span></td>
+                    <td class="pnl-col positive">+0.03%</td>
+                    <td class="pnl-col positive">$+26</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/16</td>
+                    <td class="name-col">NQ - 2026-01-16</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+4.05%</td>
+                    <td class="pnl-col positive">$+4,054</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/19</td>
+                    <td class="name-col">NQ - 2026-01-19</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-1.04%</td>
+                    <td class="pnl-col negative">$-1,040</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/20</td>
+                    <td class="name-col">NQ - 2026-01-20</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/21</td>
+                    <td class="name-col">NQ - 2026-01-21</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="text-muted">--</span></td>
+                    <td class="pnl-col neutral">+0.00%</td>
+                    <td class="pnl-col neutral">$+0</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/23</td>
+                    <td class="name-col">NQ - 2026-01-23</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-be">B/E</span></td>
+                    <td class="pnl-col positive">+0.03%</td>
+                    <td class="pnl-col positive">$+26</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/23</td>
+                    <td class="name-col">NQ - 2026-01-23 - 2</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-be">B/E</span></td>
+                    <td class="pnl-col positive">+0.03%</td>
+                    <td class="pnl-col positive">$+26</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/26</td>
+                    <td class="name-col">NQ - 2026-01-26</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-1.04%</td>
+                    <td class="pnl-col negative">$-1,040</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/27</td>
+                    <td class="name-col">NQ - 2026-01-27</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/29</td>
+                    <td class="name-col">NQ - 2026-01-29</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="text-muted">--</span></td>
+                    <td class="pnl-col neutral">+0.00%</td>
+                    <td class="pnl-col neutral">$+0</td>
+                </tr>
+                <tr>
+                    <td class="date-col">01/30</td>
+                    <td class="name-col">NQ - 2026-01-30</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="month-card" data-month="2026-02" id="month-2">
+            <div class="month-header">
+                <h2>February 2026</h2>
+                <div class="month-stats">
+                    <div class="stat-pill"><span class="positive">6W</span> / <span class="negative">8L</span> / <span class="text-yellow">1B/E</span></div>
+                    <div class="stat-pill positive">Net: $+15,164</div>
+                    <div class="stat-pill">Balance: $123,981</div>
+                </div>
+            </div>
+            <table class="trades-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Scenario</th>
+                        <th>Status</th>
+                        <th>Result</th>
+                        <th>%</th>
+                        <th>$ PnL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    
+                <tr>
+                    <td class="date-col">02/02</td>
+                    <td class="name-col">NQ - 2026-02-02</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="text-muted">--</span></td>
+                    <td class="pnl-col neutral">+0.00%</td>
+                    <td class="pnl-col neutral">$+0</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/03</td>
+                    <td class="name-col">NQ - 2026-02-03</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/04</td>
+                    <td class="name-col">NQ - 2026-02-04</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="text-muted">--</span></td>
+                    <td class="pnl-col neutral">+0.00%</td>
+                    <td class="pnl-col neutral">$+0</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/05</td>
+                    <td class="name-col">NQ - 2026-02-05</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/06</td>
+                    <td class="name-col">NQ - 2026-02-06</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-1.04%</td>
+                    <td class="pnl-col negative">$-1,040</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/09</td>
+                    <td class="name-col">NQ - 2026-02-09</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-1.04%</td>
+                    <td class="pnl-col negative">$-1,038</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/10</td>
+                    <td class="name-col">NQ - 2026-02-10</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.91%</td>
+                    <td class="pnl-col positive">$+3,910</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/11</td>
+                    <td class="name-col">NQ - 2026-02-11</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.82%</td>
+                    <td class="pnl-col positive">$+3,822</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/12</td>
+                    <td class="name-col">NQ - 2026-02-12</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.91%</td>
+                    <td class="pnl-col positive">$+3,910</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/13</td>
+                    <td class="name-col">NQ - 2026-02-13</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.82%</td>
+                    <td class="pnl-col positive">$+3,822</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/17</td>
+                    <td class="name-col">NQ - 2026-02-17</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.82%</td>
+                    <td class="pnl-col positive">$+3,822</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/18</td>
+                    <td class="name-col">NQ - 2026-02-18</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.82%</td>
+                    <td class="pnl-col positive">$+3,822</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/19</td>
+                    <td class="name-col">NQ - 2026-02-19</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/20</td>
+                    <td class="name-col">NQ - 2026-02-20</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-be">B/E</span></td>
+                    <td class="pnl-col neutral">+0.00%</td>
+                    <td class="pnl-col neutral">$+0</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/23</td>
+                    <td class="name-col">NQ - 2026-02-23</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/24</td>
+                    <td class="name-col">NQ - 2026-02-24</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/25</td>
+                    <td class="name-col">NQ - 2026-02-25</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-open">OPEN</span></td>
+                    <td class="pnl-col neutral">+0.00%</td>
+                    <td class="pnl-col neutral">$+0</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/26</td>
+                    <td class="name-col">NQ - 2026-02-26</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="text-muted">--</span></td>
+                    <td class="pnl-col neutral">+0.00%</td>
+                    <td class="pnl-col neutral">$+0</td>
+                </tr>
+                <tr>
+                    <td class="date-col">02/27</td>
+                    <td class="name-col">NQ - 2026-02-27</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="month-card" data-month="2026-03" id="month-3">
+            <div class="month-header">
+                <h2>March 2026</h2>
+                <div class="month-stats">
+                    <div class="stat-pill"><span class="positive">4W</span> / <span class="negative">2L</span> / <span class="text-yellow">2B/E</span></div>
+                    <div class="stat-pill positive">Net: $+13,760</div>
+                    <div class="stat-pill">Balance: $137,742</div>
+                </div>
+            </div>
+            <table class="trades-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Scenario</th>
+                        <th>Status</th>
+                        <th>Result</th>
+                        <th>%</th>
+                        <th>$ PnL</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    
+                <tr>
+                    <td class="date-col">03/02</td>
+                    <td class="name-col">NQ - 2026-03-02</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-be">B/E</span></td>
+                    <td class="pnl-col positive">+0.03%</td>
+                    <td class="pnl-col positive">$+26</td>
+                </tr>
+                <tr>
+                    <td class="date-col">03/03</td>
+                    <td class="name-col">NQ - 2026-03-03</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.82%</td>
+                    <td class="pnl-col positive">$+3,822</td>
+                </tr>
+                <tr>
+                    <td class="date-col">03/04</td>
+                    <td class="name-col">NQ - 2026-03-04</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">03/05</td>
+                    <td class="name-col">NQ - 2026-03-05</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.96%</td>
+                    <td class="pnl-col positive">$+3,962</td>
+                </tr>
+                <tr>
+                    <td class="date-col">03/05</td>
+                    <td class="name-col">NQ - 2026-03-05 - 2</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+4.05%</td>
+                    <td class="pnl-col positive">$+4,054</td>
+                </tr>
+                <tr>
+                    <td class="date-col">03/06</td>
+                    <td class="name-col">NQ - 2026-03-06</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="text-muted">--</span></td>
+                    <td class="pnl-col neutral">+0.00%</td>
+                    <td class="pnl-col neutral">$+0</td>
+                </tr>
+                <tr>
+                    <td class="date-col">03/09</td>
+                    <td class="name-col">NQ - 2026-03-09</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-be">B/E</span></td>
+                    <td class="pnl-col positive">+0.03%</td>
+                    <td class="pnl-col positive">$+30</td>
+                </tr>
+                <tr>
+                    <td class="date-col">03/10</td>
+                    <td class="name-col">NQ - 2026-03-10</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-loss">L</span></td>
+                    <td class="pnl-col negative">-0.98%</td>
+                    <td class="pnl-col negative">$-978</td>
+                </tr>
+                <tr>
+                    <td class="date-col">03/11</td>
+                    <td class="name-col">NQ - 2026-03-11</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="badge badge-win">W</span></td>
+                    <td class="pnl-col positive">+3.82%</td>
+                    <td class="pnl-col positive">$+3,822</td>
+                </tr>
+                <tr>
+                    <td class="date-col">03/13</td>
+                    <td class="name-col">NQ - 2026-03-13</td>
+                    <td class="status-col"><span class="status-pass">PASS</span></td>
+                    <td class="result-col"><span class="text-muted">--</span></td>
+                    <td class="pnl-col neutral">+0.00%</td>
+                    <td class="pnl-col neutral">$+0</td>
+                </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="calendarContainer" style="display:none">
+        
+        <div class="calendar-card" data-month="2025-12" data-cal-idx="0" style="display:block">
+            <div class="month-header">
+                <h2>December 2025</h2>
+                <div class="month-stats">
+                    <div class="stat-pill"><span class="positive">4W</span> / <span class="negative">1L</span></div>
+                    <div class="stat-pill positive">Net: $+14,652</div>
+                    <div class="stat-pill">Balance: $114,652</div>
+                </div>
+            </div>
+            <table class="cal-grid">
+                <thead>
+                    <tr>
+                        <th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td class="cal-cell cal-empty"></td><td class="cal-cell"><div class="cal-day-num">1</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">2</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-1,046</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">3</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,910</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">4</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,910</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">5</div><div class="cal-trade"><span class="text-muted">--</span><div class="cal-pnl neutral">$+0</div></div></td><td class="cal-cell"><div class="cal-day-num">6</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">7</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">8</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+4,054</div></div></td><td class="cal-cell"><div class="cal-day-num">9</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">10</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,822</div></div></td><td class="cal-cell"><div class="cal-day-num">11</div></td><td class="cal-cell"><div class="cal-day-num">12</div></td><td class="cal-cell"><div class="cal-day-num">13</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">14</div></td><td class="cal-cell"><div class="cal-day-num">15</div></td><td class="cal-cell"><div class="cal-day-num">16</div></td><td class="cal-cell"><div class="cal-day-num">17</div></td><td class="cal-cell"><div class="cal-day-num">18</div></td><td class="cal-cell"><div class="cal-day-num">19</div></td><td class="cal-cell"><div class="cal-day-num">20</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">21</div></td><td class="cal-cell"><div class="cal-day-num">22</div></td><td class="cal-cell"><div class="cal-day-num">23</div></td><td class="cal-cell"><div class="cal-day-num">24</div></td><td class="cal-cell"><div class="cal-day-num">25</div></td><td class="cal-cell"><div class="cal-day-num">26</div></td><td class="cal-cell"><div class="cal-day-num">27</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">28</div></td><td class="cal-cell"><div class="cal-day-num">29</div></td><td class="cal-cell"><div class="cal-day-num">30</div></td><td class="cal-cell"><div class="cal-day-num">31</div></td><td class="cal-cell cal-empty"></td><td class="cal-cell cal-empty"></td><td class="cal-cell cal-empty"></td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="calendar-card" data-month="2026-01" data-cal-idx="1" style="display:none">
+            <div class="month-header">
+                <h2>January 2026</h2>
+                <div class="month-stats">
+                    <div class="stat-pill"><span class="positive">1W</span> / <span class="negative">10L</span> / <span class="text-yellow">5B/E</span></div>
+                    <div class="stat-pill negative">Net: $-5,835</div>
+                    <div class="stat-pill">Balance: $108,817</div>
+                </div>
+            </div>
+            <table class="cal-grid">
+                <thead>
+                    <tr>
+                        <th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td class="cal-cell cal-empty"></td><td class="cal-cell cal-empty"></td><td class="cal-cell cal-empty"></td><td class="cal-cell cal-empty"></td><td class="cal-cell"><div class="cal-day-num">1</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">2</div><div class="cal-trade"><span class="text-muted">--</span><div class="cal-pnl neutral">$+0</div></div></td><td class="cal-cell"><div class="cal-day-num">3</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">4</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">5</div><div class="cal-trade"><span class="badge badge-be">B/E</span><div class="cal-pnl positive">$+30</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">6</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-1,040</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">7</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-1,040</div></div></td><td class="cal-cell"><div class="cal-day-num">8</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">9</div><div class="cal-trade"><span class="badge badge-be">B/E</span><div class="cal-pnl positive">$+30</div></div></td><td class="cal-cell"><div class="cal-day-num">10</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">11</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">12</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">13</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">14</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">15</div><div class="cal-trade"><span class="badge badge-be">B/E</span><div class="cal-pnl positive">$+26</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">16</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+4,054</div></div></td><td class="cal-cell"><div class="cal-day-num">17</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">18</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">19</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-1,040</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">20</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">21</div><div class="cal-trade"><span class="text-muted">--</span><div class="cal-pnl neutral">$+0</div></div></td><td class="cal-cell"><div class="cal-day-num">22</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">23</div><div class="cal-trade"><span class="badge badge-be">B/E</span><div class="cal-pnl positive">$+26</div></div><div class="cal-trade"><span class="badge badge-be">B/E</span><div class="cal-pnl positive">$+26</div></div></td><td class="cal-cell"><div class="cal-day-num">24</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">25</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">26</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-1,040</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">27</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell"><div class="cal-day-num">28</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">29</div><div class="cal-trade"><span class="text-muted">--</span><div class="cal-pnl neutral">$+0</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">30</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell"><div class="cal-day-num">31</div></td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="calendar-card" data-month="2026-02" data-cal-idx="2" style="display:none">
+            <div class="month-header">
+                <h2>February 2026</h2>
+                <div class="month-stats">
+                    <div class="stat-pill"><span class="positive">6W</span> / <span class="negative">8L</span> / <span class="text-yellow">1B/E</span></div>
+                    <div class="stat-pill positive">Net: $+15,164</div>
+                    <div class="stat-pill">Balance: $123,981</div>
+                </div>
+            </div>
+            <table class="cal-grid">
+                <thead>
+                    <tr>
+                        <th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td class="cal-cell"><div class="cal-day-num">1</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">2</div><div class="cal-trade"><span class="text-muted">--</span><div class="cal-pnl neutral">$+0</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">3</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">4</div><div class="cal-trade"><span class="text-muted">--</span><div class="cal-pnl neutral">$+0</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">5</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">6</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-1,040</div></div></td><td class="cal-cell"><div class="cal-day-num">7</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">8</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">9</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-1,038</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">10</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,910</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">11</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,822</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">12</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,910</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">13</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,822</div></div></td><td class="cal-cell"><div class="cal-day-num">14</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">15</div></td><td class="cal-cell"><div class="cal-day-num">16</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">17</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,822</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">18</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,822</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">19</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">20</div><div class="cal-trade"><span class="badge badge-be">B/E</span><div class="cal-pnl neutral">$+0</div></div></td><td class="cal-cell"><div class="cal-day-num">21</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">22</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">23</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">24</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">25</div><div class="cal-trade"><span class="badge badge-open">OPEN</span><div class="cal-pnl neutral">$+0</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">26</div><div class="cal-trade"><span class="text-muted">--</span><div class="cal-pnl neutral">$+0</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">27</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell"><div class="cal-day-num">28</div></td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="calendar-card" data-month="2026-03" data-cal-idx="3" style="display:none">
+            <div class="month-header">
+                <h2>March 2026</h2>
+                <div class="month-stats">
+                    <div class="stat-pill"><span class="positive">4W</span> / <span class="negative">2L</span> / <span class="text-yellow">2B/E</span></div>
+                    <div class="stat-pill positive">Net: $+13,760</div>
+                    <div class="stat-pill">Balance: $137,742</div>
+                </div>
+            </div>
+            <table class="cal-grid">
+                <thead>
+                    <tr>
+                        <th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr><td class="cal-cell"><div class="cal-day-num">1</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">2</div><div class="cal-trade"><span class="badge badge-be">B/E</span><div class="cal-pnl positive">$+26</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">3</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,822</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">4</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">5</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,962</div></div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+4,054</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">6</div><div class="cal-trade"><span class="text-muted">--</span><div class="cal-pnl neutral">$+0</div></div></td><td class="cal-cell"><div class="cal-day-num">7</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">8</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">9</div><div class="cal-trade"><span class="badge badge-be">B/E</span><div class="cal-pnl positive">$+30</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">10</div><div class="cal-trade"><span class="badge badge-loss">L</span><div class="cal-pnl negative">$-978</div></div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">11</div><div class="cal-trade"><span class="badge badge-win">W</span><div class="cal-pnl positive">$+3,822</div></div></td><td class="cal-cell"><div class="cal-day-num">12</div></td><td class="cal-cell cal-has-trade"><div class="cal-day-num">13</div><div class="cal-trade"><span class="text-muted">--</span><div class="cal-pnl neutral">$+0</div></div></td><td class="cal-cell"><div class="cal-day-num">14</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">15</div></td><td class="cal-cell"><div class="cal-day-num">16</div></td><td class="cal-cell"><div class="cal-day-num">17</div></td><td class="cal-cell"><div class="cal-day-num">18</div></td><td class="cal-cell"><div class="cal-day-num">19</div></td><td class="cal-cell"><div class="cal-day-num">20</div></td><td class="cal-cell"><div class="cal-day-num">21</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">22</div></td><td class="cal-cell"><div class="cal-day-num">23</div></td><td class="cal-cell"><div class="cal-day-num">24</div></td><td class="cal-cell"><div class="cal-day-num">25</div></td><td class="cal-cell"><div class="cal-day-num">26</div></td><td class="cal-cell"><div class="cal-day-num">27</div></td><td class="cal-cell"><div class="cal-day-num">28</div></td></tr><tr><td class="cal-cell"><div class="cal-day-num">29</div></td><td class="cal-cell"><div class="cal-day-num">30</div></td><td class="cal-cell"><div class="cal-day-num">31</div></td><td class="cal-cell cal-empty"></td><td class="cal-cell cal-empty"></td><td class="cal-cell cal-empty"></td><td class="cal-cell cal-empty"></td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <footer>
+        Generated 2026-03-13 14:44 &mdash; 54 scenarios across 4 month(s)
+    </footer>
+</div>
+
+<script>
+const listScroller = document.getElementById('scroller');
+const calContainer = document.getElementById('calendarContainer');
+const pills = document.querySelectorAll('.month-pill');
+const listCards = listScroller.querySelectorAll('.month-card');
+const calCards = calContainer.querySelectorAll('.calendar-card');
+const viewBtns = document.querySelectorAll('.view-btn');
+let currentIndex = 0;
+let currentView = 'list';
+
+function showMonth(idx) {
+    if (idx < 0 || idx >= listCards.length) return;
+    currentIndex = idx;
+    pills.forEach((p, i) => p.classList.toggle('active', i === idx));
+
+    if (currentView === 'list') {
+        listCards[idx].scrollIntoView({ behavior: 'smooth', inline: 'start', block: 'nearest' });
+    } else {
+        calCards.forEach((c, i) => c.style.display = i === idx ? 'block' : 'none');
+    }
+}
+
+function navigate(dir) {
+    showMonth(currentIndex + dir);
+}
+
+function switchView(view) {
+    currentView = view;
+    viewBtns.forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === view));
+    if (view === 'list') {
+        listScroller.style.display = 'flex';
+        calContainer.style.display = 'none';
+    } else {
+        listScroller.style.display = 'none';
+        calContainer.style.display = 'block';
+        calCards.forEach((c, i) => c.style.display = i === currentIndex ? 'block' : 'none');
+    }
+}
+
+function scrollToMonth(idx) { showMonth(idx); }
+
+// Update active pill on scroll (list view only)
+let scrollTimeout;
+listScroller.addEventListener('scroll', () => {
+    clearTimeout(scrollTimeout);
+    scrollTimeout = setTimeout(() => {
+        const scrollLeft = listScroller.scrollLeft;
+        const cardWidth = listCards[0]?.offsetWidth || 1;
+        const idx = Math.round(scrollLeft / (cardWidth + 20));
+        if (idx !== currentIndex && idx >= 0 && idx < listCards.length) {
+            currentIndex = idx;
+            pills.forEach((p, i) => p.classList.toggle('active', i === idx));
+        }
+    }, 50);
+});
+
+// Keyboard navigation
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft') navigate(-1);
+    if (e.key === 'ArrowRight') navigate(1);
+});
+</script>
+
+</body>
+</html>

@@ -6,4 +6,5 @@ poetry run python scripts/run_scenarios.py \
   --bars-per-second 800 \
   --chart-selector "#chartContainer" \
   --quiet \
+  --decision-log \
   "$@"
