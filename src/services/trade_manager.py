@@ -10,18 +10,28 @@ class TradeManager:
     Handles closing open trades when a raw 1m bar touches SL or TP.
     """
 
-    def __init__(self, trade_repository: TradeRepository, socketio):
+    def __init__(self, trade_repository: TradeRepository, socketio,
+                 session_end_time: str = None, session_tz: str = None):
         """
         :param trade_repository: SQLTradeRepository instance (must have close_trade)
         :param socketio:         flask_socketio.SocketIO instance
+        :param session_end_time: "HH:MM" — close open trades at this time (e.g. "15:00")
+        :param session_tz:       Timezone for session_end_time (e.g. "America/New_York")
         """
         self.open_trades = []
         self.trade_repository = trade_repository
         self.socketio         = socketio
-        
+
+        # Session end close config
+        self._session_end_time = None
+        self._session_tz = None
+        if session_end_time and session_tz:
+            self._session_end_time = datetime.strptime(session_end_time, "%H:%M").time()
+            self._session_tz = ZoneInfo(session_tz)
+
         # Track which trades we have already logged as "Active" to avoid spamming logs
         self._monitored_trades = set()
-        
+
         # RESUME: Load any open trades from the DB so we can manage them
         self._load_open_trades_from_db()
 
@@ -140,6 +150,61 @@ class TradeManager:
             self.open_trades.remove(trade)
 
             # emit to clients
+            self.socketio.emit('trade_close', {
+                'trade_id':   trade['trade_id'],
+                'pair':       trade['pair'],
+                'type':       trade['type'],
+                'exit_price': exit_price,
+                'exit_time':  bar['time'],
+                'result':     result
+            })
+
+        # After SL/TP checks, close any remaining open trades if session has ended
+        self._check_session_end_close(bar)
+
+    def _check_session_end_close(self, bar: dict):
+        if not self._session_end_time or not self._session_tz:
+            return
+
+        bar_dt = datetime.fromtimestamp(bar['time'], tz=self._session_tz)
+        if bar_dt.time() < self._session_end_time:
+            return
+
+        for trade in list(self.open_trades):
+            if trade['pair'] != bar['pair']:
+                continue
+            if trade['entry_time'] > bar['time']:
+                continue
+
+            exit_price = bar['close']
+            exit_time = datetime.fromtimestamp(bar['time'], tz=ZoneInfo('UTC'))
+
+            risk = trade.get('risk', 0)
+            if risk <= 0:
+                risk = 1.0
+
+            is_buy = trade['type'] in ('buy', 'long')
+            if is_buy:
+                pnl_points = exit_price - trade['entry']
+            else:
+                pnl_points = trade['entry'] - exit_price
+
+            result = pnl_points / risk
+
+            print(f"[TradeManager] 🕐 SESSION END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R)")
+
+            try:
+                self.trade_repository.close_trade(
+                    trade_id=trade['trade_id'],
+                    exit_price=exit_price,
+                    exit_time=exit_time,
+                    result=result
+                )
+            except Exception as e:
+                print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
+
+            self.open_trades.remove(trade)
+
             self.socketio.emit('trade_close', {
                 'trade_id':   trade['trade_id'],
                 'pair':       trade['pair'],

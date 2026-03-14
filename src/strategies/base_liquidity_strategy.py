@@ -10,6 +10,8 @@ from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
 from src.services.trade_manager import TradeManager
+from zoneinfo import ZoneInfo
+
 from src.strategies.entry_context import (
     EntryContext,
     EntryFilter,
@@ -177,6 +179,9 @@ class BaseLiquidityStrategy:
         if self.options.breakeven:
             self._check_breakeven(bar)
 
+        # Close any open trades at session end
+        self._check_session_end_close(bar)
+
         ts = bar["time"]
         win = (ts // self.strategy_window) * self.strategy_window
         if self._group_start is None:
@@ -226,6 +231,51 @@ class BaseLiquidityStrategy:
 
             if should_update and new_sl is not None:
                 self._update_trade_sl(trade, new_sl)
+
+    def _check_session_end_close(self, bar: Dict[str, Any]):
+        """Close any open trades if the bar is at or past the NY session end (15:00 NY)."""
+        session_end = self.trade_manager._session_end_time
+        session_tz = self.trade_manager._session_tz
+        if not session_end or not session_tz:
+            return
+
+        bar_dt = datetime.fromtimestamp(bar["time"], tz=session_tz)
+        if bar_dt.time() < session_end:
+            return
+
+        remaining = []
+        for t in self.open_trades:
+            if t["status"] != "open" or t["pair"] != bar["pair"]:
+                remaining.append(t)
+                continue
+
+            exit_price = bar["close"]
+            risk = t.get("risk", 1.0)
+            if risk <= 0:
+                risk = 1.0
+
+            if t["type"] == "long":
+                pnl = exit_price - t["entry"]
+            else:
+                pnl = t["entry"] - exit_price
+
+            r_result = pnl / risk
+            t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price)
+
+            try:
+                self.trade_repository.close_trade(
+                    trade_id=t["trade_id"],
+                    exit_price=exit_price,
+                    exit_time=self._ts_to_dt(bar["time"]),
+                    result=r_result
+                )
+                print(f"[Strategy] 🕐 SESSION END closed {t['trade_id']} @ {exit_price} (Result: {r_result:.2f}R)")
+            except Exception as e:
+                print(f"[Strategy] ❌ Failed to persist session-end close for {t['trade_id']}: {e}")
+
+            self.socketio.emit("trade_close", t)
+
+        self.open_trades = remaining
 
     def _check_reentry_opportunities(self, bar: Dict[str, Any]):
         """

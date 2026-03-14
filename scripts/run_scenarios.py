@@ -21,6 +21,7 @@ from multiprocessing import Process, Event
 import yaml
 import requests
 from collections import defaultdict
+from datetime import time as dtime
 from dateutil import parser as dtparser
 from playwright.async_api import async_playwright
 
@@ -537,9 +538,16 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     sock.on('stream_end', () => { window.__done = true; });
                 """)
 
+                # Extend stream to NY session end (15:00) so open trades get closed
+                ny_tz = ZoneInfo("America/New_York")
+                scenario_date = dtparser.parse(sc["start"]).date()
+                session_end_dt = datetime.combine(scenario_date, dtime(15, 0), tzinfo=ny_tz)
+                session_end_ts = int(session_end_dt.timestamp())
+                stream_stop_at = max(end_ts, session_end_ts)
+
                 await page.evaluate(
                     """(p) => window.chartViewer.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
-                    {"tf": tf, "start": start_ts, "end": end_ts}
+                    {"tf": tf, "start": start_ts, "end": stream_stop_at}
                 )
 
                 try:

@@ -61,7 +61,12 @@ def create_app(
     CORS(app)
     socketio = SocketIO(app, cors_allowed_origins="*")
     
-    trade_manager = TradeManager(trade_repository=repos.trades, socketio=socketio)
+    trade_manager = TradeManager(
+        trade_repository=repos.trades,
+        socketio=socketio,
+        session_end_time="15:00",
+        session_tz="America/New_York",
+    )
 
     # Initialize V2 Strategy with the list of timeframes
     tstrategy = LiquidityStrategyV2(

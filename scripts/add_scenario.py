@@ -209,6 +209,7 @@ def run_discovery(results_json_path: str) -> bool:
         "--bars-per-second", "800",
         "--chart-selector", "#chartContainer",
         "--quiet",
+        "--decision-log",
         "--results-json", results_json_path,
     ]
     result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
@@ -364,6 +365,11 @@ def main():
 
     # ── Re-run with correct tf if it differs from discovery tf ("5m") ────────
     if tf != "5m":
+        # Remove the stale 5m snapshot from the discovery run
+        safe_name = "".join(c if c.isalnum() or c in ("-", "_", " ") else "_" for c in name).strip().replace(" ", "_")
+        stale_snapshot = PROJECT_ROOT / "scenarios_out" / safe_name / "snapshot_5m.png"
+        stale_snapshot.unlink(missing_ok=True)
+
         print(f"\nRe-running with tf={tf} to generate correct snapshot...")
         write_test_scenario_yaml(sc)
         results_fd2, results_json2 = tempfile.mkstemp(suffix=".json", prefix="add_scenario_snap_")
