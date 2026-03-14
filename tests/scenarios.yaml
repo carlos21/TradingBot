@@ -190,6 +190,17 @@ scenarios:
       tolerance: 0.25
     snapshot: true
 
+  - name: "NQ - 2025-12-31"
+    pair: "NQ"
+    tf: "5m"
+    start: "2025-12-31 07:00:00Z"
+    end:   "2025-12-31 12:00:00Z"
+    lines:
+      - { price: 25699.50, at: "2025-12-31 07:00:00Z" }
+    expect:
+      none: true
+    snapshot: true
+
   - name: "NQ - 2026-01-02"
     pair: "NQ"
     tf: "5m"
