@@ -271,26 +271,9 @@ def main():
 
         lines.append({"price": price, "at": at_ts})
 
-    # ── Start / end (always on session_date, user enters only HH:MM) ─────────
-    def parse_time(time_str: str) -> str:
-        t = time_str.strip()
-        if len(t) == 5:   # HH:MM
-            t += ":00"
-        return f"{session_date} {t}Z"
-
-    while True:
-        try:
-            start_ts = parse_time(prompt(f"Start time (HH:MM)"))
-            break
-        except Exception as e:
-            print(f"  {e}")
-
-    while True:
-        try:
-            end_ts = parse_time(prompt(f"End time (HH:MM)"))
-            break
-        except Exception as e:
-            print(f"  {e}")
+    # ── Start / end (fixed defaults) ───────────────────────────────────────
+    start_ts = f"{session_date} 06:00:00Z"
+    end_ts = f"{session_date} 16:00:00Z"
 
     # ── Derive name & tf ─────────────────────────────────────────────────────
     name = derive_name(start_ts, existing_names)
