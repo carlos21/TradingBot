@@ -100,7 +100,7 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 # Server Process Logic
 # -------------------------------------------------------------------------
 
-def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False):
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False):
     if quiet:
         sys.stdout = open(os.devnull, 'w')
         import logging
@@ -116,7 +116,7 @@ def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_even
     ds = CSVDataSource(
         pair="NQ",
         filename=csv_path,
-        initial_start_time=0, 
+        initial_start_time=0,
         initial_end_time=9999999999,
         bars_per_second=bars_per_second,
     )
@@ -124,6 +124,9 @@ def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_even
     numbers = get_prod_strategy_numbers()
     candle_config = get_prod_candle_config()
     options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
+
+    if no_breakeven:
+        options.breakeven = None
 
     wiring = create_app(
         pair="NQ",
@@ -431,9 +434,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     base_url = f"http://{APP_HOST}:{args.port}"
     server_ready = Event()
 
+    no_breakeven = getattr(args, 'no_breakeven', False)
     server_proc = Process(
         target=run_test_server,
-        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet)
+        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven)
     )
     server_proc.start()
 
@@ -971,6 +975,8 @@ def main():
                     help="Generate an HTML report with monthly view in the output directory")
     ap.add_argument("--decision-log", action="store_true", default=False,
                     help="Print detailed decision log for each scenario")
+    ap.add_argument("--no-breakeven", action="store_true", default=False,
+                    help="Disable breakeven logic (SL stays at original level, never moves to entry)")
     args = ap.parse_args()
 
     yaml_path = Path(args.yaml)
