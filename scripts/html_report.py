@@ -60,7 +60,12 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
 
     Parameters match the CLI flags from run_scenarios.py.
     """
-    mode_label = "SIM" if mode == "sim" else "REAL (MNQ)"
+    if mode == "sim":
+        mode_label = "SIM"
+    elif mode == "real_cfd":
+        mode_label = "REAL (CFD)"
+    else:  # real_futures
+        mode_label = "REAL (MNQ Futures)"
 
     # ── 1. Compute per-scenario / per-trade data ──────────────────────────
     enriched = []  # list of {name, date, status, trades: [{outcome, usd, pct, r}], net_usd, net_pct}

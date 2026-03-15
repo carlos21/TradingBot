@@ -20,7 +20,10 @@
       "Bash(poetry show:*)",
       "Bash(open scenarios_out/test_cal.html)",
       "Bash(grep '^12/1[5-9]/2025\\\\|^12/2[0-2]/2025' csvs/NQ_live.csv | cut -d';' -f1 | sort -u)",
-      "Bash(grep '2025' csvs/NQ_live.csv | cut -d';' -f1 | sort -u | tail -20)"
+      "Bash(grep '2025' csvs/NQ_live.csv | cut -d';' -f1 | sort -u | tail -20)",
+      "Bash(echo:*)",
+      "Bash(./run_test_scenario.sh 2>&1 | tail -50)",
+      "Bash(git add:*)"
     ]
   }
 }

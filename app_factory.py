@@ -52,6 +52,8 @@ def create_app(
     candle_config: Optional[CandleConfig] = None,
     timeframes: Optional[List[str]] = None,
     bootstrap_existing_lines: bool = True,
+    broker_mode: str = 'futures',
+    broker_spread: float = 0.0,
 ) -> AppWiring:
     """
     Build the whole application with injected dependencies.
@@ -66,6 +68,8 @@ def create_app(
         socketio=socketio,
         session_end_time="15:00",
         session_tz="America/New_York",
+        broker_mode=broker_mode,
+        broker_spread=broker_spread,
     )
 
     # Initialize V2 Strategy with the list of timeframes

@@ -11,16 +11,21 @@ class TradeManager:
     """
 
     def __init__(self, trade_repository: TradeRepository, socketio,
-                 session_end_time: str = None, session_tz: str = None):
+                 session_end_time: str = None, session_tz: str = None,
+                 broker_mode: str = 'futures', broker_spread: float = 0.0):
         """
         :param trade_repository: SQLTradeRepository instance (must have close_trade)
         :param socketio:         flask_socketio.SocketIO instance
         :param session_end_time: "HH:MM" — close open trades at this time (e.g. "15:00")
         :param session_tz:       Timezone for session_end_time (e.g. "America/New_York")
+        :param broker_mode:      'futures' or 'cfd' - affects TP/SL hit logic
+        :param broker_spread:    Spread in points for CFD mode (e.g., 0.5)
         """
         self.open_trades = []
         self.trade_repository = trade_repository
         self.socketio         = socketio
+        self.broker_mode      = broker_mode
+        self.broker_spread    = broker_spread
 
         # Session end close config
         self._session_end_time = None
@@ -96,23 +101,39 @@ class TradeManager:
             is_buy  = ttype in ('buy', 'long')
             is_sell = ttype in ('sell', 'short')
 
+            # Adjust SL/TP levels for spread if CFD mode
+            # CFD: you sell at bid (lower) for longs, buy at ask (higher) for shorts
+            spread_adj = self.broker_spread / 2.0 if self.broker_mode == 'cfd' else 0.0
+
+            # For CFD longs: you exit (sell) at bid = nominal - half_spread
+            # For CFD shorts: you exit (buy) at ask = nominal + half_spread
+            adjusted_sl = trade['stop_loss']
+            adjusted_tp = trade['take_profit']
+            if self.broker_mode == 'cfd':
+                if is_buy:
+                    adjusted_sl = trade['stop_loss'] - spread_adj
+                    adjusted_tp = trade['take_profit'] - spread_adj
+                elif is_sell:
+                    adjusted_sl = trade['stop_loss'] + spread_adj
+                    adjusted_tp = trade['take_profit'] + spread_adj
+
             hit_sl = False
             hit_tp = False
 
             if is_buy:
-                if bar['low'] <= trade['stop_loss']:
+                if bar['low'] <= adjusted_sl:
                     hit_sl = True
-                    print(f"[TradeManager] 🛑 BUY SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= SL {trade['stop_loss']}")
-                elif bar['high'] >= trade['take_profit']:
+                    print(f"[TradeManager] 🛑 BUY SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
+                elif bar['high'] >= adjusted_tp:
                     hit_tp = True
-                    print(f"[TradeManager] 💰 BUY TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= TP {trade['take_profit']}")
-            elif is_sell: 
-                if bar['high'] >= trade['stop_loss']:
+                    print(f"[TradeManager] 💰 BUY TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
+            elif is_sell:
+                if bar['high'] >= adjusted_sl:
                     hit_sl = True
-                    print(f"[TradeManager] 🛑 SELL SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= SL {trade['stop_loss']}")
-                elif bar['low'] <= trade['take_profit']:
+                    print(f"[TradeManager] 🛑 SELL SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
+                elif bar['low'] <= adjusted_tp:
                     hit_tp = True
-                    print(f"[TradeManager] 💰 SELL TP HIT! Trade {trade['trade_id']} | Low {bar['low']} <= TP {trade['take_profit']}")
+                    print(f"[TradeManager] 💰 SELL TP HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
             
             if not hit_sl and not hit_tp:
                 continue

@@ -100,7 +100,7 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 # Server Process Logic
 # -------------------------------------------------------------------------
 
-def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False):
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0):
     if quiet:
         sys.stdout = open(os.devnull, 'w')
         import logging
@@ -137,6 +137,8 @@ def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_even
         candle_config=candle_config,
         timeframes=["3m", "5m", "15m", "30m", "1h"],
         bootstrap_existing_lines=False,
+        broker_mode=broker_mode,
+        broker_spread=broker_spread,
     )
 
     ready_event.set()
@@ -435,9 +437,14 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     server_ready = Event()
 
     no_breakeven = getattr(args, 'no_breakeven', False)
+    # Determine broker mode for trade manager
+    mode = getattr(args, 'mode', 'real_futures')
+    broker_mode = 'cfd' if mode in ('real_cfd', ) else 'futures'
+    broker_spread = getattr(args, 'cfd_spread', 0.0) if broker_mode == 'cfd' else 0.0
+
     server_proc = Process(
         target=run_test_server,
-        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven)
+        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, broker_mode, broker_spread)
     )
     server_proc.start()
 
@@ -912,11 +919,74 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     mode = getattr(args, 'mode', 'both')
     if mode in ('sim', 'both'):
         _print_results(f"SIM — ${ACCT:,.0f} account, ${RISK_USD:,.0f} fixed risk per trade", _actual_pnl_sim, _per_trade_sim)
-    if mode in ('real', 'both'):
+    if mode in ('real_futures', 'both'):
         _print_results(
-            f"REAL — MNQ micro futures, ${ACCT:,.0f} account, ~${RISK_USD:,.0f} target risk, ${FEE_PER_RT:.2f}/contract RT fees (Tradovate)",
+            f"REAL FUTURES — MNQ micro futures, ${ACCT:,.0f} account, ~${RISK_USD:,.0f} target risk, ${FEE_PER_RT:.2f}/contract RT fees (Tradovate)",
             _actual_pnl_real,
             _per_trade_real,
+        )
+    if mode in ('real_cfd', 'both'):
+        cfd_spread = getattr(args, 'cfd_spread', 0.5)
+        cfd_commission = getattr(args, 'cfd_commission', 5.0)
+
+        def _actual_pnl_cfd(r):
+            """CFD mode: accounts for spread and commission costs."""
+            trade_pairs = r.get("trade_pairs") or []
+            if not trade_pairs:
+                return None, None, None, ""
+            total_usd = 0.0
+            has_closed = False
+            detail_parts = []
+            for trade, close in trade_pairs:
+                if close is None:
+                    continue
+                entry   = trade.get("entry") or trade.get("entry_price")
+                orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+                if entry is None or orig_sl is None:
+                    continue
+                sl_pts = round(abs(entry - orig_sl), 4)
+                if sl_pts <= 0:
+                    continue
+                contracts = max(1, round(RISK_USD / (sl_pts * NQ_PV)))
+                # CFD costs: round-trip spread + commission
+                spread_cost = contracts * cfd_spread * NQ_PV
+                commission_cost = contracts * cfd_commission
+                total_cost = spread_cost + commission_cost
+                actual_r = close.get("result", 0.0)
+                if actual_r > 0:
+                    trade_usd = contracts * (actual_r * sl_pts) * NQ_PV - total_cost
+                else:
+                    trade_usd = -(contracts * sl_pts * NQ_PV) - total_cost
+                total_usd += trade_usd
+                has_closed = True
+                detail_parts.append(f"{contracts}c@{sl_pts:.0f}pt")
+            if not has_closed:
+                return None, None, None, ""
+            actual_pct = total_usd / ACCT * 100
+            extra = "  ".join(detail_parts)
+            return actual_pct, total_usd, actual_pct, extra
+
+        def _per_trade_cfd(trade, close):
+            """Per-trade CFD P&L calculation."""
+            entry   = trade.get("entry") or trade.get("entry_price")
+            orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+            if entry is None or orig_sl is None:
+                return None, None, 0.0
+            sl_pts = round(abs(entry - orig_sl), 4)
+            if sl_pts <= 0:
+                return None, None, 0.0
+            contracts = max(1, round(RISK_USD / (sl_pts * NQ_PV)))
+            spread_cost = contracts * cfd_spread * NQ_PV
+            commission_cost = contracts * cfd_commission
+            total_cost = spread_cost + commission_cost
+            actual_r = close.get("result", 0.0)
+            usd = (contracts * (actual_r * sl_pts) * NQ_PV - total_cost) if actual_r > 0 else -(contracts * sl_pts * NQ_PV) - total_cost
+            return usd, usd / ACCT * 100, actual_r
+
+        _print_results(
+            f"REAL CFD — Nasdaq CFD, ${ACCT:,.0f} account, ~${RISK_USD:,.0f} target risk, {cfd_spread}pt spread, ${cfd_commission:.2f}/lot commission",
+            _actual_pnl_cfd,
+            _per_trade_cfd,
         )
 
     if getattr(args, 'results_json', None):
@@ -931,7 +1001,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         Path(args.results_json).write_text(json.dumps(out, indent=2))
 
     if getattr(args, 'html_report', False):
-        html_mode = "real" if mode in ("real", "both") else "sim"
+        # For "both" mode, default HTML report to real_futures (the more realistic scenario)
+        html_mode = "real_futures" if mode == "both" else mode
         html_path = Path(args.outdir) / "report.html"
         generate_html_report(
             summary_results,
@@ -957,8 +1028,8 @@ def main():
     ap.add_argument("--chart-selector", default="main") 
     
     ap.add_argument("--port", type=int, default=5001)
-    ap.add_argument("--mode", choices=["sim", "real", "both"], default="real",
-                    help="Simulation mode: sim=fixed risk, real=MNQ integer contracts+fees, both=show both")
+    ap.add_argument("--mode", choices=["sim", "real_futures", "real_cfd", "both"], default="real_futures",
+                    help="Simulation mode: sim=fixed risk, real_futures=MNQ contracts+fees, real_cfd=CFD with spread+commission, both=show all")
     ap.add_argument("--risk", type=float, default=1000.0,
                     help="Fixed risk per trade in USD (default: 1000)")
     ap.add_argument("--account", type=float, default=100_000.0,
@@ -977,6 +1048,10 @@ def main():
                     help="Print detailed decision log for each scenario")
     ap.add_argument("--no-breakeven", action="store_true", default=False,
                     help="Disable breakeven logic (SL stays at original level, never moves to entry)")
+    ap.add_argument("--cfd-spread", type=float, default=0.5,
+                    help="CFD spread in points (default: 0.5 for Nasdaq)")
+    ap.add_argument("--cfd-commission", type=float, default=5.0,
+                    help="CFD commission per round-trip lot in USD (default: 5.0)")
     args = ap.parse_args()
 
     yaml_path = Path(args.yaml)
