@@ -674,6 +674,23 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         if val < 0:      return f"{RED}{BOLD}{txt}{RST}"
         return txt
 
+    def _calc_max_drawdown(balances):
+        """Calculate max drawdown (amount and %) from a list of balance values."""
+        if not balances or len(balances) < 2:
+            return 0.0, 0.0
+        peak = balances[0]
+        max_dd_usd = 0.0
+        max_dd_pct = 0.0
+        for bal in balances[1:]:
+            if bal > peak:
+                peak = bal
+            dd_usd = peak - bal
+            dd_pct = (dd_usd / peak * 100) if peak > 0 else 0.0
+            if dd_usd > max_dd_usd:
+                max_dd_usd = dd_usd
+                max_dd_pct = dd_pct
+        return max_dd_usd, max_dd_pct
+
     def _actual_pnl_sim(r):
         """$1,000 fixed risk per trade — sums across all trades in the scenario."""
         trade_pairs = r.get("trade_pairs") or []
@@ -790,8 +807,6 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         monthly = defaultdict(_new_bucket)
 
         for r in summary_results:
-            if r["status"] != "PASS":
-                continue
             date  = dtparser.parse(r["date"]).date()
             d_key = str(date)
             iso   = date.isocalendar()
@@ -889,11 +904,18 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
         total_usd_all = sum(v["usd"] for v in daily.values())
 
+        # Calculate max drawdown from equity curve
+        equity_balances = [ACCT]
+        for key in sorted(daily.keys()):
+            equity_balances.append(equity_balances[-1] + daily[key]["usd"])
+        max_dd_usd, max_dd_pct = _calc_max_drawdown(equity_balances)
+
         print(f"\n{BOLD}{CYAN}OVERALL SUMMARY — {mode_label}{RST}")
         print(f"  Trades  : {total_t}  ({GREEN}{wins}W{RST} / {RED}{losses}L{RST} / {YELLOW}{bes}BE{RST})")
         print(f"  Win Rate: {_col(winrate - 50, f'{winrate:.1f}%')}  (excl. breakevens)")
         print(f"  Max consec. wins  : {GREEN}{BOLD}{max_consec_w}{RST}")
         print(f"  Max consec. losses: {RED}{BOLD}{max_consec_l}{RST}")
+        print(f"  Max Drawdown  : {_col(-max_dd_usd, f'${-max_dd_usd:,.0f}')} ({_col(-max_dd_pct, f'{-max_dd_pct:.2f}%')})")
         print(f"  Net P&L : {_col(total_usd_all, f'${total_usd_all:+,.0f}')}")
         print()
 

@@ -23,7 +23,6 @@
       "Bash(grep '2025' csvs/NQ_live.csv | cut -d';' -f1 | sort -u | tail -20)",
       "Bash(echo:*)",
       "Bash(./run_test_scenario.sh 2>&1 | tail -50)",
-      "Bash(git add:*)",
       "Bash(./run_test_scenario.sh --rr 2.0 2>&1 | tail -20)",
       "Bash(./run_test_scenario.sh 2>&1 | grep \"TP:\")"
     ]

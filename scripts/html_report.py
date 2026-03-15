@@ -103,8 +103,6 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         m_usd = 0.0
         m_pct = 0.0
         for sc in monthly[mk]:
-            if sc["status"] != "PASS":
-                continue
             for t in sc["trades"]:
                 if t["outcome"] == "open":
                     continue
@@ -148,13 +146,29 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         max_cw = max(max_cw, cw)
         max_cl = max(max_cl, cl)
 
+    # ── 4b. Max drawdown calculation ───────────────────────────────────
+    def _calc_max_dd(balances):
+        """Calculate max drawdown from equity curve."""
+        if not balances or len(balances) < 2:
+            return 0.0, 0.0
+        peak = balances[0]
+        max_dd_usd = 0.0
+        max_dd_pct = 0.0
+        for bal in balances[1:]:
+            if bal > peak:
+                peak = bal
+            dd_usd = peak - bal
+            dd_pct = (dd_usd / peak * 100) if peak > 0 else 0.0
+            if dd_usd > max_dd_usd:
+                max_dd_usd = dd_usd
+                max_dd_pct = dd_pct
+        return max_dd_usd, max_dd_pct
+
     # ── 5. Equity curve data points (cumulative by date) ──────────────────
     equity_points = [{"date": "Start", "balance": account}]
     running = account
     for mk in month_keys:
         for sc in sorted(monthly[mk], key=lambda s: s["date"]):
-            if sc["status"] != "PASS":
-                continue
             sc_usd = sum(t["usd"] for t in sc["trades"] if t["outcome"] != "open")
             if sc_usd != 0:
                 running += sc_usd
@@ -162,6 +176,10 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                     "date": sc["date"].strftime("%m/%d"),
                     "balance": running,
                 })
+
+    # Calculate max drawdown from equity curve
+    equity_balances = [p["balance"] for p in equity_points]
+    max_dd_usd, max_dd_pct = _calc_max_dd(equity_balances)
 
     # ── 6. Build HTML ─────────────────────────────────────────────────────
     def outcome_badge(outcome):
@@ -828,6 +846,14 @@ footer {{
             <div class="stat-box">
                 <div class="label">Max Consec W / L</div>
                 <div class="value"><span class="positive">{max_cw}</span> / <span class="negative">{max_cl}</span></div>
+            </div>
+            <div class="stat-box">
+                <div class="label">Max Drawdown</div>
+                <div class="value negative">${max_dd_usd:,.0f}</div>
+            </div>
+            <div class="stat-box">
+                <div class="label">Max Drawdown %</div>
+                <div class="value negative">{max_dd_pct:.2f}%</div>
             </div>
         </div>
     </div>
