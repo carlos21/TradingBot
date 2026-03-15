@@ -28,6 +28,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         candle_config: Optional[CandleConfig] = None,
         sl_levels: Optional[List[float]] = None,
         min_cross_depth: float = 0.0,
+        rr_ratio: float = 4.0,
     ):
         self.timeframes = timeframes or ["5m"]
         
@@ -54,6 +55,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             htf_fetcher=htf_fetcher,
             sl_levels=sl_levels,
             min_cross_depth=min_cross_depth,
+            rr_ratio=rr_ratio,
         )
 
         self.candle_config = candle_config

@@ -16,6 +16,7 @@ class StrategyNumbers:
     # the smallest level >= distance-to-extreme, falling back to the largest.
     sl_levels: Optional[List[float]] = None
     min_cross_depth: float = 0.0
+    rr_ratio: float = 4.0  # Risk:Reward ratio for TP calculation
 
 @dataclass
 class CandleConfig:

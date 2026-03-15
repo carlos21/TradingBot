@@ -100,7 +100,7 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 # Server Process Logic
 # -------------------------------------------------------------------------
 
-def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0):
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 4.0):
     if quiet:
         sys.stdout = open(os.devnull, 'w')
         import logging
@@ -121,7 +121,7 @@ def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_even
         bars_per_second=bars_per_second,
     )
 
-    numbers = get_prod_strategy_numbers()
+    numbers = get_prod_strategy_numbers(rr_ratio=rr_ratio)
     candle_config = get_prod_candle_config()
     options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
 
@@ -444,7 +444,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
     server_proc = Process(
         target=run_test_server,
-        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, broker_mode, broker_spread)
+        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, broker_mode, broker_spread, args.rr)
     )
     server_proc.start()
 
@@ -1052,6 +1052,8 @@ def main():
                     help="CFD spread in points (default: 0.5 for Nasdaq)")
     ap.add_argument("--cfd-commission", type=float, default=5.0,
                     help="CFD commission per round-trip lot in USD (default: 5.0)")
+    ap.add_argument("--rr", type=float, default=4.0,
+                    help="Risk:Reward ratio for TP calculation (default: 4.0)")
     args = ap.parse_args()
 
     yaml_path = Path(args.yaml)

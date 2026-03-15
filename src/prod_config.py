@@ -13,13 +13,14 @@ from src.strategies.triggers import (
 )
 import os
 
-def get_prod_strategy_numbers() -> StrategyNumbers:
+def get_prod_strategy_numbers(rr_ratio: float = 4.0) -> StrategyNumbers:
     return StrategyNumbers(
         min_stop_loss=10.0,
         max_bounce=90.0,
         extra_sl_space=0.0,
         sl_levels=[15.0, 20.0, 30.0, 40.0],
         min_cross_depth=5.0,
+        rr_ratio=rr_ratio,
     )
 
 def get_prod_candle_config() -> CandleConfig:

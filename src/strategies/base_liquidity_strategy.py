@@ -70,10 +70,12 @@ class BaseLiquidityStrategy:
         htf_fetcher: Optional[Callable[..., Optional[dict]]] = None,
         sl_levels: Optional[List[float]] = None,
         min_cross_depth: float = 0.0,
+        rr_ratio: float = 4.0,
     ):
         self.min_stop_loss = float(min_stop_loss)
         self.max_bounce    = float(max_bounce)
         self.min_cross_depth = float(min_cross_depth)
+        self.rr_ratio = float(rr_ratio)
         self.socketio      = socketio
         self.line_repository  = line_repository
         self.trade_repository = trade_repository
@@ -576,11 +578,11 @@ class BaseLiquidityStrategy:
 
         if ctx.direction == "long":
             sl = entry - eff_risk
-            tp = entry + 4 * eff_risk
+            tp = entry + self.rr_ratio * eff_risk
             trade = self._make_trade_dict(ctx.bar, "long", entry, sl, tp, eff_risk)
         else:
             sl = entry + eff_risk
-            tp = entry - 4 * eff_risk
+            tp = entry - self.rr_ratio * eff_risk
             trade = self._make_trade_dict(ctx.bar, "short", entry, sl, tp, eff_risk)
         trade["line_level"] = ctx.level
         return trade
