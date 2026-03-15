@@ -135,6 +135,11 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     net_usd = sum(a["usd"] for a in month_agg.values())
     net_pct = sum(a["pct"] for a in month_agg.values())
 
+    # Calculate monthly average profit
+    num_months = len(month_agg) if month_agg else 1
+    avg_monthly_usd = net_usd / num_months if num_months > 0 else 0.0
+    avg_monthly_pct = avg_monthly_usd / account * 100 if account > 0 else 0.0
+
     max_cw = max_cl = cw = cl = 0
     for o in outcomes:
         if o == "win":
@@ -854,6 +859,10 @@ footer {{
             <div class="stat-box">
                 <div class="label">Max Drawdown %</div>
                 <div class="value negative">{max_dd_pct:.2f}%</div>
+            </div>
+            <div class="stat-box">
+                <div class="label">Monthly Avg</div>
+                <div class="value {pnl_class(avg_monthly_usd)}">{fmt_usd(avg_monthly_usd)}</div>
             </div>
         </div>
     </div>

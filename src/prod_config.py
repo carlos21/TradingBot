@@ -59,6 +59,6 @@ def get_prod_strategy_options(max_bounce: float, min_cross_depth: float = 0.0) -
             trigger_rr=2.0,
             move_to_rr=0.05
         ),
-        reentry_after_sl=False,      # set True to re-enter if price comes back after a SL hit
+        reentry_after_sl=True,      # set True to re-enter if price comes back after a SL hit
         reentry_threshold=90.0,      # cancel re-entry if price goes this many pts past the line
     )

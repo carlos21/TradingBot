@@ -910,6 +910,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             equity_balances.append(equity_balances[-1] + daily[key]["usd"])
         max_dd_usd, max_dd_pct = _calc_max_drawdown(equity_balances)
 
+        # Calculate monthly average profit
+        num_months = len(monthly) if monthly else 1
+        avg_monthly_pnl = total_usd_all / num_months if num_months > 0 else 0.0
+        avg_monthly_pct = avg_monthly_pnl / ACCT * 100
+
         print(f"\n{BOLD}{CYAN}OVERALL SUMMARY — {mode_label}{RST}")
         print(f"  Trades  : {total_t}  ({GREEN}{wins}W{RST} / {RED}{losses}L{RST} / {YELLOW}{bes}BE{RST})")
         print(f"  Win Rate: {_col(winrate - 50, f'{winrate:.1f}%')}  (excl. breakevens)")
@@ -917,6 +922,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         print(f"  Max consec. losses: {RED}{BOLD}{max_consec_l}{RST}")
         print(f"  Max Drawdown  : {_col(-max_dd_usd, f'${-max_dd_usd:,.0f}')} ({_col(-max_dd_pct, f'{-max_dd_pct:.2f}%')})")
         print(f"  Net P&L : {_col(total_usd_all, f'${total_usd_all:+,.0f}')}")
+        print(f"  Monthly Avg : {_col(avg_monthly_pnl, f'${avg_monthly_pnl:+,.0f}')} ({_col(avg_monthly_pct, f'{avg_monthly_pct:+.2f}%')})")
         print()
 
     def _per_trade_sim(trade, close):

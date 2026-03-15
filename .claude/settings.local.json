@@ -24,7 +24,8 @@
       "Bash(echo:*)",
       "Bash(./run_test_scenario.sh 2>&1 | tail -50)",
       "Bash(./run_test_scenario.sh --rr 2.0 2>&1 | tail -20)",
-      "Bash(./run_test_scenario.sh 2>&1 | grep \"TP:\")"
+      "Bash(./run_test_scenario.sh 2>&1 | grep \"TP:\")",
+      "Bash(./run_test_scenario.sh --html-report 2>&1 | grep -A 20 \"OVERALL SUMMARY\" | head -25)"
     ]
   }
 }
