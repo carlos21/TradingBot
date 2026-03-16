@@ -42,10 +42,12 @@ class BarsLoader:
         self._default_emit_delay = self._emit_delay
         self._fast_jump_mode  = False
         self._last_played_ts  = 0
+        self._last_bar_close  = 0
         self._step_mode       = False
 
     def reset(self):
         self._last_played_ts = 0
+        self._last_bar_close = 0
         self._1m_buffer = []
         self._current_group_start = None
         self._from_time = 0
@@ -140,18 +142,24 @@ class BarsLoader:
     def _handle_message(self, msg: dict):
         if isinstance(msg, dict) and msg.get('_end'):
             self.streaming = False
+            print(f"[BarsLoader] _END message received! last_bar_close={self._last_bar_close}, last_played_ts={self._last_played_ts}")
+            print(f"[BarsLoader] stream_end_callback exists: {self.stream_end_callback is not None}")
             if self.stream_end_callback and self._last_played_ts > 0:
-                self.stream_end_callback(msg.get('close', 0), self._last_played_ts)
+                print(f"[BarsLoader] Calling stream_end_callback NOW!")
+                self.stream_end_callback(self._last_bar_close, self._last_played_ts)
+            else:
+                print(f"[BarsLoader] NOT calling callback: callback={self.stream_end_callback is not None}, last_ts={self._last_played_ts}")
             self.socketio.emit('stream_status', {'playing': False})
             self.socketio.emit('stream_end', {'ok': True})
             return
-    
+
         if self._stop_event.is_set(): return
-        
+
         if self.bar_callback: self.bar_callback(msg)
 
         if 'open' in msg and 'high' in msg:
             self._last_played_ts = msg['time']
+            self._last_bar_close = msg.get('close', 0)
             self._process_bar(msg)
         elif 'price' in msg:
             self._last_played_ts = msg['time']
@@ -164,8 +172,14 @@ class BarsLoader:
                 self.data_source._stop_event.set()
 
             self.streaming = False
-            if self.stream_end_callback and 'close' in msg:
-                self.stream_end_callback(msg['close'], msg['time'])
+            print(f"[BarsLoader] STOP_AT reached! msg_time={msg['time']}, stop_at={self._stop_at}")
+            print(f"[BarsLoader] stream_end_callback exists: {self.stream_end_callback is not None}")
+            if self.stream_end_callback:
+                close_price = msg.get('close', self._last_bar_close)
+                print(f"[BarsLoader] Calling stream_end_callback with close={close_price}, time={msg['time']}")
+                self.stream_end_callback(close_price, msg['time'])
+            else:
+                print(f"[BarsLoader] NO callback set, trades will remain open")
             self.socketio.emit('stream_status', {'playing': False})
             self.socketio.emit('stream_end', {'reason': 'day_end', 'stop_at': self._stop_at})
             return

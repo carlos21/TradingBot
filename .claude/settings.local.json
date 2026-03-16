@@ -40,7 +40,14 @@
       "Bash(./run_test_scenario.sh 2>&1 | tail -40 | head -30)",
       "Bash(./run_test_scenario.sh 2>&1 | tail -35 | head -20)",
       "Bash(./run_test_scenario.sh 2>&1 | tail -10)",
-      "Bash(./run_test_scenario.sh 2>&1 | tail -15)"
+      "Bash(./run_test_scenario.sh 2>&1 | tail -15)",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -A 5 -B 5 \"STREAM\\\\|_END\\\\|CALLBACK\\\\|Session\\\\|SP\" | head -100)",
+      "Bash(timeout:*)",
+      "Bash(./run_test_scenario.sh 2>&1 | tee test_output.log)",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -E \"\\(STREAM END|Closing trade|DB Updated|🎬\\)\" | head -20)",
+      "Bash(./run_test_scenario.sh 2>&1 | tail -60)",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -E \"RESULT|SP|Trades  :\")",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -E \"RESULT|Trades  :|B/E|SP\")"
     ]
   }
 }

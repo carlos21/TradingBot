@@ -654,6 +654,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     GREEN  = '\033[92m'; RED    = '\033[91m'
     YELLOW = '\033[93m'; GRAY   = '\033[90m'
     CYAN   = '\033[96m'; WHITE  = '\033[97m'
+    BLUE   = '\033[94m'
     ACCT         = args.account   # simulated starting balance (configurable via --account)
     RISK_USD     = args.risk      # fixed risk per trade in USD (configurable via --risk)
     NQ_PV        = 2.0       # $ per point, MNQ micro contract
@@ -772,6 +773,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 if result_type == "SP":
                     trade_labels.append(f"{BLUE}{BOLD}SP{RST}")
                     continue
+                if result_type == "BE":
+                    trade_labels.append(f"{YELLOW}{BOLD}B/E{RST}")
+                    continue
                 r_val = close.get("result", 0.0)
                 if r_val > 0 and r_val < BE_THRESHOLD:
                     trade_labels.append(f"{YELLOW}{BOLD}B/E{RST}")
@@ -822,15 +826,24 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         bucket[key]["open"] += 1
                     continue
                 result_type = close.get("result_type", None)
+                t_usd, t_pct, actual_r = per_trade_fn(trade, close)
+
                 if result_type == "SP":
-                    t_usd, t_pct, actual_r = per_trade_fn(trade, close)
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
                         if t_usd is not None:
                             bucket[key]["usd"] += t_usd
                             bucket[key]["pct"] += t_pct
                         bucket[key]["sp"] += 1
                     continue
-                t_usd, t_pct, actual_r = per_trade_fn(trade, close)
+
+                if result_type == "BE":
+                    for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                        if t_usd is not None:
+                            bucket[key]["usd"] += t_usd
+                            bucket[key]["pct"] += t_pct
+                        bucket[key]["be"] += 1
+                    continue
+
                 is_be  = actual_r > 0 and actual_r < BE_THRESHOLD
                 is_win = actual_r >= BE_THRESHOLD
                 for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
@@ -895,6 +908,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 result_type = close.get("result_type", None)
                 if result_type == "SP":
                     outcomes.append("sp")
+                elif result_type == "BE":
+                    outcomes.append("be")
                 else:
                     actual_r = close.get("result", 0.0)
                     is_be    = actual_r > 0 and actual_r < BE_THRESHOLD

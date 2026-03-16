@@ -179,7 +179,8 @@ class TradeManager:
                 'type':       trade['type'],
                 'exit_price': exit_price,
                 'exit_time':  bar['time'],
-                'result':     result
+                'result':     result,
+                'result_type': result_type
             })
 
         # After SL/TP checks, close any remaining open trades if session has ended
@@ -214,7 +215,10 @@ class TradeManager:
 
             result = pnl_points / risk
 
-            print(f"[TradeManager] 🕐 SESSION END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: SP)")
+            # Determine if this is BE or SP: if result is <= 0.1% profit, it's BE
+            result_type = "BE" if result <= 0.001 else "SP"
+
+            print(f"[TradeManager] 🕐 SESSION END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: {result_type})")
 
             try:
                 self.trade_repository.close_trade(
@@ -222,7 +226,7 @@ class TradeManager:
                     exit_price=exit_price,
                     exit_time=exit_time,
                     result=result,
-                    result_type="SP"
+                    result_type=result_type
                 )
             except Exception as e:
                 print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
@@ -235,7 +239,8 @@ class TradeManager:
                 'type':       trade['type'],
                 'exit_price': exit_price,
                 'exit_time':  bar['time'],
-                'result':     result
+                'result':     result,
+                'result_type': result_type
             })
 
     def open_trade(self, pair: str, trade_type: str, entry_price: float,
@@ -333,7 +338,8 @@ class TradeManager:
             'type':      trade['type'],
             'exit_price':exit_price,
             'exit_time': exit_time,
-            'result':    result
+            'result':    result,
+            'result_type': None
         }
         self.socketio.emit('trade_close', payload)
 
@@ -344,6 +350,8 @@ class TradeManager:
         Close any remaining open trades at stream end (end of day/replay).
         Uses the final bar's close price and time. Marks with result_type="SP".
         """
+        print(f"[TradeManager] 🎬 STREAM END CALLBACK FIRED! close_price={final_close_price}, time={final_time}")
+        print(f"[TradeManager] Open trades count: {len(self.open_trades)}")
         for trade in list(self.open_trades):
             exit_price = final_close_price
             exit_time = datetime.fromtimestamp(final_time, tz=ZoneInfo('UTC'))
@@ -360,7 +368,10 @@ class TradeManager:
 
             result = pnl_points / risk
 
-            print(f"[TradeManager] 🎬 STREAM END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: SP)")
+            # Determine if this is BE or SP: if result is <= 0.1% profit, it's BE
+            result_type = "BE" if result <= 0.001 else "SP"
+
+            print(f"[TradeManager] 🎬 STREAM END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: {result_type})")
 
             try:
                 self.trade_repository.close_trade(
@@ -368,7 +379,7 @@ class TradeManager:
                     exit_price=exit_price,
                     exit_time=exit_time,
                     result=result,
-                    result_type="SP"
+                    result_type=result_type
                 )
             except Exception as e:
                 print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
@@ -381,7 +392,8 @@ class TradeManager:
                 'type':       trade['type'],
                 'exit_price': exit_price,
                 'exit_time':  final_time,
-                'result':     result
+                'result':     result,
+                'result_type': result_type
             })
 
     def update_local_trade_sl(self, trade_id: str, new_sl: float):

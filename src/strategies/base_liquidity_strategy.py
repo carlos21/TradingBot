@@ -621,6 +621,23 @@ class BaseLiquidityStrategy:
         )
         trade["trade_id"] = td.trade_id
         self.open_trades.append(trade)
+
+        # Also register with trade_manager so it can track SL/TP hits
+        if self.trade_manager:
+            tm_trade = {
+                'trade_id':    trade["trade_id"],
+                'pair':        trade["pair"],
+                'type':        trade["type"],
+                'entry':       trade["entry"],
+                'stop_loss':   trade["stop_loss"],
+                'take_profit': trade["take_profit"],
+                'risk':        trade["risk"],
+                'entry_time':  trade["entry_time"],
+                'status':      'open'
+            }
+            self.trade_manager.open_trades.append(tm_trade)
+            self.trade_manager._monitored_trades.add(trade["trade_id"])
+
         self.socketio.emit("trade_open", {**trade})
 
     def _store_and_emit_close(self, trade: Dict[str, Any]):

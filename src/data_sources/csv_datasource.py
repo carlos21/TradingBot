@@ -177,20 +177,16 @@ class CSVDataSource(CombinedDataSource):
         return self._aggregate_whole_history_from_list(source, timeframe)
 
     def subscribe(self, callback, from_time=0):
-        print(f"[CSV_DS] subscribe() start → from_time={from_time}, total_bars={len(self._bars)}")
-        
         # 1. Truncate _played_bars to remove any history AFTER from_time
         #    This prevents duplicates when seeking back or resuming.
         self._played_bars = [b for b in self._played_bars if b['time'] < from_time]
-        print(f"[CSV_DS] Truncated _played_bars to {len(self._played_bars)} items (before {from_time})")
 
         # 2. Find start index in the master list
         start_idx = next((i for i,b in enumerate(self._bars) if b['time'] >= from_time), None)
 
         if start_idx is not None:
-            print(f"[CSV_DS] first to play idx={start_idx}, ts={self._bars[start_idx]['time']}")
+            pass
         else:
-            print("[CSV_DS] no bars to play after from_time")
             # If we are at the end, just return
             try:
                 callback({'_end': True})
@@ -201,23 +197,23 @@ class CSVDataSource(CombinedDataSource):
         # 3. Stream bars
         for idx in range(start_idx, len(self._bars)):
             if self._stop_event.is_set():
-                print("[CSV_DS] saw stop_event, breaking")
                 break
-            
+
             bar = self._bars[idx]
-            
+
             # Append to history
             self._played_bars.append(bar)
-            
+
             # Emit
             callback(bar)
-        
-        # End of stream
-        if not self._stop_event.is_set():
-            try:
-                callback({'_end': True})
-            except Exception:
-                pass
+
+        # End of stream - send _end message regardless of stop event
+        # (the stop_event is used to break out of the loop, but we still need to notify
+        # the listener that streaming is complete)
+        try:
+            callback({'_end': True})
+        except Exception:
+            pass
 
     def set_timeframe(self, tf: str):
         t_logger.debug(f"set_timeframe called → tf={tf}")
