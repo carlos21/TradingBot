@@ -39,7 +39,7 @@ def write_discovery_yaml(scenarios: list, path: Path):
     path.write_text("".join(lines))
 
 
-def run_all(yaml_path: str, results_json: str) -> bool:
+def run_all(yaml_path: str, results_json: str, extra_args: list = None) -> bool:
     cmd = [
         "poetry", "run", "python", "scripts/run_scenarios.py",
         "--yaml", yaml_path,
@@ -51,6 +51,8 @@ def run_all(yaml_path: str, results_json: str) -> bool:
         "--quiet",
         "--results-json", results_json,
     ]
+    if extra_args:
+        cmd.extend(extra_args)
     result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
     return result.returncode == 0
 
@@ -70,6 +72,9 @@ def _expect_changed(old: dict, new: dict) -> bool:
 
 
 def main():
+    # Extract arguments to pass to run_scenarios.py (skip script name and any fix_all-specific args)
+    extra_args = [arg for arg in sys.argv[1:] if not arg.startswith("--fix")]
+
     yaml_doc = load_scenarios_yaml()
     scenarios = yaml_doc.get("scenarios", [])
     if not scenarios:
@@ -85,7 +90,7 @@ def main():
 
     try:
         write_discovery_yaml(scenarios, Path(discovery_yaml))
-        ok = run_all(discovery_yaml, results_json)
+        ok = run_all(discovery_yaml, results_json, extra_args)
         if not ok:
             print("⚠️  Runner exited with non-zero status — results may be partial.")
 
