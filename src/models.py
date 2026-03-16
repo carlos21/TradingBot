@@ -39,6 +39,7 @@ class TradeData:
     exit_price: Optional[float]
     exit_time: Optional[datetime]
     result: Optional[float]       # e.g. PnL or +1/–1 flag
+    result_type: Optional[str]    # "SL", "TP", or "SP"
     params: Optional[Dict[str, Any]]
     created_at: datetime
 
@@ -55,6 +56,7 @@ class TradeData:
             self.exit_price,
             self.exit_time,
             self.result,
+            self.result_type,
             # Note: you can choose whether to include params in the hash
             self.created_at
         ))
@@ -74,6 +76,7 @@ class TradeData:
             self.exit_price   == other.exit_price and
             self.exit_time    == other.exit_time and
             self.result       == other.result and
+            self.result_type  == other.result_type and
             self.params       == other.params and
             self.created_at   == other.created_at
         )

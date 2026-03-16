@@ -96,10 +96,14 @@ def create_app(
         trade_manager.handle_new_1m_bar(bar)
         tstrategy.on_raw_bar(bar)
 
+    def stream_end_callback(close_price: float, final_time: float):
+        trade_manager.close_remaining_trades_at_stream_end(close_price, final_time)
+
     loader = BarsLoader(
         data_source=data_source,
         socketio=socketio,
-        bar_callback=combined_bar_callback
+        bar_callback=combined_bar_callback,
+        stream_end_callback=stream_end_callback
     )
 
     lines_controller  = LinesController(repos.lines, loader, tstrategy)

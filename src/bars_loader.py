@@ -17,11 +17,13 @@ class BarsLoader:
         data_source: CombinedDataSource,
         socketio: SocketIO,
         bar_callback: Callable[[dict], None] = None,
+        stream_end_callback: Callable[[float, float], None] = None,
         bars_per_second: float = 10.0
     ):
         self.data_source     = data_source
         self.socketio        = socketio
         self.bar_callback    = bar_callback
+        self.stream_end_callback = stream_end_callback
         self.bars_per_second = bars_per_second
         self._emit_delay     = 1.0 / bars_per_second
 
@@ -138,6 +140,8 @@ class BarsLoader:
     def _handle_message(self, msg: dict):
         if isinstance(msg, dict) and msg.get('_end'):
             self.streaming = False
+            if self.stream_end_callback and self._last_played_ts > 0:
+                self.stream_end_callback(msg.get('close', 0), self._last_played_ts)
             self.socketio.emit('stream_status', {'playing': False})
             self.socketio.emit('stream_end', {'ok': True})
             return
@@ -160,6 +164,8 @@ class BarsLoader:
                 self.data_source._stop_event.set()
 
             self.streaming = False
+            if self.stream_end_callback and 'close' in msg:
+                self.stream_end_callback(msg['close'], msg['time'])
             self.socketio.emit('stream_status', {'playing': False})
             self.socketio.emit('stream_end', {'reason': 'day_end', 'stop_at': self._stop_at})
             return

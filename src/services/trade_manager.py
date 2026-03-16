@@ -134,13 +134,14 @@ class TradeManager:
                 elif bar['low'] <= adjusted_tp:
                     hit_tp = True
                     print(f"[TradeManager] 💰 SELL TP HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
-            
+
             if not hit_sl and not hit_tp:
                 continue
 
             # determine exit
             exit_price = trade['stop_loss'] if hit_sl else trade['take_profit']
             exit_time  = datetime.fromtimestamp(bar['time'], tz=ZoneInfo('UTC'))
+            result_type = "SL" if hit_sl else "TP"
 
             # calculate P&L (R-Multiple)
             risk = trade.get('risk', 0)
@@ -150,10 +151,10 @@ class TradeManager:
                 pnl_points = exit_price - trade['entry']
             else:
                 pnl_points = trade['entry'] - exit_price
-            
+
             result = pnl_points / risk
 
-            print(f"[TradeManager] 📉 Closing trade {trade['trade_id']} (Result: {result:.2f}R) at {bar['time']}")
+            print(f"[TradeManager] 📉 Closing trade {trade['trade_id']} (Result: {result:.2f}R, Type: {result_type}) at {bar['time']}")
 
             try:
                 # persist the close
@@ -161,7 +162,8 @@ class TradeManager:
                     trade_id   = trade['trade_id'],
                     exit_price = exit_price,
                     exit_time  = exit_time,
-                    result     = result
+                    result     = result,
+                    result_type = result_type
                 )
                 print(f"[TradeManager] 💾 DB Updated for Trade {trade['trade_id']} (Closed)")
             except Exception as e:
@@ -212,14 +214,15 @@ class TradeManager:
 
             result = pnl_points / risk
 
-            print(f"[TradeManager] 🕐 SESSION END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R)")
+            print(f"[TradeManager] 🕐 SESSION END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: SP)")
 
             try:
                 self.trade_repository.close_trade(
                     trade_id=trade['trade_id'],
                     exit_price=exit_price,
                     exit_time=exit_time,
-                    result=result
+                    result=result,
+                    result_type="SP"
                 )
             except Exception as e:
                 print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
@@ -282,7 +285,7 @@ class TradeManager:
             (t for t in self.open_trades if t['trade_id'] == trade_id),
             None
         )
-        
+
         # If not in memory, try to fetch from DB to calculate PnL, or just close it blindly
         if not trade:
             print(f"[TradeManager] ⚠️ Trade {trade_id} not in memory, closing in DB directly.")
@@ -291,7 +294,7 @@ class TradeManager:
                 trade_id=trade_id,
                 exit_price=exit_price,
                 exit_time=datetime.fromtimestamp(exit_time, tz=timezone.utc),
-                result=0.0 
+                result=0.0
             )
             return {
                 'trade_id': trade_id,
@@ -299,7 +302,7 @@ class TradeManager:
                 'result': 0.0
             }
 
-        
+
         # calculate P&L (R-Multiple)
         risk = trade.get('risk', 0)
         if risk <= 0: risk = 1.0
@@ -308,7 +311,7 @@ class TradeManager:
             pnl_points = exit_price - trade['entry']
         else:
             pnl_points = trade['entry'] - exit_price
-            
+
         result = pnl_points / risk
 
         # persist close
@@ -316,7 +319,8 @@ class TradeManager:
             trade_id=trade_id,
             exit_price=exit_price,
             exit_time=datetime.fromtimestamp(exit_time, tz=timezone.utc),
-            result=result
+            result=result,
+            result_type=None
         )
         # remove from in-memory
         if trade in self.open_trades:
@@ -335,6 +339,51 @@ class TradeManager:
 
         return payload
     
+    def close_remaining_trades_at_stream_end(self, final_close_price: float, final_time: float):
+        """
+        Close any remaining open trades at stream end (end of day/replay).
+        Uses the final bar's close price and time. Marks with result_type="SP".
+        """
+        for trade in list(self.open_trades):
+            exit_price = final_close_price
+            exit_time = datetime.fromtimestamp(final_time, tz=ZoneInfo('UTC'))
+
+            risk = trade.get('risk', 0)
+            if risk <= 0:
+                risk = 1.0
+
+            is_buy = trade['type'] in ('buy', 'long')
+            if is_buy:
+                pnl_points = exit_price - trade['entry']
+            else:
+                pnl_points = trade['entry'] - exit_price
+
+            result = pnl_points / risk
+
+            print(f"[TradeManager] 🎬 STREAM END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: SP)")
+
+            try:
+                self.trade_repository.close_trade(
+                    trade_id=trade['trade_id'],
+                    exit_price=exit_price,
+                    exit_time=exit_time,
+                    result=result,
+                    result_type="SP"
+                )
+            except Exception as e:
+                print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
+
+            self.open_trades.remove(trade)
+
+            self.socketio.emit('trade_close', {
+                'trade_id':   trade['trade_id'],
+                'pair':       trade['pair'],
+                'type':       trade['type'],
+                'exit_price': exit_price,
+                'exit_time':  final_time,
+                'result':     result
+            })
+
     def update_local_trade_sl(self, trade_id: str, new_sl: float):
         """
         Update the SL of an in-memory trade so the exit logic respects the new level.

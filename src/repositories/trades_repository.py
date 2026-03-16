@@ -41,7 +41,8 @@ class TradeRepository(ABC):
         trade_id: str,
         exit_price: float,
         exit_time: datetime,
-        result: float
+        result: float,
+        result_type: Optional[str] = None
     ) -> TradeData:
         """Mark a trade as closed, recording exit details."""
         pass
@@ -71,6 +72,7 @@ class SQLTradeRepository(TradeRepository):
             exit_price=t.exit_price,
             exit_time=self._ensure_utc(t.exit_time),
             result=t.result,
+            result_type=t.result_type,
             params=t.params,
             created_at=self._ensure_utc(t.created_at),
         )
@@ -142,7 +144,8 @@ class SQLTradeRepository(TradeRepository):
         trade_id: str,
         exit_price: float,
         exit_time: datetime,
-        result: float
+        result: float,
+        result_type: Optional[str] = None
     ) -> TradeData:
         with get_db_session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
@@ -152,6 +155,7 @@ class SQLTradeRepository(TradeRepository):
             t.exit_price = exit_price
             t.exit_time = exit_time
             t.result = result
+            t.result_type = result_type
             try:
                 db.commit()
                 db.refresh(t)

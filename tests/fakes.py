@@ -96,12 +96,13 @@ class FakeTradeRepository:
                 t['stop_loss'] = new_stop_loss
                 return
     
-    def close_trade(self, trade_id, exit_price, exit_time, result):
+    def close_trade(self, trade_id, exit_price, exit_time, result, result_type=None):
         self.closed.append({
             "trade_id": trade_id,
             "exit_price": exit_price,
             "exit_time": exit_time,
-            "result": result
+            "result": result,
+            "result_type": result_type
         })
 
     def list_trades(self, pair: str) -> List[TradeData]:
@@ -111,11 +112,12 @@ class FakeTradeRepository:
                 continue
             
             closed_info = next((c for c in self.closed if c['trade_id'] == t['trade_id']), None)
-            
+
             exit_price = closed_info['exit_price'] if closed_info else None
             exit_time  = closed_info['exit_time']  if closed_info else None
             result     = closed_info['result']     if closed_info else None
-            
+            result_type = closed_info.get('result_type') if closed_info else None
+
             results.append(TradeData(
                 trade_id=t['trade_id'],
                 pair=t['pair'],
@@ -128,6 +130,7 @@ class FakeTradeRepository:
                 exit_price=exit_price,
                 exit_time=exit_time,
                 result=result,
+                result_type=result_type,
                 params=t.get('params'),
                 created_at=datetime.utcnow()
             ))

@@ -761,12 +761,16 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         for r in summary_results:
             actual_pct, actual_usd, actual_acct_pct, extra = pnl_fn(r)
 
-            # Build per-trade result labels (W/L/B/E per trade)
+            # Build per-trade result labels (W/L/B/E/SP per trade)
             trade_pairs = r.get("trade_pairs") or []
             trade_labels = []
             for trade, close in trade_pairs:
                 if close is None:
                     trade_labels.append(f"{YELLOW}OPEN?{RST}")
+                    continue
+                result_type = close.get("result_type", None)
+                if result_type == "SP":
+                    trade_labels.append(f"{BLUE}{BOLD}SP{RST}")
                     continue
                 r_val = close.get("result", 0.0)
                 if r_val > 0 and r_val < BE_THRESHOLD:
@@ -800,7 +804,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
         # ── Aggregate by day / week / month (per individual trade) ─────────────
         def _new_bucket():
-            return {"usd": 0.0, "pct": 0.0, "wins": 0, "losses": 0, "be": 0, "open": 0}
+            return {"usd": 0.0, "pct": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0}
 
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
@@ -816,6 +820,15 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 if close is None:
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
                         bucket[key]["open"] += 1
+                    continue
+                result_type = close.get("result_type", None)
+                if result_type == "SP":
+                    t_usd, t_pct, actual_r = per_trade_fn(trade, close)
+                    for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                        if t_usd is not None:
+                            bucket[key]["usd"] += t_usd
+                            bucket[key]["pct"] += t_pct
+                        bucket[key]["sp"] += 1
                     continue
                 t_usd, t_pct, actual_r = per_trade_fn(trade, close)
                 is_be  = actual_r > 0 and actual_r < BE_THRESHOLD
@@ -845,6 +858,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 if v["wins"]:    parts.append(f"{GREEN}{BOLD}{v['wins']}W{RST}")
                 if v["losses"]:  parts.append(f"{RED}{BOLD}{v['losses']}L{RST}")
                 if v["be"]:      parts.append(f"{YELLOW}{v['be']}B{RST}")
+                if v["sp"]:      parts.append(f"{BLUE}{v['sp']}SP{RST}")
                 wl_str  = _center("/".join(parts) if parts else f"{GRAY}-{RST}", WL_W)
                 pct_str = _col(v["pct"], f"{v['pct']:>+8.2f}%")
                 usd_str = _col(v["usd"], f"${v['usd']:>+9,.0f}")
@@ -855,6 +869,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             total_w   = sum(v["wins"]   for v in data.values())
             total_l   = sum(v["losses"] for v in data.values())
             total_be  = sum(v["be"]     for v in data.values())
+            total_sp  = sum(v["sp"]     for v in data.values())
             print(f"  {sep}")
             tot_pct  = _col(total_pct, f"{total_pct:>+8.2f}%")
             tot_usd  = _col(total_usd, f"${total_usd:>+9,.0f}")
@@ -863,6 +878,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             if total_w:   tot_parts.append(f"{GREEN}{total_w}W{RST}")
             if total_l:   tot_parts.append(f"{RED}{total_l}L{RST}")
             if total_be:  tot_parts.append(f"{YELLOW}{total_be}B{RST}")
+            if total_sp:  tot_parts.append(f"{BLUE}{total_sp}SP{RST}")
             tot_wl = _center("/".join(tot_parts) if tot_parts else f"{GRAY}-{RST}", WL_W)
             print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal}")
 
@@ -876,19 +892,24 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             for trade, close in (r.get("trade_pairs") or []):
                 if close is None:
                     continue
-                actual_r = close.get("result", 0.0)
-                is_be    = actual_r > 0 and actual_r < BE_THRESHOLD
-                if is_be:
-                    outcomes.append("be")
-                elif actual_r >= BE_THRESHOLD:
-                    outcomes.append(True)
+                result_type = close.get("result_type", None)
+                if result_type == "SP":
+                    outcomes.append("sp")
                 else:
-                    outcomes.append(False)
+                    actual_r = close.get("result", 0.0)
+                    is_be    = actual_r > 0 and actual_r < BE_THRESHOLD
+                    if is_be:
+                        outcomes.append("be")
+                    elif actual_r >= BE_THRESHOLD:
+                        outcomes.append(True)
+                    else:
+                        outcomes.append(False)
 
         total_t = len(outcomes)
         wins    = outcomes.count(True)
         losses  = outcomes.count(False)
         bes     = outcomes.count("be")
+        sps     = outcomes.count("sp")
         winrate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
 
         max_consec_w = max_consec_l = cur_w = cur_l = 0
@@ -916,7 +937,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         avg_monthly_pct = avg_monthly_pnl / ACCT * 100
 
         print(f"\n{BOLD}{CYAN}OVERALL SUMMARY — {mode_label}{RST}")
-        print(f"  Trades  : {total_t}  ({GREEN}{wins}W{RST} / {RED}{losses}L{RST} / {YELLOW}{bes}BE{RST})")
+        summary_parts = [f"{GREEN}{wins}W{RST}", f"{RED}{losses}L{RST}", f"{YELLOW}{bes}BE{RST}"]
+        if sps:
+            summary_parts.append(f"{BLUE}{sps}SP{RST}")
+        print(f"  Trades  : {total_t}  ({' / '.join(summary_parts)})")
         print(f"  Win Rate: {_col(winrate - 50, f'{winrate:.1f}%')}  (excl. breakevens)")
         print(f"  Max consec. wins  : {GREEN}{BOLD}{max_consec_w}{RST}")
         print(f"  Max consec. losses: {RED}{BOLD}{max_consec_l}{RST}")

@@ -15,6 +15,31 @@ def _compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_
     if close is None:
         return {"outcome": "open", "usd": 0.0, "pct": 0.0, "r": 0.0}
 
+    result_type = close.get("result_type", None)
+    if result_type == "SP":
+        # Session-end closure
+        actual_r = close.get("result", 0.0)
+        if mode == "sim":
+            usd = risk * actual_r if actual_r > 0 else -risk
+        else:  # real
+            entry = trade.get("entry") or trade.get("entry_price")
+            orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+            if entry is None or orig_sl is None:
+                usd = 0.0
+            else:
+                sl_pts = round(abs(entry - orig_sl), 4)
+                if sl_pts <= 0:
+                    usd = 0.0
+                else:
+                    contracts = max(1, round(risk / (sl_pts * nq_pv)))
+                    fees = contracts * fee_per_rt
+                    if actual_r > 0:
+                        usd = contracts * (actual_r * sl_pts) * nq_pv - fees
+                    else:
+                        usd = -(contracts * sl_pts * nq_pv) - fees
+        pct = usd / account * 100 if account else 0.0
+        return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r}
+
     actual_r = close.get("result", 0.0)
 
     if mode == "sim":
@@ -96,10 +121,10 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     month_keys = sorted(monthly.keys())
 
     # ── 3. Monthly aggregation + running balance ──────────────────────────
-    month_agg = {}  # key -> {wins, losses, be, usd, pct, balance}
+    month_agg = {}  # key -> {wins, losses, be, sp, usd, pct, balance}
     balance = account
     for mk in month_keys:
-        wins = losses = bes = 0
+        wins = losses = bes = sps = 0
         m_usd = 0.0
         m_pct = 0.0
         for sc in monthly[mk]:
@@ -112,11 +137,13 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                     wins += 1
                 elif t["outcome"] == "loss":
                     losses += 1
+                elif t["outcome"] == "sp":
+                    sps += 1
                 else:
                     bes += 1
         balance += m_usd
         month_agg[mk] = {
-            "wins": wins, "losses": losses, "be": bes,
+            "wins": wins, "losses": losses, "be": bes, "sp": sps,
             "usd": m_usd, "pct": m_pct, "balance": balance,
         }
 
@@ -131,6 +158,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     total_w = outcomes.count("win")
     total_l = outcomes.count("loss")
     total_be = outcomes.count("be")
+    total_sp = outcomes.count("sp")
     winrate = (total_w / (total_w + total_l) * 100) if (total_w + total_l) > 0 else 0.0
     net_usd = sum(a["usd"] for a in month_agg.values())
     net_pct = sum(a["pct"] for a in month_agg.values())
@@ -188,8 +216,8 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
 
     # ── 6. Build HTML ─────────────────────────────────────────────────────
     def outcome_badge(outcome):
-        cls_map = {"win": "badge-win", "loss": "badge-loss", "be": "badge-be", "open": "badge-open"}
-        label_map = {"win": "W", "loss": "L", "be": "B/E", "open": "OPEN"}
+        cls_map = {"win": "badge-win", "loss": "badge-loss", "be": "badge-be", "sp": "badge-sp", "open": "badge-open"}
+        label_map = {"win": "W", "loss": "L", "be": "B/E", "sp": "SP", "open": "OPEN"}
         return f'<span class="badge {cls_map.get(outcome, "")}">{label_map.get(outcome, "?")}</span>'
 
     def pnl_class(val):
@@ -244,6 +272,8 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             wl_parts.append(f'<span class="negative">{agg["losses"]}L</span>')
         if agg["be"]:
             wl_parts.append(f'<span class="text-yellow">{agg["be"]}B/E</span>')
+        if agg["sp"]:
+            wl_parts.append(f'<span class="text-blue">{agg["sp"]}SP</span>')
         wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-muted">--</span>'
 
         card = f"""
@@ -325,6 +355,8 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             wl_parts.append(f'<span class="negative">{agg["losses"]}L</span>')
         if agg["be"]:
             wl_parts.append(f'<span class="text-yellow">{agg["be"]}B/E</span>')
+        if agg["sp"]:
+            wl_parts.append(f'<span class="text-blue">{agg["sp"]}SP</span>')
         wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-muted">--</span>'
 
         visible = "block" if idx == 0 else "none"
@@ -690,12 +722,14 @@ h1 span {{
 .badge-win  {{ background: rgba(34,197,94,0.15); color: var(--green); }}
 .badge-loss {{ background: rgba(239,68,68,0.15); color: var(--red); }}
 .badge-be   {{ background: rgba(234,179,8,0.15); color: var(--yellow); }}
+.badge-sp   {{ background: rgba(59,130,246,0.15); color: var(--blue); }}
 .badge-open {{ background: rgba(148,163,184,0.15); color: var(--text-muted); }}
 
 .positive {{ color: var(--green); }}
 .negative {{ color: var(--red); }}
 .neutral  {{ color: var(--text-muted); }}
 .text-yellow {{ color: var(--yellow); }}
+.text-blue   {{ color: var(--blue); }}
 .text-muted  {{ color: var(--text-muted); }}
 
 .status-pass {{ color: var(--green); font-weight: 600; }}
@@ -834,7 +868,7 @@ footer {{
             </div>
             <div class="stat-box">
                 <div class="label">Record</div>
-                <div class="value"><span class="positive">{total_w}W</span> / <span class="negative">{total_l}L</span> / <span class="text-yellow">{total_be}B</span></div>
+                <div class="value"><span class="positive">{total_w}W</span> / <span class="negative">{total_l}L</span> / <span class="text-yellow">{total_be}B</span>{f'/ <span class="text-blue">{total_sp}SP</span>' if total_sp else ''}</div>
             </div>
             <div class="stat-box">
                 <div class="label">Win Rate</div>
