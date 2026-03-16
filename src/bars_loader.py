@@ -44,6 +44,7 @@ class BarsLoader:
         self._last_played_ts  = 0
         self._last_bar_close  = 0
         self._step_mode       = False
+        self.live_mode        = False
 
     def reset(self):
         self._last_played_ts = 0
@@ -68,9 +69,7 @@ class BarsLoader:
         window_secs = self.group_size * 60
         win_start   = (self._from_time // window_secs) * window_secs
 
-        source_bars = getattr(self.data_source, "_bars", None)
-        if source_bars is None:
-            source_bars = getattr(self.data_source, "_played_bars", [])
+        source_bars = self._get_source_bars()
 
         buf = [b for b in source_bars if win_start <= b['time'] <= self._from_time]
         self._1m_buffer = buf
@@ -260,8 +259,15 @@ class BarsLoader:
                 self._emit_delay = self._default_emit_delay
                 self._fast_jump_mode = False
 
+    def _get_source_bars(self):
+        for attr in ("_bars", "_played_bars", "_historical_bars"):
+            bars = getattr(self.data_source, attr, None)
+            if bars is not None:
+                return bars
+        return []
+
     def _get_all_bars(self):
-        return getattr(self.data_source, "_bars", None)
+        return self._get_source_bars() or None
 
     def _find_next_same_time_next_day(self, current_ts: int, days: int) -> int:
         bars = self._get_all_bars()
@@ -279,6 +285,9 @@ class BarsLoader:
             return prev
         
     def jump_day(self, direction: int = 1, fast: bool = True) -> int:
+        if self.live_mode:
+            return self._last_played_ts or self._from_time
+
         base_ts = 0
         played = getattr(self.data_source, "_played_bars", None)
         if played: base_ts = played[-1]["time"]

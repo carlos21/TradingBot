@@ -107,8 +107,9 @@ export class ControlsView {
       this.toggleBtn.textContent = 'Play';
     });
 
-    this.socket.on('stream_status', ({ playing }) => {
+    this.socket.on('stream_status', ({ playing, live_mode }) => {
       if (!playing) this.toggleBtn.textContent = 'Play';
+      if (live_mode) this._applyLiveMode();
     });
 
     this.prevBtn.addEventListener('click', () => {
@@ -189,6 +190,20 @@ export class ControlsView {
     //   stop_loss:   this.stopLossPrice,
     //   take_profit: this.takeProfit
     // });
+  }
+
+  _applyLiveMode() {
+    // Hide replay-only controls
+    const replayControls = document.querySelectorAll('.replay-control');
+    replayControls.forEach(el => el.style.display = 'none');
+    if (this.stepBtn) this.stepBtn.style.display = 'none';
+
+    // Show LIVE indicator
+    const liveIndicator = document.getElementById('liveIndicator');
+    if (liveIndicator) liveIndicator.classList.remove('hidden');
+
+    // Change Play button label
+    this.toggleBtn.textContent = 'Start';
   }
 
   updateTradeButtons() {

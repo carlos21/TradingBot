@@ -53,8 +53,9 @@
         </div>
 
         <div class="flex items-center space-x-4">
-          <button id="prevDayBtn">◀ Prev day</button>
-          <button id="nextDayBtn">Next day ▶</button>
+          <span id="liveIndicator" class="hidden px-3 py-1 bg-red-600 text-white font-bold rounded animate-pulse">LIVE</span>
+          <button id="prevDayBtn" class="replay-control">◀ Prev day</button>
+          <button id="nextDayBtn" class="replay-control">Next day ▶</button>
           <span id="currentDayLabel"></span>
         </div>
     

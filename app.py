@@ -6,6 +6,7 @@ from app_factory import create_app, Repositories
 from src.repositories.lines_repository import SQLLineRepository
 from src.repositories.trades_repository import SQLTradeRepository
 from src.data_sources.csv_datasource import CSVDataSource
+from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource, NinjaTraderConfig
 from src.database import database
 
 # Import the centralized configuration
@@ -106,6 +107,41 @@ def build_prod():
         bootstrap_existing_lines=True,
     )
 
+def build_live():
+    database.setup_database()
+    repos = Repositories(
+        lines=SQLLineRepository(),
+        trades=SQLTradeRepository(),
+    )
+
+    nt_cfg = NinjaTraderConfig(
+        host=os.environ.get("NT_HOST", "0.0.0.0"),
+        port=int(os.environ.get("NT_PORT", 8889)),
+        pair=PAIR,
+    )
+    ds = NinjaTraderDataSource(nt_cfg)
+
+    numbers = get_prod_strategy_numbers()
+    candle_config = get_prod_candle_config()
+    options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
+
+    return create_app(
+        pair=PAIR,
+        data_source=ds,
+        repos=repos,
+        numbers=numbers,
+        options=options,
+        candle_config=candle_config,
+        timeframes=["3m", "5m", "15m", "30m", "1h"],
+        bootstrap_existing_lines=True,
+        live_mode=True,
+    )
+
+
 if __name__ == "__main__":
-    wiring = build_prod()
+    mode = os.environ.get("MODE", "backtest")
+    if mode == "live":
+        wiring = build_live()
+    else:
+        wiring = build_prod()
     wiring.socketio.run(wiring.app, debug=True, port=5001)

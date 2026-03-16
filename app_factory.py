@@ -40,6 +40,7 @@ class AppWiring:
     trades_controller: TradesController
     data_source: CombinedDataSource
     pair: str
+    live_mode: bool = False
 
 
 def create_app(
@@ -54,6 +55,7 @@ def create_app(
     bootstrap_existing_lines: bool = True,
     broker_mode: str = 'futures',
     broker_spread: float = 0.0,
+    live_mode: bool = False,
 ) -> AppWiring:
     """
     Build the whole application with injected dependencies.
@@ -105,6 +107,7 @@ def create_app(
         bar_callback=combined_bar_callback,
         stream_end_callback=stream_end_callback
     )
+    loader.live_mode = live_mode
 
     lines_controller  = LinesController(repos.lines, loader, tstrategy)
     trades_controller = TradesController(loader, trade_manager)
@@ -199,7 +202,7 @@ def create_app(
     # Socket.IO events
     @socketio.on('connect')
     def on_connect(auth):
-        emit('stream_status', {'playing': loader.streaming})
+        emit('stream_status', {'playing': loader.streaming, 'live_mode': live_mode})
 
     @socketio.on('start_stream')
     def on_start_stream(payload):
@@ -220,6 +223,8 @@ def create_app(
 
     @socketio.on('step_stream')
     def on_step_stream(payload):
+        if live_mode:
+            return
         tf = payload.get('timeframe', '1m')
         from_time = payload.get('fromTime', 0)
         # Advance from_time by one full timeframe window so the step lands on
@@ -235,10 +240,14 @@ def create_app(
 
     @socketio.on('seek')
     def on_seek(payload):
+        if live_mode:
+            return
         loader.seek(payload.get('fromTime', 0))
 
     @socketio.on('jump_day')
     def on_jump_day(payload):
+        if live_mode:
+            return
         # payload: {direction: 1|-1, fast: true|false}
         direction = int(payload.get('direction', 1))
         fast      = bool(payload.get('fast', True))
@@ -285,7 +294,7 @@ def create_app(
                     data_source.reset()
 
             # 6. WARM UP STRATEGY (Without lines)
-            played = getattr(data_source, '_played_bars', [])
+            played = getattr(data_source, '_played_bars', None) or getattr(data_source, '_historical_bars', [])
             if played:
                 print(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")
                 for bar in played:
@@ -313,4 +322,5 @@ def create_app(
         trades_controller=trades_controller,
         data_source=data_source,
         pair=pair,
+        live_mode=live_mode,
     )
