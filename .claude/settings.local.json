@@ -25,7 +25,22 @@
       "Bash(./run_test_scenario.sh 2>&1 | tail -50)",
       "Bash(./run_test_scenario.sh --rr 2.0 2>&1 | tail -20)",
       "Bash(./run_test_scenario.sh 2>&1 | grep \"TP:\")",
-      "Bash(./run_test_scenario.sh --html-report 2>&1 | grep -A 20 \"OVERALL SUMMARY\" | head -25)"
+      "Bash(./run_test_scenario.sh --html-report 2>&1 | grep -A 20 \"OVERALL SUMMARY\" | head -25)",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -E \"\\(OPEN|Monthly Avg|trade_close|SESSION END\\)\")",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -E \"\\(ENTRY|SESSION END|ACTIVATING|trade_close|TP HIT|SL HIT\\)\" | head -20)",
+      "Bash(./run_test_scenario.sh 2>&1 | tail -100 | grep -A 20 \"OUTCOME\")",
+      "Bash(./run_test_scenario.sh 2>&1 | grep \"\\\\[TradeManager\\\\]\" | tail -20)",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -E \"\\(OUTCOME|RESULT|OPEN|SESSION END|Closing trade\\)\" | head -10)",
+      "Bash(cut:*)",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -E \"\\(OUTCOME|RESULT|OPEN|SESSION|W/L\\)\" | head -15)",
+      "Bash(./add_scenario.sh --help 2>&1 | grep -A 2 \"rr\")",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -A 2 \"RESULT\")",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -E \"\\(RESULT|Trade\\)\" | head -10)",
+      "Bash(./run_test_scenario.sh 2>&1 | tail -35)",
+      "Bash(./run_test_scenario.sh 2>&1 | tail -40 | head -30)",
+      "Bash(./run_test_scenario.sh 2>&1 | tail -35 | head -20)",
+      "Bash(./run_test_scenario.sh 2>&1 | tail -10)",
+      "Bash(./run_test_scenario.sh 2>&1 | tail -15)"
     ]
   }
 }

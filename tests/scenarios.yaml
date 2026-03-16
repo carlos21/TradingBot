@@ -1,4 +1,32 @@
 scenarios:
+  - name: "NQ - 2025-10-01"
+    pair: "NQ"
+    tf: "1m"
+    start: "2025-10-01 06:00:00Z"
+    end:   "2025-10-01 16:00:00Z"
+    lines:
+      - { price: 24975.00, at: "2025-10-01 07:00:00Z" }
+    expect:
+      entry: 24975.25
+      sl:    24990.25
+      tp:    24915.25
+      tolerance: 0.25
+    snapshot: true
+
+  - name: "NQ - 2025-10-02"
+    pair: "NQ"
+    tf: "5m"
+    start: "2025-10-02 06:00:00Z"
+    end:   "2025-10-02 16:00:00Z"
+    lines:
+      - { price: 25026.25, at: "2025-10-02 07:00:00Z" }
+    expect:
+      entry: 25032.50
+      sl:    24992.50
+      tp:    25192.50
+      tolerance: 0.25
+    snapshot: true
+
   - name: "NQ - 2025-11-03"
     pair: "NQ"
     tf: "5m"

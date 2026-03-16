@@ -13,7 +13,7 @@ from src.strategies.triggers import (
 )
 import os
 
-def get_prod_strategy_numbers(rr_ratio: float = 4.0) -> StrategyNumbers:
+def get_prod_strategy_numbers(rr_ratio: float = 3.3) -> StrategyNumbers:
     return StrategyNumbers(
         min_stop_loss=10.0,
         max_bounce=90.0,

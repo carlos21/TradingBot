@@ -198,7 +198,7 @@ def write_test_scenario_yaml(sc: dict):
 # Test runner
 # ---------------------------------------------------------------------------
 
-def run_discovery(results_json_path: str) -> bool:
+def run_discovery(results_json_path: str, rr_ratio: float = 3.3) -> bool:
     """Run run_scenarios.py against test_scenario.yaml and write results JSON."""
     cmd = [
         "poetry", "run", "python", "scripts/run_scenarios.py",
@@ -211,6 +211,7 @@ def run_discovery(results_json_path: str) -> bool:
         "--quiet",
         "--decision-log",
         "--results-json", results_json_path,
+        "--rr", str(rr_ratio),
     ]
     result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
     return result.returncode == 0
@@ -232,6 +233,12 @@ def prompt(msg: str, default: str = "") -> str:
 # ---------------------------------------------------------------------------
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser(description="Add a new test scenario")
+    ap.add_argument("--rr", type=float, default=3.3,
+                    help="Risk:Reward ratio for TP calculation (default: 3.3)")
+    args = ap.parse_args()
+
     print("=== Add New Trading Scenario ===\n")
 
     yaml_doc = load_scenarios_yaml()
@@ -310,8 +317,8 @@ def main():
     results_fd, results_json = tempfile.mkstemp(suffix=".json", prefix="add_scenario_")
     os.close(results_fd)
 
-    print(f"\nRunning test to discover trade...")
-    run_discovery(results_json)
+    print(f"\nRunning test to discover trade (RR: {args.rr})...")
+    run_discovery(results_json, rr_ratio=args.rr)
 
     # ── Read results ─────────────────────────────────────────────────────────
     expect = {}
@@ -374,7 +381,7 @@ def main():
         write_test_scenario_yaml(sc)
         results_fd2, results_json2 = tempfile.mkstemp(suffix=".json", prefix="add_scenario_snap_")
         os.close(results_fd2)
-        run_discovery(results_json2)
+        run_discovery(results_json2, rr_ratio=args.rr)
         Path(results_json2).unlink(missing_ok=True)
 
     # ── Insert into scenarios.yaml ───────────────────────────────────────────
