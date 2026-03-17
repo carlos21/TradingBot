@@ -487,7 +487,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 if not quiet:
                     print(f"▶️  Running: {name}")
                 
-                sdir = Path(args.outdir) / sanitize(name)
+                pair_name_val = sc.get("pair", "unknown")
+                sdir = Path(args.outdir) / pair_name_val
                 sdir.mkdir(parents=True, exist_ok=True)
                 
                 start_ts = get_epoch(sc["start"])
@@ -636,7 +637,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                             chart_locator = page.locator("body")
                             
                         await chart_locator.wait_for(state="visible", timeout=2000)
-                        await chart_locator.screenshot(path=str(sdir / f"snapshot_{tf}.png"))
+                        await chart_locator.screenshot(path=str(sdir / f"{date_label}_{tf}.png"))
                     except Exception as e:
                         if not quiet:
                             print(f"   ⚠️ Snapshot failed: {e}")

@@ -1,11 +1,13 @@
 scenarios:
-  - name: "NQ - 2026-03-16"
+  - name: "NQ - 2026-01-23"
     pair: "NQ"
-    tf: "5m"
-    start: "2026-03-16 06:00:00Z"
-    end:   "2026-03-16 16:00:00Z"
+    tf: "3m"
+    start: "2026-01-23 07:00:00Z"
+    end:   "2026-01-23 16:00:00Z"
     lines:
-      - { price: 24804.50, at: "2026-03-16 07:00:00Z" }
+      - { price: 25802.50, at: "2026-01-23 07:00:00Z" }
     expect:
-      none: true
-    show_tsi: false
+      entry: 25824.75
+      sl:    25854.75
+      tp:    25725.75
+      tolerance: 0.25
