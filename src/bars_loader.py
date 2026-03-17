@@ -154,6 +154,16 @@ class BarsLoader:
 
         if self._stop_event.is_set(): return
 
+        is_partial = msg.get('partial', False)
+
+        # Partial bars: emit to frontend for display only, skip strategy
+        if is_partial:
+            self._last_played_ts = msg['time']
+            self._last_bar_close = msg.get('close', 0)
+            bar_for_emit = {k: v for k, v in msg.items() if k != 'partial'}
+            self.socketio.emit('bar', bar_for_emit)
+            return
+
         if self.bar_callback: self.bar_callback(msg)
 
         if 'open' in msg and 'high' in msg:

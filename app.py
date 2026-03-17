@@ -144,4 +144,4 @@ if __name__ == "__main__":
         wiring = build_live()
     else:
         wiring = build_prod()
-    wiring.socketio.run(wiring.app, debug=True, port=5001)
+    wiring.socketio.run(wiring.app, debug=True, port=5001, use_reloader=(mode != "live"))

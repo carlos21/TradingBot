@@ -203,6 +203,11 @@ def create_app(
     @socketio.on('connect')
     def on_connect(auth):
         emit('stream_status', {'playing': loader.streaming, 'live_mode': live_mode})
+        # Auto-start subscription in live mode so bars flow immediately
+        if live_mode and not loader.streaming:
+            loader.set_timeframe('1m')
+            loader.start(0)
+            emit('stream_status', {'playing': True})
 
     @socketio.on('start_stream')
     def on_start_stream(payload):
