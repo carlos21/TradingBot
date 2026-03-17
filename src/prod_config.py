@@ -1,5 +1,5 @@
 from src.strategies.base_liquidity_strategy import BreakevenConfig, StrategyOptions, LineRemovalMode
-from src.strategies.entry_context import daily_trades_limit_filter, open_trades_limit_filter, max_bounce_filter, time_range_filter, min_cross_depth_filter
+from src.strategies.entry_context import daily_trades_limit_filter, open_trades_limit_filter, max_bounce_filter, time_range_filter, min_cross_depth_filter, rollover_filter
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.strategies.triggers import (
     three_candle_reversal_trigger,
@@ -26,7 +26,7 @@ def get_prod_strategy_numbers(rr_ratio: float = 3.3) -> StrategyNumbers:
 def get_prod_candle_config() -> CandleConfig:
     return CandleConfig()
 
-def get_prod_strategy_options(max_bounce: float, min_cross_depth: float = 0.0) -> StrategyOptions:
+def get_prod_strategy_options(max_bounce: float, min_cross_depth: float = 0.0, skip_rollover_days: bool = False) -> StrategyOptions:
     removal_mode_env = os.environ.get("LINE_REMOVAL_MODE", "ON_EVALUATE").upper()
     removal_mode = LineRemovalMode.NEVER if removal_mode_env == "NEVER" else LineRemovalMode.ON_EVALUATE
 
@@ -38,7 +38,8 @@ def get_prod_strategy_options(max_bounce: float, min_cross_depth: float = 0.0) -
             max_bounce_filter(max_bounce),
             # It will now automatically detect NQ -> America/New_York
             time_range_filter("08:00", "17:00"),
-            daily_trades_limit_filter(max_trades_per_day=1)
+            daily_trades_limit_filter(max_trades_per_day=1),
+            rollover_filter(enabled=skip_rollover_days),
         ],
         triggers=[
             make_velocity_adaptive_tsi_trigger(VelocityTriggerConfig(

@@ -9,73 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from dateutil import parser as dtparser
 
-
-def _compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold):
-    """Compute PnL for a single trade+close pair. Returns dict with outcome/usd/pct/r."""
-    if close is None:
-        return {"outcome": "open", "usd": 0.0, "pct": 0.0, "r": 0.0}
-
-    result_type = close.get("result_type", None)
-    if result_type == "SP":
-        # Session-end closure
-        actual_r = close.get("result", 0.0)
-        if mode == "sim":
-            usd = risk * actual_r if actual_r > 0 else -risk
-        else:  # real
-            entry = trade.get("entry") or trade.get("entry_price")
-            orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-            if entry is None or orig_sl is None:
-                usd = 0.0
-            else:
-                sl_pts = round(abs(entry - orig_sl), 4)
-                if sl_pts <= 0:
-                    usd = 0.0
-                else:
-                    contracts = max(1, round(risk / (sl_pts * nq_pv)))
-                    fees = contracts * fee_per_rt
-                    if actual_r > 0:
-                        usd = contracts * (actual_r * sl_pts) * nq_pv - fees
-                    else:
-                        usd = -(contracts * sl_pts * nq_pv) - fees
-        pct = usd / account * 100 if account else 0.0
-        return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r}
-
-    actual_r = close.get("result", 0.0)
-
-    if mode == "sim":
-        usd = risk * actual_r if actual_r > 0 else -risk
-    else:  # real
-        entry = trade.get("entry") or trade.get("entry_price")
-        orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-        if entry is None or orig_sl is None:
-            usd = 0.0
-        else:
-            sl_pts = round(abs(entry - orig_sl), 4)
-            if sl_pts <= 0:
-                usd = 0.0
-            else:
-                contracts = max(1, round(risk / (sl_pts * nq_pv)))
-                fees = contracts * fee_per_rt
-                if actual_r > 0:
-                    usd = contracts * (actual_r * sl_pts) * nq_pv - fees
-                else:
-                    usd = -(contracts * sl_pts * nq_pv) - fees
-
-    pct = usd / account * 100 if account else 0.0
-
-    if actual_r > 0 and actual_r < be_threshold:
-        outcome = "be"
-    elif actual_r >= be_threshold:
-        outcome = "win"
-    else:
-        outcome = "loss"
-
-    return {"outcome": outcome, "usd": usd, "pct": pct, "r": actual_r}
-
-
-def _h(text):
-    """HTML-escape."""
-    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+from report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pct, pnl_class, h as _h
 
 
 def generate_html_report(summary_results, account, risk, mode, output_path,
@@ -98,7 +32,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         date = dtparser.parse(r["date"]).date()
         trades_data = []
         for trade, close in (r.get("trade_pairs") or []):
-            td = _compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold)
+            td = compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold)
             trades_data.append(td)
         net_usd = sum(t["usd"] for t in trades_data)
         net_pct = sum(t["pct"] for t in trades_data)
@@ -121,10 +55,11 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     month_keys = sorted(monthly.keys())
 
     # ── 3. Monthly aggregation + running balance ──────────────────────────
-    month_agg = {}  # key -> {wins, losses, be, sp, usd, pct, balance}
+    month_agg = {}  # key -> {wins, losses, be, sp, usd, pct, balance, reentry_win, reentry_loss}
     balance = account
     for mk in month_keys:
         wins = losses = bes = sps = 0
+        reentry_win = reentry_loss = 0
         m_usd = 0.0
         m_pct = 0.0
         for sc in monthly[mk]:
@@ -133,18 +68,26 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                     continue
                 m_usd += t["usd"]
                 m_pct += t["pct"]
+                is_re = t.get("is_reentry", False)
                 if t["outcome"] == "win":
                     wins += 1
+                    if is_re:
+                        reentry_win += 1
                 elif t["outcome"] == "loss":
                     losses += 1
+                    if is_re:
+                        reentry_loss += 1
                 elif t["outcome"] == "sp":
                     sps += 1
                 else:
                     bes += 1
+                    if is_re:
+                        reentry_win += 1
         balance += m_usd
         month_agg[mk] = {
             "wins": wins, "losses": losses, "be": bes, "sp": sps,
             "usd": m_usd, "pct": m_pct, "balance": balance,
+            "reentry_win": reentry_win, "reentry_loss": reentry_loss,
         }
 
     # ── 4. Overall stats ──────────────────────────────────────────────────
@@ -168,6 +111,9 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     avg_monthly_usd = net_usd / num_months if num_months > 0 else 0.0
     avg_monthly_pct = avg_monthly_usd / account * 100 if account > 0 else 0.0
 
+    total_rw = sum(a["reentry_win"] for a in month_agg.values())
+    total_rl = sum(a["reentry_loss"] for a in month_agg.values())
+
     max_cw = max_cl = cw = cl = 0
     for o in outcomes:
         if o == "win":
@@ -178,24 +124,6 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             continue
         max_cw = max(max_cw, cw)
         max_cl = max(max_cl, cl)
-
-    # ── 4b. Max drawdown calculation ───────────────────────────────────
-    def _calc_max_dd(balances):
-        """Calculate max drawdown from equity curve."""
-        if not balances or len(balances) < 2:
-            return 0.0, 0.0
-        peak = balances[0]
-        max_dd_usd = 0.0
-        max_dd_pct = 0.0
-        for bal in balances[1:]:
-            if bal > peak:
-                peak = bal
-            dd_usd = peak - bal
-            dd_pct = (dd_usd / peak * 100) if peak > 0 else 0.0
-            if dd_usd > max_dd_usd:
-                max_dd_usd = dd_usd
-                max_dd_pct = dd_pct
-        return max_dd_usd, max_dd_pct
 
     # ── 5. Equity curve data points (cumulative by date) ──────────────────
     equity_points = [{"date": "Start", "balance": account}]
@@ -212,26 +140,13 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
 
     # Calculate max drawdown from equity curve
     equity_balances = [p["balance"] for p in equity_points]
-    max_dd_usd, max_dd_pct = _calc_max_dd(equity_balances)
+    max_dd_usd, max_dd_pct = calc_max_dd(equity_balances)
 
     # ── 6. Build HTML ─────────────────────────────────────────────────────
     def outcome_badge(outcome):
         cls_map = {"win": "badge-win", "loss": "badge-loss", "be": "badge-be", "sp": "badge-sp", "open": "badge-open"}
         label_map = {"win": "W", "loss": "L", "be": "B/E", "sp": "SP", "open": "OPEN"}
         return f'<span class="badge {cls_map.get(outcome, "")}">{label_map.get(outcome, "?")}</span>'
-
-    def pnl_class(val):
-        if val > 0.005:
-            return "positive"
-        if val < -0.005:
-            return "negative"
-        return "neutral"
-
-    def fmt_usd(val):
-        return f"${val:+,.0f}"
-
-    def fmt_pct(val):
-        return f"{val:+.2f}%"
 
     # Build month cards HTML
     month_cards_html = []
@@ -276,6 +191,11 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             wl_parts.append(f'<span class="text-blue">{agg["sp"]}SP</span>')
         wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-muted">--</span>'
 
+        re_pill = ""
+        re_w, re_l = agg["reentry_win"], agg["reentry_loss"]
+        if re_w + re_l > 0:
+            re_pill = f'<div class="stat-pill">RE: <span class="positive">{re_w}W</span> / <span class="negative">{re_l}L</span></div>'
+
         card = f"""
         <div class="month-card" data-month="{mk}" id="month-{idx}">
             <div class="month-header">
@@ -284,6 +204,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                     <div class="stat-pill">{wl_str}</div>
                     <div class="stat-pill {pnl_class(agg['usd'])}">Net: {fmt_usd(agg['usd'])}</div>
                     <div class="stat-pill">Balance: ${agg['balance']:,.0f}</div>
+                    {re_pill}
                 </div>
             </div>
             <table class="trades-table">
@@ -359,6 +280,11 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             wl_parts.append(f'<span class="text-blue">{agg["sp"]}SP</span>')
         wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-muted">--</span>'
 
+        cal_re_pill = ""
+        cal_re_w, cal_re_l = agg["reentry_win"], agg["reentry_loss"]
+        if cal_re_w + cal_re_l > 0:
+            cal_re_pill = f'<div class="stat-pill">RE: <span class="positive">{cal_re_w}W</span> / <span class="negative">{cal_re_l}L</span></div>'
+
         visible = "block" if idx == 0 else "none"
         cal_card = f"""
         <div class="calendar-card" data-month="{mk}" data-cal-idx="{idx}" style="display:{visible}">
@@ -368,6 +294,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                     <div class="stat-pill">{wl_str}</div>
                     <div class="stat-pill {pnl_class(agg['usd'])}">Net: {fmt_usd(agg['usd'])}</div>
                     <div class="stat-pill">Balance: ${agg['balance']:,.0f}</div>
+                    {cal_re_pill}
                 </div>
             </div>
             <table class="cal-grid">
@@ -898,6 +825,10 @@ footer {{
                 <div class="label">Monthly Avg</div>
                 <div class="value {pnl_class(avg_monthly_usd)}">{fmt_usd(avg_monthly_usd)}</div>
             </div>
+            {"" if total_rw + total_rl == 0 else f'''<div class="stat-box">
+                <div class="label">Re-entries</div>
+                <div class="value"><span class="positive">{total_rw}W</span> / <span class="negative">{total_rl}L</span></div>
+            </div>'''}
         </div>
     </div>
 </header>
