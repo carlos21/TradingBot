@@ -106,6 +106,57 @@ def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: Opti
     return _f
 
 
+def rollover_filter(enabled: bool = False, timezone_str: Optional[str] = None) -> EntryFilter:
+    """
+    Blocks entries on CME futures rollover days (2nd Thursday before quarterly expiration).
+    Rollover months: March, June, September, December.
+    The rollover day is the Thursday that falls 8 days before the 3rd Friday of the expiration month.
+    """
+    import calendar
+
+    def _third_friday(year: int, month: int) -> int:
+        """Return the day-of-month of the 3rd Friday."""
+        cal = calendar.monthcalendar(year, month)
+        # Friday is index 4 in monthcalendar rows
+        fridays = [week[calendar.FRIDAY] for week in cal if week[calendar.FRIDAY] != 0]
+        return fridays[2]  # 3rd Friday (0-indexed)
+
+    def _rollover_dates_for_year(year: int) -> set:
+        """Return set of (month, day) tuples for rollover days in a given year."""
+        from datetime import date, timedelta
+        dates = set()
+        for month in (3, 6, 9, 12):
+            third_fri = date(year, month, _third_friday(year, month))
+            # Rollover is the 2nd Thursday before expiration Friday = 8 days before
+            rollover = third_fri - timedelta(days=8)
+            dates.add((rollover.month, rollover.day))
+        return dates
+
+    _cache: Dict[int, set] = {}
+
+    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+        if not enabled:
+            return True, "rollover filter disabled"
+
+        tz_name = timezone_str
+        if not tz_name:
+            pair = ctx.bar.get('pair', '')
+            tz_name = PAIR_TIMEZONES.get(pair, "UTC")
+
+        tz = ZoneInfo(tz_name)
+        bar_dt = datetime.fromtimestamp(ctx.bar['time'], tz=tz)
+        year = bar_dt.year
+
+        if year not in _cache:
+            _cache[year] = _rollover_dates_for_year(year)
+
+        if (bar_dt.month, bar_dt.day) in _cache[year]:
+            return False, f"Rollover day {bar_dt.date()} ({tz_name}) - no trades allowed"
+        return True, "ok"
+    _f.__name__ = "rollover"
+    return _f
+
+
 def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str = "America/New_York") -> EntryFilter:
     """
     Blocks entries if the number of trades taken TODAY (in the given timezone) >= limit.
