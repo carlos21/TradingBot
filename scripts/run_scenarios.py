@@ -809,7 +809,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
         # ── Aggregate by day / week / month (per individual trade) ─────────────
         def _new_bucket():
-            return {"usd": 0.0, "pct": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0}
+            return {"usd": 0.0, "pct": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0,
+                    "reentry_win": 0, "reentry_loss": 0}
 
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
@@ -828,6 +829,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     continue
                 result_type = close.get("result_type", None)
                 t_usd, t_pct, actual_r = per_trade_fn(trade, close)
+                is_reentry = trade.get("is_reentry", False)
 
                 if result_type == "SP":
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
@@ -843,6 +845,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                             bucket[key]["usd"] += t_usd
                             bucket[key]["pct"] += t_pct
                         bucket[key]["be"] += 1
+                        if is_reentry:
+                            bucket[key]["reentry_win"] += 1
                     continue
 
                 is_be  = actual_r > 0 and actual_r < BE_THRESHOLD
@@ -854,15 +858,23 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     if is_be:    bucket[key]["be"]     += 1
                     elif is_win: bucket[key]["wins"]   += 1
                     else:        bucket[key]["losses"] += 1
+                    if is_reentry:
+                        if is_win or is_be:
+                            bucket[key]["reentry_win"] += 1
+                        else:
+                            bucket[key]["reentry_loss"] += 1
 
         def _print_agg(title, data):
             if not data:
                 return
+            has_reentry = any(v["reentry_win"] + v["reentry_loss"] > 0 for v in data.values())
             WL_W  = 10
+            RE_W  = 12
             lbl_w = max(len(k) for k in data) + 2
-            sep   = "-" * (lbl_w + 3 + WL_W + 54)
+            sep   = "-" * (lbl_w + 3 + WL_W + 54 + (3 + RE_W if has_reentry else 0))
+            hdr_re = f" | {'RE-ENTRY':^{RE_W}}" if has_reentry else ""
             print(f"\n{BOLD}{CYAN}{title}{RST}")
-            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11}")
+            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11}{hdr_re}")
             print(f"  {sep}")
             balance = ACCT
             for key in sorted(data):
@@ -877,13 +889,22 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 pct_str = _col(v["pct"], f"{v['pct']:>+8.2f}%")
                 usd_str = _col(v["usd"], f"${v['usd']:>+9,.0f}")
                 bal_str = _col(balance - ACCT, f"${balance:>10,.0f}")
-                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str}")
+                re_str = ""
+                if has_reentry:
+                    rw, rl = v["reentry_win"], v["reentry_loss"]
+                    if rw + rl > 0:
+                        re_str = f" | {_center(f'{GREEN}{rw}W{RST}/{RED}{rl}L{RST}', RE_W)}"
+                    else:
+                        re_str = f" | {_center(f'{GRAY}-{RST}', RE_W)}"
+                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str}{re_str}")
             total_usd = sum(v["usd"]    for v in data.values())
             total_pct = sum(v["pct"]    for v in data.values())
             total_w   = sum(v["wins"]   for v in data.values())
             total_l   = sum(v["losses"] for v in data.values())
             total_be  = sum(v["be"]     for v in data.values())
             total_sp  = sum(v["sp"]     for v in data.values())
+            total_rw  = sum(v["reentry_win"]  for v in data.values())
+            total_rl  = sum(v["reentry_loss"] for v in data.values())
             print(f"  {sep}")
             tot_pct  = _col(total_pct, f"{total_pct:>+8.2f}%")
             tot_usd  = _col(total_usd, f"${total_usd:>+9,.0f}")
@@ -894,7 +915,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             if total_be:  tot_parts.append(f"{YELLOW}{total_be}B{RST}")
             if total_sp:  tot_parts.append(f"{BLUE}{total_sp}SP{RST}")
             tot_wl = _center("/".join(tot_parts) if tot_parts else f"{GRAY}-{RST}", WL_W)
-            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal}")
+            tot_re = ""
+            if has_reentry:
+                tot_re = f" | {_center(f'{GREEN}{total_rw}W{RST}/{RED}{total_rl}L{RST}', RE_W)}"
+            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal}{tot_re}")
 
         _print_agg(f"DAILY PnL   — {mode_label}", daily)
         _print_agg(f"WEEKLY PnL  — {mode_label}", weekly)
@@ -963,6 +987,12 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         print(f"  Max Drawdown  : {_col(-max_dd_usd, f'${-max_dd_usd:,.0f}')} ({_col(-max_dd_pct, f'{-max_dd_pct:.2f}%')})")
         print(f"  Net P&L : {_col(total_usd_all, f'${total_usd_all:+,.0f}')}")
         print(f"  Monthly Avg : {_col(avg_monthly_pnl, f'${avg_monthly_pnl:+,.0f}')} ({_col(avg_monthly_pct, f'{avg_monthly_pct:+.2f}%')})")
+        total_rw = sum(v["reentry_win"]  for v in monthly.values())
+        total_rl = sum(v["reentry_loss"] for v in monthly.values())
+        if total_rw + total_rl > 0:
+            re_total = total_rw + total_rl
+            re_rate = total_rw / re_total * 100
+            print(f"  Re-entries: {re_total}  ({GREEN}{total_rw}W{RST} / {RED}{total_rl}L{RST})  success rate: {_col(re_rate - 50, f'{re_rate:.1f}%')}")
         print()
 
     def _per_trade_sim(trade, close):

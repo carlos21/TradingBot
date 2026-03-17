@@ -6,8 +6,10 @@ Shared report utility functions used by html_report.py and html_comparison_repor
 
 def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold):
     """Compute PnL for a single trade+close pair. Returns dict with outcome/usd/pct/r."""
+    is_reentry = trade.get("is_reentry", False) if trade else False
+
     if close is None:
-        return {"outcome": "open", "usd": 0.0, "pct": 0.0, "r": 0.0}
+        return {"outcome": "open", "usd": 0.0, "pct": 0.0, "r": 0.0, "is_reentry": is_reentry}
 
     result_type = close.get("result_type", None)
     if result_type == "SP":
@@ -31,7 +33,7 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
                     else:
                         usd = -(contracts * sl_pts * nq_pv) - fees
         pct = usd / account * 100 if account else 0.0
-        return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r}
+        return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry}
 
     actual_r = close.get("result", 0.0)
 
@@ -63,7 +65,7 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
     else:
         outcome = "loss"
 
-    return {"outcome": outcome, "usd": usd, "pct": pct, "r": actual_r}
+    return {"outcome": outcome, "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry}
 
 
 def calc_max_dd(balances):

@@ -55,10 +55,11 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     month_keys = sorted(monthly.keys())
 
     # ── 3. Monthly aggregation + running balance ──────────────────────────
-    month_agg = {}  # key -> {wins, losses, be, sp, usd, pct, balance}
+    month_agg = {}  # key -> {wins, losses, be, sp, usd, pct, balance, reentry_win, reentry_loss}
     balance = account
     for mk in month_keys:
         wins = losses = bes = sps = 0
+        reentry_win = reentry_loss = 0
         m_usd = 0.0
         m_pct = 0.0
         for sc in monthly[mk]:
@@ -67,18 +68,26 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                     continue
                 m_usd += t["usd"]
                 m_pct += t["pct"]
+                is_re = t.get("is_reentry", False)
                 if t["outcome"] == "win":
                     wins += 1
+                    if is_re:
+                        reentry_win += 1
                 elif t["outcome"] == "loss":
                     losses += 1
+                    if is_re:
+                        reentry_loss += 1
                 elif t["outcome"] == "sp":
                     sps += 1
                 else:
                     bes += 1
+                    if is_re:
+                        reentry_win += 1
         balance += m_usd
         month_agg[mk] = {
             "wins": wins, "losses": losses, "be": bes, "sp": sps,
             "usd": m_usd, "pct": m_pct, "balance": balance,
+            "reentry_win": reentry_win, "reentry_loss": reentry_loss,
         }
 
     # ── 4. Overall stats ──────────────────────────────────────────────────
@@ -101,6 +110,9 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     num_months = len(month_agg) if month_agg else 1
     avg_monthly_usd = net_usd / num_months if num_months > 0 else 0.0
     avg_monthly_pct = avg_monthly_usd / account * 100 if account > 0 else 0.0
+
+    total_rw = sum(a["reentry_win"] for a in month_agg.values())
+    total_rl = sum(a["reentry_loss"] for a in month_agg.values())
 
     max_cw = max_cl = cw = cl = 0
     for o in outcomes:
@@ -179,6 +191,11 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             wl_parts.append(f'<span class="text-blue">{agg["sp"]}SP</span>')
         wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-muted">--</span>'
 
+        re_pill = ""
+        re_w, re_l = agg["reentry_win"], agg["reentry_loss"]
+        if re_w + re_l > 0:
+            re_pill = f'<div class="stat-pill">RE: <span class="positive">{re_w}W</span> / <span class="negative">{re_l}L</span></div>'
+
         card = f"""
         <div class="month-card" data-month="{mk}" id="month-{idx}">
             <div class="month-header">
@@ -187,6 +204,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                     <div class="stat-pill">{wl_str}</div>
                     <div class="stat-pill {pnl_class(agg['usd'])}">Net: {fmt_usd(agg['usd'])}</div>
                     <div class="stat-pill">Balance: ${agg['balance']:,.0f}</div>
+                    {re_pill}
                 </div>
             </div>
             <table class="trades-table">
@@ -262,6 +280,11 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             wl_parts.append(f'<span class="text-blue">{agg["sp"]}SP</span>')
         wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-muted">--</span>'
 
+        cal_re_pill = ""
+        cal_re_w, cal_re_l = agg["reentry_win"], agg["reentry_loss"]
+        if cal_re_w + cal_re_l > 0:
+            cal_re_pill = f'<div class="stat-pill">RE: <span class="positive">{cal_re_w}W</span> / <span class="negative">{cal_re_l}L</span></div>'
+
         visible = "block" if idx == 0 else "none"
         cal_card = f"""
         <div class="calendar-card" data-month="{mk}" data-cal-idx="{idx}" style="display:{visible}">
@@ -271,6 +294,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                     <div class="stat-pill">{wl_str}</div>
                     <div class="stat-pill {pnl_class(agg['usd'])}">Net: {fmt_usd(agg['usd'])}</div>
                     <div class="stat-pill">Balance: ${agg['balance']:,.0f}</div>
+                    {cal_re_pill}
                 </div>
             </div>
             <table class="cal-grid">
@@ -801,6 +825,10 @@ footer {{
                 <div class="label">Monthly Avg</div>
                 <div class="value {pnl_class(avg_monthly_usd)}">{fmt_usd(avg_monthly_usd)}</div>
             </div>
+            {"" if total_rw + total_rl == 0 else f'''<div class="stat-box">
+                <div class="label">Re-entries</div>
+                <div class="value"><span class="positive">{total_rw}W</span> / <span class="negative">{total_rl}L</span></div>
+            </div>'''}
         </div>
     </div>
 </header>
