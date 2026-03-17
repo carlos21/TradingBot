@@ -29,7 +29,7 @@ def write_discovery_yaml(scenarios: list, path: Path):
     for sc in scenarios:
         lines.append(f'  - name: "{sc["name"]}"\n')
         lines.append(f'    pair: "NQ"\n')
-        lines.append(f'    tf: "5m"\n')
+        lines.append(f'    tf: "{sc.get("tf", "5m")}"\n')
         lines.append(f'    start: "{sc["start"]}"\n')
         lines.append(f'    end:   "{sc["end"]}"\n')
         lines.append(f'    lines:\n')
@@ -49,6 +49,8 @@ def run_all(yaml_path: str, results_json: str, extra_args: list = None) -> bool:
         "--bars-per-second", "5000",
         "--mode", "sim",
         "--quiet",
+        "--no-snapshot",
+        "--no-breakeven",
         "--results-json", results_json,
     ]
     if extra_args:
@@ -94,7 +96,8 @@ def main():
         if not ok:
             print("⚠️  Runner exited with non-zero status — results may be partial.")
 
-        results = json.loads(Path(results_json).read_text())
+        raw = json.loads(Path(results_json).read_text())
+        results = raw.get("results", raw) if isinstance(raw, dict) else raw
     except Exception as e:
         print(f"❌ Failed to run or read results: {e}")
         return
@@ -117,9 +120,10 @@ def main():
             missing += 1
             continue
 
-        trades    = result.get("trades", [])
-        old_tf     = sc.get("tf", "5m")
-        old_expect = sc.get("expect", {})
+        trade_pairs = result.get("trade_pairs", [])
+        trades      = [tp[0] for tp in trade_pairs if tp[0]] if trade_pairs else []
+        old_tf      = sc.get("tf", "5m")
+        old_expect  = sc.get("expect", {})
 
         if trades:
             trade      = trades[0]

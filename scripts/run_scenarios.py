@@ -482,10 +482,14 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 page.on("console", lambda msg: print(f"   [BROWSER] {msg.text}"))
             page.on("pageerror", lambda exc: print(f"   [BROWSER ERROR] {exc}"))
 
+            total = len(scenarios)
             for i, sc in enumerate(scenarios):
                 name = sc.get("name", f"scenario_{i}")
-                if not quiet:
-                    print(f"▶️  Running: {name}")
+                pct = int((i / total) * 100)
+                bar_len = 30
+                filled = int(bar_len * i / total)
+                bar = "█" * filled + "░" * (bar_len - filled)
+                print(f"\r  {bar} {pct:3d}% ({i}/{total}) {name:<40}", end="", flush=True)
                 
                 pair_name_val = sc.get("pair", "unknown")
                 sdir = Path(args.outdir) / pair_name_val
@@ -594,7 +598,6 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     "date": sc["start"],
                 })
                 date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
-                print(f"   [{status}] {date_label}  {reason} {values}")
 
                 if args.decision_log:
                     try:
@@ -642,6 +645,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         if not quiet:
                             print(f"   ⚠️ Snapshot failed: {e}")
 
+            print(f"\r  {'█' * 30} 100% ({total}/{total}){' ' * 50}")
             await browser.close()
 
     finally:
@@ -752,65 +756,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         per_trade_fn(trade, close) → (usd, pct, actual_r)
         Used so that W/L bucketing counts each individual trade, not the net scenario outcome.
         """
-        # ── Per-scenario table ─────────────────────────────────────────────────
-        W = 135
-        print(f"\n{'=' * W}")
-        print(f"  {BOLD}{CYAN}MODE: {mode_label}{RST}")
-        print(f"{'=' * W}")
-        hdr = f"{'SCENARIO':<40} | {'STATUS':^8} | {'RESULT':^14} | {'%':>9} | {'$ PnL':>12} | DETAILS"
-        print(hdr)
-        print("-" * W)
-        for r in summary_results:
-            actual_pct, actual_usd, actual_acct_pct, extra = pnl_fn(r)
-
-            # Build per-trade result labels (W/L/B/E/SP per trade)
-            trade_pairs = r.get("trade_pairs") or []
-            trade_labels = []
-            for trade, close in trade_pairs:
-                if close is None:
-                    trade_labels.append(f"{YELLOW}OPEN?{RST}")
-                    continue
-                result_type = close.get("result_type", None)
-                if result_type == "SP":
-                    trade_labels.append(f"{BLUE}{BOLD}SP{RST}")
-                    continue
-                if result_type == "BE":
-                    trade_labels.append(f"{YELLOW}{BOLD}B/E{RST}")
-                    continue
-                r_val = close.get("result", 0.0)
-                if r_val > 0 and r_val < BE_THRESHOLD:
-                    trade_labels.append(f"{YELLOW}{BOLD}B/E{RST}")
-                elif r_val >= BE_THRESHOLD:
-                    trade_labels.append(f"{GREEN}{BOLD}W{RST}")
-                else:
-                    trade_labels.append(f"{RED}{BOLD}L{RST}")
-
-            if len(trade_labels) == 1:
-                res_str = _center(trade_labels[0], 14)
-            elif trade_labels:
-                res_str = _center(" + ".join(trade_labels), 14)
-            else:
-                res_str = _center(f"{GRAY}–{RST}", 14)
-
-            if actual_pct is not None:
-                pct_str = _col(actual_pct, f"{actual_pct:>+8.2f}%")
-                usd_str = _col(actual_usd, f"{actual_usd:>+11,.0f}")
-            else:
-                pct_str = f"{GRAY}{'N/A':>9}{RST}"
-                usd_str = f"{GRAY}{'N/A':>12}{RST}"
-
-            status_vis = f"{'PASS':^8}" if r['status'] == 'PASS' else f"{'FAIL':^8}"
-            status_col = f"{GREEN}{BOLD}{status_vis}{RST}" if r['status'] == 'PASS' else f"{RED}{BOLD}{status_vis}{RST}"
-            details = f"{r['reason']} {r['values']}"
-            if extra:
-                details = f"{details}  {GRAY}[{extra}]{RST}"
-            print(f"{r['name']:<40} | {status_col} | {res_str} | {pct_str} | {usd_str} | {details}")
-        print("=" * W)
-
         # ── Aggregate by day / week / month (per individual trade) ─────────────
         def _new_bucket():
             return {"usd": 0.0, "pct": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0,
-                    "reentry_win": 0, "reentry_loss": 0}
+                    "reentry_win": 0, "reentry_loss": 0, "all_passed": True}
 
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
@@ -822,6 +771,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             iso   = date.isocalendar()
             w_key = f"{iso.year}-W{iso.week:02d}"
             m_key = date.strftime("%Y-%m")
+            if r["status"] != "PASS":
+                daily[d_key]["all_passed"] = False
             for trade, close in (r.get("trade_pairs") or []):
                 if close is None:
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
@@ -864,17 +815,22 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         else:
                             bucket[key]["reentry_loss"] += 1
 
-        def _print_agg(title, data):
+        CHECKMARK = "\u2713"
+        CROSSMARK = "\u2717"
+
+        def _print_agg(title, data, show_passed=False):
             if not data:
                 return
             has_reentry = any(v["reentry_win"] + v["reentry_loss"] > 0 for v in data.values())
             WL_W  = 10
             RE_W  = 12
+            PAS_W = 8
             lbl_w = max(len(k) for k in data) + 2
-            sep   = "-" * (lbl_w + 3 + WL_W + 54 + (3 + RE_W if has_reentry else 0))
+            sep   = "-" * (lbl_w + 3 + WL_W + 54 + (3 + RE_W if has_reentry else 0) + (3 + PAS_W if show_passed else 0))
             hdr_re = f" | {'RE-ENTRY':^{RE_W}}" if has_reentry else ""
+            hdr_pas = f" | {'PASSED':^{PAS_W}}" if show_passed else ""
             print(f"\n{BOLD}{CYAN}{title}{RST}")
-            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11}{hdr_re}")
+            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11}{hdr_re}{hdr_pas}")
             print(f"  {sep}")
             balance = ACCT
             for key in sorted(data):
@@ -896,7 +852,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         re_str = f" | {_center(f'{GREEN}{rw}W{RST}/{RED}{rl}L{RST}', RE_W)}"
                     else:
                         re_str = f" | {_center(f'{GRAY}-{RST}', RE_W)}"
-                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str}{re_str}")
+                pas_str = ""
+                if show_passed:
+                    if v.get("all_passed", True):
+                        pas_str = f" | {_center(f'{GREEN}{CHECKMARK}{RST}', PAS_W)}"
+                    else:
+                        pas_str = f" | {_center(f'{RED}{CROSSMARK}{RST}', PAS_W)}"
+                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str}{re_str}{pas_str}")
             total_usd = sum(v["usd"]    for v in data.values())
             total_pct = sum(v["pct"]    for v in data.values())
             total_w   = sum(v["wins"]   for v in data.values())
@@ -918,9 +880,17 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             tot_re = ""
             if has_reentry:
                 tot_re = f" | {_center(f'{GREEN}{total_rw}W{RST}/{RED}{total_rl}L{RST}', RE_W)}"
-            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal}{tot_re}")
+            tot_pas = ""
+            if show_passed:
+                all_ok = all(v.get("all_passed", True) for v in data.values())
+                if all_ok:
+                    tot_pas = f" | {_center(f'{GREEN}{CHECKMARK}{RST}', PAS_W)}"
+                else:
+                    failed = sum(1 for v in data.values() if not v.get("all_passed", True))
+                    tot_pas = f" | {_center(f'{RED}{failed}{CROSSMARK}{RST}', PAS_W)}"
+            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal}{tot_re}{tot_pas}")
 
-        _print_agg(f"DAILY PnL   — {mode_label}", daily)
+        _print_agg(f"DAILY PnL   — {mode_label}", daily, show_passed=True)
         _print_agg(f"WEEKLY PnL  — {mode_label}", weekly)
         _print_agg(f"MONTHLY PnL — {mode_label}", monthly)
 

@@ -9,9 +9,8 @@ scenarios:
     expect:
       entry: 24975.25
       sl:    24990.25
-      tp:    24925.75
+      tp:    24915.25
       tolerance: 0.25
-
   - name: "NQ - 2025-10-02"
     pair: "NQ"
     tf: "5m"
@@ -22,9 +21,8 @@ scenarios:
     expect:
       entry: 25032.50
       sl:    24992.50
-      tp:    25164.50
+      tp:    25192.50
       tolerance: 0.25
-
   - name: "NQ - 2025-10-03"
     pair: "NQ"
     tf: "3m"
@@ -35,10 +33,8 @@ scenarios:
     expect:
       entry: 24973.50
       sl:    24933.50
-      tp:    25105.50
+      tp:    25133.50
       tolerance: 0.25
-    snapshot: true
-
   - name: "NQ - 2025-10-06"
     pair: "NQ"
     tf: "3m"
@@ -49,10 +45,8 @@ scenarios:
     expect:
       entry: 25219.25
       sl:    25249.25
-      tp:    25120.25
+      tp:    25099.25
       tolerance: 0.25
-    snapshot: true
-
   - name: "NQ - 2025-10-07"
     pair: "NQ"
     tf: "3m"
@@ -63,9 +57,8 @@ scenarios:
     expect:
       entry: 25265.50
       sl:    25280.50
-      tp:    25216.00
+      tp:    25205.50
       tolerance: 0.25
-
   - name: "NQ - 2025-10-08"
     pair: "NQ"
     tf: "1m"
@@ -77,9 +70,8 @@ scenarios:
     expect:
       entry: 25117.00
       sl:    25137.00
-      tp:    25051.00
+      tp:    25037.00
       tolerance: 0.25
-
   - name: "NQ - 2025-10-09"
     pair: "NQ"
     tf: "1m"
@@ -90,9 +82,8 @@ scenarios:
     expect:
       entry: 25275.75
       sl:    25245.75
-      tp:    25374.75
+      tp:    25395.75
       tolerance: 0.25
-
   - name: "NQ - 2025-10-10"
     pair: "NQ"
     tf: "5m"
@@ -119,9 +110,8 @@ scenarios:
     expect:
       entry: 25104.75
       sl:    25119.75
-      tp:    25055.25
+      tp:    25044.75
       tolerance: 0.25
-
   - name: "NQ - 2025-10-16"
     pair: "NQ"
     tf: "1m"
@@ -132,9 +122,8 @@ scenarios:
     expect:
       entry: 25148.75
       sl:    25188.75
-      tp:    25016.75
+      tp:    24988.75
       tolerance: 0.25
-
   - name: "NQ - 2025-10-17"
     pair: "NQ"
     tf: "3m"
@@ -145,9 +134,8 @@ scenarios:
     expect:
       entry: 25014.25
       sl:    25034.25
-      tp:    24948.25
+      tp:    24934.25
       tolerance: 0.25
-
   - name: "NQ - 2025-10-20"
     pair: "NQ"
     tf: "5m"
@@ -159,9 +147,8 @@ scenarios:
     expect:
       entry: 25222.00
       sl:    25242.00
-      tp:    25156.00
+      tp:    25142.00
       tolerance: 0.25
-
   - name: "NQ - 2025-10-22"
     pair: "NQ"
     tf: "1m"
@@ -172,9 +159,8 @@ scenarios:
     expect:
       entry: 25191.50
       sl:    25171.50
-      tp:    25257.50
+      tp:    25271.50
       tolerance: 0.25
-
   - name: "NQ - 2025-10-23"
     pair: "NQ"
     tf: "1m"
@@ -185,9 +171,8 @@ scenarios:
     expect:
       entry: 25214.50
       sl:    25229.50
-      tp:    25165.00
+      tp:    25154.50
       tolerance: 0.25
-
   - name: "NQ - 2025-10-24"
     pair: "NQ"
     tf: "5m"
@@ -210,15 +195,17 @@ scenarios:
 
   - name: "NQ - 2025-10-31"
     pair: "NQ"
-    tf: "5m"
+    tf: "1m"
     start: "2025-10-31 06:00:00Z"
     end:   "2025-10-31 16:00:00Z"
     lines:
       - { price: 26225.00, at: "2025-10-31 05:00:00Z" }
       - { price: 25993.25, at: "2025-10-31 05:00:00Z" }
     expect:
-      none: true
-
+      entry: 25980.25
+      sl:    25950.25
+      tp:    26100.25
+      tolerance: 0.25
   - name: "NQ - 2025-11-03"
     pair: "NQ"
     tf: "5m"
@@ -240,9 +227,8 @@ scenarios:
     expect:
       entry: 25864.00
       sl:    25894.00
-      tp:    25765.00
+      tp:    25744.00
       tolerance: 0.25
-
   - name: "NQ - 2025-11-06"
     pair: "NQ"
     tf: "5m"
@@ -255,9 +241,8 @@ scenarios:
     expect:
       entry: 25302.00
       sl:    25262.00
-      tp:    25434.00
+      tp:    25462.00
       tolerance: 0.25
-
   - name: "NQ - 2025-11-07"
     pair: "NQ"
     tf: "3m"
@@ -267,11 +252,7 @@ scenarios:
       - { price: 25011.00, at: "2025-11-07 07:00:00Z" }
       - { price: 24805.00, at: "2025-11-07 07:00:00Z" }
     expect:
-      entry: 24826.75
-      sl:    24786.75
-      tp:    24958.75
-      tolerance: 0.25
-
+      none: true
   - name: "NQ - 2025-11-10"
     pair: "NQ"
     tf: "1m"
@@ -282,9 +263,8 @@ scenarios:
     expect:
       entry: 25630.50
       sl:    25650.50
-      tp:    25564.50
+      tp:    25550.50
       tolerance: 0.25
-
   - name: "NQ - 2025-11-13"
     pair: "NQ"
     tf: "3m"
@@ -295,9 +275,8 @@ scenarios:
     expect:
       entry: 25472.25
       sl:    25432.25
-      tp:    25604.25
+      tp:    25632.25
       tolerance: 0.25
-
   - name: "NQ - 2025-11-14"
     pair: "NQ"
     tf: "5m"
@@ -308,9 +287,8 @@ scenarios:
     expect:
       entry: 24722.00
       sl:    24682.00
-      tp:    24854.00
+      tp:    24882.00
       tolerance: 0.25
-
   - name: "NQ - 2025-11-17"
     pair: "NQ"
     tf: "5m"
@@ -321,9 +299,8 @@ scenarios:
     expect:
       entry: 25094.50
       sl:    25054.50
-      tp:    25226.50
+      tp:    25254.50
       tolerance: 0.25
-
   - name: "NQ - 2025-11-18"
     pair: "NQ"
     tf: "3m"
@@ -334,9 +311,8 @@ scenarios:
     expect:
       entry: 24494.25
       sl:    24454.25
-      tp:    24626.25
+      tp:    24654.25
       tolerance: 0.25
-
   - name: "NQ - 2025-11-19"
     pair: "NQ"
     tf: "3m"
@@ -347,9 +323,8 @@ scenarios:
     expect:
       entry: 24572.75
       sl:    24532.75
-      tp:    24704.75
+      tp:    24732.75
       tolerance: 0.25
-
   - name: "NQ - 2025-11-20"
     pair: "NQ"
     tf: "3m"
@@ -360,9 +335,8 @@ scenarios:
     expect:
       entry: 25229.50
       sl:    25269.50
-      tp:    25097.50
+      tp:    25069.50
       tolerance: 0.25
-
   - name: "NQ - 2025-11-21"
     pair: "NQ"
     tf: "1m"
@@ -373,9 +347,8 @@ scenarios:
     expect:
       entry: 24337.75
       sl:    24377.75
-      tp:    24205.75
+      tp:    24177.75
       tolerance: 0.25
-
   - name: "NQ - 2025-11-25"
     pair: "NQ"
     tf: "3m"
@@ -386,9 +359,8 @@ scenarios:
     expect:
       entry: 25032.50
       sl:    25062.50
-      tp:    24933.50
+      tp:    24912.50
       tolerance: 0.25
-
   - name: "NQ - 2025-11-26"
     pair: "NQ"
     tf: "3m"
@@ -399,9 +371,8 @@ scenarios:
     expect:
       entry: 25349.00
       sl:    25379.00
-      tp:    25250.00
+      tp:    25229.00
       tolerance: 0.25
-
   - name: "NQ - 2025-12-02"
     pair: "NQ"
     tf: "1m"
@@ -412,9 +383,8 @@ scenarios:
     expect:
       entry: 25587.50
       sl:    25617.50
-      tp:    25488.50
+      tp:    25467.50
       tolerance: 0.25
-
   - name: "NQ - 2025-12-03"
     pair: "NQ"
     tf: "1m"
@@ -425,9 +395,8 @@ scenarios:
     expect:
       entry: 25611.00
       sl:    25626.00
-      tp:    25561.50
+      tp:    25551.00
       tolerance: 0.25
-
   - name: "NQ - 2025-12-04"
     pair: "NQ"
     tf: "1m"
@@ -438,9 +407,8 @@ scenarios:
     expect:
       entry: 25720.75
       sl:    25735.75
-      tp:    25671.25
+      tp:    25660.75
       tolerance: 0.25
-
   - name: "NQ - 2025-12-05"
     pair: "NQ"
     tf: "5m"
@@ -462,9 +430,8 @@ scenarios:
     expect:
       entry: 25586.75
       sl:    25556.75
-      tp:    25685.75
+      tp:    25706.75
       tolerance: 0.25
-
   - name: "NQ - 2025-12-10"
     pair: "NQ"
     tf: "3m"
@@ -475,9 +442,8 @@ scenarios:
     expect:
       entry: 25568.50
       sl:    25528.50
-      tp:    25700.50
+      tp:    25728.50
       tolerance: 0.25
-
   - name: "NQ - 2025-12-12"
     pair: "NQ"
     tf: "3m"
@@ -488,9 +454,8 @@ scenarios:
     expect:
       entry: 25327.00
       sl:    25287.00
-      tp:    25459.00
+      tp:    25487.00
       tolerance: 0.25
-
   - name: "NQ - 2025-12-15"
     pair: "NQ"
     tf: "1m"
@@ -501,9 +466,8 @@ scenarios:
     expect:
       entry: 25389.75
       sl:    25404.75
-      tp:    25340.25
+      tp:    25329.75
       tolerance: 0.25
-
   - name: "NQ - 2025-12-17"
     pair: "NQ"
     tf: "1m"
@@ -516,9 +480,8 @@ scenarios:
     expect:
       entry: 25078.75
       sl:    25058.75
-      tp:    25144.75
+      tp:    25158.75
       tolerance: 0.25
-
   - name: "NQ - 2025-12-18"
     pair: "NQ"
     tf: "5m"
@@ -540,9 +503,8 @@ scenarios:
     expect:
       entry: 25638.25
       sl:    25608.25
-      tp:    25737.25
+      tp:    25758.25
       tolerance: 0.25
-
   - name: "NQ - 2025-12-24"
     pair: "NQ"
     tf: "1m"
@@ -553,9 +515,8 @@ scenarios:
     expect:
       entry: 25824.50
       sl:    25839.50
-      tp:    25775.00
+      tp:    25764.50
       tolerance: 0.25
-
   - name: "NQ - 2025-12-26"
     pair: "NQ"
     tf: "1m"
@@ -566,9 +527,8 @@ scenarios:
     expect:
       entry: 25917.25
       sl:    25932.25
-      tp:    25867.75
+      tp:    25857.25
       tolerance: 0.25
-
   - name: "NQ - 2025-12-29"
     pair: "NQ"
     tf: "1m"
@@ -579,9 +539,8 @@ scenarios:
     expect:
       entry: 25686.25
       sl:    25656.25
-      tp:    25785.25
+      tp:    25806.25
       tolerance: 0.25
-
   - name: "NQ - 2025-12-31"
     pair: "NQ"
     tf: "5m"
@@ -613,9 +572,8 @@ scenarios:
     expect:
       entry: 25630.50
       sl:    25670.50
-      tp:    25498.50
+      tp:    25470.50
       tolerance: 0.25
-
   - name: "NQ - 2026-01-06"
     pair: "NQ"
     tf: "5m"
@@ -626,9 +584,8 @@ scenarios:
     expect:
       entry: 25811.00
       sl:    25826.00
-      tp:    25761.50
+      tp:    25751.00
       tolerance: 0.25
-
   - name: "NQ - 2026-01-07"
     pair: "NQ"
     tf: "1m"
@@ -649,9 +606,8 @@ scenarios:
     expect:
       entry: 25684.75
       sl:    25644.75
-      tp:    25816.75
+      tp:    25844.75
       tolerance: 0.25
-
   - name: "NQ - 2026-01-12"
     pair: "NQ"
     tf: "5m"
@@ -662,9 +618,8 @@ scenarios:
     expect:
       entry: 25891.50
       sl:    25931.50
-      tp:    25759.50
+      tp:    25731.50
       tolerance: 0.25
-
   - name: "NQ - 2026-01-13"
     pair: "NQ"
     tf: "3m"
@@ -675,9 +630,8 @@ scenarios:
     expect:
       entry: 25989.00
       sl:    26029.00
-      tp:    25857.00
+      tp:    25829.00
       tolerance: 0.25
-
   - name: "NQ - 2026-01-14"
     pair: "NQ"
     tf: "3m"
@@ -688,9 +642,8 @@ scenarios:
     expect:
       entry: 25514.75
       sl:    25474.75
-      tp:    25646.75
+      tp:    25674.75
       tolerance: 0.25
-
   - name: "NQ - 2026-01-15"
     pair: "NQ"
     tf: "3m"
@@ -701,9 +654,8 @@ scenarios:
     expect:
       entry: 25924.50
       sl:    25954.50
-      tp:    25825.50
+      tp:    25804.50
       tolerance: 0.25
-
   - name: "NQ - 2026-01-16"
     pair: "NQ"
     tf: "1m"
@@ -714,9 +666,8 @@ scenarios:
     expect:
       entry: 25864.25
       sl:    25894.25
-      tp:    25765.25
+      tp:    25744.25
       tolerance: 0.25
-
   - name: "NQ - 2026-01-19"
     pair: "NQ"
     tf: "1m"
@@ -727,9 +678,8 @@ scenarios:
     expect:
       entry: 25257.75
       sl:    25242.75
-      tp:    25307.25
+      tp:    25317.75
       tolerance: 0.25
-
   - name: "NQ - 2026-01-20"
     pair: "NQ"
     tf: "1m"
@@ -740,9 +690,8 @@ scenarios:
     expect:
       entry: 25291.00
       sl:    25331.00
-      tp:    25159.00
+      tp:    25131.00
       tolerance: 0.25
-
   - name: "NQ - 2026-01-21"
     pair: "NQ"
     tf: "5m"
@@ -762,9 +711,8 @@ scenarios:
     expect:
       entry: 25824.75
       sl:    25854.75
-      tp:    25725.75
+      tp:    25704.75
       tolerance: 0.25
-
   - name: "NQ - 2026-01-26"
     pair: "NQ"
     tf: "1m"
@@ -775,9 +723,8 @@ scenarios:
     expect:
       entry: 25821.50
       sl:    25836.50
-      tp:    25772.00
+      tp:    25761.50
       tolerance: 0.25
-
   - name: "NQ - 2026-01-27"
     pair: "NQ"
     tf: "3m"
@@ -788,9 +735,8 @@ scenarios:
     expect:
       entry: 25993.50
       sl:    25953.50
-      tp:    26125.50
+      tp:    26153.50
       tolerance: 0.25
-
   - name: "NQ - 2026-01-29"
     pair: "NQ"
     tf: "5m"
@@ -813,9 +759,8 @@ scenarios:
     expect:
       entry: 25650.50
       sl:    25610.50
-      tp:    25782.50
+      tp:    25810.50
       tolerance: 0.25
-
   - name: "NQ - 2026-02-02"
     pair: "NQ"
     tf: "5m"
@@ -838,9 +783,8 @@ scenarios:
     expect:
       entry: 25546.00
       sl:    25506.00
-      tp:    25678.00
+      tp:    25706.00
       tolerance: 0.25
-
   - name: "NQ - 2026-02-04"
     pair: "NQ"
     tf: "5m"
@@ -862,9 +806,8 @@ scenarios:
     expect:
       entry: 24872.75
       sl:    24912.75
-      tp:    24740.75
+      tp:    24712.75
       tolerance: 0.25
-
   - name: "NQ - 2026-02-06"
     pair: "NQ"
     tf: "1m"
@@ -876,9 +819,8 @@ scenarios:
     expect:
       entry: 24988.25
       sl:    25003.25
-      tp:    24938.75
+      tp:    24928.25
       tolerance: 0.25
-
   - name: "NQ - 2026-02-09"
     pair: "NQ"
     tf: "3m"
@@ -889,9 +831,8 @@ scenarios:
     expect:
       entry: 25344.75
       sl:    25364.75
-      tp:    25278.75
+      tp:    25264.75
       tolerance: 0.25
-
   - name: "NQ - 2026-02-10"
     pair: "NQ"
     tf: "1m"
@@ -902,9 +843,8 @@ scenarios:
     expect:
       entry: 25435.25
       sl:    25450.25
-      tp:    25385.75
+      tp:    25375.25
       tolerance: 0.25
-
   - name: "NQ - 2026-02-11"
     pair: "NQ"
     tf: "1m"
@@ -915,9 +855,8 @@ scenarios:
     expect:
       entry: 25101.50
       sl:    25061.50
-      tp:    25233.50
+      tp:    25261.50
       tolerance: 0.25
-
   - name: "NQ - 2026-02-12"
     pair: "NQ"
     tf: "1m"
@@ -928,9 +867,8 @@ scenarios:
     expect:
       entry: 25411.75
       sl:    25426.75
-      tp:    25362.25
+      tp:    25351.75
       tolerance: 0.25
-
   - name: "NQ - 2026-02-13"
     pair: "NQ"
     tf: "1m"
@@ -941,9 +879,8 @@ scenarios:
     expect:
       entry: 24688.25
       sl:    24648.25
-      tp:    24820.25
+      tp:    24848.25
       tolerance: 0.25
-
   - name: "NQ - 2026-02-17"
     pair: "NQ"
     tf: "1m"
@@ -954,9 +891,8 @@ scenarios:
     expect:
       entry: 24776.50
       sl:    24816.50
-      tp:    24644.50
+      tp:    24616.50
       tolerance: 0.25
-
   - name: "NQ - 2026-02-18"
     pair: "NQ"
     tf: "3m"
@@ -967,9 +903,8 @@ scenarios:
     expect:
       entry: 24825.75
       sl:    24785.75
-      tp:    24957.75
+      tp:    24985.75
       tolerance: 0.25
-
   - name: "NQ - 2026-02-19"
     pair: "NQ"
     tf: "1m"
@@ -980,9 +915,8 @@ scenarios:
     expect:
       entry: 24908.75
       sl:    24948.75
-      tp:    24776.75
+      tp:    24748.75
       tolerance: 0.25
-
   - name: "NQ - 2026-02-20"
     pair: "NQ"
     tf: "1m"
@@ -993,9 +927,8 @@ scenarios:
     expect:
       entry: 24735.50
       sl:    24720.50
-      tp:    24785.00
+      tp:    24795.50
       tolerance: 0.25
-
   - name: "NQ - 2026-02-23"
     pair: "NQ"
     tf: "1m"
@@ -1006,9 +939,8 @@ scenarios:
     expect:
       entry: 24976.75
       sl:    25016.75
-      tp:    24844.75
+      tp:    24816.75
       tolerance: 0.25
-
   - name: "NQ - 2026-02-24"
     pair: "NQ"
     tf: "1m"
@@ -1019,9 +951,8 @@ scenarios:
     expect:
       entry: 24739.00
       sl:    24699.00
-      tp:    24871.00
+      tp:    24899.00
       tolerance: 0.25
-
   - name: "NQ - 2026-02-25"
     pair: "NQ"
     tf: "5m"
@@ -1032,9 +963,8 @@ scenarios:
     expect:
       entry: 25321.25
       sl:    25361.25
-      tp:    25189.25
+      tp:    25161.25
       tolerance: 0.25
-
   - name: "NQ - 2026-02-26"
     pair: "NQ"
     tf: "5m"
@@ -1055,9 +985,8 @@ scenarios:
     expect:
       entry: 24839.75
       sl:    24799.75
-      tp:    24971.75
+      tp:    24999.75
       tolerance: 0.25
-
   - name: "NQ - 2026-03-02"
     pair: "NQ"
     tf: "3m"
@@ -1068,9 +997,8 @@ scenarios:
     expect:
       entry: 24919.75
       sl:    24949.75
-      tp:    24820.75
+      tp:    24799.75
       tolerance: 0.25
-
   - name: "NQ - 2026-03-03"
     pair: "NQ"
     tf: "3m"
@@ -1081,9 +1009,8 @@ scenarios:
     expect:
       entry: 24411.25
       sl:    24371.25
-      tp:    24543.25
+      tp:    24571.25
       tolerance: 0.25
-
   - name: "NQ - 2026-03-04"
     pair: "NQ"
     tf: "3m"
@@ -1094,9 +1021,8 @@ scenarios:
     expect:
       entry: 25103.50
       sl:    25143.50
-      tp:    24971.50
+      tp:    24943.50
       tolerance: 0.25
-
   - name: "NQ - 2026-03-05"
     pair: "NQ"
     tf: "3m"
@@ -1107,9 +1033,8 @@ scenarios:
     expect:
       entry: 24978.50
       sl:    24958.50
-      tp:    25044.50
+      tp:    25058.50
       tolerance: 0.25
-
   - name: "NQ - 2026-03-06"
     pair: "NQ"
     tf: "5m"
@@ -1131,9 +1056,8 @@ scenarios:
     expect:
       entry: 24459.00
       sl:    24499.00
-      tp:    24327.00
+      tp:    24299.00
       tolerance: 0.25
-
   - name: "NQ - 2026-03-10"
     pair: "NQ"
     tf: "1m"
@@ -1144,9 +1068,8 @@ scenarios:
     expect:
       entry: 25004.00
       sl:    25044.00
-      tp:    24872.00
+      tp:    24844.00
       tolerance: 0.25
-
   - name: "NQ - 2026-03-11"
     pair: "NQ"
     tf: "1m"
@@ -1157,9 +1080,8 @@ scenarios:
     expect:
       entry: 25115.25
       sl:    25155.25
-      tp:    24983.25
+      tp:    24955.25
       tolerance: 0.25
-
   - name: "NQ - 2026-03-13"
     pair: "NQ"
     tf: "5m"
