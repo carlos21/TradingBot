@@ -1058,15 +1058,27 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         )
 
     if getattr(args, 'results_json', None):
-        out = [
-            {
-                "name": r["name"],
-                "status": r["status"],
-                "trades": [t for t, _ in (r.get("trade_pairs") or [])],
-            }
-            for r in summary_results
-        ]
-        Path(args.results_json).write_text(json.dumps(out, indent=2))
+        out = {
+            "config": {
+                "account": ACCT,
+                "risk": RISK_USD,
+                "mode": mode,
+                "rr": args.rr,
+                "no_breakeven": getattr(args, 'no_breakeven', False),
+            },
+            "results": [
+                {
+                    "name": r["name"],
+                    "status": r["status"],
+                    "date": r.get("date", ""),
+                    "trade_pairs": [
+                        [t, c] for t, c in (r.get("trade_pairs") or [])
+                    ],
+                }
+                for r in summary_results
+            ],
+        }
+        Path(args.results_json).write_text(json.dumps(out, indent=2, default=str))
 
     if getattr(args, 'html_report', False):
         # For "both" mode, default HTML report to real_futures (the more realistic scenario)

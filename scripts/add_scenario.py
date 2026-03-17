@@ -131,7 +131,6 @@ def format_scenario_block(sc: dict) -> str:
         f'    lines:\n'
         f'{_format_lines_block(sc["lines"])}'
         f'{_format_expect_block(sc["expect"])}'
-        f'    snapshot: true\n'
     )
 
 
@@ -212,6 +211,7 @@ def run_discovery(results_json_path: str, rr_ratio: float = 3.3) -> bool:
         "--decision-log",
         "--results-json", results_json_path,
         "--rr", str(rr_ratio),
+        "--no-breakeven",
     ]
     result = subprocess.run(cmd, cwd=str(PROJECT_ROOT))
     return result.returncode == 0
@@ -344,18 +344,10 @@ def main():
             # Use the triggering timeframe (fall back to "1m" if not in payload)
             tf = trade_tf or "1m"
         else:
-            print("\nNo trade was found.")
-            ans = prompt("Add scenario with 'expect: {none: true}'?", default="y")
-            if ans.lower() not in ("y", "yes", ""):
-                print("Aborted.")
-                return
+            print("\nNo trade was found — adding with expect: none.")
             expect = {"none": True}
     except Exception as e:
-        print(f"\nCould not read results ({e}).")
-        ans = prompt("Add scenario with 'expect: {none: true}'?", default="y")
-        if ans.lower() not in ("y", "yes", ""):
-            print("Aborted.")
-            return
+        print(f"\nCould not read results ({e}) — adding with expect: none.")
         expect = {"none": True}
     finally:
         Path(results_json).unlink(missing_ok=True)
@@ -373,8 +365,8 @@ def main():
     # ── Re-run with correct tf if it differs from discovery tf ("5m") ────────
     if tf != "5m":
         # Remove the stale 5m snapshot from the discovery run
-        safe_name = "".join(c if c.isalnum() or c in ("-", "_", " ") else "_" for c in name).strip().replace(" ", "_")
-        stale_snapshot = PROJECT_ROOT / "scenarios_out" / safe_name / "snapshot_5m.png"
+        date_label = ts_date(start_ts)
+        stale_snapshot = PROJECT_ROOT / "scenarios_out" / "NQ" / f"{date_label}_5m.png"
         stale_snapshot.unlink(missing_ok=True)
 
         print(f"\nRe-running with tf={tf} to generate correct snapshot...")

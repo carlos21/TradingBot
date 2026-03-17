@@ -9,73 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from dateutil import parser as dtparser
 
-
-def _compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold):
-    """Compute PnL for a single trade+close pair. Returns dict with outcome/usd/pct/r."""
-    if close is None:
-        return {"outcome": "open", "usd": 0.0, "pct": 0.0, "r": 0.0}
-
-    result_type = close.get("result_type", None)
-    if result_type == "SP":
-        # Session-end closure
-        actual_r = close.get("result", 0.0)
-        if mode == "sim":
-            usd = risk * actual_r if actual_r > 0 else -risk
-        else:  # real
-            entry = trade.get("entry") or trade.get("entry_price")
-            orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-            if entry is None or orig_sl is None:
-                usd = 0.0
-            else:
-                sl_pts = round(abs(entry - orig_sl), 4)
-                if sl_pts <= 0:
-                    usd = 0.0
-                else:
-                    contracts = max(1, round(risk / (sl_pts * nq_pv)))
-                    fees = contracts * fee_per_rt
-                    if actual_r > 0:
-                        usd = contracts * (actual_r * sl_pts) * nq_pv - fees
-                    else:
-                        usd = -(contracts * sl_pts * nq_pv) - fees
-        pct = usd / account * 100 if account else 0.0
-        return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r}
-
-    actual_r = close.get("result", 0.0)
-
-    if mode == "sim":
-        usd = risk * actual_r if actual_r > 0 else -risk
-    else:  # real
-        entry = trade.get("entry") or trade.get("entry_price")
-        orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-        if entry is None or orig_sl is None:
-            usd = 0.0
-        else:
-            sl_pts = round(abs(entry - orig_sl), 4)
-            if sl_pts <= 0:
-                usd = 0.0
-            else:
-                contracts = max(1, round(risk / (sl_pts * nq_pv)))
-                fees = contracts * fee_per_rt
-                if actual_r > 0:
-                    usd = contracts * (actual_r * sl_pts) * nq_pv - fees
-                else:
-                    usd = -(contracts * sl_pts * nq_pv) - fees
-
-    pct = usd / account * 100 if account else 0.0
-
-    if actual_r > 0 and actual_r < be_threshold:
-        outcome = "be"
-    elif actual_r >= be_threshold:
-        outcome = "win"
-    else:
-        outcome = "loss"
-
-    return {"outcome": outcome, "usd": usd, "pct": pct, "r": actual_r}
-
-
-def _h(text):
-    """HTML-escape."""
-    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+from report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pct, pnl_class, h as _h
 
 
 def generate_html_report(summary_results, account, risk, mode, output_path,
@@ -98,7 +32,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         date = dtparser.parse(r["date"]).date()
         trades_data = []
         for trade, close in (r.get("trade_pairs") or []):
-            td = _compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold)
+            td = compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold)
             trades_data.append(td)
         net_usd = sum(t["usd"] for t in trades_data)
         net_pct = sum(t["pct"] for t in trades_data)
@@ -179,24 +113,6 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         max_cw = max(max_cw, cw)
         max_cl = max(max_cl, cl)
 
-    # ── 4b. Max drawdown calculation ───────────────────────────────────
-    def _calc_max_dd(balances):
-        """Calculate max drawdown from equity curve."""
-        if not balances or len(balances) < 2:
-            return 0.0, 0.0
-        peak = balances[0]
-        max_dd_usd = 0.0
-        max_dd_pct = 0.0
-        for bal in balances[1:]:
-            if bal > peak:
-                peak = bal
-            dd_usd = peak - bal
-            dd_pct = (dd_usd / peak * 100) if peak > 0 else 0.0
-            if dd_usd > max_dd_usd:
-                max_dd_usd = dd_usd
-                max_dd_pct = dd_pct
-        return max_dd_usd, max_dd_pct
-
     # ── 5. Equity curve data points (cumulative by date) ──────────────────
     equity_points = [{"date": "Start", "balance": account}]
     running = account
@@ -212,26 +128,13 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
 
     # Calculate max drawdown from equity curve
     equity_balances = [p["balance"] for p in equity_points]
-    max_dd_usd, max_dd_pct = _calc_max_dd(equity_balances)
+    max_dd_usd, max_dd_pct = calc_max_dd(equity_balances)
 
     # ── 6. Build HTML ─────────────────────────────────────────────────────
     def outcome_badge(outcome):
         cls_map = {"win": "badge-win", "loss": "badge-loss", "be": "badge-be", "sp": "badge-sp", "open": "badge-open"}
         label_map = {"win": "W", "loss": "L", "be": "B/E", "sp": "SP", "open": "OPEN"}
         return f'<span class="badge {cls_map.get(outcome, "")}">{label_map.get(outcome, "?")}</span>'
-
-    def pnl_class(val):
-        if val > 0.005:
-            return "positive"
-        if val < -0.005:
-            return "negative"
-        return "neutral"
-
-    def fmt_usd(val):
-        return f"${val:+,.0f}"
-
-    def fmt_pct(val):
-        return f"{val:+.2f}%"
 
     # Build month cards HTML
     month_cards_html = []
