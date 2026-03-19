@@ -387,7 +387,7 @@ def main():
     print(f"\n✅ Done! Scenario '{name}' added.")
     print(f"   scenarios.yaml     — updated")
     print(f"   test_scenario.yaml — updated")
-    print(f"\nRun './run_test_scenario.sh' to validate.")
+    print(f"\nRun './bin/run_test_scenario.sh' to validate.")
 
 
 if __name__ == "__main__":

@@ -1102,3 +1102,12 @@ scenarios:
     expect:
       none: true
 
+  - name: "NQ - 2026-03-18"
+    pair: "NQ"
+    tf: "5m"
+    start: "2026-03-18 06:00:00Z"
+    end:   "2026-03-18 16:00:00Z"
+    lines:
+      - { price: 24858.25, at: "2026-03-18 07:00:00Z" }
+    expect:
+      none: true
