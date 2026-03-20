@@ -10,7 +10,6 @@ scenarios:
       entry: 24975.25
       sl:    24990.25
       tp:    24915.25
-      tolerance: 0.25
   - name: "NQ - 2025-10-02"
     pair: "NQ"
     tf: "5m"
@@ -22,7 +21,6 @@ scenarios:
       entry: 25032.50
       sl:    24992.50
       tp:    25192.50
-      tolerance: 0.25
   - name: "NQ - 2025-10-03"
     pair: "NQ"
     tf: "3m"
@@ -34,7 +32,6 @@ scenarios:
       entry: 24973.50
       sl:    24933.50
       tp:    25133.50
-      tolerance: 0.25
       reentry:
         entry: 24996.00
         sl:    24981.00
@@ -50,7 +47,6 @@ scenarios:
       entry: 25219.25
       sl:    25249.25
       tp:    25099.25
-      tolerance: 0.25
       reentry:
         entry: 25191.50
         sl:    25206.50
@@ -66,7 +62,6 @@ scenarios:
       entry: 25265.50
       sl:    25280.50
       tp:    25205.50
-      tolerance: 0.25
   - name: "NQ - 2025-10-08"
     pair: "NQ"
     tf: "1m"
@@ -79,7 +74,6 @@ scenarios:
       entry: 25117.00
       sl:    25137.00
       tp:    25037.00
-      tolerance: 0.25
       reentry:
         entry: 25122.75
         sl:    25137.75
@@ -95,7 +89,6 @@ scenarios:
       entry: 25275.75
       sl:    25245.75
       tp:    25395.75
-      tolerance: 0.25
   - name: "NQ - 2025-10-10"
     pair: "NQ"
     tf: "5m"
@@ -123,7 +116,6 @@ scenarios:
       entry: 25104.75
       sl:    25119.75
       tp:    25044.75
-      tolerance: 0.25
   - name: "NQ - 2025-10-16"
     pair: "NQ"
     tf: "1m"
@@ -135,7 +127,6 @@ scenarios:
       entry: 25148.75
       sl:    25188.75
       tp:    24988.75
-      tolerance: 0.25
   - name: "NQ - 2025-10-17"
     pair: "NQ"
     tf: "3m"
@@ -147,7 +138,6 @@ scenarios:
       entry: 25014.25
       sl:    25034.25
       tp:    24934.25
-      tolerance: 0.25
       reentry:
         entry: 25008.25
         sl:    25023.25
@@ -164,7 +154,6 @@ scenarios:
       entry: 25222.00
       sl:    25242.00
       tp:    25142.00
-      tolerance: 0.25
   - name: "NQ - 2025-10-22"
     pair: "NQ"
     tf: "1m"
@@ -176,7 +165,6 @@ scenarios:
       entry: 25191.50
       sl:    25171.50
       tp:    25271.50
-      tolerance: 0.25
   - name: "NQ - 2025-10-23"
     pair: "NQ"
     tf: "1m"
@@ -188,7 +176,6 @@ scenarios:
       entry: 25214.50
       sl:    25229.50
       tp:    25154.50
-      tolerance: 0.25
       reentry:
         entry: 25199.75
         sl:    25214.75
@@ -225,7 +212,6 @@ scenarios:
       entry: 25980.25
       sl:    25950.25
       tp:    26100.25
-      tolerance: 0.25
   - name: "NQ - 2025-11-03"
     pair: "NQ"
     tf: "5m"
@@ -248,7 +234,6 @@ scenarios:
       entry: 25864.00
       sl:    25894.00
       tp:    25744.00
-      tolerance: 0.25
   - name: "NQ - 2025-11-06"
     pair: "NQ"
     tf: "5m"
@@ -262,7 +247,6 @@ scenarios:
       entry: 25302.00
       sl:    25262.00
       tp:    25462.00
-      tolerance: 0.25
   - name: "NQ - 2025-11-07"
     pair: "NQ"
     tf: "3m"
@@ -284,7 +268,6 @@ scenarios:
       entry: 25630.50
       sl:    25650.50
       tp:    25550.50
-      tolerance: 0.25
       reentry:
         entry: 25626.00
         sl:    25641.00
@@ -300,7 +283,6 @@ scenarios:
       entry: 25472.25
       sl:    25432.25
       tp:    25632.25
-      tolerance: 0.25
   - name: "NQ - 2025-11-14"
     pair: "NQ"
     tf: "5m"
@@ -312,7 +294,6 @@ scenarios:
       entry: 24722.00
       sl:    24682.00
       tp:    24882.00
-      tolerance: 0.25
       reentry:
         entry: 24713.75
         sl:    24698.75
@@ -328,7 +309,6 @@ scenarios:
       entry: 25094.50
       sl:    25054.50
       tp:    25254.50
-      tolerance: 0.25
       reentry:
         entry: 25066.25
         sl:    25026.25
@@ -344,7 +324,6 @@ scenarios:
       entry: 24494.25
       sl:    24454.25
       tp:    24654.25
-      tolerance: 0.25
   - name: "NQ - 2025-11-19"
     pair: "NQ"
     tf: "3m"
@@ -356,7 +335,6 @@ scenarios:
       entry: 24572.75
       sl:    24532.75
       tp:    24732.75
-      tolerance: 0.25
   - name: "NQ - 2025-11-20"
     pair: "NQ"
     tf: "3m"
@@ -368,7 +346,6 @@ scenarios:
       entry: 25229.50
       sl:    25269.50
       tp:    25069.50
-      tolerance: 0.25
       reentry:
         entry: 25240.00
         sl:    25255.00
@@ -384,7 +361,6 @@ scenarios:
       entry: 24337.75
       sl:    24377.75
       tp:    24177.75
-      tolerance: 0.25
       reentry:
         entry: 24379.25
         sl:    24394.25
@@ -400,7 +376,6 @@ scenarios:
       entry: 25032.50
       sl:    25062.50
       tp:    24912.50
-      tolerance: 0.25
   - name: "NQ - 2025-11-26"
     pair: "NQ"
     tf: "3m"
@@ -412,7 +387,6 @@ scenarios:
       entry: 25349.00
       sl:    25379.00
       tp:    25229.00
-      tolerance: 0.25
   - name: "NQ - 2025-12-02"
     pair: "NQ"
     tf: "1m"
@@ -424,7 +398,6 @@ scenarios:
       entry: 25587.50
       sl:    25617.50
       tp:    25467.50
-      tolerance: 0.25
   - name: "NQ - 2025-12-03"
     pair: "NQ"
     tf: "1m"
@@ -436,7 +409,6 @@ scenarios:
       entry: 25611.00
       sl:    25626.00
       tp:    25551.00
-      tolerance: 0.25
   - name: "NQ - 2025-12-04"
     pair: "NQ"
     tf: "1m"
@@ -448,7 +420,6 @@ scenarios:
       entry: 25720.75
       sl:    25735.75
       tp:    25660.75
-      tolerance: 0.25
   - name: "NQ - 2025-12-05"
     pair: "NQ"
     tf: "5m"
@@ -471,7 +442,6 @@ scenarios:
       entry: 25586.75
       sl:    25556.75
       tp:    25706.75
-      tolerance: 0.25
   - name: "NQ - 2025-12-10"
     pair: "NQ"
     tf: "3m"
@@ -483,7 +453,6 @@ scenarios:
       entry: 25568.50
       sl:    25528.50
       tp:    25728.50
-      tolerance: 0.25
   - name: "NQ - 2025-12-12"
     pair: "NQ"
     tf: "3m"
@@ -495,7 +464,6 @@ scenarios:
       entry: 25327.00
       sl:    25287.00
       tp:    25487.00
-      tolerance: 0.25
   - name: "NQ - 2025-12-15"
     pair: "NQ"
     tf: "1m"
@@ -507,7 +475,6 @@ scenarios:
       entry: 25389.75
       sl:    25404.75
       tp:    25329.75
-      tolerance: 0.25
       reentry:
         entry: 25380.00
         sl:    25395.00
@@ -525,7 +492,6 @@ scenarios:
       entry: 25078.75
       sl:    25058.75
       tp:    25158.75
-      tolerance: 0.25
   - name: "NQ - 2025-12-18"
     pair: "NQ"
     tf: "5m"
@@ -548,7 +514,6 @@ scenarios:
       entry: 25638.25
       sl:    25608.25
       tp:    25758.25
-      tolerance: 0.25
   - name: "NQ - 2025-12-24"
     pair: "NQ"
     tf: "1m"
@@ -560,7 +525,6 @@ scenarios:
       entry: 25824.50
       sl:    25839.50
       tp:    25764.50
-      tolerance: 0.25
       reentry:
         entry: 25817.75
         sl:    25832.75
@@ -576,7 +540,6 @@ scenarios:
       entry: 25917.25
       sl:    25932.25
       tp:    25857.25
-      tolerance: 0.25
       reentry:
         entry: 25915.25
         sl:    25930.25
@@ -592,7 +555,6 @@ scenarios:
       entry: 25686.25
       sl:    25656.25
       tp:    25806.25
-      tolerance: 0.25
   - name: "NQ - 2025-12-31"
     pair: "NQ"
     tf: "5m"
@@ -625,7 +587,6 @@ scenarios:
       entry: 25630.50
       sl:    25670.50
       tp:    25470.50
-      tolerance: 0.25
       reentry:
         entry: 25634.75
         sl:    25649.75
@@ -641,7 +602,6 @@ scenarios:
       entry: 25811.00
       sl:    25826.00
       tp:    25751.00
-      tolerance: 0.25
   - name: "NQ - 2026-01-07"
     pair: "NQ"
     tf: "1m"
@@ -663,7 +623,6 @@ scenarios:
       entry: 25684.75
       sl:    25644.75
       tp:    25844.75
-      tolerance: 0.25
       reentry:
         entry: 25724.25
         sl:    25694.25
@@ -679,7 +638,6 @@ scenarios:
       entry: 25891.50
       sl:    25931.50
       tp:    25731.50
-      tolerance: 0.25
   - name: "NQ - 2026-01-13"
     pair: "NQ"
     tf: "3m"
@@ -691,7 +649,6 @@ scenarios:
       entry: 25989.00
       sl:    26029.00
       tp:    25829.00
-      tolerance: 0.25
       reentry:
         entry: 25982.75
         sl:    26022.75
@@ -707,7 +664,6 @@ scenarios:
       entry: 25514.75
       sl:    25474.75
       tp:    25674.75
-      tolerance: 0.25
       reentry:
         entry: 25484.50
         sl:    25469.50
@@ -723,7 +679,6 @@ scenarios:
       entry: 25924.50
       sl:    25954.50
       tp:    25804.50
-      tolerance: 0.25
   - name: "NQ - 2026-01-16"
     pair: "NQ"
     tf: "1m"
@@ -735,7 +690,6 @@ scenarios:
       entry: 25864.25
       sl:    25894.25
       tp:    25744.25
-      tolerance: 0.25
   - name: "NQ - 2026-01-19"
     pair: "NQ"
     tf: "1m"
@@ -747,7 +701,6 @@ scenarios:
       entry: 25257.75
       sl:    25242.75
       tp:    25317.75
-      tolerance: 0.25
       reentry:
         entry: 25262.00
         sl:    25247.00
@@ -763,7 +716,6 @@ scenarios:
       entry: 25291.00
       sl:    25331.00
       tp:    25131.00
-      tolerance: 0.25
       reentry:
         entry: 25300.50
         sl:    25330.50
@@ -788,7 +740,6 @@ scenarios:
       entry: 25824.75
       sl:    25854.75
       tp:    25704.75
-      tolerance: 0.25
   - name: "NQ - 2026-01-26"
     pair: "NQ"
     tf: "1m"
@@ -800,7 +751,6 @@ scenarios:
       entry: 25821.50
       sl:    25836.50
       tp:    25761.50
-      tolerance: 0.25
   - name: "NQ - 2026-01-27"
     pair: "NQ"
     tf: "3m"
@@ -812,7 +762,6 @@ scenarios:
       entry: 25993.50
       sl:    25953.50
       tp:    26153.50
-      tolerance: 0.25
       reentry:
         entry: 25974.00
         sl:    25959.00
@@ -840,7 +789,6 @@ scenarios:
       entry: 25650.50
       sl:    25610.50
       tp:    25810.50
-      tolerance: 0.25
       reentry:
         entry: 25660.50
         sl:    25645.50
@@ -868,7 +816,6 @@ scenarios:
       entry: 25546.00
       sl:    25506.00
       tp:    25706.00
-      tolerance: 0.25
       reentry:
         entry: 25542.00
         sl:    25527.00
@@ -895,7 +842,6 @@ scenarios:
       entry: 24872.75
       sl:    24912.75
       tp:    24712.75
-      tolerance: 0.25
       reentry:
         entry: 24913.50
         sl:    24928.50
@@ -912,7 +858,6 @@ scenarios:
       entry: 24988.25
       sl:    25003.25
       tp:    24928.25
-      tolerance: 0.25
       reentry:
         entry: 24981.75
         sl:    24996.75
@@ -928,7 +873,6 @@ scenarios:
       entry: 25344.75
       sl:    25364.75
       tp:    25264.75
-      tolerance: 0.25
       reentry:
         entry: 25353.75
         sl:    25368.75
@@ -944,7 +888,6 @@ scenarios:
       entry: 25435.25
       sl:    25450.25
       tp:    25375.25
-      tolerance: 0.25
   - name: "NQ - 2026-02-11"
     pair: "NQ"
     tf: "1m"
@@ -956,7 +899,6 @@ scenarios:
       entry: 25101.50
       sl:    25061.50
       tp:    25261.50
-      tolerance: 0.25
   - name: "NQ - 2026-02-12"
     pair: "NQ"
     tf: "1m"
@@ -968,7 +910,6 @@ scenarios:
       entry: 25411.75
       sl:    25426.75
       tp:    25351.75
-      tolerance: 0.25
   - name: "NQ - 2026-02-13"
     pair: "NQ"
     tf: "1m"
@@ -980,7 +921,6 @@ scenarios:
       entry: 24688.25
       sl:    24648.25
       tp:    24848.25
-      tolerance: 0.25
   - name: "NQ - 2026-02-17"
     pair: "NQ"
     tf: "1m"
@@ -992,7 +932,6 @@ scenarios:
       entry: 24776.50
       sl:    24816.50
       tp:    24616.50
-      tolerance: 0.25
   - name: "NQ - 2026-02-18"
     pair: "NQ"
     tf: "3m"
@@ -1004,7 +943,6 @@ scenarios:
       entry: 24825.75
       sl:    24785.75
       tp:    24985.75
-      tolerance: 0.25
   - name: "NQ - 2026-02-19"
     pair: "NQ"
     tf: "1m"
@@ -1016,7 +954,6 @@ scenarios:
       entry: 24908.75
       sl:    24948.75
       tp:    24748.75
-      tolerance: 0.25
       reentry:
         entry: 24926.50
         sl:    24946.50
@@ -1032,7 +969,6 @@ scenarios:
       entry: 24735.50
       sl:    24720.50
       tp:    24795.50
-      tolerance: 0.25
       reentry:
         entry: 24780.50
         sl:    24740.50
@@ -1048,7 +984,6 @@ scenarios:
       entry: 24976.75
       sl:    25016.75
       tp:    24816.75
-      tolerance: 0.25
       reentry:
         entry: 25011.75
         sl:    25026.75
@@ -1064,7 +999,6 @@ scenarios:
       entry: 24739.00
       sl:    24699.00
       tp:    24899.00
-      tolerance: 0.25
       reentry:
         entry: 24720.50
         sl:    24705.50
@@ -1080,7 +1014,6 @@ scenarios:
       entry: 25321.25
       sl:    25361.25
       tp:    25161.25
-      tolerance: 0.25
   - name: "NQ - 2026-02-26"
     pair: "NQ"
     tf: "5m"
@@ -1102,7 +1035,6 @@ scenarios:
       entry: 24839.75
       sl:    24799.75
       tp:    24999.75
-      tolerance: 0.25
       reentry:
         entry: 24880.75
         sl:    24860.75
@@ -1118,7 +1050,6 @@ scenarios:
       entry: 24919.75
       sl:    24949.75
       tp:    24799.75
-      tolerance: 0.25
       reentry:
         entry: 24938.75
         sl:    24953.75
@@ -1134,7 +1065,6 @@ scenarios:
       entry: 24411.25
       sl:    24371.25
       tp:    24571.25
-      tolerance: 0.25
   - name: "NQ - 2026-03-04"
     pair: "NQ"
     tf: "3m"
@@ -1146,7 +1076,6 @@ scenarios:
       entry: 25103.50
       sl:    25143.50
       tp:    24943.50
-      tolerance: 0.25
       reentry:
         entry: 25091.50
         sl:    25106.50
@@ -1162,7 +1091,6 @@ scenarios:
       entry: 24978.50
       sl:    24958.50
       tp:    25058.50
-      tolerance: 0.25
   - name: "NQ - 2026-03-06"
     pair: "NQ"
     tf: "5m"
@@ -1185,7 +1113,6 @@ scenarios:
       entry: 24459.00
       sl:    24499.00
       tp:    24299.00
-      tolerance: 0.25
       reentry:
         entry: 24483.50
         sl:    24498.50
@@ -1201,7 +1128,6 @@ scenarios:
       entry: 25004.00
       sl:    25044.00
       tp:    24844.00
-      tolerance: 0.25
       reentry:
         entry: 24998.25
         sl:    25038.25
@@ -1217,7 +1143,6 @@ scenarios:
       entry: 25115.25
       sl:    25155.25
       tp:    24955.25
-      tolerance: 0.25
   - name: "NQ - 2026-03-13"
     pair: "NQ"
     tf: "5m"
@@ -1249,7 +1174,6 @@ scenarios:
       entry: 24912.25
       sl:    24872.25
       tp:    25072.25
-      tolerance: 0.25
       reentry:
         entry: 24876.00
         sl:    24856.00
@@ -1265,7 +1189,6 @@ scenarios:
       entry: 24446.75
       sl:    24406.75
       tp:    24606.75
-      tolerance: 0.25
       reentry:
         entry: 24405.75
         sl:    24390.75
