@@ -663,10 +663,17 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     CYAN   = '\033[96m'; WHITE  = '\033[97m'
     BLUE   = '\033[94m'
     ACCT         = args.account   # simulated starting balance (configurable via --account)
-    RISK_USD     = args.risk      # fixed risk per trade in USD (configurable via --risk)
+    RISK_PCT     = getattr(args, 'risk_pct', None)  # percentage risk per trade (e.g. 1.0 = 1%)
+    RISK_USD_FIX = args.risk      # fixed risk per trade in USD (configurable via --risk)
     NQ_PV        = 2.0       # $ per point, MNQ micro contract
     FEE_PER_RT   = 1.50      # $ round-trip per contract (Tradovate monthly + CME micro exchange fees)
     BE_THRESHOLD = 0.5       # R below this is considered breakeven
+
+    def get_risk(balance):
+        """Return risk amount in USD — either fixed or percentage of current balance."""
+        if RISK_PCT is not None:
+            return balance * RISK_PCT / 100.0
+        return RISK_USD_FIX
 
     _ANSI = re.compile(r'\033\[[0-9;]*m')
     def _vis(s):      return len(_ANSI.sub('', s))
@@ -699,19 +706,23 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 max_dd_pct = dd_pct
         return max_dd_usd, max_dd_pct
 
-    def _actual_pnl_sim(r):
-        """$1,000 fixed risk per trade — sums across all trades in the scenario."""
+    def _actual_pnl_sim(r, balance=ACCT):
+        """Risk per trade — fixed USD or percentage of balance. Sums across all trades in the scenario."""
         trade_pairs = r.get("trade_pairs") or []
         if not trade_pairs:
             return None, None, None, ""
         total_usd = 0.0
         has_closed = False
+        bal = balance
         for _trade, close in trade_pairs:
             if close is None:
                 continue
             has_closed = True
+            risk = get_risk(bal)
             actual_r = close.get("result", 0.0)
-            total_usd += RISK_USD * actual_r if actual_r > 0 else -RISK_USD
+            t_usd = risk * actual_r if actual_r > 0 else -risk
+            total_usd += t_usd
+            bal += t_usd
         if not has_closed:
             return None, None, None, ""
         actual_pct = total_usd / ACCT * 100
@@ -719,7 +730,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         extra = f"{n} trade(s)" if n > 1 else ""
         return actual_pct, total_usd, actual_pct, extra
 
-    def _actual_pnl_real(r):
+    def _actual_pnl_real(r, balance=ACCT):
         """Realistic NQ futures: integer contracts ($20/pt), round-trip fees included. Sums all trades."""
         trade_pairs = r.get("trade_pairs") or []
         if not trade_pairs:
@@ -727,6 +738,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         total_usd = 0.0
         has_closed = False
         detail_parts = []
+        bal = balance
         for trade, close in trade_pairs:
             if close is None:
                 continue
@@ -737,7 +749,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             sl_pts = round(abs(entry - orig_sl), 4)
             if sl_pts <= 0:
                 continue
-            contracts = max(1, round(RISK_USD / (sl_pts * NQ_PV)))
+            risk = get_risk(bal)
+            contracts = max(1, round(risk / (sl_pts * NQ_PV)))
             fees = contracts * FEE_PER_RT
             actual_r = close.get("result", 0.0)
             if actual_r > 0:
@@ -745,6 +758,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             else:
                 trade_usd = -(contracts * sl_pts * NQ_PV) - fees
             total_usd += trade_usd
+            bal += trade_usd
             has_closed = True
             detail_parts.append(f"{contracts}c@{sl_pts:.0f}pt")
         if not has_closed:
@@ -766,6 +780,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
         monthly = defaultdict(_new_bucket)
+        running_balance = ACCT
 
         for r in summary_results:
             date  = dtparser.parse(r["date"]).date()
@@ -781,7 +796,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         bucket[key]["open"] += 1
                     continue
                 result_type = close.get("result_type", None)
-                t_usd, t_pct, actual_r = per_trade_fn(trade, close)
+                t_usd, t_pct, actual_r = per_trade_fn(trade, close, running_balance)
+                if t_usd is not None:
+                    running_balance += t_usd
                 is_reentry = trade.get("is_reentry", False)
 
                 if result_type == "SP":
@@ -967,12 +984,14 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             print(f"  Re-entries: {re_total}  ({GREEN}{total_rw}W{RST} / {RED}{total_rl}L{RST})  success rate: {_col(re_rate - 50, f'{re_rate:.1f}%')}")
         print()
 
-    def _per_trade_sim(trade, close):
+    def _per_trade_sim(trade, close, balance=ACCT):
+        risk = get_risk(balance)
         actual_r = close.get("result", 0.0)
-        usd = RISK_USD * actual_r if actual_r > 0 else -RISK_USD
+        usd = risk * actual_r if actual_r > 0 else -risk
         return usd, usd / ACCT * 100, actual_r
 
-    def _per_trade_real(trade, close):
+    def _per_trade_real(trade, close, balance=ACCT):
+        risk = get_risk(balance)
         entry   = trade.get("entry") or trade.get("entry_price")
         orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
         if entry is None or orig_sl is None:
@@ -980,18 +999,19 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         sl_pts = round(abs(entry - orig_sl), 4)
         if sl_pts <= 0:
             return None, None, 0.0
-        contracts = max(1, round(RISK_USD / (sl_pts * NQ_PV)))
+        contracts = max(1, round(risk / (sl_pts * NQ_PV)))
         fees = contracts * FEE_PER_RT
         actual_r = close.get("result", 0.0)
         usd = (contracts * (actual_r * sl_pts) * NQ_PV - fees) if actual_r > 0 else -(contracts * sl_pts * NQ_PV) - fees
         return usd, usd / ACCT * 100, actual_r
 
+    risk_desc = f"{RISK_PCT}% of balance" if RISK_PCT is not None else f"${RISK_USD_FIX:,.0f} fixed"
     mode = getattr(args, 'mode', 'both')
     if mode in ('sim', 'both'):
-        _print_results(f"SIM — ${ACCT:,.0f} account, ${RISK_USD:,.0f} fixed risk per trade", _actual_pnl_sim, _per_trade_sim)
+        _print_results(f"SIM — ${ACCT:,.0f} account, {risk_desc} risk per trade", _actual_pnl_sim, _per_trade_sim)
     if mode in ('real_futures', 'both'):
         _print_results(
-            f"REAL FUTURES — MNQ micro futures, ${ACCT:,.0f} account, ~${RISK_USD:,.0f} target risk, ${FEE_PER_RT:.2f}/contract RT fees (Tradovate)",
+            f"REAL FUTURES — MNQ micro futures, ${ACCT:,.0f} account, ~{risk_desc} risk, ${FEE_PER_RT:.2f}/contract RT fees (Tradovate)",
             _actual_pnl_real,
             _per_trade_real,
         )
@@ -999,7 +1019,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         cfd_spread = getattr(args, 'cfd_spread', 0.5)
         cfd_commission = getattr(args, 'cfd_commission', 5.0)
 
-        def _actual_pnl_cfd(r):
+        def _actual_pnl_cfd(r, balance=ACCT):
             """CFD mode: accounts for spread and commission costs."""
             trade_pairs = r.get("trade_pairs") or []
             if not trade_pairs:
@@ -1007,6 +1027,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             total_usd = 0.0
             has_closed = False
             detail_parts = []
+            bal = balance
             for trade, close in trade_pairs:
                 if close is None:
                     continue
@@ -1017,7 +1038,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 sl_pts = round(abs(entry - orig_sl), 4)
                 if sl_pts <= 0:
                     continue
-                contracts = max(1, round(RISK_USD / (sl_pts * NQ_PV)))
+                risk = get_risk(bal)
+                contracts = max(1, round(risk / (sl_pts * NQ_PV)))
                 # CFD costs: round-trip spread + commission
                 spread_cost = contracts * cfd_spread * NQ_PV
                 commission_cost = contracts * cfd_commission
@@ -1028,6 +1050,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 else:
                     trade_usd = -(contracts * sl_pts * NQ_PV) - total_cost
                 total_usd += trade_usd
+                bal += trade_usd
                 has_closed = True
                 detail_parts.append(f"{contracts}c@{sl_pts:.0f}pt")
             if not has_closed:
@@ -1036,8 +1059,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             extra = "  ".join(detail_parts)
             return actual_pct, total_usd, actual_pct, extra
 
-        def _per_trade_cfd(trade, close):
+        def _per_trade_cfd(trade, close, balance=ACCT):
             """Per-trade CFD P&L calculation."""
+            risk = get_risk(balance)
             entry   = trade.get("entry") or trade.get("entry_price")
             orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
             if entry is None or orig_sl is None:
@@ -1045,7 +1069,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             sl_pts = round(abs(entry - orig_sl), 4)
             if sl_pts <= 0:
                 return None, None, 0.0
-            contracts = max(1, round(RISK_USD / (sl_pts * NQ_PV)))
+            contracts = max(1, round(risk / (sl_pts * NQ_PV)))
             spread_cost = contracts * cfd_spread * NQ_PV
             commission_cost = contracts * cfd_commission
             total_cost = spread_cost + commission_cost
@@ -1054,7 +1078,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             return usd, usd / ACCT * 100, actual_r
 
         _print_results(
-            f"REAL CFD — Nasdaq CFD, ${ACCT:,.0f} account, ~${RISK_USD:,.0f} target risk, {cfd_spread}pt spread, ${cfd_commission:.2f}/lot commission",
+            f"REAL CFD — Nasdaq CFD, ${ACCT:,.0f} account, ~{risk_desc} risk, {cfd_spread}pt spread, ${cfd_commission:.2f}/lot commission",
             _actual_pnl_cfd,
             _per_trade_cfd,
         )
@@ -1063,7 +1087,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         out = {
             "config": {
                 "account": ACCT,
-                "risk": RISK_USD,
+                "risk": RISK_USD_FIX,
+                "risk_pct": RISK_PCT,
                 "mode": mode,
                 "rr": args.rr,
                 "no_breakeven": getattr(args, 'no_breakeven', False),
@@ -1089,7 +1114,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         generate_html_report(
             summary_results,
             account=ACCT,
-            risk=RISK_USD,
+            risk=RISK_USD_FIX,
             mode=html_mode,
             output_path=str(html_path),
             nq_pv=NQ_PV,
@@ -1113,7 +1138,9 @@ def main():
     ap.add_argument("--mode", choices=["sim", "real_futures", "real_cfd", "both"], default="real_futures",
                     help="Simulation mode: sim=fixed risk, real_futures=MNQ contracts+fees, real_cfd=CFD with spread+commission, both=show all")
     ap.add_argument("--risk", type=float, default=1000.0,
-                    help="Fixed risk per trade in USD (default: 1000)")
+                    help="Fixed risk per trade in USD (default: 1000). Ignored if --risk-pct is set")
+    ap.add_argument("--risk-pct", type=float, default=None,
+                    help="Risk per trade as %% of current balance (e.g. 1 = 1%%). Overrides --risk")
     ap.add_argument("--account", type=float, default=100_000.0,
                     help="Simulated account size in USD (default: 100000)")
     ap.add_argument("--quiet", action="store_true",
