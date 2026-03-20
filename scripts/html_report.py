@@ -13,7 +13,7 @@ from report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pct, pnl_c
 
 
 def generate_html_report(summary_results, account, risk, mode, output_path,
-                         nq_pv=2.0, fee_per_rt=1.50, be_threshold=0.5):
+                         nq_pv=2.0, fee_per_rt=1.50, be_threshold=0.5, risk_pct=None):
     """
     Generate a self-contained HTML report with monthly horizontal-scroll pages.
 
@@ -28,12 +28,16 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
 
     # ── 1. Compute per-scenario / per-trade data ──────────────────────────
     enriched = []  # list of {name, date, status, trades: [{outcome, usd, pct, r}], net_usd, net_pct}
+    running_balance = account
     for r in summary_results:
         date = dtparser.parse(r["date"]).date()
         trades_data = []
         for trade, close in (r.get("trade_pairs") or []):
-            td = compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold)
+            td = compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold,
+                                   risk_pct=risk_pct, balance=running_balance)
             trades_data.append(td)
+            if td["outcome"] != "open":
+                running_balance += td["usd"]
         net_usd = sum(t["usd"] for t in trades_data)
         net_pct = sum(t["pct"] for t in trades_data)
         enriched.append({

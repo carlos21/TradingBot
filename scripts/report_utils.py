@@ -4,8 +4,12 @@ Shared report utility functions used by html_report.py and html_comparison_repor
 """
 
 
-def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold):
-    """Compute PnL for a single trade+close pair. Returns dict with outcome/usd/pct/r."""
+def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold,
+                      risk_pct=None, balance=None):
+    """Compute PnL for a single trade+close pair. Returns dict with outcome/usd/pct/r.
+    If risk_pct is set, risk is computed as balance * risk_pct / 100."""
+    if risk_pct is not None and balance is not None:
+        risk = balance * risk_pct / 100.0
     is_reentry = trade.get("is_reentry", False) if trade else False
 
     if close is None:

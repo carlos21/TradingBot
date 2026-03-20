@@ -1130,6 +1130,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             nq_pv=NQ_PV,
             fee_per_rt=FEE_PER_RT,
             be_threshold=BE_THRESHOLD,
+            risk_pct=RISK_PCT,
         )
         print(f"\n📄 HTML report: {html_path.resolve()}")
 
