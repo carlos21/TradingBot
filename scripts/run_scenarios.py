@@ -273,7 +273,7 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
     if not expect:
         return "PASS", "Matches expectations", values_str
 
-    tol = float(expect.get("tolerance", 1.0))
+    tol = 0.25
     errors = _check_trade("", expect, trade, tol)
 
     # Check re-entry trade if expected

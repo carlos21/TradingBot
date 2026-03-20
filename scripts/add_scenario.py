@@ -116,7 +116,6 @@ def _format_expect_block(expect: dict) -> str:
         f'      entry: {expect["entry"]:.2f}\n'
         f'      sl:    {expect["sl"]:.2f}\n'
         f'      tp:    {expect["tp"]:.2f}\n'
-        f'      tolerance: 0.25\n'
     )
     if "reentry" in expect:
         re_ = expect["reentry"]
