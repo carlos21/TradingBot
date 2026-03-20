@@ -227,6 +227,31 @@ def reset_app_state(base_url: str, start=None, end=None):
     except Exception:
         return False
 
+def _check_trade(label: str, expect: Dict, trade: Dict, tol: float) -> List[str]:
+    """Check a single trade against expected values. Returns list of error strings."""
+    checks = {
+        "entry": ["entry", "entry_price"],
+        "sl":    ["orig_sl", "stop_loss", "stopLoss", "sl"],
+        "tp":    ["take_profit", "takeProfit", "tp"]
+    }
+    errors = []
+    prefix = f"{label} " if label else ""
+    for yaml_key, trade_keys in checks.items():
+        if yaml_key in expect:
+            target = float(expect[yaml_key])
+            actual = None
+            for k in trade_keys:
+                if k in trade:
+                    actual = trade[k]
+                    break
+            if actual is None:
+                errors.append(f"{prefix}{yaml_key} missing")
+                continue
+            if abs(actual - target) > tol:
+                errors.append(f"{prefix}{yaml_key}: got {actual}, want {target}")
+    return errors
+
+
 def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]:
     if expect and expect.get("none") is True:
         if not trades:
@@ -238,7 +263,7 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
 
     if not trades:
         return "FAIL", "No trades opened", ""
-    
+
     trade = trades[0]
     entry = trade.get("entry") or trade.get("entry_price")
     orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
@@ -249,29 +274,14 @@ def check_expectations(expect: Dict, trades: List[Dict]) -> Tuple[str, str, str]
         return "PASS", "Matches expectations", values_str
 
     tol = float(expect.get("tolerance", 1.0))
-    errors = []
+    errors = _check_trade("", expect, trade, tol)
 
-    checks = {
-        "entry": ["entry", "entry_price"],
-        "sl":    ["orig_sl", "stop_loss", "stopLoss", "sl"],
-        "tp":    ["take_profit", "takeProfit", "tp"]
-    }
-
-    for yaml_key, trade_keys in checks.items():
-        if yaml_key in expect:
-            target = float(expect[yaml_key])
-            actual = None
-            for k in trade_keys:
-                if k in trade:
-                    actual = trade[k]
-                    break
-            
-            if actual is None:
-                errors.append(f"{yaml_key} missing")
-                continue
-            
-            if abs(actual - target) > tol:
-                errors.append(f"{yaml_key}: got {actual}, want {target}")
+    # Check re-entry trade if expected
+    if "reentry" in expect:
+        if len(trades) < 2:
+            errors.append("reentry expected but only 1 trade")
+        else:
+            errors += _check_trade("reentry", expect["reentry"], trades[1], tol)
 
     if errors:
         return "FAIL", ", ".join(errors), values_str

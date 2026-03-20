@@ -111,13 +111,22 @@ def _format_lines_block(lines: list) -> str:
 def _format_expect_block(expect: dict) -> str:
     if expect.get("none"):
         return "    expect:\n      none: true\n"
-    return (
+    block = (
         f'    expect:\n'
         f'      entry: {expect["entry"]:.2f}\n'
         f'      sl:    {expect["sl"]:.2f}\n'
         f'      tp:    {expect["tp"]:.2f}\n'
         f'      tolerance: 0.25\n'
     )
+    if "reentry" in expect:
+        re_ = expect["reentry"]
+        block += (
+            f'      reentry:\n'
+            f'        entry: {re_["entry"]:.2f}\n'
+            f'        sl:    {re_["sl"]:.2f}\n'
+            f'        tp:    {re_["tp"]:.2f}\n'
+        )
+    return block
 
 
 def format_scenario_block(sc: dict) -> str:
