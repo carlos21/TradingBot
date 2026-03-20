@@ -374,11 +374,11 @@ export class ChartViewer {
 
     this.socket.on('trade_open', trade => {
       this.activeTrade = trade;
-      this._drawTradeLines(trade);
       const existingIdx = this.allTrades.findIndex(t => t.trade_id === trade.trade_id);
       if (existingIdx !== -1) this.allTrades[existingIdx] = trade;
       else this.allTrades.push(trade);
-      this._updateMarkers(); 
+      this._drawTradeLines(trade);
+      this._updateMarkers();
     });
 
     this.socket.on('trade_close', (trade) => {
@@ -531,10 +531,17 @@ export class ChartViewer {
   }
 
   _drawTradeLines(trade) {
-    [this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine].forEach(h => h && this.series.removePriceLine(h));
-    this.tradeEntryLine = this.series.createPriceLine({ price: trade.entry,      color: 'yellow', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'Entry' });
-    this.tradeSLLine    = this.series.createPriceLine({ price: trade.stop_loss || trade.stopLoss, color: 'red',   lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'SL'    });
-    this.tradeTPLine    = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP'    });
+    const isSameTrade = this.activeTrade && this.activeTrade.trade_id === trade.trade_id;
+    if (isSameTrade || !this.keepClosedTradeLines) {
+      [this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine].forEach(h => h && this.series.removePriceLine(h));
+    } else {
+      [this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine].forEach(h => h && h.applyOptions({ lineStyle: LightweightCharts.LineStyle.Dashed, lineWidth: 1 }));
+    }
+    const n = this.allTrades.findIndex(t => t.trade_id === trade.trade_id) + 1;
+    const entryLabel = n > 1 ? 'Re-entry #' + n : 'Entry #' + n;
+    this.tradeEntryLine = this.series.createPriceLine({ price: trade.entry,      color: 'yellow', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: entryLabel });
+    this.tradeSLLine    = this.series.createPriceLine({ price: trade.stop_loss || trade.stopLoss, color: 'red',   lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'SL #' + n    });
+    this.tradeTPLine    = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP #' + n    });
   }
   
   clearPreviews() {

@@ -536,6 +536,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
                     sock.on('trade_open', (t) => {
                         window.__trades.push(t);
+                        const n = window.__trades.length;
                         if (window.chartViewer && window.chartViewer.series) {
                             const sl = t.stop_loss ?? t.sl ?? t.stopLoss;
                             if (typeof sl === 'number') {
@@ -545,9 +546,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                                     lineWidth: 1,
                                     lineStyle: 1,
                                     axisLabelVisible: true,
-                                    title: 'Orig SL'
+                                    title: 'Orig SL #' + n
                                 });
                             }
+
                         }
                     });
                     sock.on('trade_close', (c) => { window.__closes[String(c.trade_id)] = c; });
