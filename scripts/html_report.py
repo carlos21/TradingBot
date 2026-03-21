@@ -63,7 +63,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     balance = account
     for mk in month_keys:
         wins = losses = bes = sps = 0
-        reentry_win = reentry_loss = 0
+        reentry_win = reentry_loss = reentry_be = 0
         m_usd = 0.0
         m_pct = 0.0
         for sc in monthly[mk]:
@@ -86,12 +86,12 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                 else:
                     bes += 1
                     if is_re:
-                        reentry_win += 1
+                        reentry_be += 1
         balance += m_usd
         month_agg[mk] = {
             "wins": wins, "losses": losses, "be": bes, "sp": sps,
             "usd": m_usd, "pct": m_pct, "balance": balance,
-            "reentry_win": reentry_win, "reentry_loss": reentry_loss,
+            "reentry_win": reentry_win, "reentry_loss": reentry_loss, "reentry_be": reentry_be,
         }
 
     # ── 4. Overall stats ──────────────────────────────────────────────────
@@ -108,7 +108,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     total_sp = outcomes.count("sp")
     winrate = (total_w / (total_w + total_l) * 100) if (total_w + total_l) > 0 else 0.0
     net_usd = sum(a["usd"] for a in month_agg.values())
-    net_pct = sum(a["pct"] for a in month_agg.values())
+    net_pct = net_usd / account * 100 if account else 0.0
 
     # Calculate monthly average profit
     num_months = len(month_agg) if month_agg else 1
@@ -117,6 +117,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
 
     total_rw = sum(a["reentry_win"] for a in month_agg.values())
     total_rl = sum(a["reentry_loss"] for a in month_agg.values())
+    total_rb = sum(a["reentry_be"] for a in month_agg.values())
 
     max_cw = max_cl = cw = cl = 0
     for o in outcomes:
@@ -196,9 +197,13 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-muted">--</span>'
 
         re_pill = ""
-        re_w, re_l = agg["reentry_win"], agg["reentry_loss"]
-        if re_w + re_l > 0:
-            re_pill = f'<div class="stat-pill">RE: <span class="positive">{re_w}W</span> / <span class="negative">{re_l}L</span></div>'
+        re_w, re_l, re_b = agg["reentry_win"], agg["reentry_loss"], agg["reentry_be"]
+        if re_w + re_l + re_b > 0:
+            re_parts = []
+            if re_w: re_parts.append(f'<span class="positive">{re_w}W</span>')
+            if re_l: re_parts.append(f'<span class="negative">{re_l}L</span>')
+            if re_b: re_parts.append(f'<span class="text-yellow">{re_b}B</span>')
+            re_pill = f'<div class="stat-pill">RE: {" / ".join(re_parts)}</div>'
 
         card = f"""
         <div class="month-card" data-month="{mk}" id="month-{idx}">
@@ -285,9 +290,13 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-muted">--</span>'
 
         cal_re_pill = ""
-        cal_re_w, cal_re_l = agg["reentry_win"], agg["reentry_loss"]
-        if cal_re_w + cal_re_l > 0:
-            cal_re_pill = f'<div class="stat-pill">RE: <span class="positive">{cal_re_w}W</span> / <span class="negative">{cal_re_l}L</span></div>'
+        cal_re_w, cal_re_l, cal_re_b = agg["reentry_win"], agg["reentry_loss"], agg["reentry_be"]
+        if cal_re_w + cal_re_l + cal_re_b > 0:
+            cal_re_parts = []
+            if cal_re_w: cal_re_parts.append(f'<span class="positive">{cal_re_w}W</span>')
+            if cal_re_l: cal_re_parts.append(f'<span class="negative">{cal_re_l}L</span>')
+            if cal_re_b: cal_re_parts.append(f'<span class="text-yellow">{cal_re_b}B</span>')
+            cal_re_pill = f'<div class="stat-pill">RE: {" / ".join(cal_re_parts)}</div>'
 
         visible = "block" if idx == 0 else "none"
         cal_card = f"""
@@ -791,7 +800,7 @@ footer {{
 
 <header>
     <div class="container">
-        <h1>Trading Strategy Report <span>{_h(mode_label)} &mdash; ${account:,.0f} account, ${risk:,.0f} risk/trade</span></h1>
+        <h1>Trading Strategy Report <span>{_h(mode_label)} &mdash; ${account:,.0f} account, {f"{risk_pct}% of balance" if risk_pct else f"${risk:,.0f} fixed"} risk/trade</span></h1>
         <div class="overall-stats">
             <div class="stat-box">
                 <div class="label">Trades</div>
@@ -829,9 +838,9 @@ footer {{
                 <div class="label">Monthly Avg</div>
                 <div class="value {pnl_class(avg_monthly_usd)}">{fmt_usd(avg_monthly_usd)}</div>
             </div>
-            {"" if total_rw + total_rl == 0 else f'''<div class="stat-box">
+            {"" if total_rw + total_rl + total_rb == 0 else f'''<div class="stat-box">
                 <div class="label">Re-entries</div>
-                <div class="value"><span class="positive">{total_rw}W</span> / <span class="negative">{total_rl}L</span></div>
+                <div class="value"><span class="positive">{total_rw}W</span> / <span class="negative">{total_rl}L</span>{f' / <span class="text-yellow">{total_rb}B</span>' if total_rb else ''}</div>
             </div>'''}
         </div>
     </div>

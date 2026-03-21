@@ -36,7 +36,8 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
                         usd = contracts * (actual_r * sl_pts) * nq_pv - fees
                     else:
                         usd = -(contracts * sl_pts * nq_pv) - fees
-        pct = usd / account * 100 if account else 0.0
+        pct_base = balance if (risk_pct is not None and balance) else account
+        pct = usd / pct_base * 100 if pct_base else 0.0
         return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry}
 
     actual_r = close.get("result", 0.0)
@@ -60,7 +61,8 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
                 else:
                     usd = -(contracts * sl_pts * nq_pv) - fees
 
-    pct = usd / account * 100 if account else 0.0
+    pct_base = balance if (risk_pct is not None and balance) else account
+    pct = usd / pct_base * 100 if pct_base else 0.0
 
     if actual_r > 0 and actual_r < be_threshold:
         outcome = "be"
