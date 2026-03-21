@@ -100,7 +100,7 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 # Server Process Logic
 # -------------------------------------------------------------------------
 
-def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 4.0):
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 4.0):
     if quiet:
         sys.stdout = open(os.devnull, 'w')
         import logging
@@ -127,6 +127,8 @@ def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_even
 
     if no_breakeven:
         options.breakeven = None
+    if no_reentry_breakeven:
+        options.reentry_breakeven = None
 
     wiring = create_app(
         pair="NQ",
@@ -447,6 +449,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     server_ready = Event()
 
     no_breakeven = getattr(args, 'no_breakeven', False)
+    no_reentry_breakeven = getattr(args, 'no_reentry_breakeven', False)
     # Determine broker mode for trade manager
     mode = getattr(args, 'mode', 'real_futures')
     broker_mode = 'cfd' if mode in ('real_cfd', ) else 'futures'
@@ -454,7 +457,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
     server_proc = Process(
         target=run_test_server,
-        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, broker_mode, broker_spread, args.rr)
+        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr)
     )
     server_proc.start()
 
@@ -895,7 +898,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         pas_str = f" | {_center(f'{RED}{CROSSMARK}{RST}', PAS_W)}"
                 print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str}{re_str}{pas_str}")
             total_usd = sum(v["usd"]    for v in data.values())
-            total_pct = sum(v["pct"]    for v in data.values())
+            total_pct = total_usd / ACCT * 100
             total_w   = sum(v["wins"]   for v in data.values())
             total_l   = sum(v["losses"] for v in data.values())
             total_be  = sum(v["be"]     for v in data.values())
@@ -984,7 +987,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         # Calculate monthly average profit
         num_months = len(monthly) if monthly else 1
         avg_monthly_pnl = total_usd_all / num_months if num_months > 0 else 0.0
-        avg_monthly_pct = avg_monthly_pnl / ACCT * 100
+        avg_monthly_pct = (avg_monthly_pnl / ACCT * 100) if ACCT > 0 else 0.0
 
         print(f"\n{BOLD}{CYAN}OVERALL SUMMARY — {mode_label}{RST}")
         summary_parts = [f"{GREEN}{wins}W{RST}", f"{RED}{losses}L{RST}", f"{YELLOW}{bes}BE{RST}"]
@@ -999,17 +1002,22 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         print(f"  Monthly Avg : {_col(avg_monthly_pnl, f'${avg_monthly_pnl:+,.0f}')} ({_col(avg_monthly_pct, f'{avg_monthly_pct:+.2f}%')})")
         total_rw = sum(v["reentry_win"]  for v in monthly.values())
         total_rl = sum(v["reentry_loss"] for v in monthly.values())
-        if total_rw + total_rl > 0:
-            re_total = total_rw + total_rl
-            re_rate = total_rw / re_total * 100
-            print(f"  Re-entries: {re_total}  ({GREEN}{total_rw}W{RST} / {RED}{total_rl}L{RST})  success rate: {_col(re_rate - 50, f'{re_rate:.1f}%')}")
+        total_rb = sum(v["reentry_be"]   for v in monthly.values())
+        if total_rw + total_rl + total_rb > 0:
+            re_total = total_rw + total_rl + total_rb
+            re_wl = total_rw + total_rl
+            re_rate = total_rw / re_wl * 100 if re_wl > 0 else 0.0
+            re_parts = [f"{GREEN}{total_rw}W{RST}", f"{RED}{total_rl}L{RST}"]
+            if total_rb:
+                re_parts.append(f"{YELLOW}{total_rb}B{RST}")
+            print(f"  Re-entries: {re_total}  ({' / '.join(re_parts)})  success rate: {_col(re_rate - 50, f'{re_rate:.1f}%')}")
         print()
 
     def _per_trade_sim(trade, close, balance=ACCT):
         risk = get_risk(balance)
         actual_r = close.get("result", 0.0)
         usd = risk * actual_r if actual_r > 0 else -risk
-        return usd, usd / ACCT * 100, actual_r
+        return usd, usd / balance * 100, actual_r
 
     def _per_trade_real(trade, close, balance=ACCT):
         risk = get_risk(balance)
@@ -1024,7 +1032,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         fees = contracts * FEE_PER_RT
         actual_r = close.get("result", 0.0)
         usd = (contracts * (actual_r * sl_pts) * NQ_PV - fees) if actual_r > 0 else -(contracts * sl_pts * NQ_PV) - fees
-        return usd, usd / ACCT * 100, actual_r
+        return usd, usd / balance * 100, actual_r
 
     risk_desc = f"{RISK_PCT}% of balance" if RISK_PCT is not None else f"${RISK_USD_FIX:,.0f} fixed"
     mode = getattr(args, 'mode', 'both')
@@ -1096,7 +1104,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             total_cost = spread_cost + commission_cost
             actual_r = close.get("result", 0.0)
             usd = (contracts * (actual_r * sl_pts) * NQ_PV - total_cost) if actual_r > 0 else -(contracts * sl_pts * NQ_PV) - total_cost
-            return usd, usd / ACCT * 100, actual_r
+            return usd, usd / balance * 100, actual_r
 
         _print_results(
             f"REAL CFD — Nasdaq CFD, ${ACCT:,.0f} account, ~{risk_desc} risk, {cfd_spread}pt spread, ${cfd_commission:.2f}/lot commission",
@@ -1113,6 +1121,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 "mode": mode,
                 "rr": args.rr,
                 "no_breakeven": getattr(args, 'no_breakeven', False),
+                "no_reentry_breakeven": getattr(args, 'no_reentry_breakeven', False),
             },
             "results": [
                 {
@@ -1179,6 +1188,8 @@ def main():
                     help="Print detailed decision log for each scenario")
     ap.add_argument("--no-breakeven", action="store_true", default=False,
                     help="Disable breakeven logic (SL stays at original level, never moves to entry)")
+    ap.add_argument("--no-reentry-breakeven", action="store_true", default=False,
+                    help="Disable breakeven logic for re-entry trades only")
     ap.add_argument("--cfd-spread", type=float, default=0.5,
                     help="CFD spread in points (default: 0.5 for Nasdaq)")
     ap.add_argument("--cfd-commission", type=float, default=5.0,
