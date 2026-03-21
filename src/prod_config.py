@@ -56,7 +56,8 @@ def get_prod_strategy_options(max_bounce: float, min_cross_depth: float = 0.0, s
             # trigger_with_timeframes(double_5m_cross_trigger, ['5m']),
             # trigger_with_timeframes(wick_near_line_trigger, ['5m', '15m'])
         ],
-        breakeven=BreakevenConfig(
+        breakeven=None,
+        reentry_breakeven=BreakevenConfig(
             trigger_rr=2.0,
             move_to_rr=0.05
         ),

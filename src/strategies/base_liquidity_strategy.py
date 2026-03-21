@@ -37,6 +37,7 @@ class StrategyOptions:
     entry_filters: Optional[List[EntryFilter]] = None
     triggers: Optional[List[EntryTrigger]] = None
     breakeven: Optional[BreakevenConfig] = None
+    reentry_breakeven: Optional[BreakevenConfig] = None  # breakeven config applied only to re-entry trades
     reentry_after_sl: bool = False        # re-enter if price comes back after a SL hit
     reentry_threshold: float = 60.0       # cancel re-entry if price goes this many pts past the line
 
@@ -178,7 +179,7 @@ class BaseLiquidityStrategy:
         """
 
         # Check breakeven conditions on every raw bar before aggregation
-        if self.options.breakeven:
+        if self.options.breakeven or self.options.reentry_breakeven:
             self._check_breakeven(bar)
 
         # Close any open trades at session end
@@ -196,26 +197,32 @@ class BaseLiquidityStrategy:
             self._on_strategy_bar(agg)
 
     def _check_breakeven(self, bar: Dict[str, Any]):
-        cfg = self.options.breakeven
-        if not cfg:
-            return
-
         for trade in self.open_trades:
             if trade['status'] != 'open':
                 continue
             if trade['pair'] != bar['pair']:
                 continue
 
+            # Pick the right breakeven config based on trade type
+            is_reentry = trade.get('is_reentry', False)
+            if is_reentry:
+                cfg = self.options.reentry_breakeven
+            else:
+                cfg = self.options.breakeven
+
+            if not cfg:
+                continue
+
             current_sl = trade['stop_loss']
             entry      = trade['entry']
-            risk       = trade['risk'] 
-            
+            risk       = trade['risk']
+
             new_sl = None
             should_update = False
 
             if trade['type'] == 'long':
                 trigger_price = entry + (risk * cfg.trigger_rr)
-                
+
                 if bar['high'] >= trigger_price:
                     proposed_sl = entry + (risk * cfg.move_to_rr)
                     if proposed_sl > current_sl:

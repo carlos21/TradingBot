@@ -785,7 +785,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         # ── Aggregate by day / week / month (per individual trade) ─────────────
         def _new_bucket():
             return {"usd": 0.0, "pct": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0,
-                    "reentry_win": 0, "reentry_loss": 0, "all_passed": True}
+                    "reentry_win": 0, "reentry_loss": 0, "reentry_be": 0, "all_passed": True}
 
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
@@ -826,7 +826,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                             bucket[key]["pct"] += t_pct
                         bucket[key]["be"] += 1
                         if is_reentry:
-                            bucket[key]["reentry_win"] += 1
+                            bucket[key]["reentry_be"] += 1
                     continue
 
                 is_be  = actual_r > 0 and actual_r < BE_THRESHOLD
@@ -839,7 +839,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     elif is_win: bucket[key]["wins"]   += 1
                     else:        bucket[key]["losses"] += 1
                     if is_reentry:
-                        if is_win or is_be:
+                        if is_be:
+                            bucket[key]["reentry_be"] += 1
+                        elif is_win:
                             bucket[key]["reentry_win"] += 1
                         else:
                             bucket[key]["reentry_loss"] += 1
@@ -850,8 +852,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         def _print_agg(title, data, show_passed=False):
             if not data:
                 return
-            has_reentry = any(v["reentry_win"] + v["reentry_loss"] > 0 for v in data.values())
-            WL_W  = 10
+            has_reentry = any(v["reentry_win"] + v["reentry_loss"] + v["reentry_be"] > 0 for v in data.values())
+            WL_W  = 16
             RE_W  = 12
             PAS_W = 8
             lbl_w = max(len(k) for k in data) + 2
@@ -876,9 +878,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 bal_str = _col(balance - ACCT, f"${balance:>10,.0f}")
                 re_str = ""
                 if has_reentry:
-                    rw, rl = v["reentry_win"], v["reentry_loss"]
-                    if rw + rl > 0:
-                        re_str = f" | {_center(f'{GREEN}{rw}W{RST}/{RED}{rl}L{RST}', RE_W)}"
+                    rw, rl, rb = v["reentry_win"], v["reentry_loss"], v["reentry_be"]
+                    if rw + rl + rb > 0:
+                        re_parts = []
+                        if rw: re_parts.append(f"{GREEN}{rw}W{RST}")
+                        if rl: re_parts.append(f"{RED}{rl}L{RST}")
+                        if rb: re_parts.append(f"{YELLOW}{rb}B{RST}")
+                        re_str = f" | {_center('/'.join(re_parts), RE_W)}"
                     else:
                         re_str = f" | {_center(f'{GRAY}-{RST}', RE_W)}"
                 pas_str = ""
@@ -896,6 +902,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             total_sp  = sum(v["sp"]     for v in data.values())
             total_rw  = sum(v["reentry_win"]  for v in data.values())
             total_rl  = sum(v["reentry_loss"] for v in data.values())
+            total_rb  = sum(v["reentry_be"]   for v in data.values())
             print(f"  {sep}")
             tot_pct  = _col(total_pct, f"{total_pct:>+8.2f}%")
             tot_usd  = _col(total_usd, f"${total_usd:>+9,.0f}")
@@ -908,7 +915,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             tot_wl = _center("/".join(tot_parts) if tot_parts else f"{GRAY}-{RST}", WL_W)
             tot_re = ""
             if has_reentry:
-                tot_re = f" | {_center(f'{GREEN}{total_rw}W{RST}/{RED}{total_rl}L{RST}', RE_W)}"
+                tot_re_parts = []
+                if total_rw: tot_re_parts.append(f"{GREEN}{total_rw}W{RST}")
+                if total_rl: tot_re_parts.append(f"{RED}{total_rl}L{RST}")
+                if total_rb: tot_re_parts.append(f"{YELLOW}{total_rb}B{RST}")
+                tot_re = f" | {_center('/'.join(tot_re_parts) if tot_re_parts else f'{GRAY}-{RST}', RE_W)}"
             tot_pas = ""
             if show_passed:
                 all_ok = all(v.get("all_passed", True) for v in data.values())
