@@ -14,6 +14,8 @@ options=(
   "Add scenario                   (add_scenario.sh)"
   "Fix scenario                   (fix_scenario.sh)"
   "Fix ALL scenarios              (fix_all_scenarios.sh)"
+  "Compare configs                (compare_configs.sh)"
+  "Fetch data                     (fetch_data.sh)"
   "Quit"
 )
 
@@ -24,6 +26,8 @@ commands=(
   "./bin/add_scenario.sh"
   "./bin/fix_scenario.sh"
   "./bin/fix_all_scenarios.sh"
+  "./bin/compare_configs.sh"
+  "./bin/fetch_data.sh"
   ""
 )
 
