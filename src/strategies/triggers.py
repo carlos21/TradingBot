@@ -43,9 +43,9 @@ class VelocityTriggerConfig:
     Example – slow regime accepts either a double-1m cross or a single-1m cross:
         slow=[TsiCrossCondition("1m", 2), TsiCrossCondition("1m", 1)]
     """
-    fast_threshold: float = 3.0
-    slow_threshold: float = 1.0
-    lookback: int = 10
+    fast_threshold: float = 5.0   # pts/min — above this is fast
+    slow_threshold: float = 2.0   # pts/min — below this is slow; between = moderate
+    lookback: int = 30            # number of 1m bars to measure over
     fast:     List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("5m", 2)])
     moderate: List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("3m", 1)])
     slow:     List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("1m", 1)])
@@ -66,25 +66,23 @@ def trigger_with_timeframes(trigger_func: EntryTrigger, timeframes: List[str]) -
     wrapper.__name__ = trigger_func.__name__
     return wrapper
 
-def _calculate_velocity_score(history: List[Dict[str, Any]], lookback: int) -> float:
+def _calculate_velocity_score(history_1m: List[Dict[str, Any]], lookback: int) -> float:
     """
-    Calculates a 'Velocity Score' to detect fast moves.
-    Score = (Net Displacement) / (Average Candle Range)
-    """
-    if len(history) < lookback:
-        return 0.0
-    
-    subset = history[-lookback:]
-    total_range = sum(b['high'] - b['low'] for b in subset)
-    avg_range = total_range / lookback if lookback > 0 else 1.0
-    
-    if avg_range == 0: return 0.0
+    Calculates velocity as points-per-minute using 1m bars.
 
-    start_open = subset[0]['open']
-    end_close  = subset[-1]['close']
-    displacement = end_close - start_open
-    
-    return displacement / avg_range
+    Measures how fast price is moving by looking at the net displacement
+    over the last *lookback* 1-minute bars, divided by the number of minutes.
+    Positive = price moving up, negative = price moving down.
+    """
+    if len(history_1m) < lookback:
+        return 0.0
+
+    subset = history_1m[-lookback:]
+    start_price = subset[0]['open']
+    end_price = subset[-1]['close']
+    displacement = end_price - start_price
+
+    return displacement / lookback
 
 def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig, tf):
     """
@@ -218,9 +216,9 @@ def tsi_cross_trigger(
             if (prev_tsi >= prev_sig) and (curr_tsi < curr_sig): has_crossed = True
         
         if has_crossed:
-            # Fast Move Check (15m)
-            hist_15m = strategy.get_history("15m", FAST_MOVE_LOOKBACK + 5)
-            velocity_score = _calculate_velocity_score(hist_15m, FAST_MOVE_LOOKBACK)
+            # Fast Move Check (1m bars)
+            hist_1m = strategy.get_history("1m", FAST_MOVE_LOOKBACK + 5)
+            velocity_score = _calculate_velocity_score(hist_1m, FAST_MOVE_LOOKBACK)
             
             is_fast = False
             if dir_ == "long" and velocity_score < -FAST_MOVE_THRESHOLD: is_fast = True
@@ -460,15 +458,12 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
 
         # Lock regime on first touch; reuse on all subsequent bars
         if 'vat_regime' not in line:
-            hist_15m = strategy.get_history("15m", config.lookback + 10)
-            velocity_score = _calculate_velocity_score(hist_15m, config.lookback)
+            hist_1m = strategy.get_history("1m", config.lookback + 10)
+            velocity_score = _calculate_velocity_score(hist_1m, config.lookback)
+            abs_vel = abs(velocity_score)
 
-            if dir_ == "long":
-                is_fast     = velocity_score < -config.fast_threshold
-                is_moderate = not is_fast and velocity_score < -config.slow_threshold
-            else:
-                is_fast     = velocity_score > config.fast_threshold
-                is_moderate = not is_fast and velocity_score > config.slow_threshold
+            is_fast     = abs_vel > config.fast_threshold
+            is_moderate = not is_fast and abs_vel > config.slow_threshold
 
             regime_label = "FAST" if is_fast else ("MODERATE" if is_moderate else "SLOW")
             line['vat_regime']   = regime_label
@@ -477,7 +472,7 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
             regime_conditions = config.fast if is_fast else (config.moderate if is_moderate else config.slow)
             conds_str = " OR ".join(f"{c.timeframe}×{c.count}" for c in regime_conditions)
             strategy.log_decision(bar['time'], tf, line_id, "VAT_REGIME",
-                f"vel={velocity_score:+.2f} → {regime_label} | need [{conds_str}] (locked at touch)")
+                f"vel={abs_vel:.2f} pts/min → {regime_label} | need [{conds_str}] (locked at touch)")
         else:
             regime_label = line['vat_regime']
             is_fast      = regime_label == "FAST"

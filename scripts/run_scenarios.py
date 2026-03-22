@@ -611,14 +611,26 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     "won": won,
                     "trade_pairs": trade_pairs,   # all trades for PnL accounting
                     "date": sc["start"],
+                    "velocity": None,
                 })
                 date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
 
-                if args.decision_log:
-                    try:
-                        logs = requests.get(f"{base_url}/api/debug/logs", timeout=2).json()
+                # Always fetch logs to extract velocity
+                try:
+                    logs = requests.get(f"{base_url}/api/debug/logs", timeout=2).json()
+                    for log_entry in logs:
+                        if log_entry.get("event") == "VAT_REGIME":
+                            details = log_entry.get("details", "")
+                            # Parse "vel=3.45 pts/min → MODERATE | ..."
+                            m = re.search(r'vel=([\d.]+)\s*pts/min\s*→\s*(\w+)', details)
+                            if m:
+                                summary_results[-1]["velocity"] = float(m.group(1))
+                                summary_results[-1]["velocity_regime"] = m.group(2)
+                            break
+                    if args.decision_log:
                         print_detailed_summary(logs, pair_tz)
-                    except Exception as e:
+                except Exception as e:
+                    if args.decision_log:
                         print(f"   ⚠️ Failed to fetch summary logs: {e}")
 
                 if args.snapshot:
@@ -788,7 +800,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         # ── Aggregate by day / week / month (per individual trade) ─────────────
         def _new_bucket():
             return {"usd": 0.0, "pct": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0,
-                    "reentry_win": 0, "reentry_loss": 0, "reentry_be": 0, "all_passed": True}
+                    "reentry_win": 0, "reentry_loss": 0, "reentry_be": 0, "all_passed": True,
+                    "velocity": None}
 
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
@@ -803,6 +816,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             m_key = date.strftime("%Y-%m")
             if r["status"] != "PASS":
                 daily[d_key]["all_passed"] = False
+            if r.get("velocity") is not None:
+                daily[d_key]["velocity"] = r["velocity"]
             for trade, close in (r.get("trade_pairs") or []):
                 if close is None:
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
@@ -852,19 +867,22 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         CHECKMARK = "\u2713"
         CROSSMARK = "\u2717"
 
-        def _print_agg(title, data, show_passed=False):
+        def _print_agg(title, data, show_passed=False, show_velocity=False):
             if not data:
                 return
             has_reentry = any(v["reentry_win"] + v["reentry_loss"] + v["reentry_be"] > 0 for v in data.values())
+            has_velocity = show_velocity and any(v.get("velocity") is not None for v in data.values())
             WL_W  = 16
             RE_W  = 12
             PAS_W = 8
+            VEL_W = 12
             lbl_w = max(len(k) for k in data) + 2
-            sep   = "-" * (lbl_w + 3 + WL_W + 54 + (3 + RE_W if has_reentry else 0) + (3 + PAS_W if show_passed else 0))
+            sep   = "-" * (lbl_w + 3 + WL_W + 54 + (3 + RE_W if has_reentry else 0) + (3 + PAS_W if show_passed else 0) + (3 + VEL_W if has_velocity else 0))
             hdr_re = f" | {'RE-ENTRY':^{RE_W}}" if has_reentry else ""
             hdr_pas = f" | {'PASSED':^{PAS_W}}" if show_passed else ""
+            hdr_vel = f" | {'VELOCITY':^{VEL_W}}" if has_velocity else ""
             print(f"\n{BOLD}{CYAN}{title}{RST}")
-            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11}{hdr_re}{hdr_pas}")
+            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11}{hdr_re}{hdr_pas}{hdr_vel}")
             print(f"  {sep}")
             balance = ACCT
             for key in sorted(data):
@@ -896,7 +914,14 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         pas_str = f" | {_center(f'{GREEN}{CHECKMARK}{RST}', PAS_W)}"
                     else:
                         pas_str = f" | {_center(f'{RED}{CROSSMARK}{RST}', PAS_W)}"
-                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str}{re_str}{pas_str}")
+                vel_str = ""
+                if has_velocity:
+                    vel_val = v.get("velocity")
+                    if vel_val is not None:
+                        vel_str = f" | {f'{vel_val:.2f} pts/m':^{VEL_W}}"
+                    else:
+                        vel_str = f" | {f'-':^{VEL_W}}"
+                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str}{re_str}{pas_str}{vel_str}")
             total_usd = sum(v["usd"]    for v in data.values())
             total_pct = total_usd / ACCT * 100
             total_w   = sum(v["wins"]   for v in data.values())
@@ -933,7 +958,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     tot_pas = f" | {_center(f'{RED}{failed}{CROSSMARK}{RST}', PAS_W)}"
             print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal}{tot_re}{tot_pas}")
 
-        _print_agg(f"DAILY PnL   — {mode_label}", daily, show_passed=True)
+        _print_agg(f"DAILY PnL   — {mode_label}", daily, show_passed=True, show_velocity=True)
         _print_agg(f"WEEKLY PnL  — {mode_label}", weekly)
         _print_agg(f"MONTHLY PnL — {mode_label}", monthly)
 
