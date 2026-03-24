@@ -1,6 +1,6 @@
 import time
 import threading
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
@@ -43,11 +43,16 @@ class NinjaTraderDataSource(CombinedDataSource):
         self._refreshing = False
         self._refresh_lock = threading.Lock()
         # Long-poll: NinjaTrader blocks on GET /api/nt/await_command,
-        # Python signals it via this Event when a refresh is needed.
+        # Python signals it via this Event when a command is available.
         self._command_event = threading.Event()
-        self._pending_command: Optional[Dict] = None
+        self._command_queue: deque = deque()
 
     # ---- Refresh API (long-poll: NinjaTrader hangs on GET, Python signals) ----
+
+    def enqueue_command(self, cmd: Dict):
+        """Add a command to the queue and wake the long-poll thread."""
+        self._command_queue.append(cmd)
+        self._command_event.set()
 
     def request_history_refresh(self, days: int = 1):
         """Signal NinjaTrader to resend history. Wakes the hanging await_command GET."""
@@ -55,12 +60,13 @@ class NinjaTraderDataSource(CombinedDataSource):
             if self._refreshing:
                 print("[NTDataSrc] Refresh already in progress, skipping", flush=True)
                 return
-            if self._pending_command is not None:
-                print("[NTDataSrc] Refresh already pending, skipping", flush=True)
-                return
+            # Check if a refresh command is already queued
+            for cmd in self._command_queue:
+                if cmd.get("command") == "request_history":
+                    print("[NTDataSrc] Refresh already pending, skipping", flush=True)
+                    return
             self._refreshing = True
-            self._pending_command = {"command": "request_history", "days": days}
-        self._command_event.set()
+        self.enqueue_command({"command": "request_history", "days": days})
         print(f"[NTDataSrc] Refresh signaled ({days} days)", flush=True)
 
     def await_command(self, timeout: float = 30.0) -> Optional[Dict]:
@@ -68,9 +74,13 @@ class NinjaTraderDataSource(CombinedDataSource):
         Returns the command dict, or None on timeout."""
         self._command_event.wait(timeout=timeout)
         self._command_event.clear()
-        with self._refresh_lock:
-            cmd = self._pending_command
-            self._pending_command = None
+        try:
+            cmd = self._command_queue.popleft()
+        except IndexError:
+            return None
+        # Re-set the event if there are more commands queued
+        if self._command_queue:
+            self._command_event.set()
         return cmd
 
     def handle_refresh_start(self):

@@ -407,6 +407,21 @@ export class ChartViewer {
       }
     });
 
+    this.socket.on('trade_entry_update', (update) => {
+      // Broker confirmed actual entry fill price — update chart to reflect reality
+      const idx = this.allTrades.findIndex(t => t.trade_id === update.trade_id);
+      if (idx !== -1) {
+        this.allTrades[idx].entry = update.entry_price;
+        this.allTrades[idx].risk = update.risk;
+      }
+      if (this.activeTrade && this.activeTrade.trade_id === update.trade_id) {
+        this.activeTrade.entry = update.entry_price;
+        this.activeTrade.risk = update.risk;
+        this._drawTradeLines(this.activeTrade);
+      }
+      this._updateMarkers();
+    });
+
     this.socket.on('line_removed', ({ id }) => {
       if (this.keepStrategyLines) return;
       const found = this.pinnedLines.find(o => o.id === id);

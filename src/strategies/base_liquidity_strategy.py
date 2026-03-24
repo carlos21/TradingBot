@@ -72,6 +72,7 @@ class BaseLiquidityStrategy:
         sl_levels: Optional[List[float]] = None,
         min_cross_depth: float = 0.0,
         rr_ratio: float = 4.0,
+        trade_logger=None,
     ):
         self.min_stop_loss = float(min_stop_loss)
         self.max_bounce    = float(max_bounce)
@@ -85,6 +86,7 @@ class BaseLiquidityStrategy:
         self.fixed_stop_loss = fixed_stop_loss
         self.max_stop_loss = max_stop_loss
         self.sl_levels = sorted(sl_levels) if sl_levels else None
+        self.trade_logger = trade_logger
 
         self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
         self.open_trades: List[Dict[str, Any]] = []
@@ -281,6 +283,12 @@ class BaseLiquidityStrategy:
                 print(f"[Strategy] 🕐 SESSION END closed {t['trade_id']} @ {exit_price} (Result: {r_result:.2f}R)")
             except Exception as e:
                 print(f"[Strategy] ❌ Failed to persist session-end close for {t['trade_id']}: {e}")
+                if self.trade_logger:
+                    self.trade_logger.log(t["trade_id"], "ERROR", str(e))
+
+            if self.trade_logger:
+                self.trade_logger.log(t["trade_id"], "SESSION_END", f"Close @ {exit_price:.2f} Result={r_result:.2f}R")
+                self.trade_logger.log(t["trade_id"], "CLOSE", "Persisted to DB")
 
             self.socketio.emit("trade_close", t)
 
@@ -360,17 +368,25 @@ class BaseLiquidityStrategy:
         self._reentry_opportunities = remaining
 
     def _update_trade_sl(self, trade: Dict[str, Any], new_sl: float):
+        old_sl = trade['stop_loss']
         print(f"[Strategy] 🛡️ Moving SL for {trade['trade_id']} to {new_sl}")
-        
+
         # 1. Update In-Memory State
         trade['stop_loss'] = new_sl
-        
+
         # 2. Update Database
         try:
             self.trade_repository.update_stop_loss(trade['trade_id'], new_sl)
             self.trade_manager.update_local_trade_sl(trade['trade_id'], new_sl)
         except Exception as e:
             print(f"[Strategy] ⚠️ Failed to update SL in DB: {e}")
+
+        # 2b. Notify executor (live mode: sends modify_order to NinjaTrader)
+        self.trade_manager.trade_executor.on_sl_update(trade['trade_id'], new_sl)
+
+        if self.trade_logger:
+            self.trade_logger.log(trade['trade_id'], "SL_UPDATE", f"{old_sl:.2f} → {new_sl:.2f}")
+            self.trade_logger.log(trade['trade_id'], "CMD_SENT", f"modify_order SL={new_sl:.2f} → NinjaTrader")
 
         # 3. Notify Frontend
         # We emit a 'trade_update' event. You might need to handle this in JS.
@@ -531,7 +547,15 @@ class BaseLiquidityStrategy:
                     print(f"[Strategy] 💾 Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R)")
                 except Exception as e:
                     print(f"[Strategy] ❌ Failed to persist close for {t['trade_id']}: {e}")
+                    if self.trade_logger:
+                        self.trade_logger.log(t["trade_id"], "ERROR", str(e))
 
+                if self.trade_logger:
+                    event = "SL_HIT" if r_result < 0 else "TP_HIT"
+                    self.trade_logger.log(t["trade_id"], event, f"Exit={exit_price:.2f} Result={r_result:.2f}R")
+                    self.trade_logger.log(t["trade_id"], "CLOSE", "Persisted to DB")
+
+                self.trade_manager.trade_executor.on_trade_close(t['trade_id'], exit_price)
                 self.socketio.emit("trade_close", t)
             else:
                 remaining.append(t)
@@ -646,6 +670,9 @@ class BaseLiquidityStrategy:
             self.trade_manager._monitored_trades.add(trade["trade_id"])
 
         self.socketio.emit("trade_open", {**trade})
+        self.trade_manager.trade_executor.on_trade_open(trade)
+        if self.trade_logger:
+            self.trade_logger.log(trade["trade_id"], "CMD_SENT", "place_order → NinjaTrader")
 
     def _store_and_emit_close(self, trade: Dict[str, Any]):
         self.socketio.emit("trade_close", trade)

@@ -36,6 +36,11 @@ class TradeRepository(ABC):
         pass
 
     @abstractmethod
+    def update_entry_price(self, trade_id: str, new_entry_price: float) -> TradeData:
+        """Update a trade's entry price (e.g. after broker fill confirms actual price)."""
+        pass
+
+    @abstractmethod
     def close_trade(
         self,
         trade_id: str,
@@ -45,6 +50,16 @@ class TradeRepository(ABC):
         result_type: Optional[str] = None
     ) -> TradeData:
         """Mark a trade as closed, recording exit details."""
+        pass
+
+    @abstractmethod
+    def append_trade_log(self, trade_id: str, event: str, message: str) -> None:
+        """Append a timestamped log entry to a trade's logs."""
+        pass
+
+    @abstractmethod
+    def get_trade_logs(self, trade_id: str) -> list:
+        """Return the log entries for a trade."""
         pass
 
 
@@ -74,6 +89,7 @@ class SQLTradeRepository(TradeRepository):
             result=t.result,
             result_type=t.result_type,
             params=t.params,
+            logs=t.logs or [],
             created_at=self._ensure_utc(t.created_at),
         )
 
@@ -139,6 +155,24 @@ class SQLTradeRepository(TradeRepository):
 
         return self._make_trade_data(t)
 
+    def update_entry_price(self, trade_id: str, new_entry_price: float) -> TradeData:
+        with get_db_session() as db:
+            t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+            if not t:
+                db.close()
+                raise DBNotFoundException(f"Trade {trade_id} not found")
+            t.entry_price = new_entry_price
+            try:
+                db.commit()
+                db.refresh(t)
+            except Exception as e:
+                db.rollback()
+                raise DBException(str(e))
+            finally:
+                db.close()
+
+        return self._make_trade_data(t)
+
     def close_trade(
         self,
         trade_id: str,
@@ -166,3 +200,30 @@ class SQLTradeRepository(TradeRepository):
                 db.close()
 
         return self._make_trade_data(t)
+
+    def append_trade_log(self, trade_id: str, event: str, message: str) -> None:
+        with get_db_session() as db:
+            t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+            if not t:
+                db.close()
+                return
+            logs = list(t.logs or [])
+            logs.append({
+                "ts": datetime.now(tz=timezone.utc).isoformat(),
+                "event": event,
+                "msg": message,
+            })
+            t.logs = logs
+            try:
+                db.commit()
+            except Exception as e:
+                db.rollback()
+            finally:
+                db.close()
+
+    def get_trade_logs(self, trade_id: str) -> list:
+        with get_db_session() as db:
+            t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+            result = list(t.logs or []) if t else []
+            db.close()
+            return result

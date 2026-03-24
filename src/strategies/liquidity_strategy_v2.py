@@ -29,6 +29,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         sl_levels: Optional[List[float]] = None,
         min_cross_depth: float = 0.0,
         rr_ratio: float = 4.0,
+        trade_logger=None,
     ):
         self.timeframes = timeframes or ["5m"]
         
@@ -56,6 +57,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             sl_levels=sl_levels,
             min_cross_depth=min_cross_depth,
             rr_ratio=rr_ratio,
+            trade_logger=trade_logger,
         )
 
         self.candle_config = candle_config
@@ -303,6 +305,11 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     trade['tf'] = bar.get('tf', '1m')
                     trade['velocity_regime'] = line.get('vat_regime', '')
                     self._store_and_emit_open(trade)
+                    if self.trade_logger:
+                        self.trade_logger.log(trade['trade_id'], "SIGNAL",
+                            f"{trigger_name} on {bar.get('tf', '1m')}, {proposed_ctx.direction} @ {proposed_ctx.close:.2f}")
+                        self.trade_logger.log(trade['trade_id'], "OPEN",
+                            f"Entry={trade['entry']:.2f} SL={trade['stop_loss']:.2f} TP={trade['take_profit']:.2f} Risk={trade['risk']:.2f}")
                     opened = True
                 else:
                     self.log_decision(bar['time'], bar.get('tf'), sid, "FILTER_BLOCK",
@@ -313,3 +320,13 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         continue
 
                 self._maybe_remove_line(sid, opened)
+
+
+class LiveLiquidityStrategyV2(LiquidityStrategyV2):
+    """Live mode variant — NinjaTrader handles all SL/TP/session-end closes."""
+
+    def _check_open_trades(self, bar: Dict[str, Any]):
+        pass  # NinjaTrader is source of truth for SL/TP
+
+    def _check_session_end_close(self, bar: Dict[str, Any]):
+        pass  # Wiring layer sends close commands to NinjaTrader

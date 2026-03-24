@@ -1,7 +1,7 @@
 # src/app_factory.py
 from __future__ import annotations
 from dataclasses import dataclass
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Optional, List
 
 from flask import Flask, jsonify, request, abort, render_template
@@ -13,13 +13,15 @@ from src.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
 from src.data_sources.combined_datasource import CombinedDataSource
 from src.services.trade_manager import TradeManager
+from src.services.trade_executor import TradeExecutor
+from src.services.trade_logger import TradeLogger
 from src.strategies.base_liquidity_strategy import StrategyOptions
 from src.strategies.entry_context import (
     open_trades_limit_filter, max_bounce_filter
 )
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
-from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
+from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2, LiveLiquidityStrategyV2
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
 
@@ -56,6 +58,7 @@ def create_app(
     broker_mode: str = 'futures',
     broker_spread: float = 0.0,
     live_mode: bool = False,
+    trade_executor: TradeExecutor = None,
 ) -> AppWiring:
     """
     Build the whole application with injected dependencies.
@@ -74,6 +77,8 @@ def create_app(
             return not any(p in msg for p in self._NOISY)
     logging.getLogger('werkzeug').addFilter(_QuietFilter())
     
+    trade_logger = TradeLogger(repos.trades)
+
     trade_manager = TradeManager(
         trade_repository=repos.trades,
         socketio=socketio,
@@ -81,10 +86,14 @@ def create_app(
         session_tz="America/New_York",
         broker_mode=broker_mode,
         broker_spread=broker_spread,
+        trade_executor=trade_executor,
+        trade_logger=trade_logger,
     )
 
-    # Initialize V2 Strategy with the list of timeframes
-    tstrategy = LiquidityStrategyV2(
+    # Initialize strategy — LiveLiquidityStrategyV2 disables Python SL/TP/session-end
+    # close checks (NinjaTrader is source of truth in live mode)
+    StrategyClass = LiveLiquidityStrategyV2 if live_mode else LiquidityStrategyV2
+    tstrategy = StrategyClass(
         min_stop_loss   = numbers.min_stop_loss,
         max_bounce      = numbers.max_bounce,
         extra_sl_space  = numbers.extra_sl_space,
@@ -99,16 +108,55 @@ def create_app(
         trade_manager   = trade_manager,
         options         = options,
         timeframes      = timeframes,
-        candle_config   = candle_config
+        candle_config   = candle_config,
+        trade_logger    = trade_logger,
     )
 
-    # Combined callback
-    def combined_bar_callback(bar):
-        trade_manager.handle_new_1m_bar(bar)
-        tstrategy.on_raw_bar(bar)
+    # Wire different bar processing paths based on mode
+    if live_mode:
+        _close_commands_sent: set = set()
 
-    def stream_end_callback(close_price: float, final_time: float):
-        trade_manager.close_remaining_trades_at_stream_end(close_price, final_time)
+        def _check_live_session_end(bar):
+            """Send close commands to NinjaTrader when session ends."""
+            if not trade_manager._session_end_time or not trade_manager._session_tz:
+                return
+            from zoneinfo import ZoneInfo
+            bar_dt = datetime.fromtimestamp(bar['time'], tz=trade_manager._session_tz)
+            if bar_dt.time() < trade_manager._session_end_time:
+                return
+            for t in list(trade_manager.open_trades):
+                if t['pair'] != bar['pair'] or t['entry_time'] > bar['time']:
+                    continue
+                tid = t['trade_id']
+                if tid not in _close_commands_sent:
+                    print(f"[LiveMode] SESSION END — sending close_order to NT for {tid}")
+                    trade_logger.log(tid, "SESSION_END", "Sending close_order to NinjaTrader")
+                    trade_logger.log(tid, "CMD_SENT", "close_order → NinjaTrader")
+                    trade_manager.trade_executor.on_trade_close(tid, bar['close'])
+                    _close_commands_sent.add(tid)
+
+        def combined_bar_callback(bar):
+            # No trade_manager.handle_new_1m_bar — NinjaTrader handles SL/TP
+            tstrategy.on_raw_bar(bar)
+            _check_live_session_end(bar)
+
+        def stream_end_callback(close_price: float, final_time: float):
+            # Send close commands to NT, don't close locally
+            for t in list(trade_manager.open_trades):
+                tid = t['trade_id']
+                if tid not in _close_commands_sent:
+                    print(f"[LiveMode] STREAM END — sending close_order to NT for {tid}")
+                    trade_logger.log(tid, "SESSION_END", "Stream end — sending close_order to NinjaTrader")
+                    trade_logger.log(tid, "CMD_SENT", "close_order → NinjaTrader")
+                    trade_manager.trade_executor.on_trade_close(tid, close_price)
+                    _close_commands_sent.add(tid)
+    else:
+        def combined_bar_callback(bar):
+            trade_manager.handle_new_1m_bar(bar)
+            tstrategy.on_raw_bar(bar)
+
+        def stream_end_callback(close_price: float, final_time: float):
+            trade_manager.close_remaining_trades_at_stream_end(close_price, final_time)
 
     loader = BarsLoader(
         data_source=data_source,
@@ -231,6 +279,105 @@ def create_app(
             data_source.ingest_live_bar(bar)
             return jsonify({'ok': True})
 
+        @app.route('/api/nt/trade_log', methods=['POST'])
+        def nt_trade_log():
+            """Accept log entries from NinjaTrader (NT:ORDER, NT:FILL, NT:MODIFY, etc.)."""
+            data = request.get_json()
+            tid = data.get('trade_id')
+            event = data.get('event')
+            msg = data.get('msg', '')
+            if not tid or not event:
+                abort(400, 'trade_id and event are required')
+            trade_logger.log(tid, event, msg)
+            return jsonify({'ok': True})
+
+        @app.route('/api/nt/positions', methods=['POST'])
+        def nt_positions_sync():
+            """Reconcile broker positions with DB after reconnect/restart."""
+            positions = request.get_json()
+            if not isinstance(positions, list):
+                abort(400, 'Expected JSON array of position objects')
+
+            broker_ids = {p['trade_id'] for p in positions}
+            db_open = [t for t in repos.trades.list_trades(pair) if t.exit_time is None]
+            db_open_ids = {t.trade_id for t in db_open}
+
+            reconciled = []
+
+            # DB has open trade but broker does not → closed offline
+            for t in db_open:
+                if t.trade_id not in broker_ids:
+                    print(f"[PositionSync] Trade {t.trade_id} closed offline (not on broker)")
+                    trade_logger.log(t.trade_id, "POSITION_SYNC", "Closed offline (not on broker)")
+                    repos.trades.close_trade(
+                        trade_id=t.trade_id,
+                        exit_price=0,
+                        exit_time=datetime.now(tz=timezone.utc),
+                        result=0.0,
+                        result_type="OFFLINE"
+                    )
+                    # Remove from trade_manager in-memory
+                    trade_manager.open_trades = [
+                        ot for ot in trade_manager.open_trades if ot['trade_id'] != t.trade_id
+                    ]
+                    reconciled.append({'trade_id': t.trade_id, 'action': 'closed_offline'})
+
+            # Broker has position but DB does not → orphan
+            for p in positions:
+                if p['trade_id'] not in db_open_ids:
+                    print(f"[PositionSync] WARNING: Orphan position on broker: {p['trade_id']}")
+                    reconciled.append({'trade_id': p['trade_id'], 'action': 'orphan_warning'})
+
+            # Matching → already resumed by TradeManager._load_open_trades_from_db
+            for p in positions:
+                if p['trade_id'] in db_open_ids:
+                    reconciled.append({'trade_id': p['trade_id'], 'action': 'resumed'})
+
+            print(f"[PositionSync] Reconciliation complete: {len(reconciled)} items")
+            return jsonify({'ok': True, 'reconciled': reconciled})
+
+        @app.route('/api/nt/entry_fill', methods=['POST'])
+        def nt_entry_fill():
+            """NinjaTrader reports the actual entry fill price."""
+            data = request.get_json()
+            trade_id = data.get('trade_id')
+            entry_price = float(data.get('entry_price', 0))
+
+            if not trade_id:
+                abort(400, 'trade_id is required')
+
+            print(f"[NT EntryFill] trade_id={trade_id} entry_price={entry_price}", flush=True)
+            trade_manager.handle_broker_entry_fill(trade_id, entry_price)
+
+            # Also update entry in strategy's open_trades list
+            for t in tstrategy.open_trades:
+                if t.get('trade_id') == trade_id:
+                    t['entry'] = entry_price
+                    break
+
+            return jsonify({'ok': True})
+
+        @app.route('/api/nt/fill', methods=['POST'])
+        def nt_fill():
+            """NinjaTrader reports a broker fill (SL, TP, or close)."""
+            data = request.get_json()
+            trade_id = data.get('trade_id')
+            exit_price = float(data.get('exit_price', 0))
+            result_type = data.get('result_type')  # "SL", "TP", or None
+
+            if not trade_id:
+                abort(400, 'trade_id is required')
+
+            print(f"[NT Fill] trade_id={trade_id} exit_price={exit_price} type={result_type}", flush=True)
+            trade_manager.handle_broker_fill(trade_id, exit_price, result_type)
+
+            # Also remove from strategy's open_trades list
+            tstrategy.open_trades = [
+                t for t in tstrategy.open_trades if t.get('trade_id') != trade_id
+            ]
+
+            return jsonify({'ok': True})
+
     @app.route('/api/lines', methods=['GET'])
     def list_lines():
         pair = request.args.get('pair')
@@ -293,6 +440,19 @@ def create_app(
     @app.route('/api/trades/<string:trade_id>/close', methods=['POST'])
     def close_trade(trade_id):
         return trades_controller.close_trade(trade_id)
+
+    @app.route('/api/trades/<string:trade_id>/logs', methods=['GET'])
+    def get_trade_logs(trade_id):
+        fmt = request.args.get('format', 'json')
+        if fmt == 'text':
+            all_trades = repos.trades.list_trades(pair)
+            trade = next((t for t in all_trades if t.trade_id == trade_id), None)
+            if not trade:
+                abort(404, 'Trade not found')
+            return TradeLogger.format_logs(trade), 200, {'Content-Type': 'text/plain'}
+        else:
+            logs = repos.trades.get_trade_logs(trade_id)
+            return jsonify(logs)
 
     # Socket.IO events
     @socketio.on('connect')

@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from src.repositories.trades_repository import TradeRepository
+from src.services.trade_executor import TradeExecutor, NoOpExecutor
 
 
 class TradeManager:
@@ -12,7 +13,9 @@ class TradeManager:
 
     def __init__(self, trade_repository: TradeRepository, socketio,
                  session_end_time: str = None, session_tz: str = None,
-                 broker_mode: str = 'futures', broker_spread: float = 0.0):
+                 broker_mode: str = 'futures', broker_spread: float = 0.0,
+                 trade_executor: TradeExecutor = None,
+                 trade_logger=None):
         """
         :param trade_repository: SQLTradeRepository instance (must have close_trade)
         :param socketio:         flask_socketio.SocketIO instance
@@ -20,12 +23,15 @@ class TradeManager:
         :param session_tz:       Timezone for session_end_time (e.g. "America/New_York")
         :param broker_mode:      'futures' or 'cfd' - affects TP/SL hit logic
         :param broker_spread:    Spread in points for CFD mode (e.g., 0.5)
+        :param trade_logger:     TradeLogger instance for per-trade lifecycle logging
         """
         self.open_trades = []
         self.trade_repository = trade_repository
         self.socketio         = socketio
         self.broker_mode      = broker_mode
         self.broker_spread    = broker_spread
+        self.trade_executor   = trade_executor or NoOpExecutor()
+        self.trade_logger     = trade_logger
 
         # Session end close config
         self._session_end_time = None
@@ -78,21 +84,21 @@ class TradeManager:
     def handle_new_1m_bar(self, bar: dict):
         """
         Call this on every 1m bar:
-        - scans strategy.open_trades
-        - when SL/TP is hit, closes & emits a 'trade_close'
+        - scans open_trades for SL/TP hits, closes & emits
+        - checks session end close
         """
+        self._check_sl_tp(bar)
+        self._check_session_end_close(bar)
+
+    def _check_sl_tp(self, bar: dict):
+        """SL/TP detection on 1m bars."""
         for trade in list(self.open_trades):
             if trade['pair'] != bar['pair']:
                 continue
-            
-            # CRITICAL FIX: Do not evaluate trades that haven't happened yet in this replay timeline
+
             if trade['entry_time'] > bar['time']:
-                # Optional: Log once that we are waiting for this trade
-                # if trade['trade_id'] not in self._monitored_trades:
-                #     print(f"[TradeManager] ⏳ Waiting for Trade {trade['trade_id']} (Entry: {trade['entry_time']} > Current: {bar['time']})")
                 continue
-            
-            # Log activation once
+
             if trade['trade_id'] not in self._monitored_trades:
                 print(f"[TradeManager] 🟢 ACTIVATING Trade {trade['trade_id']} at {bar['time']} (Replay caught up to Entry)")
                 self._monitored_trades.add(trade['trade_id'])
@@ -101,12 +107,8 @@ class TradeManager:
             is_buy  = ttype in ('buy', 'long')
             is_sell = ttype in ('sell', 'short')
 
-            # Adjust SL/TP levels for spread if CFD mode
-            # CFD: you sell at bid (lower) for longs, buy at ask (higher) for shorts
             spread_adj = self.broker_spread / 2.0 if self.broker_mode == 'cfd' else 0.0
 
-            # For CFD longs: you exit (sell) at bid = nominal - half_spread
-            # For CFD shorts: you exit (buy) at ask = nominal + half_spread
             adjusted_sl = trade['stop_loss']
             adjusted_tp = trade['take_profit']
             if self.broker_mode == 'cfd':
@@ -138,14 +140,12 @@ class TradeManager:
             if not hit_sl and not hit_tp:
                 continue
 
-            # determine exit
             exit_price = trade['stop_loss'] if hit_sl else trade['take_profit']
             exit_time  = datetime.fromtimestamp(bar['time'], tz=ZoneInfo('UTC'))
             result_type = "SL" if hit_sl else "TP"
 
-            # calculate P&L (R-Multiple)
             risk = trade.get('risk', 0)
-            if risk <= 0: risk = 1.0 # avoid div/0
+            if risk <= 0: risk = 1.0
 
             if is_buy:
                 pnl_points = exit_price - trade['entry']
@@ -157,7 +157,6 @@ class TradeManager:
             print(f"[TradeManager] 📉 Closing trade {trade['trade_id']} (Result: {result:.2f}R, Type: {result_type}) at {bar['time']}")
 
             try:
-                # persist the close
                 self.trade_repository.close_trade(
                     trade_id   = trade['trade_id'],
                     exit_price = exit_price,
@@ -168,11 +167,17 @@ class TradeManager:
                 print(f"[TradeManager] 💾 DB Updated for Trade {trade['trade_id']} (Closed)")
             except Exception as e:
                 print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
+                if self.trade_logger:
+                    self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
 
-            # remove from live list
+            if self.trade_logger:
+                event = "SL_HIT" if hit_sl else "TP_HIT"
+                self.trade_logger.log(trade['trade_id'], event, f"Exit={exit_price:.2f} Result={result:.2f}R")
+                self.trade_logger.log(trade['trade_id'], "CLOSE", "Persisted to DB")
+
             self.open_trades.remove(trade)
+            self.trade_executor.on_trade_close(trade['trade_id'], exit_price)
 
-            # emit to clients
             self.socketio.emit('trade_close', {
                 'trade_id':   trade['trade_id'],
                 'pair':       trade['pair'],
@@ -182,9 +187,6 @@ class TradeManager:
                 'result':     result,
                 'result_type': result_type
             })
-
-        # After SL/TP checks, close any remaining open trades if session has ended
-        self._check_session_end_close(bar)
 
     def _check_session_end_close(self, bar: dict):
         if not self._session_end_time or not self._session_tz:
@@ -215,7 +217,6 @@ class TradeManager:
 
             result = pnl_points / risk
 
-            # Determine if this is BE or SP: if result is <= 0.1% profit, it's BE
             result_type = "BE" if result <= 0.001 else "SP"
 
             print(f"[TradeManager] 🕐 SESSION END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: {result_type})")
@@ -230,6 +231,12 @@ class TradeManager:
                 )
             except Exception as e:
                 print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
+                if self.trade_logger:
+                    self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
+
+            if self.trade_logger:
+                self.trade_logger.log(trade['trade_id'], "SESSION_END", f"Close @ {exit_price:.2f} Result={result:.2f}R")
+                self.trade_logger.log(trade['trade_id'], "CLOSE", "Persisted to DB")
 
             self.open_trades.remove(trade)
 
@@ -327,10 +334,16 @@ class TradeManager:
             result=result,
             result_type=None
         )
+
+        if self.trade_logger:
+            self.trade_logger.log(trade_id, "CLOSE", f"Exit={exit_price:.2f} Result={result:.2f}R")
+            self.trade_logger.log(trade_id, "CMD_SENT", "close_order → NinjaTrader")
+
         # remove from in-memory
         if trade in self.open_trades:
             self.open_trades.remove(trade)
-            
+        self.trade_executor.on_trade_close(trade_id, exit_price)
+
         # emit close event
         payload = {
             'trade_id':  trade_id,
@@ -368,7 +381,6 @@ class TradeManager:
 
             result = pnl_points / risk
 
-            # Determine if this is BE or SP: if result is <= 0.1% profit, it's BE
             result_type = "BE" if result <= 0.001 else "SP"
 
             print(f"[TradeManager] 🎬 STREAM END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: {result_type})")
@@ -383,6 +395,12 @@ class TradeManager:
                 )
             except Exception as e:
                 print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
+                if self.trade_logger:
+                    self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
+
+            if self.trade_logger:
+                self.trade_logger.log(trade['trade_id'], "SESSION_END", f"Stream end @ {exit_price:.2f} Result={result:.2f}R")
+                self.trade_logger.log(trade['trade_id'], "CLOSE", "Persisted to DB")
 
             self.open_trades.remove(trade)
 
@@ -407,3 +425,127 @@ class TradeManager:
                 print(f"[TradeManager] 🔄 Synced SL for {trade_id}: {old_sl} -> {new_sl}")
                 return
         print(f"[TradeManager] ⚠️ Could not find trade {trade_id} to update SL")
+
+    def handle_broker_entry_fill(self, trade_id: str, entry_price: float):
+        """
+        Called when NinjaTrader reports the actual entry fill price.
+        Updates DB, in-memory trade, and emits to UI so chart shows real broker price.
+        """
+        # Update in-memory trade
+        trade = next(
+            (t for t in self.open_trades if t['trade_id'] == trade_id),
+            None
+        )
+
+        if not trade:
+            print(f"[TradeManager] ⚠️ Entry fill for {trade_id} but trade not in memory")
+            return
+
+        old_entry = trade['entry']
+        trade['entry'] = entry_price
+
+        # Recalculate risk based on actual entry
+        is_buy = trade['type'] in ('buy', 'long')
+        if is_buy:
+            trade['risk'] = abs(entry_price - trade['stop_loss'])
+        else:
+            trade['risk'] = abs(trade['stop_loss'] - entry_price)
+
+        print(f"[TradeManager] 📡 ENTRY FILL: {trade_id} @ {entry_price} "
+              f"(was {old_entry}, slippage={entry_price - old_entry:+.2f})")
+
+        if self.trade_logger:
+            self.trade_logger.log(trade_id, "NT_ENTRY_FILL",
+                f"Filled @ {entry_price:.2f} (slippage: {entry_price - old_entry:+.2f})")
+
+        # Persist to DB
+        try:
+            self.trade_repository.update_entry_price(trade_id, entry_price)
+        except Exception as e:
+            print(f"[TradeManager] ❌ DB ERROR on entry fill for {trade_id}: {e}")
+            if self.trade_logger:
+                self.trade_logger.log(trade_id, "ERROR", str(e))
+
+        # Emit to UI so chart updates
+        self.socketio.emit('trade_entry_update', {
+            'trade_id':    trade_id,
+            'entry_price': entry_price,
+            'risk':        trade['risk'],
+        })
+
+    def handle_broker_fill(self, trade_id: str, exit_price: float, result_type: str = None):
+        """
+        Called when NinjaTrader reports a fill (SL, TP, or manual close).
+        This is the ONLY path that closes trades in live mode.
+        Updates DB, removes from open_trades, emits to UI.
+        """
+        # Find trade in memory
+        trade = next(
+            (t for t in self.open_trades if t['trade_id'] == trade_id),
+            None
+        )
+
+        if not trade:
+            print(f"[TradeManager] ⚠️ Broker fill for {trade_id} but trade not in memory (already closed?)")
+            return
+
+        # Calculate P&L
+        risk = trade.get('risk', 0)
+        if risk <= 0:
+            risk = 1.0
+
+        is_buy = trade['type'] in ('buy', 'long')
+        if is_buy:
+            pnl_points = exit_price - trade['entry']
+        else:
+            pnl_points = trade['entry'] - exit_price
+
+        result = pnl_points / risk
+
+        # Auto-detect result_type if not provided
+        if not result_type:
+            if abs(exit_price - trade['stop_loss']) < 0.5:
+                result_type = "SL"
+            elif abs(exit_price - trade['take_profit']) < 0.5:
+                result_type = "TP"
+            else:
+                result_type = "MANUAL"
+
+        exit_time = datetime.now(tz=timezone.utc)
+
+        print(f"[TradeManager] 📡 BROKER FILL: {trade_id} @ {exit_price} "
+              f"(Result: {result:.2f}R, Type: {result_type})")
+
+        if self.trade_logger:
+            self.trade_logger.log(trade_id, "NT_FILL", f"{result_type} @ {exit_price:.2f} (Result: {result:.2f}R)")
+
+        # Persist close
+        try:
+            self.trade_repository.close_trade(
+                trade_id=trade_id,
+                exit_price=exit_price,
+                exit_time=exit_time,
+                result=result,
+                result_type=result_type
+            )
+        except Exception as e:
+            print(f"[TradeManager] ❌ DB ERROR on broker fill for {trade_id}: {e}")
+            if self.trade_logger:
+                self.trade_logger.log(trade_id, "ERROR", str(e))
+
+        if self.trade_logger:
+            self.trade_logger.log(trade_id, "CLOSE", "Persisted to DB")
+
+        # Remove from in-memory lists
+        self.open_trades.remove(trade)
+
+        # Emit to UI
+        self.socketio.emit('trade_close', {
+            'trade_id':    trade_id,
+            'pair':        trade['pair'],
+            'type':        trade['type'],
+            'exit_price':  exit_price,
+            'exit_time':   exit_time.timestamp(),
+            'result':      result,
+            'result_type': result_type
+        })

@@ -7,6 +7,7 @@ from src.repositories.lines_repository import SQLLineRepository
 from src.repositories.trades_repository import SQLTradeRepository
 from src.data_sources.csv_datasource import CSVDataSource
 from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource, NinjaTraderConfig
+from src.services.trade_executor import NinjaTraderExecutor
 from src.database import database
 
 # Import the centralized configuration
@@ -116,6 +117,7 @@ def build_live():
 
     nt_cfg = NinjaTraderConfig(pair=PAIR)
     ds = NinjaTraderDataSource(nt_cfg)
+    executor = NinjaTraderExecutor(ds)
 
     numbers = get_prod_strategy_numbers()
     candle_config = get_prod_candle_config()
@@ -131,6 +133,7 @@ def build_live():
         timeframes=["3m", "5m", "15m", "30m", "1h"],
         bootstrap_existing_lines=True,
         live_mode=True,
+        trade_executor=executor,
     )
 
 

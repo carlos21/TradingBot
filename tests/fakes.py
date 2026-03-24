@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional, List
 from src.models import LineData, TradeData
+from src.services.trade_executor import TradeExecutor
 
 class DummySocketIO:
     def __init__(self):
@@ -95,6 +96,12 @@ class FakeTradeRepository:
             if t['trade_id'] == trade_id:
                 t['stop_loss'] = new_stop_loss
                 return
+
+    def update_entry_price(self, trade_id, new_entry_price):
+        for t in self.inserted:
+            if t['trade_id'] == trade_id:
+                t['entry'] = new_entry_price
+                return
     
     def close_trade(self, trade_id, exit_price, exit_time, result, result_type=None):
         self.closed.append({
@@ -104,6 +111,19 @@ class FakeTradeRepository:
             "result": result,
             "result_type": result_type
         })
+
+    def append_trade_log(self, trade_id: str, event: str, message: str) -> None:
+        for t in self.inserted:
+            if t['trade_id'] == trade_id:
+                logs = t.setdefault('logs', [])
+                logs.append({"ts": "", "event": event, "msg": message})
+                return
+
+    def get_trade_logs(self, trade_id: str) -> list:
+        for t in self.inserted:
+            if t['trade_id'] == trade_id:
+                return t.get('logs', [])
+        return []
 
     def list_trades(self, pair: str) -> List[TradeData]:
         results = []
@@ -135,3 +155,19 @@ class FakeTradeRepository:
                 created_at=datetime.utcnow()
             ))
         return results
+
+
+class FakeTradeExecutor(TradeExecutor):
+    def __init__(self):
+        self.opens = []
+        self.closes = []
+        self.sl_updates = []
+
+    def on_trade_open(self, trade):
+        self.opens.append(trade)
+
+    def on_trade_close(self, trade_id, exit_price):
+        self.closes.append((trade_id, exit_price))
+
+    def on_sl_update(self, trade_id, new_sl):
+        self.sl_updates.append((trade_id, new_sl))

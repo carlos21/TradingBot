@@ -1,7 +1,7 @@
 from enum import Enum
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -41,7 +41,8 @@ class TradeData:
     result: Optional[float]       # e.g. PnL or +1/–1 flag
     result_type: Optional[str]    # "SL", "TP", or "SP"
     params: Optional[Dict[str, Any]]
-    created_at: datetime
+    logs: Optional[List[Dict[str, str]]] = field(default=None)
+    created_at: datetime = field(default=None)
 
     def __hash__(self):
         return hash((
