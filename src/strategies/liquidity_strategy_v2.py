@@ -130,7 +130,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         with self.lock:
             self._check_open_trades(bar)
 
-            if self.options.breakeven:
+            if self.options.breakeven or self.options.reentry_breakeven:
                 self._check_breakeven(bar)
 
             if self.options.reentry_after_sl and self._reentry_opportunities:

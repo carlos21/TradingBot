@@ -17,7 +17,7 @@ EXAMPLES
 
 CRON EXAMPLE (runs every weekday at 18:00 Chicago time)
 --------------------------------------------------------
-  0 18 * * 1-5  cd /path/to/TradingBot && ./fetch_data.sh
+  0 18 * * 1-5  cd /path/to/TradingBot && ./bin/fetch_data.sh
 
 USING THE FETCHED CSV IN CSVDataSource
 ---------------------------------------

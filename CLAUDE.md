@@ -17,15 +17,19 @@ poetry install
 
 **Run all test scenarios:**
 ```bash
-./run_scenarios.sh
+./bin/run_scenarios.sh
 ```
 
 **Run a single test scenario:**
 ```bash
-./run_test_scenario.sh
+./bin/run_test_scenario.sh
 ```
 
 Both scripts invoke `scripts/run_scenarios.py` with Playwright browser automation against `tests/scenarios.yaml` (full suite) or `tests/test_scenario.yaml` (single case). Output is written to `scenarios_out/`.
+
+## Rules
+
+- **Never run `git add` or `git commit`** — I will handle all git operations myself. Only make code changes; do not stage or commit them.
 
 ## Architecture
 

@@ -6,7 +6,7 @@ and rank them by Net P&L.
 Usage:
     poetry run python scripts/tune_tsi.py
 
-Each variant patches prod_config.py, runs ./run_scenarios.sh, captures output,
+Each variant patches prod_config.py, runs ./bin/run_scenarios.sh, captures output,
 then restores the original. Results are ranked at the end.
 """
 
@@ -174,7 +174,7 @@ class RunResult:
 
 def run_scenarios() -> str:
     proc = subprocess.run(
-        ["bash", "run_scenarios.sh", "--mode", "sim"],
+        ["bash", "bin/run_scenarios.sh", "--mode", "sim"],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,

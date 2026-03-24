@@ -42,7 +42,11 @@ def _expect_summary(expect: dict) -> str:
         return "(none set)"
     if expect.get("none"):
         return "none: true"
-    return f"entry={expect.get('entry')}  sl={expect.get('sl')}  tp={expect.get('tp')}"
+    s = f"entry={expect.get('entry')}  sl={expect.get('sl')}  tp={expect.get('tp')}"
+    if "reentry" in expect:
+        re_ = expect["reentry"]
+        s += f"  | reentry: entry={re_.get('entry')}  sl={re_.get('sl')}  tp={re_.get('tp')}"
+    return s
 
 
 def write_discovery_yaml(sc: dict):
@@ -149,9 +153,13 @@ def main():
     new_expect = old_expect
 
     try:
-        results = json.loads(Path(results_json).read_text())
-        if results and results[0].get("trades"):
-            trade = results[0]["trades"][0]
+        raw = json.loads(Path(results_json).read_text())
+        results = raw.get("results", raw) if isinstance(raw, dict) else raw
+        trade_pairs = results[0].get("trade_pairs", []) if results else []
+        trades = [tp[0] for tp in trade_pairs if tp[0]] if trade_pairs else []
+
+        if trades:
+            trade = trades[0]
             entry    = trade.get("entry")
             sl       = trade.get("orig_sl") or trade.get("stop_loss")
             tp       = trade.get("take_profit")
@@ -160,11 +168,22 @@ def main():
             new_tf     = trade_tf or "1m"
             new_expect = {"entry": entry, "sl": sl, "tp": tp}
 
-            print(f"\n  Found trade:")
+            print(f"\n  Found trade #1:")
             print(f"    tf:     {new_tf}")
             print(f"    entry:  {entry}")
             print(f"    sl:     {sl}")
             print(f"    tp:     {tp}")
+
+            if len(trades) > 1:
+                re_trade = trades[1]
+                re_entry = re_trade.get("entry")
+                re_sl    = re_trade.get("orig_sl") or re_trade.get("stop_loss")
+                re_tp    = re_trade.get("take_profit")
+                new_expect["reentry"] = {"entry": re_entry, "sl": re_sl, "tp": re_tp}
+                print(f"\n  Found re-entry trade #2:")
+                print(f"    entry:  {re_entry}")
+                print(f"    sl:     {re_sl}")
+                print(f"    tp:     {re_tp}")
         else:
             print("\n  No trade found.")
             ans = prompt("  Update expect to {none: true}?", default="n")
@@ -196,6 +215,20 @@ def main():
             nv = new_expect.get(key)
             if ov is None or nv is None or abs(float(ov) - float(nv)) > 0.01:
                 changes.append(f"  {key}: {ov} → {nv}")
+
+    # Compare reentry
+    old_re = old_expect.get("reentry")
+    new_re = new_expect.get("reentry")
+    if new_re and not old_re:
+        changes.append(f"  reentry: (new) entry={new_re.get('entry')} sl={new_re.get('sl')} tp={new_re.get('tp')}")
+    elif old_re and not new_re:
+        changes.append(f"  reentry: removed")
+    elif old_re and new_re:
+        for key in ("entry", "sl", "tp"):
+            ov = old_re.get(key)
+            nv = new_re.get(key)
+            if ov is None or nv is None or abs(float(ov) - float(nv)) > 0.01:
+                changes.append(f"  reentry {key}: {ov} → {nv}")
 
     if not changes:
         print("\n✅ No changes needed — scenario is already correct.")

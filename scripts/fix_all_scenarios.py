@@ -70,6 +70,17 @@ def _expect_changed(old: dict, new: dict) -> bool:
             return True
         if abs(float(ov) - float(nv)) > 0.01:
             return True
+    # Check reentry
+    old_re, new_re = old.get("reentry"), new.get("reentry")
+    if bool(old_re) != bool(new_re):
+        return True
+    if old_re and new_re:
+        for key in ("entry", "sl", "tp"):
+            ov, nv = old_re.get(key), new_re.get(key)
+            if ov is None or nv is None:
+                return True
+            if abs(float(ov) - float(nv)) > 0.01:
+                return True
     return False
 
 
@@ -133,6 +144,13 @@ def main():
                 "sl":    trade.get("orig_sl") or trade.get("stop_loss"),
                 "tp":    trade.get("take_profit"),
             }
+            if len(trades) > 1:
+                re_trade = trades[1]
+                new_expect["reentry"] = {
+                    "entry": re_trade.get("entry"),
+                    "sl":    re_trade.get("orig_sl") or re_trade.get("stop_loss"),
+                    "tp":    re_trade.get("take_profit"),
+                }
         else:
             new_tf     = old_tf
             new_expect = {"none": True}

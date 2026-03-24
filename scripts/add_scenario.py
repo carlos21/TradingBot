@@ -111,13 +111,21 @@ def _format_lines_block(lines: list) -> str:
 def _format_expect_block(expect: dict) -> str:
     if expect.get("none"):
         return "    expect:\n      none: true\n"
-    return (
+    block = (
         f'    expect:\n'
         f'      entry: {expect["entry"]:.2f}\n'
         f'      sl:    {expect["sl"]:.2f}\n'
         f'      tp:    {expect["tp"]:.2f}\n'
-        f'      tolerance: 0.25\n'
     )
+    if "reentry" in expect:
+        re_ = expect["reentry"]
+        block += (
+            f'      reentry:\n'
+            f'        entry: {re_["entry"]:.2f}\n'
+            f'        sl:    {re_["sl"]:.2f}\n'
+            f'        tp:    {re_["tp"]:.2f}\n'
+        )
+    return block
 
 
 def format_scenario_block(sc: dict) -> str:
@@ -197,7 +205,7 @@ def write_test_scenario_yaml(sc: dict):
 # Test runner
 # ---------------------------------------------------------------------------
 
-def run_discovery(results_json_path: str, rr_ratio: float = 3.3) -> bool:
+def run_discovery(results_json_path: str, rr_ratio: float = 4.0) -> bool:
     """Run run_scenarios.py against test_scenario.yaml and write results JSON."""
     cmd = [
         "poetry", "run", "python", "scripts/run_scenarios.py",
@@ -235,8 +243,8 @@ def prompt(msg: str, default: str = "") -> str:
 def main():
     import argparse
     ap = argparse.ArgumentParser(description="Add a new test scenario")
-    ap.add_argument("--rr", type=float, default=3.3,
-                    help="Risk:Reward ratio for TP calculation (default: 3.3)")
+    ap.add_argument("--rr", type=float, default=4.0,
+                    help="Risk:Reward ratio for TP calculation (default: 4.0)")
     args = ap.parse_args()
 
     print("=== Add New Trading Scenario ===\n")
@@ -323,10 +331,12 @@ def main():
     # ── Read results ─────────────────────────────────────────────────────────
     expect = {}
     try:
-        results = json.loads(Path(results_json).read_text())
-        if results and results[0].get("trades"):
-            trade = results[0]["trades"][0]
-            entry = trade.get("entry")
+        raw = json.loads(Path(results_json).read_text())
+        scenario_results = raw.get("results", []) if isinstance(raw, dict) else raw
+        trade_pairs = scenario_results[0].get("trade_pairs", []) if scenario_results else []
+        if trade_pairs:
+            trade = trade_pairs[0][0]  # first (trade, close) pair → trade dict
+            entry = trade.get("entry") or trade.get("entry_price")
             sl = trade.get("orig_sl") or trade.get("stop_loss")
             tp = trade.get("take_profit")
             trade_tf = trade.get("tf")
@@ -387,7 +397,7 @@ def main():
     print(f"\n✅ Done! Scenario '{name}' added.")
     print(f"   scenarios.yaml     — updated")
     print(f"   test_scenario.yaml — updated")
-    print(f"\nRun './run_test_scenario.sh' to validate.")
+    print(f"\nRun './bin/run_test_scenario.sh' to validate.")
 
 
 if __name__ == "__main__":

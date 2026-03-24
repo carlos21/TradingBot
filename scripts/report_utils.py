@@ -4,8 +4,12 @@ Shared report utility functions used by html_report.py and html_comparison_repor
 """
 
 
-def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold):
-    """Compute PnL for a single trade+close pair. Returns dict with outcome/usd/pct/r."""
+def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold,
+                      risk_pct=None, balance=None):
+    """Compute PnL for a single trade+close pair. Returns dict with outcome/usd/pct/r.
+    If risk_pct is set, risk is computed as balance * risk_pct / 100."""
+    if risk_pct is not None and balance is not None:
+        risk = balance * risk_pct / 100.0
     is_reentry = trade.get("is_reentry", False) if trade else False
 
     if close is None:
@@ -32,7 +36,8 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
                         usd = contracts * (actual_r * sl_pts) * nq_pv - fees
                     else:
                         usd = -(contracts * sl_pts * nq_pv) - fees
-        pct = usd / account * 100 if account else 0.0
+        pct_base = balance if (risk_pct is not None and balance) else account
+        pct = usd / pct_base * 100 if pct_base else 0.0
         return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry}
 
     actual_r = close.get("result", 0.0)
@@ -56,7 +61,8 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
                 else:
                     usd = -(contracts * sl_pts * nq_pv) - fees
 
-    pct = usd / account * 100 if account else 0.0
+    pct_base = balance if (risk_pct is not None and balance) else account
+    pct = usd / pct_base * 100 if pct_base else 0.0
 
     if actual_r > 0 and actual_r < be_threshold:
         outcome = "be"
