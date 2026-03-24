@@ -114,11 +114,7 @@ def build_live():
         trades=SQLTradeRepository(),
     )
 
-    nt_cfg = NinjaTraderConfig(
-        host=os.environ.get("NT_HOST", "0.0.0.0"),
-        port=int(os.environ.get("NT_PORT", 8889)),
-        pair=PAIR,
-    )
+    nt_cfg = NinjaTraderConfig(pair=PAIR)
     ds = NinjaTraderDataSource(nt_cfg)
 
     numbers = get_prod_strategy_numbers()

@@ -64,6 +64,15 @@ def create_app(
     app = Flask(__name__)
     CORS(app)
     socketio = SocketIO(app, cors_allowed_origins="*")
+
+    # Suppress noisy Werkzeug access logs for high-frequency endpoints
+    import logging
+    class _QuietFilter(logging.Filter):
+        _NOISY = ('/api/nt/tick', '/api/nt/partial')
+        def filter(self, record):
+            msg = record.getMessage()
+            return not any(p in msg for p in self._NOISY)
+    logging.getLogger('werkzeug').addFilter(_QuietFilter())
     
     trade_manager = TradeManager(
         trade_repository=repos.trades,
@@ -109,6 +118,36 @@ def create_app(
     )
     loader.live_mode = live_mode
 
+    # In live mode, wire direct callbacks on the data source so the strategy
+    # processes bars as soon as NinjaTrader sends them — no browser needed.
+    if live_mode:
+        def _on_history_complete(bars):
+            print(f"[LiveMode] Warming up strategy with {len(bars)} historical bars...")
+            for bar in bars:
+                tstrategy.on_raw_bar(bar)
+            print("[LiveMode] Warmup complete, ready for live bars.")
+            # Tell any connected browsers to reload chart data
+            socketio.emit('history_ready', {'count': len(bars)})
+
+        def _on_live_bar(bar):
+            # Route through BarsLoader so bars get aggregated into
+            # the current timeframe (5m, 15m, etc.) before chart emission.
+            loader._handle_message(bar)
+
+        def _on_before_refresh():
+            """Reset strategy and re-add DB lines before fresh bars arrive."""
+            print("[LiveMode] Refresh: resetting strategy...")
+            tstrategy.reset()
+            loader.reset()
+            # Re-add persistent lines so they're available during warmup
+            for l in repos.lines.list_lines(pair):
+                tstrategy.add_strategy_line(l.line_id, l.price, creation_timestamp=0)
+            print("[LiveMode] Refresh: strategy reset, ready for fresh bars.")
+
+        data_source.on_history_complete = _on_history_complete
+        data_source.on_live_bar = _on_live_bar
+        data_source.on_before_refresh = _on_before_refresh
+
     lines_controller  = LinesController(repos.lines, loader, tstrategy)
     trades_controller = TradesController(loader, trade_manager)
 
@@ -135,6 +174,62 @@ def create_app(
         start_ts = request.args.get('start_time', type=int)
         bars     = data_source.load_historical_bars(tf, start_ts)
         return jsonify(bars)
+
+    # --- NinjaTrader ingest routes (live mode) ---
+    if live_mode:
+        @app.route('/api/nt/await_command', methods=['GET'])
+        def nt_await_command():
+            """Long-poll: NinjaTrader hangs here until Python has a command."""
+            cmd = data_source.await_command(timeout=30.0)
+            if cmd:
+                print(f"[NT LongPoll] Sending command: {cmd}", flush=True)
+                return jsonify(cmd)
+            return jsonify({'command': None})
+
+        @app.route('/api/nt/refresh_start', methods=['POST'])
+        def nt_refresh_start():
+            print("[NT Ingest] REFRESH_START received", flush=True)
+            data_source.handle_refresh_start()
+            return jsonify({'ok': True})
+
+        @app.route('/api/nt/bars', methods=['POST'])
+        def nt_ingest_bars():
+            bars = request.get_json()
+            if not isinstance(bars, list):
+                abort(400, 'Expected JSON array of bar objects')
+            data_source.ingest_bars(bars)
+            print(f"[NT Ingest] Received {len(bars)} bars, total={len(data_source._historical_bars)}", flush=True)
+            return jsonify({'ok': True, 'count': len(bars)})
+
+        @app.route('/api/nt/history_end', methods=['POST'])
+        def nt_history_end():
+            print(f"[NT Ingest] HISTORY_END received", flush=True)
+            data_source.mark_history_complete()
+            socketio.emit('history_ready', {'count': len(data_source._historical_bars)})
+            return jsonify({'ok': True})
+
+        @app.route('/api/nt/tick', methods=['POST'])
+        def nt_ingest_tick():
+            tick = request.get_json()
+            data_source.ingest_tick(tick)
+            return jsonify({'ok': True})
+
+        @app.route('/api/nt/bar', methods=['POST'])
+        def nt_ingest_live_bar():
+            bar = request.get_json()
+            from datetime import datetime, timezone
+            ts = int(bar.get('time', 0))
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%H:%M:%S')
+            print(f"[NT /bar] COMPLETED bar time={dt} ({ts}) O={bar.get('open')} H={bar.get('high')} L={bar.get('low')} C={bar.get('close')}", flush=True)
+            data_source.ingest_live_bar(bar)
+            return jsonify({'ok': True})
+
+        @app.route('/api/nt/partial', methods=['POST'])
+        def nt_ingest_partial():
+            bar = request.get_json()
+            bar['partial'] = True
+            data_source.ingest_live_bar(bar)
+            return jsonify({'ok': True})
 
     @app.route('/api/lines', methods=['GET'])
     def list_lines():
@@ -203,11 +298,11 @@ def create_app(
     @socketio.on('connect')
     def on_connect(auth):
         emit('stream_status', {'playing': loader.streaming, 'live_mode': live_mode})
-        # Auto-start subscription in live mode so bars flow immediately
-        if live_mode and not loader.streaming:
-            loader.set_timeframe('1m')
-            loader.start(0)
-            emit('stream_status', {'playing': True})
+        if live_mode and hasattr(data_source, '_historical_bars') and data_source._historical_bars:
+            emit('history_ready', {'count': len(data_source._historical_bars)})
+            # Request fresh bars from NinjaTrader (once per browser connect)
+            if hasattr(data_source, 'request_history_refresh'):
+                data_source.request_history_refresh(days=1)
 
     @socketio.on('start_stream')
     def on_start_stream(payload):
@@ -223,6 +318,8 @@ def create_app(
 
     @socketio.on('pause_stream')
     def on_pause_stream():
+        if live_mode:
+            return
         loader.pause()
         emit('stream_status', {'playing': False})
 
@@ -248,6 +345,13 @@ def create_app(
         if live_mode:
             return
         loader.seek(payload.get('fromTime', 0))
+
+    @socketio.on('set_timeframe')
+    def on_set_timeframe(payload):
+        tf = payload.get('timeframe', '1m')
+        from_time = payload.get('fromTime', 0)
+        loader.seek(from_time)
+        loader.set_timeframe(tf)
 
     @socketio.on('jump_day')
     def on_jump_day(payload):

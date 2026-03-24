@@ -11,6 +11,7 @@ export class ChartViewer {
     this.pair         = null;
     this.currentTF    = opts.timeframe || '5m';
     this.isPlaying    = false;
+    this.liveMode     = false;
     this.activeTrade  = null;
     
     this.historicalBars = []; 
@@ -183,14 +184,20 @@ export class ChartViewer {
   }
 
   async _initBars() {
-    console.log(`[ChartViewer] Fetching bars for ${this.currentTF}...`);
+    console.log(`[ChartViewer] Fetching bars for ${this.currentTF}, startTime=${this.startTime}...`);
     const bars = await this.dataService.fetchBars(this.pair, this.currentTF, this.startTime);
+    console.log(`[ChartViewer] Got ${bars.length} bars from /api/bars`);
+    if (bars.length > 0) {
+      console.log(`[ChartViewer] First bar: time=${bars[0].time}, close=${bars[0].close}`);
+      console.log(`[ChartViewer] Last bar: time=${bars[bars.length-1].time}, close=${bars[bars.length-1].close}`);
+    }
     this.historicalBars = bars;
-    
+
     this._calculateAndDrawTSI(bars);
     this.displayChart(bars);
-    
+
     bars.forEach(bar => this._shadeBar(bar));
+
   }
 
   async _initLines() {
@@ -410,8 +417,17 @@ export class ChartViewer {
 
     this.socket.on('stream_end', () => { window.__done = true; });
 
-    this.socket.on('stream_status', ({ playing }) => {
-      if (!playing) this.isPlaying = false;
+    // Live mode: NinjaTrader history arrived after initial page load
+    this.socket.on('history_ready', async (data) => {
+      console.log('[ChartViewer] history_ready received!', data);
+      this.liveMode = true;
+      await this._initBars();
+    });
+
+    this.socket.on('stream_status', (data) => {
+      console.log('[ChartViewer] stream_status received:', data);
+      if (!data.playing) this.isPlaying = false;
+      if (data.live_mode) this.liveMode = true;
     });
   }
 
@@ -605,8 +621,9 @@ export class ChartViewer {
 
     let bars = await this.dataService.fetchBars(this.pair, tf, this.startTime);
 
-    // If mid-replay, trim to bars that have started by the current position
-    if (replayPos !== null) {
+    // If mid-replay, trim to bars up to the current position.
+    // In live mode, always show all bars — there's no replay position.
+    if (!this.liveMode && replayPos !== null && bars.length > 0 && replayPos < bars[bars.length - 1].time) {
       bars = bars.filter(b => b.time <= replayPos);
     }
 
@@ -614,8 +631,8 @@ export class ChartViewer {
     this._calculateAndDrawTSI(bars);
     this.displayChart(bars);
 
-    // Sync backend to the new effective position
-    this.socket.emit('seek', { fromTime: this.lastTime });
+    // Sync backend to the new timeframe and position
+    this.socket.emit('set_timeframe', { timeframe: tf, fromTime: this.lastTime });
 
     this.chart.timeScale().fitContent();
     bars.forEach(bar => this._shadeBar(bar));

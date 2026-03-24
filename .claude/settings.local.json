@@ -50,7 +50,11 @@
       "Bash(./run_test_scenario.sh 2>&1 | grep -E \"RESULT|Trades  :|B/E|SP\")",
       "WebSearch",
       "WebFetch(domain:ninjatrader.com)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(netstat -tlnp)",
+      "Bash(ip addr:*)",
+      "Read(//etc/**)",
+      "Read(//mnt/c/Users/dark_/**)"
     ]
   }
 }

@@ -58,7 +58,9 @@ class BarsLoader:
         self._step_mode = False
 
     def set_timeframe(self, tf: str):
-        self._stop_event.set()
+        if not self.live_mode:
+            self._stop_event.set()
+
         unit = tf[-1]
         num  = int(tf[:-1])
         if unit == 'm': self.group_size = max(1, num)
@@ -74,7 +76,9 @@ class BarsLoader:
         buf = [b for b in source_bars if win_start <= b['time'] <= self._from_time]
         self._1m_buffer = buf
         self._current_group_start = win_start
-        self._stop_event.clear()
+
+        if not self.live_mode:
+            self._stop_event.clear()
         self._reached_stop_at = False
 
     def start(self, from_time: int = None, stop_at: int = None):
@@ -105,10 +109,11 @@ class BarsLoader:
         self.socketio.start_background_task(self._run_subscription, self._from_time)
 
     def pause(self):
-        self._stop_event.set()
+        if not self.live_mode:
+            self._stop_event.set()
         self._stop_at = None
         self._step_mode = False
-        if hasattr(self.data_source, 'pause'):
+        if not self.live_mode and hasattr(self.data_source, 'pause'):
             try: self.data_source.pause()
             except Exception: pass
         self.streaming = False
@@ -152,15 +157,41 @@ class BarsLoader:
             self.socketio.emit('stream_end', {'ok': True})
             return
 
-        if self._stop_event.is_set(): return
+        if not self.live_mode and self._stop_event.is_set(): return
 
         is_partial = msg.get('partial', False)
+
+        if self.live_mode and not is_partial and 'open' in msg:
+            from datetime import datetime, timezone
+            ts = msg.get('time', 0)
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%H:%M:%S')
+            print(f"[BarsLoader] PROCESSING completed bar time={dt} tf={self.current_tf} buf_len={len(self._1m_buffer)} group_start={self._current_group_start}", flush=True)
 
         # Partial bars: emit to frontend for display only, skip strategy
         if is_partial:
             self._last_played_ts = msg['time']
             self._last_bar_close = msg.get('close', 0)
             bar_for_emit = {k: v for k, v in msg.items() if k != 'partial'}
+
+            # For higher timeframes, merge partial tick data with buffered
+            # 1m bars so the chart shows the correct aggregated candle
+            if not (self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1):
+                window_secs = self.group_size * 60
+                window_start = (bar_for_emit['time'] // window_secs) * window_secs
+                bar_for_emit['time'] = window_start
+
+                # Combine buffered completed 1m bars + this partial tick
+                if self._1m_buffer:
+                    bar_for_emit = {
+                        'time': window_start,
+                        'open': self._1m_buffer[0]['open'],
+                        'high': max(max(b['high'] for b in self._1m_buffer), bar_for_emit['high']),
+                        'low': min(min(b['low'] for b in self._1m_buffer), bar_for_emit['low']),
+                        'close': bar_for_emit['close'],
+                        'volume': sum(b['volume'] for b in self._1m_buffer) + bar_for_emit.get('volume', 0),
+                        'pair': bar_for_emit.get('pair', self._1m_buffer[0]['pair']),
+                    }
+
             self.socketio.emit('bar', bar_for_emit)
             return
 
@@ -201,6 +232,10 @@ class BarsLoader:
 
     def _process_bar(self, bar: dict):
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
+            if self.live_mode:
+                from datetime import datetime, timezone
+                dt = datetime.fromtimestamp(bar.get('time', 0), tz=timezone.utc).strftime('%H:%M:%S')
+                print(f"[BarsLoader] EMIT 1m bar time={dt} C={bar.get('close')}", flush=True)
             self.socketio.emit('bar', bar)
             time.sleep(self._emit_delay)
             if self._step_mode:
