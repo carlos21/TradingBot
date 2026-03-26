@@ -43,11 +43,19 @@
       "Bash(./bin/run_test_scenario.sh 2>&1 | tail -15)",
       "Bash(./bin/run_test_scenario.sh 2>&1 | grep -A 5 -B 5 \"STREAM\\\\|_END\\\\|CALLBACK\\\\|Session\\\\|SP\" | head -100)",
       "Bash(timeout:*)",
-      "Bash(./bin/run_test_scenario.sh 2>&1 | tee test_output.log)",
-      "Bash(./bin/run_test_scenario.sh 2>&1 | grep -E \"\\(STREAM END|Closing trade|DB Updated|🎬\\)\" | head -20)",
-      "Bash(./bin/run_test_scenario.sh 2>&1 | tail -60)",
-      "Bash(./bin/run_test_scenario.sh 2>&1 | grep -E \"RESULT|SP|Trades  :\")",
-      "Bash(./bin/run_test_scenario.sh 2>&1 | grep -E \"RESULT|Trades  :|B/E|SP\")"
+      "Bash(./run_test_scenario.sh 2>&1 | tee test_output.log)",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -E \"\\(STREAM END|Closing trade|DB Updated|🎬\\)\" | head -20)",
+      "Bash(./run_test_scenario.sh 2>&1 | tail -60)",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -E \"RESULT|SP|Trades  :\")",
+      "Bash(./run_test_scenario.sh 2>&1 | grep -E \"RESULT|Trades  :|B/E|SP\")",
+      "WebSearch",
+      "WebFetch(domain:ninjatrader.com)",
+      "Bash(find:*)",
+      "Bash(netstat -tlnp)",
+      "Bash(ip addr:*)",
+      "Read(//etc/**)",
+      "Read(//mnt/c/Users/dark_/**)",
+      "Bash(git reset:*)"
     ]
   }
 }
