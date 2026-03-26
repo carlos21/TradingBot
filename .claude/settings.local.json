@@ -55,7 +55,8 @@
       "Bash(ip addr:*)",
       "Read(//etc/**)",
       "Read(//mnt/c/Users/dark_/**)",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(./bin/run_test_scenario.sh)"
     ]
   }
 }

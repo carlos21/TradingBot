@@ -8,6 +8,6 @@ scenarios:
       - { price: 24320.25, at: "2026-03-25 07:00:00Z" }
     expect:
       entry: 24317.25
-      sl:    24277.25
-      tp:    24477.25
+      sl:    24287.25
+      tp:    24437.25
     show_tsi: false

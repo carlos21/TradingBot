@@ -15,6 +15,7 @@ class StrategyNumbers:
     # Tiered SL levels (sorted ascending). When set, the system picks
     # the smallest level >= distance-to-extreme, falling back to the largest.
     sl_levels: Optional[List[float]] = None
+    sl_level_tolerance: float = 5.0
     min_cross_depth: float = 0.0
     rr_ratio: float = 4.0  # Risk:Reward ratio for TP calculation
 

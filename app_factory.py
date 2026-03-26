@@ -82,6 +82,7 @@ def create_app(
         fixed_stop_loss = numbers.fixed_stop_loss,
         max_stop_loss   = numbers.max_stop_loss,
         sl_levels       = numbers.sl_levels,
+        sl_level_tolerance = numbers.sl_level_tolerance,
         min_cross_depth = numbers.min_cross_depth,
         rr_ratio        = numbers.rr_ratio,
         socketio        = socketio,
