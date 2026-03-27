@@ -82,6 +82,7 @@ def create_app(
     trade_manager = TradeManager(
         trade_repository=repos.trades,
         socketio=socketio,
+        pair=pair,
         session_end_time="17:00",
         session_tz="America/New_York",
         broker_mode=broker_mode,

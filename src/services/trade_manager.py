@@ -12,6 +12,7 @@ class TradeManager:
     """
 
     def __init__(self, trade_repository: TradeRepository, socketio,
+                 pair: str = 'NQ',
                  session_end_time: str = None, session_tz: str = None,
                  broker_mode: str = 'futures', broker_spread: float = 0.0,
                  trade_executor: TradeExecutor = None,
@@ -19,6 +20,7 @@ class TradeManager:
         """
         :param trade_repository: SQLTradeRepository instance (must have close_trade)
         :param socketio:         flask_socketio.SocketIO instance
+        :param pair:             Instrument pair name (e.g. "NQ", "MNQ")
         :param session_end_time: "HH:MM" — close open trades at this time (e.g. "15:00")
         :param session_tz:       Timezone for session_end_time (e.g. "America/New_York")
         :param broker_mode:      'futures' or 'cfd' - affects TP/SL hit logic
@@ -28,6 +30,7 @@ class TradeManager:
         self.open_trades = []
         self.trade_repository = trade_repository
         self.socketio         = socketio
+        self.pair             = pair
         self.broker_mode      = broker_mode
         self.broker_spread    = broker_spread
         self.trade_executor   = trade_executor or NoOpExecutor()
@@ -52,7 +55,7 @@ class TradeManager:
         This ensures orphaned trades are picked up and closed properly during replay.
         """
         try:
-            all_trades = self.trade_repository.list_trades('NQ')
+            all_trades = self.trade_repository.list_trades(self.pair)
             
             count = 0
             for t in all_trades:

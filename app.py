@@ -17,7 +17,7 @@ from src.prod_config import (
     get_prod_strategy_options
 )
 
-PAIR = "NQ"
+PAIR = os.environ.get("PAIR", "NQ")
 
 # --- 1. INPUT TIMEZONE ---
 # This controls how the DATES you type below (start_str, end_str) are interpreted.

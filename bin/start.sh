@@ -61,11 +61,12 @@ select_option MODE "Mode:" "backtest" "live"
 
 if [ "$MODE" = "live" ]; then
   echo ""
+  read_input PAIR "Pair" "MNQ"
   read_input NT_ACCOUNT "NinjaTrader account" ""
   echo ""
-  echo -e "${GREEN}${BOLD}  Starting live server...${RST}"
+  echo -e "${GREEN}${BOLD}  Starting live server (${PAIR})...${RST}"
   echo ""
-  MODE=live NT_ACCOUNT="$NT_ACCOUNT" exec poetry run python app.py
+  MODE=live PAIR="$PAIR" NT_ACCOUNT="$NT_ACCOUNT" exec poetry run python app.py
 fi
 
 # Backtest — no prompts needed, just start

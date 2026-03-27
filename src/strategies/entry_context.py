@@ -10,8 +10,11 @@ from zoneinfo import ZoneInfo
 # correct local time (e.g. NY time for Indices) without manual config.
 PAIR_TIMEZONES = {
     "NQ": "America/New_York",
+    "MNQ": "America/New_York",
     "ES": "America/New_York",
+    "MES": "America/New_York",
     "YM": "America/New_York",
+    "MYM": "America/New_York",
     "EURUSD": "America/New_York",
 }
 

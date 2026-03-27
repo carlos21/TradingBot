@@ -21,6 +21,7 @@ class NinjaTraderDataSource(CombinedDataSource):
 
     def __init__(self, cfg: NinjaTraderConfig):
         self._cfg = cfg
+        self.pair = cfg.pair
         self._historical_bars: List[Dict] = []
         self._live = False
 
@@ -42,6 +43,7 @@ class NinjaTraderDataSource(CombinedDataSource):
 
         # Refresh state
         self._refreshing = False
+        self._refresh_days = 1
         self._refresh_lock = threading.Lock()
         # Long-poll: NinjaTrader blocks on GET /api/nt/await_command,
         # Python signals it via this Event when a command is available.
@@ -67,6 +69,7 @@ class NinjaTraderDataSource(CombinedDataSource):
                     print("[NTDataSrc] Refresh already pending, skipping", flush=True)
                     return
             self._refreshing = True
+            self._refresh_days = days
         self.enqueue_command({"command": "request_history", "days": days})
         print(f"[NTDataSrc] Refresh signaled ({days} days)", flush=True)
 
@@ -85,8 +88,22 @@ class NinjaTraderDataSource(CombinedDataSource):
         return cmd
 
     def handle_refresh_start(self):
-        """Called when NinjaTrader signals refresh_start — clears bars, resets state."""
-        print("[NTDataSrc] Refresh start — clearing bars and resetting state", flush=True)
+        """Called when NinjaTrader signals refresh_start — removes only the
+        recent window (self._refresh_days) and keeps older bars intact."""
+        import time as _time
+
+        days = getattr(self, '_refresh_days', 1)
+        cutoff = int(_time.time()) - (days * 86400)
+
+        # Keep bars older than the refresh window
+        preserved = [b for b in self._historical_bars if b["time"] < cutoff]
+        removed = len(self._historical_bars) - len(preserved)
+        print(
+            f"[NTDataSrc] Refresh start — keeping {len(preserved)} bars before cutoff, "
+            f"removing {removed} bars from last {days} day(s)",
+            flush=True,
+        )
+
         if self.on_before_refresh:
             try:
                 self.on_before_refresh()
@@ -94,10 +111,12 @@ class NinjaTraderDataSource(CombinedDataSource):
                 print(f"[NTDataSrc] ERROR in on_before_refresh: {e}", flush=True)
                 import traceback
                 traceback.print_exc()
-        self._historical_bars.clear()
+
+        self._historical_bars = preserved
         self._live = False
         self._current_bar = None
-        self._last_history_time = 0
+        # Keep _last_history_time based on preserved bars so gap detection still works
+        self._last_history_time = preserved[-1]["time"] if preserved else 0
 
     # ---- public ingest API (called from Flask routes) -----------------------
 
