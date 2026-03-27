@@ -115,6 +115,7 @@ def create_app(
     # Wire different bar processing paths based on mode
     if live_mode:
         _close_commands_sent: set = set()
+        _test_sequences: dict = {}  # trade_id → {"stage", "scenario", "entry_price", ...}
 
         def _check_live_session_end(bar):
             """Send close commands to NinjaTrader when session ends."""
@@ -214,7 +215,11 @@ def create_app(
 
     @app.route('/api/pair')
     def get_pair():
-        return jsonify({'pair': pair})
+        from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource
+        result = {'pair': pair}
+        if isinstance(data_source, NinjaTraderDataSource) and data_source._cfg.account:
+            result['account'] = data_source._cfg.account
+        return jsonify(result)
 
     @app.route('/api/bars')
     def get_bars():
@@ -279,6 +284,97 @@ def create_app(
             data_source.ingest_live_bar(bar)
             return jsonify({'ok': True})
 
+        @app.route('/api/nt/test_connection', methods=['POST'])
+        def nt_test_connection():
+            """Simple ping/pong to verify HTTP connectivity."""
+            return jsonify({'ok': True, 'ts': datetime.now(tz=timezone.utc).isoformat()})
+
+        @app.route('/api/nt/run_e2e_test', methods=['POST'])
+        def nt_run_e2e_test():
+            """Start an E2E test scenario. Body: {"scenario": "tp_hit"|"sl_hit"|"session_end"}"""
+            data = request.get_json() or {}
+            scenario = data.get('scenario', 'tp_hit')
+            if scenario not in ('tp_hit', 'sl_hit', 'session_end'):
+                abort(400, 'scenario must be tp_hit, sl_hit, or session_end')
+
+            entry_price = 21000.0
+            sl = 20920.0
+            tp = 21080.0
+            risk = 80.0
+            now_dt = datetime.now(tz=timezone.utc)
+
+            trade_data = repos.trades.insert_trade(
+                pair=pair, trade_type="long",
+                entry_price=entry_price, stop_loss=sl,
+                take_profit=tp, risk=risk,
+                entry_time=now_dt,
+            )
+            trade_id = trade_data.trade_id
+            trade_manager.open_trades.append({
+                'trade_id': trade_id, 'pair': pair, 'type': 'long',
+                'entry': entry_price, 'stop_loss': sl, 'take_profit': tp,
+                'risk': risk, 'entry_time': now_dt.timestamp(),
+                'status': 'open'
+            })
+
+            trade_logger.log(trade_id, "TEST", f"E2E test started: {scenario}")
+
+            data_source.enqueue_command({
+                "command": "place_order",
+                "trade_id": trade_id,
+                "pair": pair,
+                "direction": "long",
+                "entry_price": entry_price,
+                "stop_loss": sl,
+                "take_profit": tp,
+                "test": True,
+                "scenario": scenario,
+            })
+
+            _test_sequences[trade_id] = {
+                "stage": "awaiting_entry_fill",
+                "scenario": scenario,
+                "entry_price": entry_price,
+                "sl": sl,
+                "tp": tp,
+            }
+
+            print(f"[E2E Test] Started scenario={scenario} trade_id={trade_id}", flush=True)
+            return jsonify({
+                "ok": True, "trade_id": trade_id, "scenario": scenario,
+                "entry_price": entry_price, "sl": sl, "tp": tp
+            })
+
+        @app.route('/api/nt/test_result/<string:test_trade_id>', methods=['GET'])
+        def nt_test_result(test_trade_id):
+            """Check the result of an E2E test by trade_id."""
+            logs = repos.trades.get_trade_logs(test_trade_id)
+            events = [l['event'] for l in logs]
+
+            has_error = any("ERROR" in e for e in events)
+
+            # Check trade is actually closed in DB (more reliable than log events
+            # which can be lost to concurrent JSON column writes)
+            all_trades = repos.trades.list_trades(pair)
+            trade = next((t for t in all_trades if t.trade_id == test_trade_id), None)
+            trade_closed = trade is not None and trade.exit_time is not None
+
+            # Key command events that must be present
+            has_key_events = all(e in events for e in
+                                ["NT:ORDER", "NT_ENTRY_FILL", "NT:MODIFY"])
+            passed = trade_closed and has_key_events and not has_error
+
+            formatted = TradeLogger.format_logs(trade) if trade else "(trade not found)"
+
+            return jsonify({
+                "passed": passed,
+                "trade_closed": trade_closed,
+                "has_errors": has_error,
+                "events_found": events,
+                "trade_id": test_trade_id,
+                "formatted_logs": formatted,
+            })
+
         @app.route('/api/nt/trade_log', methods=['POST'])
         def nt_trade_log():
             """Accept log entries from NinjaTrader (NT:ORDER, NT:FILL, NT:MODIFY, etc.)."""
@@ -289,6 +385,20 @@ def create_app(
             if not tid or not event:
                 abort(400, 'trade_id and event are required')
             trade_logger.log(tid, event, msg)
+
+            # E2E test state machine: advance after NT:MODIFY acknowledgement
+            if tid in _test_sequences:
+                seq = _test_sequences[tid]
+                if event == "NT:MODIFY" and seq["stage"] == "awaiting_modify_ack":
+                    if seq["scenario"] == "session_end":
+                        seq["stage"] = "awaiting_close_fill"
+                        data_source.enqueue_command({"command": "close_order", "trade_id": tid, "test": True})
+                        trade_logger.log(tid, "CMD_SENT", "close_order -> NinjaTrader (session end test)")
+                        print(f"[E2E Test] {tid}: close_order enqueued (session_end)", flush=True)
+                    else:
+                        seq["stage"] = "awaiting_exit_fill"
+                        print(f"[E2E Test] {tid}: awaiting exit fill from NT ({seq['scenario']})", flush=True)
+
             return jsonify({'ok': True})
 
         @app.route('/api/nt/positions', methods=['POST'])
@@ -355,6 +465,25 @@ def create_app(
                     t['entry'] = entry_price
                     break
 
+            # E2E test state machine: after entry fill, move SL to breakeven
+            if trade_id in _test_sequences and _test_sequences[trade_id]["stage"] == "awaiting_entry_fill":
+                seq = _test_sequences[trade_id]
+                seq["stage"] = "awaiting_modify_ack"
+                new_sl = entry_price  # breakeven
+                for t in trade_manager.open_trades:
+                    if t.get('trade_id') == trade_id:
+                        t['stop_loss'] = new_sl
+                        break
+                repos.trades.update_stop_loss(trade_id, new_sl)
+                trade_logger.log(trade_id, "SL_UPDATE", f"SL moved to breakeven {new_sl}")
+                data_source.enqueue_command({
+                    "command": "modify_order", "trade_id": trade_id, "stop_loss": new_sl,
+                    "test": True, "scenario": seq["scenario"],
+                    "entry_price": seq["entry_price"], "tp": seq["tp"],
+                })
+                trade_logger.log(trade_id, "CMD_SENT", "modify_order -> NinjaTrader (breakeven)")
+                print(f"[E2E Test] {trade_id}: modify_order enqueued (breakeven)", flush=True)
+
             return jsonify({'ok': True})
 
         @app.route('/api/nt/fill', methods=['POST'])
@@ -375,6 +504,9 @@ def create_app(
             tstrategy.open_trades = [
                 t for t in tstrategy.open_trades if t.get('trade_id') != trade_id
             ]
+
+            # Clean up E2E test state
+            _test_sequences.pop(trade_id, None)
 
             return jsonify({'ok': True})
 

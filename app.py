@@ -115,7 +115,8 @@ def build_live():
         trades=SQLTradeRepository(),
     )
 
-    nt_cfg = NinjaTraderConfig(pair=PAIR)
+    nt_account = os.environ.get("NT_ACCOUNT", "")
+    nt_cfg = NinjaTraderConfig(pair=PAIR, account=nt_account)
     ds = NinjaTraderDataSource(nt_cfg)
     executor = NinjaTraderExecutor(ds)
 
@@ -144,3 +145,4 @@ if __name__ == "__main__":
     else:
         wiring = build_prod()
     wiring.socketio.run(wiring.app, debug=True, port=5001, use_reloader=(mode != "live"))
+    

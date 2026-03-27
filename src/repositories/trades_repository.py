@@ -65,6 +65,10 @@ class TradeRepository(ABC):
 
 class SQLTradeRepository(TradeRepository):
 
+    def __init__(self):
+        import threading
+        self._log_lock = threading.Lock()
+
     def _ensure_utc(self, dt: Optional[datetime]) -> Optional[datetime]:
         """Helper to ensure a datetime is UTC-aware."""
         if dt is None:
@@ -202,24 +206,25 @@ class SQLTradeRepository(TradeRepository):
         return self._make_trade_data(t)
 
     def append_trade_log(self, trade_id: str, event: str, message: str) -> None:
-        with get_db_session() as db:
-            t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
-            if not t:
-                db.close()
-                return
-            logs = list(t.logs or [])
-            logs.append({
-                "ts": datetime.now(tz=timezone.utc).isoformat(),
-                "event": event,
-                "msg": message,
-            })
-            t.logs = logs
-            try:
-                db.commit()
-            except Exception as e:
-                db.rollback()
-            finally:
-                db.close()
+        with self._log_lock:
+            with get_db_session() as db:
+                t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+                if not t:
+                    db.close()
+                    return
+                logs = list(t.logs or [])
+                logs.append({
+                    "ts": datetime.now(tz=timezone.utc).isoformat(),
+                    "event": event,
+                    "msg": message,
+                })
+                t.logs = logs
+                try:
+                    db.commit()
+                except Exception as e:
+                    db.rollback()
+                finally:
+                    db.close()
 
     def get_trade_logs(self, trade_id: str) -> list:
         with get_db_session() as db:

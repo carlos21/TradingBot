@@ -54,7 +54,8 @@
       "Bash(netstat -tlnp)",
       "Bash(ip addr:*)",
       "Read(//etc/**)",
-      "Read(//mnt/c/Users/dark_/**)"
+      "Read(//mnt/c/Users/dark_/**)",
+      "Bash(MODE=live poetry run python -c \"from app import build_live; w = build_live\\(\\); print\\(''''OK''''\\)\")"
     ]
   }
 }

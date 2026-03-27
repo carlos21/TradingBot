@@ -44,3 +44,13 @@ def setup_database():
     global db
     db = get_database()
     db.create_tables(Base)
+    # Auto-migrate: add 'logs' column if missing (added after initial schema)
+    from sqlalchemy import inspect, text
+    insp = inspect(db.get_engine())
+    if 'trades' in insp.get_table_names():
+        columns = [c['name'] for c in insp.get_columns('trades')]
+        if 'logs' not in columns:
+            with db.get_engine().connect() as conn:
+                conn.execute(text("ALTER TABLE trades ADD COLUMN logs JSON"))
+                conn.commit()
+            print("[DB] Auto-migrated: added 'logs' column to trades table")
