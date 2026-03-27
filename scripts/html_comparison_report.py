@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from dateutil import parser as dtparser
 
-from report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pct, pnl_class, h
+from scripts.report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pct, pnl_class, h
 
 
 # Colors for each config line in equity curve

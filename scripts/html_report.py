@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from dateutil import parser as dtparser
 
-from report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pct, pnl_class, h as _h
+from scripts.report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pct, pnl_class, h as _h
 
 
 def generate_html_report(summary_results, account, risk, mode, output_path,
