@@ -70,6 +70,7 @@ class BaseLiquidityStrategy:
         options: Optional[StrategyOptions] = None,
         htf_fetcher: Optional[Callable[..., Optional[dict]]] = None,
         sl_levels: Optional[List[float]] = None,
+        sl_level_tolerance: float = 5.0,
         min_cross_depth: float = 0.0,
         rr_ratio: float = 4.0,
         trade_logger=None,
@@ -87,6 +88,7 @@ class BaseLiquidityStrategy:
         self.max_stop_loss = max_stop_loss
         self.sl_levels = sorted(sl_levels) if sl_levels else None
         self.trade_logger = trade_logger
+        self.sl_level_tolerance = float(sl_level_tolerance)
 
         self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
         self.open_trades: List[Dict[str, Any]] = []
@@ -565,9 +567,14 @@ class BaseLiquidityStrategy:
     # ----- Trade creation & persistence -----
 
     def _select_sl_level(self, distance: float) -> float:
-        """Pick the smallest SL tier >= distance. Falls back to the largest tier."""
+        """Pick the smallest SL tier that is close enough to cover the distance.
+
+        A level is accepted if ``level + sl_level_tolerance >= distance``,
+        so the SL doesn't need to fully cover the extreme — just get close.
+        Falls back to the largest tier.
+        """
         for level in self.sl_levels:  # already sorted ascending
-            if level >= distance:
+            if level + self.sl_level_tolerance >= distance:
                 return level
         return self.sl_levels[-1]
 

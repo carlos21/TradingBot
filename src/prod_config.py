@@ -19,6 +19,7 @@ def get_prod_strategy_numbers(rr_ratio: float = 3.3) -> StrategyNumbers:
         max_bounce=90.0,
         extra_sl_space=0.0,
         sl_levels=[15.0, 20.0, 30.0, 40.0],
+        sl_level_tolerance=3,
         min_cross_depth=5.0,
         rr_ratio=rr_ratio,
     )
