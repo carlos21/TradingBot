@@ -10,7 +10,7 @@ from .combined_datasource import CombinedDataSource
 @dataclass
 class NinjaTraderConfig:
     pair: str = "NQ"
-    account: str = ""  # NinjaTrader account name (e.g. "Sim101", "MyLiveAccount")
+    account: str = ""
 
 
 class NinjaTraderDataSource(CombinedDataSource):

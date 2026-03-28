@@ -1,0 +1,21 @@
+[Unit]
+Description=TradingBot Live Sim Server
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/TradingBot
+ExecStart=/home/%i/TradingBot/bin/live_sim.sh
+
+# Defaults are in bin/live_sim.sh — override here only if needed
+
+Restart=on-failure
+RestartSec=5
+
+# Logging — viewable via: journalctl -u tradingbot -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
