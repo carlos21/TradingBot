@@ -74,9 +74,6 @@ class FakeTradeRepository:
     def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None):
         self._seq += 1
         trade_id = f"T{self._seq}"
-        
-        class MockTradeData:
-            def __init__(self, tid): self.trade_id = tid
 
         self.inserted.append({
             "trade_id": trade_id,
@@ -89,7 +86,21 @@ class FakeTradeRepository:
             "entry_time": entry_time,
             "params": params
         })
-        return MockTradeData(trade_id)
+        return TradeData(
+            trade_id=trade_id,
+            pair=pair,
+            trade_type=trade_type,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            risk=risk,
+            entry_time=entry_time,
+            exit_price=None,
+            exit_time=None,
+            result=None,
+            result_type=None,
+            params=params,
+        )
 
     def update_stop_loss(self, trade_id, new_stop_loss):
         for t in self.inserted:

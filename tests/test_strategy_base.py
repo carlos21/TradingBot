@@ -1,0 +1,288 @@
+"""Tests for src/strategies/base_liquidity_strategy.py — line management, trade building, SL selection, exits."""
+
+import pytest
+from datetime import datetime, timezone
+from unittest.mock import MagicMock
+
+from src.strategies.base_liquidity_strategy import (
+    BaseLiquidityStrategy,
+    StrategyOptions,
+    BreakevenConfig,
+    LineRemovalMode,
+)
+from src.strategies.entry_context import EntryContext
+from tests.conftest import make_bar, make_strategy
+from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository, FakeTradeExecutor
+from src.services.trade_manager import TradeManager
+
+
+def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=None,
+               options=None, fixed_stop_loss=20, sl_levels=None, **kwargs):
+    sio = socketio or DummySocketIO()
+    lr = line_repo or FakeLineRepository()
+    tr = trade_repo or FakeTradeRepository()
+    tm = trade_manager or TradeManager(tr, sio, trade_executor=FakeTradeExecutor())
+    return BaseLiquidityStrategy(
+        min_stop_loss=10.0,
+        max_bounce=90.0,
+        socketio=sio,
+        line_repository=lr,
+        trade_repository=tr,
+        trade_manager=tm,
+        extra_sl_space=0.0,
+        fixed_stop_loss=fixed_stop_loss,
+        options=options or StrategyOptions(),
+        sl_levels=sl_levels,
+        rr_ratio=3.3,
+        **kwargs,
+    )
+
+
+class TestLineManagement:
+
+    def test_add_line(self):
+        strat = _make_base()
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=500)
+        assert "L1" in strat.strategy_lines
+        assert strat.strategy_lines["L1"]["level"] == 100.0
+        assert strat.strategy_lines["L1"]["direction"] is None
+
+    def test_remove_line(self):
+        sio = DummySocketIO()
+        lr = FakeLineRepository()
+        lr.insert_line("NQ", 100.0)
+        strat = _make_base(socketio=sio, line_repo=lr)
+        strat.add_strategy_line("L1", 100.0)
+        strat.remove_strategy_line("L1")
+        assert "L1" not in strat.strategy_lines
+        assert any(e[0] == "line_removed" for e in sio.events)
+
+    def test_remove_nonexistent_line_does_not_crash(self):
+        strat = _make_base()
+        strat.remove_strategy_line("DOES_NOT_EXIST")
+
+
+class TestSLSelection:
+
+    def test_tiered_picks_smallest_covering(self):
+        strat = _make_base(sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
+        # distance=17 -> 15+3=18 >= 17 -> pick 15
+        assert strat._select_sl_level(17.0) == 15.0
+
+    def test_tiered_exceeds_all_picks_largest(self):
+        strat = _make_base(sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
+        assert strat._select_sl_level(100.0) == 40.0
+
+    def test_tiered_exact_match(self):
+        strat = _make_base(sl_levels=[15, 20, 30, 40], sl_level_tolerance=0)
+        assert strat._select_sl_level(20.0) == 20.0
+
+
+class TestBuildTrade:
+
+    def _make_ctx(self, strat, direction="long", close=100.0, extreme=90.0, level=100.0, bar_time=1000):
+        bar = make_bar(time=bar_time, close=close, pair="NQ")
+        return EntryContext(
+            strategy=strat, line_id="L1", direction=direction,
+            level=level, bar=bar, close=close,
+            low=bar["low"], high=bar["high"],
+            extreme=extreme, cross_depth=abs(level - extreme),
+        )
+
+    def test_long_fixed_sl(self):
+        strat = _make_base(fixed_stop_loss=20, sl_levels=None)
+        ctx = self._make_ctx(strat, direction="long", close=100, extreme=85)
+        trade = strat._build_trade_from_context(ctx)
+        assert trade["type"] == "long"
+        assert trade["stop_loss"] == 80.0   # 100 - 20
+        assert trade["take_profit"] == pytest.approx(100 + 3.3 * 20, abs=0.1)
+        assert trade["risk"] == 20.0
+
+    def test_short_fixed_sl(self):
+        strat = _make_base(fixed_stop_loss=20, sl_levels=None)
+        ctx = self._make_ctx(strat, direction="short", close=100, extreme=115)
+        trade = strat._build_trade_from_context(ctx)
+        assert trade["type"] == "short"
+        assert trade["stop_loss"] == 120.0  # 100 + 20
+        assert trade["risk"] == 20.0
+
+    def test_tiered_sl(self):
+        strat = _make_base(fixed_stop_loss=None, sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
+        ctx = self._make_ctx(strat, direction="long", close=100, extreme=83)
+        # distance = max(100-83, 10) = 17; pick 15 since 15+3=18>=17
+        trade = strat._build_trade_from_context(ctx)
+        assert trade["risk"] == 15.0
+
+    def test_max_stop_loss_cap(self):
+        strat = _make_base(fixed_stop_loss=None, sl_levels=None, max_stop_loss=25)
+        # Dynamic risk: distance = max(100-70, 10) = 30; capped at 25
+        ctx = self._make_ctx(strat, direction="long", close=100, extreme=70)
+        trade = strat._build_trade_from_context(ctx)
+        assert trade["risk"] == 25.0
+
+    def test_trade_has_line_level(self):
+        strat = _make_base()
+        ctx = self._make_ctx(strat, level=105.0)
+        trade = strat._build_trade_from_context(ctx)
+        assert trade["line_level"] == 105.0
+
+
+class TestCheckOpenTrades:
+
+    def test_long_sl_hit_closes_trade(self):
+        strat = _make_base()
+        strat.open_trades.append({
+            "trade_id": "T1", "pair": "NQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open",
+        })
+        bar = make_bar(time=1000, low=85, high=95, pair="NQ")
+        strat._check_open_trades(bar)
+        assert len(strat.open_trades) == 0
+
+    def test_long_tp_hit_closes_trade(self):
+        strat = _make_base()
+        strat.open_trades.append({
+            "trade_id": "T1", "pair": "NQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open",
+        })
+        bar = make_bar(time=1000, low=100, high=135, pair="NQ")
+        strat._check_open_trades(bar)
+        assert len(strat.open_trades) == 0
+
+    def test_short_sl_hit(self):
+        strat = _make_base()
+        strat.open_trades.append({
+            "trade_id": "T1", "pair": "NQ", "type": "short",
+            "entry": 100, "stop_loss": 110, "take_profit": 70,
+            "risk": 10, "status": "open",
+        })
+        bar = make_bar(time=1000, low=99, high=115, pair="NQ")
+        strat._check_open_trades(bar)
+        assert len(strat.open_trades) == 0
+
+    def test_no_hit_keeps_trade(self):
+        strat = _make_base()
+        strat.open_trades.append({
+            "trade_id": "T1", "pair": "NQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open",
+        })
+        bar = make_bar(time=1000, low=95, high=110, pair="NQ")
+        strat._check_open_trades(bar)
+        assert len(strat.open_trades) == 1
+
+
+class TestFiltersAllowEntry:
+
+    def test_all_pass(self):
+        strat = _make_base()
+        strat.entry_filters = [lambda ctx: (True, "ok")]
+        ctx = MagicMock()
+        allow, reason, hold = strat._filters_allow_entry(ctx)
+        assert allow is True
+        assert hold is False
+
+    def test_one_blocks(self):
+        def blocker(ctx):
+            return False, "blocked"
+        blocker.__name__ = "blocker"
+        strat = _make_base()
+        strat.entry_filters = [blocker]
+        ctx = MagicMock()
+        allow, reason, hold = strat._filters_allow_entry(ctx)
+        assert allow is False
+        assert "blocker" in reason
+
+    def test_hold_on_block(self):
+        def holder(ctx):
+            return False, "hold"
+        holder.__name__ = "holder"
+        holder._hold_on_block = True
+        strat = _make_base()
+        strat.entry_filters = [holder]
+        ctx = MagicMock()
+        allow, reason, hold = strat._filters_allow_entry(ctx)
+        assert allow is False
+        assert hold is True
+
+
+class TestLineRemovalModes:
+
+    def test_on_evaluate_removes_always(self):
+        strat = _make_base(options=StrategyOptions(line_removal_mode=LineRemovalMode.ON_EVALUATE))
+        strat.add_strategy_line("L1", 100.0)
+        strat._maybe_remove_line("L1", opened=False)
+        assert "L1" not in strat.strategy_lines
+
+    def test_on_enter_removes_only_when_opened(self):
+        strat = _make_base(options=StrategyOptions(line_removal_mode=LineRemovalMode.ON_ENTER))
+        strat.add_strategy_line("L1", 100.0)
+        strat._maybe_remove_line("L1", opened=False)
+        assert "L1" in strat.strategy_lines
+        strat._maybe_remove_line("L1", opened=True)
+        assert "L1" not in strat.strategy_lines
+
+    def test_never_keeps_line_and_resets(self):
+        strat = _make_base(options=StrategyOptions(line_removal_mode=LineRemovalMode.NEVER))
+        strat.add_strategy_line("L1", 100.0)
+        strat.strategy_lines["L1"]["extreme"] = 50.0
+        strat._maybe_remove_line("L1", opened=True)
+        assert "L1" in strat.strategy_lines
+        assert strat.strategy_lines["L1"]["extreme"] == 0.0
+
+
+class TestBreakeven:
+
+    def test_long_breakeven_triggered(self):
+        sio = DummySocketIO()
+        tr = FakeTradeRepository()
+        tm = TradeManager(tr, sio, trade_executor=FakeTradeExecutor())
+        strat = _make_base(
+            socketio=sio, trade_repo=tr, trade_manager=tm,
+            options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
+        )
+        strat.open_trades.append({
+            "trade_id": "T1", "pair": "NQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "is_reentry": False,
+        })
+        # High reaches trigger_price = 100 + 10*2 = 120
+        bar = make_bar(time=1000, high=121, low=100, pair="NQ")
+        strat._check_breakeven(bar)
+        # SL should move to entry + risk * 0.05 = 100.5
+        assert strat.open_trades[0]["stop_loss"] == pytest.approx(100.5, abs=0.01)
+
+    def test_breakeven_not_triggered_below_threshold(self):
+        strat = _make_base(
+            options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
+        )
+        strat.open_trades.append({
+            "trade_id": "T1", "pair": "NQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "is_reentry": False,
+        })
+        bar = make_bar(time=1000, high=115, low=100, pair="NQ")
+        strat._check_breakeven(bar)
+        assert strat.open_trades[0]["stop_loss"] == 90  # unchanged
+
+
+class TestStoreAndEmitOpen:
+
+    def test_persists_and_tracks(self):
+        sio = DummySocketIO()
+        tr = FakeTradeRepository()
+        tm = TradeManager(tr, sio, trade_executor=FakeTradeExecutor())
+        strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
+        trade = {
+            "pair": "NQ", "type": "long", "entry": 100,
+            "stop_loss": 90, "take_profit": 130, "risk": 10,
+            "entry_time": 1000, "status": "open",
+        }
+        strat._store_and_emit_open(trade)
+        assert trade["trade_id"] is not None
+        assert len(strat.open_trades) == 1
+        assert len(tr.inserted) == 1
+        open_events = [e for e in sio.events if e[0] == "trade_open"]
+        assert len(open_events) == 1

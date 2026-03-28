@@ -25,6 +25,9 @@ playwright = "^1.57.0"
 databento = "^0.72.0"
 
 
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0.2"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
