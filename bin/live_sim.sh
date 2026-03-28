@@ -12,7 +12,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 export MODE="live"
 export PAIR="${PAIR:-MNQ}"
-export NT_ACCOUNT="${NT_ACCOUNT:-DEMO202007}"
+export NT_ACCOUNT="${NT_ACCOUNT:-DEMO2020071}"
 
 cd "$PROJECT_DIR"
 

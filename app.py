@@ -127,6 +127,7 @@ def build_prod():
         timeframes=["3m", "5m", "15m", "30m", "1h"],
         bootstrap_existing_lines=True,
         notifier=_build_notifier(),
+        analytics=_build_analytics()
     )
 
 def build_live():
