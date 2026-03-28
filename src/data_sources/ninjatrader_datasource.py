@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional
 
 from .combined_datasource import CombinedDataSource
+from src.notifier import Notifier, NoOpNotifier
 
 
 @dataclass
@@ -19,8 +20,9 @@ class NinjaTraderDataSource(CombinedDataSource):
     (Flask routes call the ingest_* methods directly).
     """
 
-    def __init__(self, cfg: NinjaTraderConfig):
+    def __init__(self, cfg: NinjaTraderConfig, notifier: Notifier = None):
         self._cfg = cfg
+        self._notifier = notifier or NoOpNotifier()
         self.pair = cfg.pair
         self._historical_bars: List[Dict] = []
         self._live = False
@@ -111,6 +113,7 @@ class NinjaTraderDataSource(CombinedDataSource):
                 print(f"[NTDataSrc] ERROR in on_before_refresh: {e}", flush=True)
                 import traceback
                 traceback.print_exc()
+                self._notifier.send(f"[NTDataSrc] ERROR in on_before_refresh: {e}")
 
         self._historical_bars = preserved
         self._live = False
@@ -233,6 +236,7 @@ class NinjaTraderDataSource(CombinedDataSource):
                 print(f"[NTDataSrc] ERROR in on_history_complete: {e}", flush=True)
                 import traceback
                 traceback.print_exc()
+                self._notifier.send(f"[NTDataSrc] ERROR in on_history_complete: {e}")
 
     def ingest_live_bar(self, raw: Dict):
         """Process a single live bar from NinjaTrader.

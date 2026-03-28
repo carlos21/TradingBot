@@ -24,6 +24,8 @@ from src.repositories.trades_repository import TradeRepository
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2, LiveLiquidityStrategyV2
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
+from src.notifier import Notifier, NoOpNotifier
+from src.analytics import AnalyticsReporter, NoOpReporter
 
 
 @dataclass
@@ -59,6 +61,8 @@ def create_app(
     broker_spread: float = 0.0,
     live_mode: bool = False,
     trade_executor: TradeExecutor = None,
+    notifier: Notifier = None,
+    analytics: AnalyticsReporter = None,
 ) -> AppWiring:
     """
     Build the whole application with injected dependencies.
@@ -77,6 +81,12 @@ def create_app(
             return not any(p in msg for p in self._NOISY)
     logging.getLogger('werkzeug').addFilter(_QuietFilter())
     
+    if notifier is None:
+        notifier = NoOpNotifier()
+    if analytics is None:
+        analytics = NoOpReporter()
+    analytics.set_context("app", {"pair": pair, "live_mode": live_mode})
+
     trade_logger = TradeLogger(repos.trades)
 
     trade_manager = TradeManager(
@@ -89,6 +99,8 @@ def create_app(
         broker_spread=broker_spread,
         trade_executor=trade_executor,
         trade_logger=trade_logger,
+        notifier=notifier,
+        analytics=analytics,
     )
 
     # Initialize strategy — LiveLiquidityStrategyV2 disables Python SL/TP/session-end
@@ -112,6 +124,7 @@ def create_app(
         timeframes      = timeframes,
         candle_config   = candle_config,
         trade_logger    = trade_logger,
+        analytics       = analytics,
     )
 
     # Wire different bar processing paths based on mode
@@ -387,6 +400,9 @@ def create_app(
             if not tid or not event:
                 abort(400, 'trade_id and event are required')
             trade_logger.log(tid, event, msg)
+
+            if "ERROR" in event.upper():
+                notifier.send(f"[NinjaTrader] {event}: {msg} (trade {tid})")
 
             # E2E test state machine: advance after NT:MODIFY acknowledgement
             if tid in _test_sequences:
@@ -707,6 +723,8 @@ def create_app(
             return jsonify({"status": "OK"})
         except Exception as e:
             print(f"[Reset] Critical error: {e}")
+            analytics.capture_exception(e, {"op": "reset_all"})
+            notifier.send(f"[Reset] Critical error: {e}")
             return jsonify({"error": str(e)}), 500
 
     @app.route('/__shutdown', methods=['POST'])
@@ -714,6 +732,11 @@ def create_app(
         func = request.environ.get('werkzeug.server.shutdown')
         if func: func()
         return "OK"
+
+    @app.errorhandler(500)
+    def handle_500(error):
+        notifier.send(f"[Flask] Unhandled server error: {error}")
+        return jsonify({"error": "Internal server error"}), 500
 
     return AppWiring(
         app=app,

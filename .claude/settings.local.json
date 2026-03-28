@@ -58,7 +58,9 @@
       "Bash(MODE=live poetry run python -c \"from app import build_live; w = build_live\\(\\); print\\(''''OK''''\\)\")",
       "Bash(timeout 30 poetry run python scripts/run_scenarios.py --yaml tests/scenarios.yaml --source-csv csvs/NQ_live.csv --outdir ./scenarios_out --port 5001 --bars-per-second 800 --chart-selector \"#chartContainer\" --account 100000 --risk-pct 1.0 --no-snapshot --rr 5.0 2>&1)",
       "Bash(timeout 45 poetry run python scripts/run_scenarios.py --yaml tests/scenarios.yaml --source-csv csvs/NQ_live.csv --outdir ./scenarios_out --port 5001 --bars-per-second 800 --chart-selector \"#chartContainer\" --account 100000 --risk-pct 1.0 --no-snapshot --rr 5.0)",
-      "Bash(timeout 30 poetry run python scripts/run_scenarios.py --yaml tests/scenarios.yaml --source-csv csvs/NQ_live.csv --outdir ./scenarios_out --port 5002 --bars-per-second 800 --chart-selector \"#chartContainer\" --account 100000 --risk-pct 1.0 --no-snapshot --rr 5.0)"
+      "Bash(timeout 30 poetry run python scripts/run_scenarios.py --yaml tests/scenarios.yaml --source-csv csvs/NQ_live.csv --outdir ./scenarios_out --port 5002 --bars-per-second 800 --chart-selector \"#chartContainer\" --account 100000 --risk-pct 1.0 --no-snapshot --rr 5.0)",
+      "Bash(poetry install:*)",
+      "Bash(poetry lock:*)"
     ]
   }
 }

@@ -4,6 +4,7 @@ from tests.fakes import (
     FakeLineRepository,
     FakeTradeRepository,
     FakeTradeExecutor,
+    FakeAnalyticsReporter,
 )
 from src.services.trade_manager import TradeManager
 from src.services.trade_logger import TradeLogger
@@ -38,12 +39,18 @@ def trade_logger(trade_repo):
 
 
 @pytest.fixture
-def trade_manager(trade_repo, socketio, trade_executor):
+def analytics():
+    return FakeAnalyticsReporter()
+
+
+@pytest.fixture
+def trade_manager(trade_repo, socketio, trade_executor, analytics):
     return TradeManager(
         trade_repository=trade_repo,
         socketio=socketio,
         pair="NQ",
         trade_executor=trade_executor,
+        analytics=analytics,
     )
 
 

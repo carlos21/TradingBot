@@ -2,6 +2,9 @@ from datetime import datetime
 import os
 from zoneinfo import ZoneInfo
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from app_factory import create_app, Repositories
 from src.repositories.lines_repository import SQLLineRepository
 from src.repositories.trades_repository import SQLTradeRepository
@@ -9,6 +12,8 @@ from src.data_sources.csv_datasource import CSVDataSource
 from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource, NinjaTraderConfig
 from src.services.trade_executor import NinjaTraderExecutor
 from src.database import database
+from src.notifier import Notifier, TelegramNotifier, NoOpNotifier
+from src.analytics import AnalyticsReporter, SentryReporter, NoOpReporter
 
 # Import the centralized configuration
 from src.prod_config import (
@@ -18,6 +23,21 @@ from src.prod_config import (
 )
 
 PAIR = os.environ.get("PAIR", "NQ")
+
+def _build_analytics() -> AnalyticsReporter:
+    dsn = os.environ.get("SENTRY_DSN", "")
+    if dsn:
+        print("[App] Sentry analytics enabled")
+        return SentryReporter(dsn)
+    return NoOpReporter()
+
+def _build_notifier() -> Notifier:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+    if token and chat_id:
+        print("[App] Telegram notifications enabled")
+        return TelegramNotifier(token, chat_id)
+    return NoOpNotifier()
 
 # --- 1. INPUT TIMEZONE ---
 # This controls how the DATES you type below (start_str, end_str) are interpreted.
@@ -106,6 +126,7 @@ def build_prod():
         candle_config=candle_config,
         timeframes=["3m", "5m", "15m", "30m", "1h"],
         bootstrap_existing_lines=True,
+        notifier=_build_notifier(),
     )
 
 def build_live():
@@ -115,9 +136,12 @@ def build_live():
         trades=SQLTradeRepository(),
     )
 
+    notifier = _build_notifier()
+    analytics = _build_analytics()
+
     nt_account = os.environ.get("NT_ACCOUNT", "")
     nt_cfg = NinjaTraderConfig(pair=PAIR, account=nt_account)
-    ds = NinjaTraderDataSource(nt_cfg)
+    ds = NinjaTraderDataSource(nt_cfg, notifier=notifier)
     executor = NinjaTraderExecutor(ds)
 
     numbers = get_prod_strategy_numbers()
@@ -135,6 +159,8 @@ def build_live():
         bootstrap_existing_lines=True,
         live_mode=True,
         trade_executor=executor,
+        notifier=notifier,
+        analytics=analytics,
     )
 
 

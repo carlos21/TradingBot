@@ -2,7 +2,7 @@
 
 import pytest
 from tests.conftest import make_bar, make_strategy
-from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository, FakeTradeExecutor
+from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter
 from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import StrategyOptions, LineRemovalMode
 
@@ -11,7 +11,7 @@ def _deps():
     sio = DummySocketIO()
     lr = FakeLineRepository()
     tr = FakeTradeRepository()
-    tm = TradeManager(tr, sio, trade_executor=FakeTradeExecutor())
+    tm = TradeManager(tr, sio, trade_executor=FakeTradeExecutor(), analytics=FakeAnalyticsReporter())
     return sio, lr, tr, tm
 
 

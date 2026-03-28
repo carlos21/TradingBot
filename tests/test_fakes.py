@@ -1,7 +1,7 @@
 """Tests for tests/fakes.py — ensure fake repositories behave correctly for test use."""
 
 from datetime import datetime, timezone
-from tests.fakes import FakeLineRepository, FakeTradeRepository, FakeTradeExecutor, DummySocketIO
+from tests.fakes import FakeLineRepository, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter, DummySocketIO
 from src.models import TradeData, LineData
 
 
@@ -103,6 +103,31 @@ class TestDummySocketIO:
         results = []
         sio.start_background_task(lambda: results.append(1))
         assert results == [1]
+
+
+class TestFakeAnalyticsReporter:
+
+    def test_records_exceptions(self):
+        a = FakeAnalyticsReporter()
+        a.capture_exception(ValueError("test"), {"op": "test"})
+        assert len(a.exceptions) == 1
+        assert isinstance(a.exceptions[0][0], ValueError)
+
+    def test_records_trade_events(self):
+        a = FakeAnalyticsReporter()
+        a.capture_trade_event("TRADE_OPEN", {"trade_id": "T1"})
+        assert len(a.trade_events) == 1
+        assert a.trade_events[0] == ("TRADE_OPEN", {"trade_id": "T1"})
+
+    def test_records_signal_events(self):
+        a = FakeAnalyticsReporter()
+        a.capture_signal_event("LATCH", {"line_id": "L1"})
+        assert len(a.signal_events) == 1
+
+    def test_records_context(self):
+        a = FakeAnalyticsReporter()
+        a.set_context("app", {"pair": "NQ"})
+        assert a.contexts["app"]["pair"] == "NQ"
 
 
 class TestFakeTradeExecutor:

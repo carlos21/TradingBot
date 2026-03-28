@@ -31,6 +31,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         min_cross_depth: float = 0.0,
         rr_ratio: float = 4.0,
         trade_logger=None,
+        analytics=None,
     ):
         self.timeframes = timeframes or ["5m"]
         
@@ -60,6 +61,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             min_cross_depth=min_cross_depth,
             rr_ratio=rr_ratio,
             trade_logger=trade_logger,
+            analytics=analytics,
         )
 
         self.candle_config = candle_config
@@ -168,6 +170,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             line.pop('_pending_dir', None)
                             depth = pending_ext - lvl if pending_ext > lvl else 0.0
                             self.log_decision(bar_time, "1m", sid, "LATCH", f"Latched short @ {current_price} (depth={depth:.2f})")
+                            self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "short", "level": lvl, "depth": depth})
                     elif current_price > lvl:
                         # Potential long: close is above the line.
                         # Accumulate the lowest low seen while close stays above the line.
@@ -185,19 +188,22 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             line.pop('_pending_dir', None)
                             depth = lvl - pending_ext if pending_ext < lvl else 0.0
                             self.log_decision(bar_time, "1m", sid, "LATCH", f"Latched long @ {current_price} (depth={depth:.2f})")
+                            self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "long", "level": lvl, "depth": depth})
                 
                 elif line['direction'] == 'short':
                     line['extreme'] = max(line['extreme'], bar['high'])
                     if current_price > (line['level'] + self.max_bounce):
                         msg = f"Price {current_price} > {line['level'] + self.max_bounce} (Max Bounce)"
                         self.log_decision(bar_time, "1m", sid, "REMOVE", msg)
+                        self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
                         lines_to_remove.add(sid)
-                
+
                 elif line['direction'] == 'long':
                     line['extreme'] = min(line['extreme'], bar['low'])
                     if current_price < (line['level'] - self.max_bounce):
                         msg = f"Price {current_price} < {line['level'] - self.max_bounce} (Max Bounce)"
                         self.log_decision(bar_time, "1m", sid, "REMOVE", msg)
+                        self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
                         lines_to_remove.add(sid)
 
             short_lines = [l for l in self.strategy_lines.values() if l['direction'] == 'short']
@@ -307,6 +313,10 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     trade['tf'] = bar.get('tf', '1m')
                     trade['velocity_regime'] = line.get('vat_regime', '')
                     self._store_and_emit_open(trade)
+                    self.analytics.capture_signal_event("ENTRY_SIGNAL", {
+                        "line_id": sid, "trigger": trigger_name,
+                        "direction": proposed_ctx.direction, "price": proposed_ctx.close,
+                    })
                     if self.trade_logger:
                         self.trade_logger.log(trade['trade_id'], "SIGNAL",
                             f"{trigger_name} on {bar.get('tf', '1m')}, {proposed_ctx.direction} @ {proposed_ctx.close:.2f}")
@@ -316,6 +326,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 else:
                     self.log_decision(bar['time'], bar.get('tf'), sid, "FILTER_BLOCK",
                         f"Trigger: {trigger_name} | Reason: {reason}")
+                    self.analytics.capture_signal_event("FILTER_BLOCK", {
+                        "line_id": sid, "trigger": trigger_name, "reason": reason,
+                    })
                     if hold:
                         # depth insufficient — reset trigger so it can re-fire, keep line alive
                         self._reset_trigger_state(line)

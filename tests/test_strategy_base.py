@@ -12,7 +12,7 @@ from src.strategies.base_liquidity_strategy import (
 )
 from src.strategies.entry_context import EntryContext
 from tests.conftest import make_bar, make_strategy
-from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository, FakeTradeExecutor
+from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter
 from src.services.trade_manager import TradeManager
 
 
@@ -21,7 +21,7 @@ def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=Non
     sio = socketio or DummySocketIO()
     lr = line_repo or FakeLineRepository()
     tr = trade_repo or FakeTradeRepository()
-    tm = trade_manager or TradeManager(tr, sio, trade_executor=FakeTradeExecutor())
+    tm = trade_manager or TradeManager(tr, sio, trade_executor=FakeTradeExecutor(), analytics=FakeAnalyticsReporter())
     return BaseLiquidityStrategy(
         min_stop_loss=10.0,
         max_bounce=90.0,
@@ -238,7 +238,7 @@ class TestBreakeven:
     def test_long_breakeven_triggered(self):
         sio = DummySocketIO()
         tr = FakeTradeRepository()
-        tm = TradeManager(tr, sio, trade_executor=FakeTradeExecutor())
+        tm = TradeManager(tr, sio, trade_executor=FakeTradeExecutor(), analytics=FakeAnalyticsReporter())
         strat = _make_base(
             socketio=sio, trade_repo=tr, trade_manager=tm,
             options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
@@ -273,7 +273,7 @@ class TestStoreAndEmitOpen:
     def test_persists_and_tracks(self):
         sio = DummySocketIO()
         tr = FakeTradeRepository()
-        tm = TradeManager(tr, sio, trade_executor=FakeTradeExecutor())
+        tm = TradeManager(tr, sio, trade_executor=FakeTradeExecutor(), analytics=FakeAnalyticsReporter())
         strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
         trade = {
             "pair": "NQ", "type": "long", "entry": 100,

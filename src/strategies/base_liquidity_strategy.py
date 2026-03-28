@@ -6,6 +6,7 @@ from enum import Enum
 from threading import RLock
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+from src.analytics import AnalyticsReporter, NoOpReporter
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
@@ -74,6 +75,7 @@ class BaseLiquidityStrategy:
         min_cross_depth: float = 0.0,
         rr_ratio: float = 4.0,
         trade_logger=None,
+        analytics: AnalyticsReporter = None,
     ):
         self.min_stop_loss = float(min_stop_loss)
         self.max_bounce    = float(max_bounce)
@@ -88,6 +90,7 @@ class BaseLiquidityStrategy:
         self.max_stop_loss = max_stop_loss
         self.sl_levels = sorted(sl_levels) if sl_levels else None
         self.trade_logger = trade_logger
+        self.analytics = analytics or NoOpReporter()
         self.sl_level_tolerance = float(sl_level_tolerance)
 
         self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
@@ -285,6 +288,7 @@ class BaseLiquidityStrategy:
                 print(f"[Strategy] 🕐 SESSION END closed {t['trade_id']} @ {exit_price} (Result: {r_result:.2f}R)")
             except Exception as e:
                 print(f"[Strategy] ❌ Failed to persist session-end close for {t['trade_id']}: {e}")
+                self.analytics.capture_exception(e, {"op": "strategy_session_close", "trade_id": t["trade_id"]})
                 if self.trade_logger:
                     self.trade_logger.log(t["trade_id"], "ERROR", str(e))
 
@@ -382,6 +386,7 @@ class BaseLiquidityStrategy:
             self.trade_manager.update_local_trade_sl(trade['trade_id'], new_sl)
         except Exception as e:
             print(f"[Strategy] ⚠️ Failed to update SL in DB: {e}")
+            self.analytics.capture_exception(e, {"op": "update_sl", "trade_id": trade['trade_id']})
 
         # 2b. Notify executor (live mode: sends modify_order to NinjaTrader)
         self.trade_manager.trade_executor.on_sl_update(trade['trade_id'], new_sl)
@@ -549,6 +554,7 @@ class BaseLiquidityStrategy:
                     print(f"[Strategy] 💾 Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R)")
                 except Exception as e:
                     print(f"[Strategy] ❌ Failed to persist close for {t['trade_id']}: {e}")
+                    self.analytics.capture_exception(e, {"op": "strategy_persist_close", "trade_id": t["trade_id"]})
                     if self.trade_logger:
                         self.trade_logger.log(t["trade_id"], "ERROR", str(e))
 

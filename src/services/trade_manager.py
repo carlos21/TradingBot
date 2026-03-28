@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 from src.repositories.trades_repository import TradeRepository
 from src.services.trade_executor import TradeExecutor, NoOpExecutor
+from src.notifier import Notifier, NoOpNotifier
+from src.analytics import AnalyticsReporter, NoOpReporter
 
 
 class TradeManager:
@@ -16,7 +18,9 @@ class TradeManager:
                  session_end_time: str = None, session_tz: str = None,
                  broker_mode: str = 'futures', broker_spread: float = 0.0,
                  trade_executor: TradeExecutor = None,
-                 trade_logger=None):
+                 trade_logger=None,
+                 notifier: Notifier = None,
+                 analytics: AnalyticsReporter = None):
         """
         :param trade_repository: SQLTradeRepository instance (must have close_trade)
         :param socketio:         flask_socketio.SocketIO instance
@@ -35,6 +39,8 @@ class TradeManager:
         self.broker_spread    = broker_spread
         self.trade_executor   = trade_executor or NoOpExecutor()
         self.trade_logger     = trade_logger
+        self.notifier         = notifier or NoOpNotifier()
+        self.analytics        = analytics or NoOpReporter()
 
         # Session end close config
         self._session_end_time = None
@@ -83,6 +89,8 @@ class TradeManager:
                 
         except Exception as e:
             print(f"[TradeManager] ⚠️ Failed to load open trades on init: {e}")
+            self.analytics.capture_exception(e, {"op": "load_open_trades"})
+            self.notifier.send(f"[TradeManager] Failed to load open trades on init: {e}")
 
     def handle_new_1m_bar(self, bar: dict):
         """
@@ -170,8 +178,10 @@ class TradeManager:
                 print(f"[TradeManager] 💾 DB Updated for Trade {trade['trade_id']} (Closed)")
             except Exception as e:
                 print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
+                self.analytics.capture_exception(e, {"op": "close_trade_sl_tp", "trade_id": trade['trade_id']})
                 if self.trade_logger:
                     self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
+                self.notifier.send(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
 
             if self.trade_logger:
                 event = "SL_HIT" if hit_sl else "TP_HIT"
@@ -180,6 +190,11 @@ class TradeManager:
 
             self.open_trades.remove(trade)
             self.trade_executor.on_trade_close(trade['trade_id'], exit_price)
+
+            self.analytics.capture_trade_event("SL_HIT" if hit_sl else "TP_HIT", {
+                "trade_id": trade['trade_id'], "exit_price": exit_price,
+                "result": result, "result_type": result_type,
+            })
 
             self.socketio.emit('trade_close', {
                 'trade_id':   trade['trade_id'],
@@ -234,14 +249,20 @@ class TradeManager:
                 )
             except Exception as e:
                 print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
+                self.analytics.capture_exception(e, {"op": "session_end_close", "trade_id": trade['trade_id']})
                 if self.trade_logger:
                     self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
+                self.notifier.send(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
 
             if self.trade_logger:
                 self.trade_logger.log(trade['trade_id'], "SESSION_END", f"Close @ {exit_price:.2f} Result={result:.2f}R")
                 self.trade_logger.log(trade['trade_id'], "CLOSE", "Persisted to DB")
 
             self.open_trades.remove(trade)
+
+            self.analytics.capture_trade_event("SESSION_END", {
+                "trade_id": trade['trade_id'], "exit_price": exit_price, "result": result,
+            })
 
             self.socketio.emit('trade_close', {
                 'trade_id':   trade['trade_id'],
@@ -283,9 +304,14 @@ class TradeManager:
         # track in-memory
         self.open_trades.append(trade)
         self._monitored_trades.add(td.trade_id) # Mark as monitored since we just opened it
-        
+
         print(f"[TradeManager] ✅ Registered OPEN trade {trade['trade_id']} @ {entry_time}")
-        
+
+        self.analytics.capture_trade_event("TRADE_OPEN", {
+            "trade_id": trade['trade_id'], "pair": pair, "type": trade_type,
+            "entry": entry_price, "sl": stop_loss, "tp": take_profit,
+        })
+
         # notify clients
         self.socketio.emit('trade_open', trade)
 
@@ -398,14 +424,20 @@ class TradeManager:
                 )
             except Exception as e:
                 print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
+                self.analytics.capture_exception(e, {"op": "stream_end_close", "trade_id": trade['trade_id']})
                 if self.trade_logger:
                     self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
+                self.notifier.send(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
 
             if self.trade_logger:
                 self.trade_logger.log(trade['trade_id'], "SESSION_END", f"Stream end @ {exit_price:.2f} Result={result:.2f}R")
                 self.trade_logger.log(trade['trade_id'], "CLOSE", "Persisted to DB")
 
             self.open_trades.remove(trade)
+
+            self.analytics.capture_trade_event("STREAM_END", {
+                "trade_id": trade['trade_id'], "exit_price": exit_price, "result": result,
+            })
 
             self.socketio.emit('trade_close', {
                 'trade_id':   trade['trade_id'],
@@ -466,8 +498,10 @@ class TradeManager:
             self.trade_repository.update_entry_price(trade_id, entry_price)
         except Exception as e:
             print(f"[TradeManager] ❌ DB ERROR on entry fill for {trade_id}: {e}")
+            self.analytics.capture_exception(e, {"op": "broker_entry_fill", "trade_id": trade_id})
             if self.trade_logger:
                 self.trade_logger.log(trade_id, "ERROR", str(e))
+            self.notifier.send(f"[TradeManager] DB ERROR on entry fill for {trade_id}: {e}")
 
         # Emit to UI so chart updates
         self.socketio.emit('trade_entry_update', {
@@ -533,8 +567,10 @@ class TradeManager:
             )
         except Exception as e:
             print(f"[TradeManager] ❌ DB ERROR on broker fill for {trade_id}: {e}")
+            self.analytics.capture_exception(e, {"op": "broker_fill", "trade_id": trade_id})
             if self.trade_logger:
                 self.trade_logger.log(trade_id, "ERROR", str(e))
+            self.notifier.send(f"[TradeManager] DB ERROR on broker fill for {trade_id}: {e}")
 
         if self.trade_logger:
             self.trade_logger.log(trade_id, "CLOSE", "Persisted to DB")

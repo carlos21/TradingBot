@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from tests.conftest import make_bar
-from tests.fakes import DummySocketIO, FakeTradeRepository, FakeTradeExecutor
+from tests.fakes import DummySocketIO, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter
 
 
 def _make_manager(**overrides):
@@ -12,6 +12,7 @@ def _make_manager(**overrides):
         socketio=DummySocketIO(),
         pair="NQ",
         trade_executor=FakeTradeExecutor(),
+        analytics=FakeAnalyticsReporter(),
     )
     defaults.update(overrides)
     return TradeManager(**defaults)

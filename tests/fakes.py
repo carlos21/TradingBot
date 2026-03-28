@@ -3,6 +3,8 @@ from datetime import datetime
 from typing import Optional, List
 from src.models import LineData, TradeData
 from src.services.trade_executor import TradeExecutor
+from src.notifier import Notifier
+from src.analytics import AnalyticsReporter
 
 class DummySocketIO:
     def __init__(self):
@@ -166,6 +168,34 @@ class FakeTradeRepository:
                 created_at=datetime.utcnow()
             ))
         return results
+
+
+class FakeNotifier(Notifier):
+    def __init__(self):
+        self.messages = []
+
+    def send(self, message: str) -> None:
+        self.messages.append(message)
+
+
+class FakeAnalyticsReporter(AnalyticsReporter):
+    def __init__(self):
+        self.exceptions = []
+        self.trade_events = []
+        self.signal_events = []
+        self.contexts = {}
+
+    def capture_exception(self, exc, context=None):
+        self.exceptions.append((exc, context))
+
+    def capture_trade_event(self, event_type, trade_data):
+        self.trade_events.append((event_type, trade_data))
+
+    def capture_signal_event(self, event_type, details):
+        self.signal_events.append((event_type, details))
+
+    def set_context(self, name, data):
+        self.contexts[name] = data
 
 
 class FakeTradeExecutor(TradeExecutor):
