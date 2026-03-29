@@ -1,41 +1,29 @@
 export class ControlsView {
-  constructor(chartViewer, socket, dataService) {
+  constructor(chartViewer, socket) {
     this.chartViewer = chartViewer;
-    this.socket      = socket;
-    this.dataService = dataService;
-
-    // UI elements
-    this.toggleBtn   = null;
-    this.stepBtn     = null;
-    this.prevBtn     = null;
-    this.nextBtn     = null;
-    this.tfButtons   = [];
+    this.socket = socket;
   }
 
   init() {
-    this.toggleBtn       = document.getElementById('toggleReplayBtn');
-    this.stepBtn         = document.getElementById('stepBarBtn');
-    this.prevBtn         = document.getElementById('prevDayBtn');
-    this.nextBtn         = document.getElementById('nextDayBtn');
-    this.currentDayLabel = document.getElementById('currentDayLabel');
-    this.tfButtons       = Array.from(document.querySelectorAll('[data-timeframe]'));
+    this.toggleBtn = document.getElementById('toggleReplayBtn');
+    this.stepBtn = document.getElementById('stepBarBtn');
+    this.prevBtn = document.getElementById('prevDayBtn');
+    this.nextBtn = document.getElementById('nextDayBtn');
+    this.tfButtons = Array.from(document.querySelectorAll('[data-timeframe]'));
 
-    this.bindReplayEvents();
-    this.bindTimeframeEvents();
-    this.bindSocketEvents();
+    this._bindReplayEvents();
+    this._bindTimeframeEvents();
 
-    const defaultBtn = document.querySelector(`[data-timeframe="${this.chartViewer.currentTF}"]`);
-    if (defaultBtn) this.setActiveTf(defaultBtn);
-  }
-
-  bindSocketEvents() {
     this.socket.on('stream_status', ({ playing, live_mode }) => {
       if (!playing) this.toggleBtn.textContent = 'Play';
       if (live_mode) this._applyLiveMode();
     });
+
+    const defaultBtn = document.querySelector(`[data-timeframe="${this.chartViewer.currentTF}"]`);
+    if (defaultBtn) this._setActiveTf(defaultBtn);
   }
 
-  bindReplayEvents() {
+  _bindReplayEvents() {
     this.toggleBtn.addEventListener('click', () => {
       this.chartViewer.toggleReplay();
       this.toggleBtn.textContent = this.chartViewer.isPlaying ? 'Pause' : 'Play';
@@ -46,37 +34,26 @@ export class ControlsView {
       this.toggleBtn.textContent = 'Play';
     });
 
-    this.prevBtn.addEventListener('click', () => {
-      this.chartViewer.jumpToDay(-1);
-    });
-
-    this.nextBtn.addEventListener('click', () => {
-      this.chartViewer.jumpToDay(1);
-    });
+    this.prevBtn.addEventListener('click', () => this.chartViewer.jumpToDay(-1));
+    this.nextBtn.addEventListener('click', () => this.chartViewer.jumpToDay(1));
   }
 
-  bindTimeframeEvents() {
+  _bindTimeframeEvents() {
     this.tfButtons.forEach(btn => {
       btn.addEventListener('click', () => {
-        this.setActiveTf(btn);
-        const tf = btn.getAttribute('data-timeframe');
-        this.chartViewer.changeTimeframe(tf);
+        this._setActiveTf(btn);
+        this.chartViewer.changeTimeframe(btn.getAttribute('data-timeframe'));
       });
     });
   }
 
-  setActiveTf(button) {
+  _setActiveTf(button) {
     this.tfButtons.forEach(b => b.classList.remove('active'));
     button.classList.add('active');
   }
 
-  updateView() {
-    // No-op — kept for compatibility with main.js onDisplay callback
-  }
-
   _applyLiveMode() {
-    const replayControls = document.querySelectorAll('.replay-control');
-    replayControls.forEach(el => el.style.display = 'none');
+    document.querySelectorAll('.replay-control').forEach(el => el.style.display = 'none');
     if (this.stepBtn) this.stepBtn.style.display = 'none';
 
     const liveIndicator = document.getElementById('liveIndicator');

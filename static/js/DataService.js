@@ -3,62 +3,53 @@ export class DataService {
     this.baseUrl = baseUrl;
   }
 
-  // Fetch the last N bars (default 10k)
-  fetchBars(pair, tf = '5m', startTime = null) {
-    const url = `/api/bars?pair=${encodeURIComponent(pair)}&tf=${encodeURIComponent(tf)}&start_time=${encodeURIComponent(startTime)}`;
-    return fetch(url).then(res => {
-      if (!res.ok) throw new Error(`Error fetching bars: ${res.status}`);
-      return res.json();
-    });
-  }
-
-  async getPair() {
-    const resp = await fetch(`${this.baseUrl}/api/pair`);
-    if (!resp.ok) throw new Error(`Error fetching pair: ${resp.statusText}`);
-    const data = await resp.json();
-    return data.pair;
-  }
-
-  // List all pinned lines
-  async fetchLines(pair) {
-    if (!pair) throw new Error("listLines(pair): 'pair' is required.");
-    const res = await fetch(`${this.baseUrl}/api/lines?pair=${pair}`);
+  async fetchBars(pair, tf = '5m', startTime = null) {
+    const url = `${this.baseUrl}/api/bars?pair=${encodeURIComponent(pair)}&tf=${encodeURIComponent(tf)}&start_time=${encodeURIComponent(startTime)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Error fetching bars: ${res.status}`);
     return res.json();
   }
 
-  // Fetch all trades for the pair
+  async getPair() {
+    const res = await fetch(`${this.baseUrl}/api/pair`);
+    if (!res.ok) throw new Error(`Error fetching pair: ${res.statusText}`);
+    const data = await res.json();
+    return data.pair;
+  }
+
+  async fetchLines(pair) {
+    const res = await fetch(`${this.baseUrl}/api/lines?pair=${encodeURIComponent(pair)}`);
+    if (!res.ok) throw new Error(`Error fetching lines: ${res.status}`);
+    return res.json();
+  }
+
   async fetchTrades(pair) {
-    if (!pair) throw new Error("fetchTrades(pair): 'pair' is required.");
-    const res = await fetch(`${this.baseUrl}/api/trades?pair=${pair}`);
+    const res = await fetch(`${this.baseUrl}/api/trades?pair=${encodeURIComponent(pair)}`);
     if (!res.ok) throw new Error(`Error fetching trades: ${res.status}`);
     return res.json();
   }
 
-  // Add a new line with `pair` and `price`
   async addLine(pair, price, creationTime = null) {
-    const resp = await fetch(`${this.baseUrl}/api/lines`, {
+    const res = await fetch(`${this.baseUrl}/api/lines`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ pair, price, creation_time: creationTime }),
     });
-    if (!resp.ok) {
-      const txt = await resp.text();
-      throw new Error(`Error adding line: ${resp.status} ${txt}`);
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`Error adding line: ${res.status} ${txt}`);
     }
-    // returns the created LineData: { id, pair, price, creation_date }
-    return resp.json();
+    return res.json();
   }
 
-  // Delete a line by its UUID
   async deleteLine(id) {
-    const resp = await fetch(`${this.baseUrl}/api/lines/${encodeURIComponent(id)}`, {
+    const res = await fetch(`${this.baseUrl}/api/lines/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     });
-    if (!resp.ok) {
-      const txt = await resp.text();
-      throw new Error(`Error deleting line: ${resp.status} ${txt}`);
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(`Error deleting line: ${res.status} ${txt}`);
     }
     return true;
   }
-
 }
