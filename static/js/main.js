@@ -29,8 +29,6 @@ document.addEventListener("DOMContentLoaded", () => {
         showTSI: showTSI
     });
     window.chartViewer = chartViewer;
-    const controlsView = new ControlsView(chartViewer, socket, service);
+    const controlsView = new ControlsView(chartViewer, socket);
     controlsView.init();
-
-    chartViewer.onDisplay = () => controlsView.updateView();
 });

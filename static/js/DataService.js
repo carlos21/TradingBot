@@ -61,34 +61,4 @@ export class DataService {
     return true;
   }
 
-  // Open a new trade: pair (string), type ('buy'|'sell'), stopLoss (number)
-  async openTrade(pair, type, stopLoss) {
-    const resp = await fetch(`${this.baseUrl}/api/trades`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pair, type, stop_loss: stopLoss }),
-    });
-    if (!resp.ok) {
-      const txt = await resp.text();
-      throw new Error(`Error opening trade: ${resp.status} ${txt}`);
-    }
-    // returns trade details: { pair, type, entry, stop_loss, take_profit, risk, entry_time, trade_id }
-    return resp.json();
-  }
-
-  async closeTrade(tradeId) {
-    const resp = await fetch(
-      `${this.baseUrl}/api/trades/${encodeURIComponent(tradeId)}/close`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      }
-    );
-    if (!resp.ok) {
-      const txt = await resp.text();
-      throw new Error(`Error closing trade: ${resp.status} ${txt}`);
-    }
-    // returns the same payload as trade_close event
-    return resp.json();
-  }
 }

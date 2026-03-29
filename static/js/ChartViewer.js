@@ -3,7 +3,6 @@ export class ChartViewer {
     this.chartElement = chartElement;
     this.dataService  = dataService;
     this.socket = socket;
-    this.onDisplay = opts.onDisplay || (() => {});
     
     // --- State ---
     this.lastTime     = -Infinity;
@@ -31,10 +30,6 @@ export class ChartViewer {
     };
 
     // --- UI DOM ---
-    this.winCounter   = document.getElementById('winCount');
-    this.lossCounter  = document.getElementById('lossCount');
-    this.pnlCounter   = document.getElementById('pnlCounter');
-    if (this.pnlCounter) this.pnlCounter.textContent = 'Total PnL: 0.00R';
 
     // ========================================================================
     // 1. TIME FORMATTING
@@ -319,7 +314,6 @@ export class ChartViewer {
       this.lastPrice = last.close;
     }
     this.chart.timeScale().fitContent();
-    this.onDisplay();
   }
 
   _setupSocket() {
@@ -452,8 +446,6 @@ export class ChartViewer {
     // 1. Start with TSI Markers
     const markers = [...this.tsiMarkers];
     
-    let win = 0, loss = 0, pnl = 0;
-
     // 2. Add Trade Markers
     this.allTrades.forEach(t => {
       const entryTime = t.entry_time || t.entryTime;
@@ -468,15 +460,13 @@ export class ChartViewer {
 
       if (t.status === 'closed' && exitTime && exitTime <= this.lastTime) {
           const res = t.result || 0;
-          if (res > 0) win++; else loss++;
-          pnl += res;
-          markers.push({ 
-              time: exitTime, 
-              position: isLong ? 'aboveBar' : 'belowBar', 
-              shape: isLong ? 'arrowDown' : 'arrowUp', 
-              color: res > 0 ? '#00E676' : '#FF1744', 
+          markers.push({
+              time: exitTime,
+              position: isLong ? 'aboveBar' : 'belowBar',
+              shape: isLong ? 'arrowDown' : 'arrowUp',
+              color: res > 0 ? '#00E676' : '#FF1744',
               text: (res > 0 ? '+' : '') + res.toFixed(2) + 'R',
-              size: 2 
+              size: 2
           });
       }
     });
@@ -498,10 +488,6 @@ export class ChartViewer {
     });
 
     this.series.setMarkers(uniqueMarkers);
-    
-    if (this.winCounter) this.winCounter.textContent = win;
-    if (this.lossCounter) this.lossCounter.textContent = loss;
-    if (this.pnlCounter) this.pnlCounter.textContent = `Total PnL: ${pnl.toFixed(2)}R`;
   }
 
   _onMouseDown(e) {
@@ -575,11 +561,6 @@ export class ChartViewer {
     this.tradeTPLine    = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP #' + n    });
   }
   
-  clearPreviews() {
-    [ this.previewEntryLine, this.previewSLLine, this.previewTPLine ].forEach(l => l && this.series.removePriceLine(l));
-    this.previewEntryLine = this.previewSLLine = this.previewTPLine = null;
-  }
-
   _shadeBar(bar) {
     const parts = this.nyTimeFormatter.formatToParts(new Date(bar.time * 1000));
     let h, m;

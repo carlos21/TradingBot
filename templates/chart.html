@@ -15,10 +15,10 @@
 <body class="flex h-screen">
   <!-- Main chart column -->
   <div class="flex-1 flex flex-col">
-    <!-- Header with timeframe buttons, stop-loss controls, and trade actions -->
+    <!-- Header with timeframe buttons and replay controls -->
     <header class="p-4 bg-gray-800 text-white">
       <div class="flex justify-between items-center">
-        <!-- Left group: timeframes + stop-loss + trade actions -->
+        <!-- Left group: timeframes -->
         <div class="flex items-center space-x-4">
           <!-- Timeframe buttons -->
           <div class="flex space-x-2">
@@ -29,27 +29,6 @@
             <button data-timeframe="1h"  class="px-2 py-1 rounded bg-gray-900 text-white">1h</button>
             <button data-timeframe="4h"  class="px-2 py-1 rounded bg-gray-900 text-white">4h</button>
           </div>
-          
-          <!-- Stop-Loss controls -->
-          <div id="stop-loss-group" class="flex items-center space-x-2">
-            <label class="text-white">
-              Stop Loss: <span id="stop-loss-value">100.00</span>
-            </label>
-            <button id="decrease-stop-loss" class="px-2 py-1 rounded border bg-gray-900 text-white">-</button>
-            <button id="increase-stop-loss" class="px-2 py-1 rounded border bg-gray-900 text-white">+</button>
-          </div>
-          
-          <!-- Trade Actions -->
-          <div id="trade-actions-group" class="flex items-center space-x-2">
-            <button id="buy-button" class="px-4 py-2 rounded border bg-gray-500 text-white">BUY</button>
-            <button id="sell-button" class="px-4 py-2 rounded border bg-gray-500 text-white">SELL</button>
-            <button id="open-trade-button" class="px-4 py-2 bg-blue-500 text-white rounded">
-              Open Trade
-            </button>
-            <button id="close-trade-button" class="px-4 py-2 bg-orange-500 text-white rounded" disabled>
-              Close Trade
-            </button>
-          </div>
         </div>
 
         <div class="flex items-center space-x-4">
@@ -58,12 +37,9 @@
           <button id="nextDayBtn" class="replay-control">Next day ▶</button>
           <span id="currentDayLabel"></span>
         </div>
-    
-        <!-- Right group: PnL display + Play/Pause -->
+
+        <!-- Right group: Play/Pause -->
         <div class="flex items-center space-x-4">
-          <div>Wins: <span id="winCount">0</span></div>
-          <div>Losses: <span id="lossCount">0</span></div>
-          <div>PnL: <span id="pnlCounter">0%</span></div>
           <button
             id="toggleReplayBtn"
             class="px-4 py-2 bg-blue-500 text-white rounded"

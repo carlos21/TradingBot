@@ -226,7 +226,7 @@ def create_app(
 
     @app.route('/')
     def index():
-        return render_template('tester.html')
+        return render_template('chart.html')
 
     @app.route('/api/pair')
     def get_pair():
