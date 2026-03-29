@@ -461,10 +461,12 @@ class TradeManager:
                 return
         print(f"[TradeManager] ⚠️ Could not find trade {trade_id} to update SL")
 
-    def handle_broker_entry_fill(self, trade_id: str, entry_price: float):
+    def handle_broker_entry_fill(self, trade_id: str, entry_price: float,
+                                stop_loss: float = None, take_profit: float = None):
         """
-        Called when NinjaTrader reports the actual entry fill price.
-        Updates DB, in-memory trade, and emits to UI so chart shows real broker price.
+        Called when NinjaTrader reports the actual entry fill price and
+        the real SL/TP calculated from the fill price.
+        Updates DB, in-memory trade, and emits to UI so chart shows real broker levels.
         """
         # Update in-memory trade
         trade = next(
@@ -479,7 +481,13 @@ class TradeManager:
         old_entry = trade['entry']
         trade['entry'] = entry_price
 
-        # Recalculate risk based on actual entry
+        # Update SL/TP if provided by broker (calculated from real fill price)
+        if stop_loss is not None:
+            trade['stop_loss'] = stop_loss
+        if take_profit is not None:
+            trade['take_profit'] = take_profit
+
+        # Recalculate risk based on actual entry and SL
         is_buy = trade['type'] in ('buy', 'long')
         if is_buy:
             trade['risk'] = abs(entry_price - trade['stop_loss'])
@@ -487,15 +495,21 @@ class TradeManager:
             trade['risk'] = abs(trade['stop_loss'] - entry_price)
 
         print(f"[TradeManager] 📡 ENTRY FILL: {trade_id} @ {entry_price} "
-              f"(was {old_entry}, slippage={entry_price - old_entry:+.2f})")
+              f"(was {old_entry}, slippage={entry_price - old_entry:+.2f}) "
+              f"SL={trade['stop_loss']} TP={trade['take_profit']}")
 
         if self.trade_logger:
             self.trade_logger.log(trade_id, "NT_ENTRY_FILL",
-                f"Filled @ {entry_price:.2f} (slippage: {entry_price - old_entry:+.2f})")
+                f"Filled @ {entry_price:.2f} (slippage: {entry_price - old_entry:+.2f}) "
+                f"SL={trade['stop_loss']:.2f} TP={trade['take_profit']:.2f}")
 
         # Persist to DB
         try:
             self.trade_repository.update_entry_price(trade_id, entry_price)
+            if stop_loss is not None:
+                self.trade_repository.update_stop_loss(trade_id, stop_loss)
+            if take_profit is not None:
+                self.trade_repository.update_take_profit(trade_id, take_profit)
         except Exception as e:
             print(f"[TradeManager] ❌ DB ERROR on entry fill for {trade_id}: {e}")
             self.analytics.capture_exception(e, {"op": "broker_entry_fill", "trade_id": trade_id})
@@ -507,6 +521,8 @@ class TradeManager:
         self.socketio.emit('trade_entry_update', {
             'trade_id':    trade_id,
             'entry_price': entry_price,
+            'stop_loss':   trade['stop_loss'],
+            'take_profit': trade['take_profit'],
             'risk':        trade['risk'],
         })
 

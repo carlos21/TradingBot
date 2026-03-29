@@ -280,3 +280,23 @@ class TestBrokerEntryFill:
         tm.handle_broker_entry_fill("T1", 101.0)
         assert tm.open_trades[0]["entry"] == 101.0
         assert tm.open_trades[0]["risk"] == 11.0  # |101-90|
+
+    def test_updates_entry_sl_tp_from_broker(self):
+        tm = _make_manager()
+        _add_open_trade(tm, trade_type="long", entry=100, sl=90, tp=130, risk=10)
+        tm.handle_broker_entry_fill("T1", 101.0, stop_loss=91.0, take_profit=131.0)
+        t = tm.open_trades[0]
+        assert t["entry"] == 101.0
+        assert t["stop_loss"] == 91.0
+        assert t["take_profit"] == 131.0
+        assert t["risk"] == 10.0  # |101-91|
+
+    def test_updates_short_trade_sl_tp_from_broker(self):
+        tm = _make_manager()
+        _add_open_trade(tm, trade_type="short", entry=100, sl=110, tp=70, risk=10)
+        tm.handle_broker_entry_fill("T1", 99.0, stop_loss=109.0, take_profit=69.0)
+        t = tm.open_trades[0]
+        assert t["entry"] == 99.0
+        assert t["stop_loss"] == 109.0
+        assert t["take_profit"] == 69.0
+        assert t["risk"] == 10.0  # |109-99|

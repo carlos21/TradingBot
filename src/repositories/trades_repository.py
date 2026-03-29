@@ -36,6 +36,11 @@ class TradeRepository(ABC):
         pass
 
     @abstractmethod
+    def update_take_profit(self, trade_id: str, new_take_profit: float) -> TradeData:
+        """Adjust an existing trade's take profit."""
+        pass
+
+    @abstractmethod
     def update_entry_price(self, trade_id: str, new_entry_price: float) -> TradeData:
         """Update a trade's entry price (e.g. after broker fill confirms actual price)."""
         pass
@@ -148,6 +153,24 @@ class SQLTradeRepository(TradeRepository):
                 db.close()
                 raise DBNotFoundException(f"Trade {trade_id} not found")
             t.stop_loss = new_stop_loss
+            try:
+                db.commit()
+                db.refresh(t)
+            except Exception as e:
+                db.rollback()
+                raise DBException(str(e))
+            finally:
+                db.close()
+
+        return self._make_trade_data(t)
+
+    def update_take_profit(self, trade_id: str, new_take_profit: float) -> TradeData:
+        with get_db_session() as db:
+            t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+            if not t:
+                db.close()
+                raise DBNotFoundException(f"Trade {trade_id} not found")
+            t.take_profit = new_take_profit
             try:
                 db.commit()
                 db.refresh(t)

@@ -648,6 +648,7 @@ class BaseLiquidityStrategy:
             "orig_sl":     stop_loss,
             "take_profit": take_profit,
             "risk":        risk,
+            "rr_ratio":    self.rr_ratio,
             "status":      "open",
             "entry_time":  bar["time"],
         }

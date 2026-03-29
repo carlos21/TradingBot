@@ -313,9 +313,10 @@ def create_app(
                 abort(400, 'scenario must be tp_hit, sl_hit, or session_end')
 
             entry_price = 21000.0
-            sl = 20920.0
-            tp = 21080.0
             risk = 80.0
+            tp_rr = 1.0  # TP at 1R for test simplicity
+            sl = entry_price - risk       # 20920.0
+            tp = entry_price + risk * tp_rr  # 21080.0
             now_dt = datetime.now(tz=timezone.utc)
 
             trade_data = repos.trades.insert_trade(
@@ -340,8 +341,8 @@ def create_app(
                 "pair": pair,
                 "direction": "long",
                 "entry_price": entry_price,
-                "stop_loss": sl,
-                "take_profit": tp,
+                "sl_points": risk,
+                "rr_ratio": tp_rr,
                 "test": True,
                 "scenario": scenario,
             })
@@ -466,27 +467,38 @@ def create_app(
 
         @app.route('/api/nt/entry_fill', methods=['POST'])
         def nt_entry_fill():
-            """NinjaTrader reports the actual entry fill price."""
+            """NinjaTrader reports the actual entry fill price and real SL/TP."""
             data = request.get_json()
             trade_id = data.get('trade_id')
             entry_price = float(data.get('entry_price', 0))
+            broker_sl = float(data['stop_loss']) if data.get('stop_loss') is not None else None
+            broker_tp = float(data['take_profit']) if data.get('take_profit') is not None else None
 
             if not trade_id:
                 abort(400, 'trade_id is required')
 
-            print(f"[NT EntryFill] trade_id={trade_id} entry_price={entry_price}", flush=True)
-            trade_manager.handle_broker_entry_fill(trade_id, entry_price)
+            print(f"[NT EntryFill] trade_id={trade_id} entry={entry_price} "
+                  f"SL={broker_sl} TP={broker_tp}", flush=True)
+            trade_manager.handle_broker_entry_fill(trade_id, entry_price, broker_sl, broker_tp)
 
-            # Also update entry in strategy's open_trades list
+            # Also update entry/SL/TP in strategy's open_trades list
             for t in tstrategy.open_trades:
                 if t.get('trade_id') == trade_id:
                     t['entry'] = entry_price
+                    if broker_sl is not None:
+                        t['stop_loss'] = broker_sl
+                    if broker_tp is not None:
+                        t['take_profit'] = broker_tp
                     break
 
             # E2E test state machine: after entry fill, move SL to breakeven
             if trade_id in _test_sequences and _test_sequences[trade_id]["stage"] == "awaiting_entry_fill":
                 seq = _test_sequences[trade_id]
                 seq["stage"] = "awaiting_modify_ack"
+                # Update seq with broker's real values
+                seq["entry_price"] = entry_price
+                if broker_tp is not None:
+                    seq["tp"] = broker_tp
                 new_sl = entry_price  # breakeven
                 for t in trade_manager.open_trades:
                     if t.get('trade_id') == trade_id:

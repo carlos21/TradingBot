@@ -31,8 +31,8 @@ class NinjaTraderExecutor(TradeExecutor):
             "pair": trade["pair"],
             "direction": trade["type"],
             "entry_price": trade["entry"],
-            "stop_loss": trade["stop_loss"],
-            "take_profit": trade["take_profit"],
+            "sl_points": trade["risk"],
+            "rr_ratio": trade.get("rr_ratio", 4.0),
         })
 
     def on_trade_close(self, trade_id, exit_price):

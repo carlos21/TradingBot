@@ -110,6 +110,12 @@ class FakeTradeRepository:
                 t['stop_loss'] = new_stop_loss
                 return
 
+    def update_take_profit(self, trade_id, new_take_profit):
+        for t in self.inserted:
+            if t['trade_id'] == trade_id:
+                t['take_profit'] = new_take_profit
+                return
+
     def update_entry_price(self, trade_id, new_entry_price):
         for t in self.inserted:
             if t['trade_id'] == trade_id:
