@@ -40,6 +40,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                 running_balance += td["usd"]
         net_usd = sum(t["usd"] for t in trades_data)
         net_pct = sum(t["pct"] for t in trades_data)
+        net_commission = sum(t.get("commission", 0.0) for t in trades_data)
         enriched.append({
             "name": r["name"],
             "date": date,
@@ -49,6 +50,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             "trades": trades_data,
             "net_usd": net_usd,
             "net_pct": net_pct,
+            "net_commission": net_commission,
         })
 
     # ── 2. Group by month ─────────────────────────────────────────────────
@@ -66,12 +68,14 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         reentry_win = reentry_loss = reentry_be = 0
         m_usd = 0.0
         m_pct = 0.0
+        m_commission = 0.0
         for sc in monthly[mk]:
             for t in sc["trades"]:
                 if t["outcome"] == "open":
                     continue
                 m_usd += t["usd"]
                 m_pct += t["pct"]
+                m_commission += t.get("commission", 0.0)
                 is_re = t.get("is_reentry", False)
                 if t["outcome"] == "win":
                     wins += 1
@@ -90,7 +94,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         balance += m_usd
         month_agg[mk] = {
             "wins": wins, "losses": losses, "be": bes, "sp": sps,
-            "usd": m_usd, "pct": m_pct, "balance": balance,
+            "usd": m_usd, "pct": m_pct, "balance": balance, "commission": m_commission,
             "reentry_win": reentry_win, "reentry_loss": reentry_loss, "reentry_be": reentry_be,
         }
 
@@ -114,6 +118,8 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     num_months = len(month_agg) if month_agg else 1
     avg_monthly_usd = net_usd / num_months if num_months > 0 else 0.0
     avg_monthly_pct = avg_monthly_usd / account * 100 if account > 0 else 0.0
+
+    total_commission = sum(a["commission"] for a in month_agg.values())
 
     total_rw = sum(a["reentry_win"] for a in month_agg.values())
     total_rl = sum(a["reentry_loss"] for a in month_agg.values())
@@ -174,6 +180,8 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
 
             sc_usd = sc["net_usd"]
             sc_pct = sc["net_pct"]
+            sc_comm = sc.get("net_commission", 0.0)
+            comm_str = f"${sc_comm:,.2f}" if sc_comm > 0 else "--"
 
             rows_html.append(f"""
                 <tr>
@@ -183,6 +191,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                     <td class="result-col">{badges}</td>
                     <td class="pnl-col {pnl_class(sc_pct)}">{fmt_pct(sc_pct)}</td>
                     <td class="pnl-col {pnl_class(sc_usd)}">{fmt_usd(sc_usd)}</td>
+                    <td class="pnl-col">{comm_str}</td>
                 </tr>""")
 
         wl_parts = []
@@ -225,6 +234,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                         <th>Result</th>
                         <th>%</th>
                         <th>$ PnL</th>
+                        <th>Commission</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -837,6 +847,10 @@ footer {{
             <div class="stat-box">
                 <div class="label">Monthly Avg</div>
                 <div class="value {pnl_class(avg_monthly_usd)}">{fmt_usd(avg_monthly_usd)}</div>
+            </div>
+            <div class="stat-box">
+                <div class="label">Total Commission</div>
+                <div class="value negative">${total_commission:,.2f}</div>
             </div>
             {"" if total_rw + total_rl + total_rb == 0 else f'''<div class="stat-box">
                 <div class="label">Re-entries</div>

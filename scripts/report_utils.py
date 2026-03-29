@@ -13,11 +13,12 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
     is_reentry = trade.get("is_reentry", False) if trade else False
 
     if close is None:
-        return {"outcome": "open", "usd": 0.0, "pct": 0.0, "r": 0.0, "is_reentry": is_reentry}
+        return {"outcome": "open", "usd": 0.0, "pct": 0.0, "r": 0.0, "is_reentry": is_reentry, "commission": 0.0}
 
     result_type = close.get("result_type", None)
     if result_type == "SP":
         actual_r = close.get("result", 0.0)
+        commission = 0.0
         if mode == "sim":
             usd = risk * actual_r if actual_r > 0 else -risk
         else:  # real
@@ -32,15 +33,17 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
                 else:
                     contracts = max(1, round(risk / (sl_pts * nq_pv)))
                     fees = contracts * fee_per_rt
+                    commission = fees
                     if actual_r > 0:
                         usd = contracts * (actual_r * sl_pts) * nq_pv - fees
                     else:
                         usd = -(contracts * sl_pts * nq_pv) - fees
         pct_base = balance if (risk_pct is not None and balance) else account
         pct = usd / pct_base * 100 if pct_base else 0.0
-        return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry}
+        return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry, "commission": commission}
 
     actual_r = close.get("result", 0.0)
+    commission = 0.0
 
     if mode == "sim":
         usd = risk * actual_r if actual_r > 0 else -risk
@@ -56,6 +59,7 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
             else:
                 contracts = max(1, round(risk / (sl_pts * nq_pv)))
                 fees = contracts * fee_per_rt
+                commission = fees
                 if actual_r > 0:
                     usd = contracts * (actual_r * sl_pts) * nq_pv - fees
                 else:
@@ -71,7 +75,7 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
     else:
         outcome = "loss"
 
-    return {"outcome": outcome, "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry}
+    return {"outcome": outcome, "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry, "commission": commission}
 
 
 def calc_max_dd(balances):

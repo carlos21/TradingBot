@@ -803,12 +803,12 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
     def _print_results(mode_label, pnl_fn, per_trade_fn):
         """
-        per_trade_fn(trade, close) → (usd, pct, actual_r)
+        per_trade_fn(trade, close) → (usd, pct, actual_r, commission)
         Used so that W/L bucketing counts each individual trade, not the net scenario outcome.
         """
         # ── Aggregate by day / week / month (per individual trade) ─────────────
         def _new_bucket():
-            return {"usd": 0.0, "pct": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0,
+            return {"usd": 0.0, "pct": 0.0, "commission": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0,
                     "reentry_win": 0, "reentry_loss": 0, "reentry_be": 0, "all_passed": True,
                     "velocity": None}
 
@@ -833,7 +833,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         bucket[key]["open"] += 1
                     continue
                 result_type = close.get("result_type", None)
-                t_usd, t_pct, actual_r = per_trade_fn(trade, close, running_balance)
+                t_usd, t_pct, actual_r, t_comm = per_trade_fn(trade, close, running_balance)
                 if t_usd is not None:
                     running_balance += t_usd
                 is_reentry = trade.get("is_reentry", False)
@@ -843,6 +843,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         if t_usd is not None:
                             bucket[key]["usd"] += t_usd
                             bucket[key]["pct"] += t_pct
+                            bucket[key]["commission"] += t_comm
                         bucket[key]["sp"] += 1
                     continue
 
@@ -851,6 +852,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         if t_usd is not None:
                             bucket[key]["usd"] += t_usd
                             bucket[key]["pct"] += t_pct
+                            bucket[key]["commission"] += t_comm
                         bucket[key]["be"] += 1
                         if is_reentry:
                             bucket[key]["reentry_be"] += 1
@@ -862,6 +864,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     if t_usd is not None:
                         bucket[key]["usd"] += t_usd
                         bucket[key]["pct"] += t_pct
+                        bucket[key]["commission"] += t_comm
                     if is_be:    bucket[key]["be"]     += 1
                     elif is_win: bucket[key]["wins"]   += 1
                     else:        bucket[key]["losses"] += 1
@@ -881,17 +884,18 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 return
             has_reentry = any(v["reentry_win"] + v["reentry_loss"] + v["reentry_be"] > 0 for v in data.values())
             has_velocity = show_velocity and any(v.get("velocity") is not None for v in data.values())
+            COMM_W = 12
             WL_W  = 16
             RE_W  = 12
             PAS_W = 8
             VEL_W = 12
             lbl_w = max(len(k) for k in data) + 2
-            sep   = "-" * (lbl_w + 3 + WL_W + 54 + (3 + RE_W if has_reentry else 0) + (3 + PAS_W if show_passed else 0) + (3 + VEL_W if has_velocity else 0))
+            sep   = "-" * (lbl_w + 3 + WL_W + 54 + 3 + COMM_W + (3 + RE_W if has_reentry else 0) + (3 + PAS_W if show_passed else 0) + (3 + VEL_W if has_velocity else 0))
             hdr_re = f" | {'RE-ENTRY':^{RE_W}}" if has_reentry else ""
             hdr_pas = f" | {'PASSED':^{PAS_W}}" if show_passed else ""
             hdr_vel = f" | {'VELOCITY':^{VEL_W}}" if has_velocity else ""
             print(f"\n{BOLD}{CYAN}{title}{RST}")
-            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11}{hdr_re}{hdr_pas}{hdr_vel}")
+            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11} | {'COMMISSION':>{COMM_W}}{hdr_re}{hdr_pas}{hdr_vel}")
             print(f"  {sep}")
             balance = ACCT
             for key in sorted(data):
@@ -930,13 +934,16 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         vel_str = f" | {f'{vel_val:.2f} pts/m':^{VEL_W}}"
                     else:
                         vel_str = f" | {f'-':^{VEL_W}}"
-                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str}{re_str}{pas_str}{vel_str}")
+                comm_val = v.get("commission", 0.0)
+                comm_str = f"${comm_val:>10,.2f}" if comm_val > 0 else f"{'--':>{COMM_W}}"
+                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str} | {comm_str}{re_str}{pas_str}{vel_str}")
             total_usd = sum(v["usd"]    for v in data.values())
             total_pct = total_usd / ACCT * 100
             total_w   = sum(v["wins"]   for v in data.values())
             total_l   = sum(v["losses"] for v in data.values())
             total_be  = sum(v["be"]     for v in data.values())
             total_sp  = sum(v["sp"]     for v in data.values())
+            total_comm = sum(v.get("commission", 0.0) for v in data.values())
             total_rw  = sum(v["reentry_win"]  for v in data.values())
             total_rl  = sum(v["reentry_loss"] for v in data.values())
             total_rb  = sum(v["reentry_be"]   for v in data.values())
@@ -944,6 +951,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             tot_pct  = _col(total_pct, f"{total_pct:>+8.2f}%")
             tot_usd  = _col(total_usd, f"${total_usd:>+9,.0f}")
             tot_bal  = _col(total_usd, f"${ACCT + total_usd:>10,.0f}")
+            tot_comm = f"${total_comm:>10,.2f}" if total_comm > 0 else f"{'--':>{COMM_W}}"
             tot_parts = []
             if total_w:   tot_parts.append(f"{GREEN}{total_w}W{RST}")
             if total_l:   tot_parts.append(f"{RED}{total_l}L{RST}")
@@ -965,7 +973,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 else:
                     failed = sum(1 for v in data.values() if not v.get("all_passed", True))
                     tot_pas = f" | {_center(f'{RED}{failed}{CROSSMARK}{RST}', PAS_W)}"
-            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal}{tot_re}{tot_pas}")
+            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal} | {tot_comm}{tot_re}{tot_pas}")
 
         _print_agg(f"DAILY PnL   — {mode_label}", daily, show_passed=True, show_velocity=True)
         _print_agg(f"WEEKLY PnL  — {mode_label}", weekly)
@@ -1032,7 +1040,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         print(f"  Max consec. wins  : {GREEN}{BOLD}{max_consec_w}{RST}")
         print(f"  Max consec. losses: {RED}{BOLD}{max_consec_l}{RST}")
         print(f"  Max Drawdown  : {_col(-max_dd_usd, f'${-max_dd_usd:,.0f}')} ({_col(-max_dd_pct, f'{-max_dd_pct:.2f}%')})")
+        total_comm_all = sum(v.get("commission", 0.0) for v in daily.values())
         print(f"  Net P&L : {_col(total_usd_all, f'${total_usd_all:+,.0f}')}")
+        print(f"  Commission: ${total_comm_all:,.2f}")
         print(f"  Monthly Avg : {_col(avg_monthly_pnl, f'${avg_monthly_pnl:+,.0f}')} ({_col(avg_monthly_pct, f'{avg_monthly_pct:+.2f}%')})")
         total_rw = sum(v["reentry_win"]  for v in monthly.values())
         total_rl = sum(v["reentry_loss"] for v in monthly.values())
@@ -1051,22 +1061,22 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         risk = get_risk(balance)
         actual_r = close.get("result", 0.0)
         usd = risk * actual_r if actual_r > 0 else -risk
-        return usd, usd / balance * 100, actual_r
+        return usd, usd / balance * 100, actual_r, 0.0
 
     def _per_trade_real(trade, close, balance=ACCT):
         risk = get_risk(balance)
         entry   = trade.get("entry") or trade.get("entry_price")
         orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
         if entry is None or orig_sl is None:
-            return None, None, 0.0
+            return None, None, 0.0, 0.0
         sl_pts = round(abs(entry - orig_sl), 4)
         if sl_pts <= 0:
-            return None, None, 0.0
+            return None, None, 0.0, 0.0
         contracts = max(1, round(risk / (sl_pts * NQ_PV)))
         fees = contracts * FEE_PER_RT
         actual_r = close.get("result", 0.0)
         usd = (contracts * (actual_r * sl_pts) * NQ_PV - fees) if actual_r > 0 else -(contracts * sl_pts * NQ_PV) - fees
-        return usd, usd / balance * 100, actual_r
+        return usd, usd / balance * 100, actual_r, fees
 
     risk_desc = f"{RISK_PCT}% of balance" if RISK_PCT is not None else f"${RISK_USD_FIX:,.0f} fixed"
     mode = getattr(args, 'mode', 'both')
@@ -1128,17 +1138,17 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             entry   = trade.get("entry") or trade.get("entry_price")
             orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
             if entry is None or orig_sl is None:
-                return None, None, 0.0
+                return None, None, 0.0, 0.0
             sl_pts = round(abs(entry - orig_sl), 4)
             if sl_pts <= 0:
-                return None, None, 0.0
+                return None, None, 0.0, 0.0
             contracts = max(1, round(risk / (sl_pts * NQ_PV)))
             spread_cost = contracts * cfd_spread * NQ_PV
             commission_cost = contracts * cfd_commission
             total_cost = spread_cost + commission_cost
             actual_r = close.get("result", 0.0)
             usd = (contracts * (actual_r * sl_pts) * NQ_PV - total_cost) if actual_r > 0 else -(contracts * sl_pts * NQ_PV) - total_cost
-            return usd, usd / balance * 100, actual_r
+            return usd, usd / balance * 100, actual_r, total_cost
 
         _print_results(
             f"REAL CFD — Nasdaq CFD, ${ACCT:,.0f} account, ~{risk_desc} risk, {cfd_spread}pt spread, ${cfd_commission:.2f}/lot commission",
