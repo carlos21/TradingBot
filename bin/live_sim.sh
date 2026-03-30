@@ -12,8 +12,9 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 export MODE="live"
 export PAIR="${PAIR:-MNQ}"
-export NT_ACCOUNT="${NT_ACCOUNT:-DEMO2020071}"
-export RISK="${RISK:-}"
+#export NT_ACCOUNT="${NT_ACCOUNT:-DEMO2020071}"
+export NT_ACCOUNT="${NT_ACCOUNT:-FNFTCHCARLOSDUCLOS74105}"
+export RISK="${RISK:-50}"
 export RISK_PCT="${RISK_PCT:-}"
 
 cd "$PROJECT_DIR"
