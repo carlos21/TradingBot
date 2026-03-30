@@ -143,7 +143,17 @@ def build_live():
     nt_account = os.environ.get("NT_ACCOUNT", "")
     nt_cfg = NinjaTraderConfig(pair=PAIR, account=nt_account)
     ds = NinjaTraderDataSource(nt_cfg, notifier=notifier)
-    executor = NinjaTraderExecutor(ds)
+
+    risk_usd = float(os.environ["RISK"]) if os.environ.get("RISK") else None
+    risk_pct = float(os.environ["RISK_PCT"]) if os.environ.get("RISK_PCT") else None
+    executor = NinjaTraderExecutor(ds, risk_usd=risk_usd, risk_pct=risk_pct)
+
+    if risk_usd is not None:
+        print(f"[tradingbot] Risk config: fixed ${risk_usd:.0f} per trade")
+    elif risk_pct is not None:
+        print(f"[tradingbot] Risk config: {risk_pct}% of account balance")
+    else:
+        print("[tradingbot] Risk config: none (NinjaTrader will use 1 contract)")
 
     numbers = get_prod_strategy_numbers()
     candle_config = get_prod_candle_config()
