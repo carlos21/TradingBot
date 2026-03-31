@@ -203,9 +203,12 @@ def create_app(
             print("[LiveMode] Refresh: resetting strategy...")
             tstrategy.reset()
             loader.reset()
-            # Re-add persistent lines so they're available during warmup
+            # Re-add persistent lines with their real creation timestamp so the
+            # existing guards in liquidity_strategy_v2 skip historical bars that
+            # predate when the line was drawn.  creation_date is always UTC-aware
+            # (the repo enforces this), so .timestamp() gives correct epoch seconds.
             for l in repos.lines.list_lines(pair):
-                tstrategy.add_strategy_line(l.line_id, l.price, creation_timestamp=0)
+                tstrategy.add_strategy_line(l.line_id, l.price, creation_timestamp=l.creation_date.timestamp())
             print("[LiveMode] Refresh: strategy reset, ready for fresh bars.")
 
         data_source.on_history_complete = _on_history_complete
