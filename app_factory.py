@@ -276,7 +276,7 @@ def create_app(
         def nt_history_end():
             print(f"[NT Ingest] HISTORY_END received", flush=True)
             data_source.mark_history_complete()
-            socketio.emit('history_ready', {'count': len(data_source._historical_bars)})
+            # history_ready is already emitted by _on_history_complete() inside mark_history_complete()
             return jsonify({'ok': True})
 
         @app.route('/api/nt/tick', methods=['POST'])

@@ -30,7 +30,7 @@ export class MarkerManager {
     this.tsiMarkers.push(marker);
   }
 
-  update(allTrades, lastTime) {
+  update(allTrades, lastTime, validTimes = null) {
     if (lastTime === -Infinity) return;
 
     const markers = [...this.tsiMarkers];
@@ -78,6 +78,10 @@ export class MarkerManager {
       }
     }
 
-    this.series.setMarkers(unique);
+    // Only emit markers whose time exists in the current series.
+    // LightweightCharts throws "Value is null" when a marker references a
+    // time that has no matching bar (e.g. a 5m cross marker after a TF switch).
+    const safe = validTimes ? unique.filter(m => validTimes.has(m.time)) : unique;
+    this.series.setMarkers(safe);
   }
 }

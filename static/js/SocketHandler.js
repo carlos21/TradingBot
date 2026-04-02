@@ -10,6 +10,7 @@ export class SocketHandler {
     this.socket.on('connect', () => console.log('[ChartViewer] socket connected'));
 
     this.socket.on('bar', bar => {
+      if (c._seriesBusy) return;
       if (bar.time >= c.lastTime) {
         c.series.update(bar);
 
@@ -23,7 +24,7 @@ export class SocketHandler {
         c.lastTime = bar.time;
         c.lastPrice = bar.close;
         c.shadeBar(bar);
-        c.recalculateTSI();
+        c.recalculateTSI();  // passes validTimes built from historicalBars internally
       }
     });
 
@@ -36,7 +37,7 @@ export class SocketHandler {
 
         if (data.cross_type) {
           c.markers.appendTSIMarker(data.cross_type, data.time);
-          c.markers.update(c.allTrades, c.lastTime);
+          c.markers.update(c.allTrades, c.lastTime, new Set(c.historicalBars.map(b => b.time)));
         }
       }
     });
@@ -47,7 +48,7 @@ export class SocketHandler {
       if (idx !== -1) c.allTrades[idx] = trade;
       else c.allTrades.push(trade);
       c.drawTradeLines(trade);
-      c.markers.update(c.allTrades, c.lastTime);
+      if (!c._seriesBusy) c.markers.update(c.allTrades, c.lastTime, new Set(c.historicalBars.map(b => b.time)));
     });
 
     this.socket.on('trade_close', trade => {
@@ -59,7 +60,7 @@ export class SocketHandler {
       if (!c.keepClosedTradeLines) {
         [c.tradeEntryLine, c.tradeSLLine, c.tradeTPLine].forEach(h => h && c.series.removePriceLine(h));
       }
-      c.markers.update(c.allTrades, c.lastTime);
+      if (!c._seriesBusy) c.markers.update(c.allTrades, c.lastTime, new Set(c.historicalBars.map(b => b.time)));
     });
 
     this.socket.on('trade_update', update => {
@@ -80,7 +81,7 @@ export class SocketHandler {
         c.activeTrade.risk = update.risk;
         c.drawTradeLines(c.activeTrade);
       }
-      c.markers.update(c.allTrades, c.lastTime);
+      if (!c._seriesBusy) c.markers.update(c.allTrades, c.lastTime, new Set(c.historicalBars.map(b => b.time)));
     });
 
     this.socket.on('line_removed', ({ id }) => {
@@ -96,7 +97,11 @@ export class SocketHandler {
     this.socket.on('history_ready', async data => {
       console.log('[ChartViewer] history_ready received!', data);
       c.liveMode = true;
-      await c.initBars();
+      // Debounce: coalesce rapid history_ready events (e.g. duplicate emissions)
+      clearTimeout(c._historyReadyTimer);
+      c._historyReadyTimer = setTimeout(async () => {
+        await c.initBars();
+      }, 150);
     });
 
     this.socket.on('stream_status', data => {

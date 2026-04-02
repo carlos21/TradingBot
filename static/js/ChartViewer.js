@@ -27,6 +27,7 @@ export class ChartViewer {
     this.historicalBars = [];
     this.allTrades = [];
     this.pinnedLines = [];
+    this._seriesBusy = false;
 
     // Config
     this.keepClosedTradeLines = opts.keepClosedTradeLines || false;
@@ -122,7 +123,6 @@ export class ChartViewer {
     this._initPair()
       .then(() => this.initBars())
       .then(() => this._initLines())
-      .then(() => this._initTrades())
       .then(() => {
         window.__chartReady = true;
         new SocketHandler(socket, this).init();
@@ -139,11 +139,17 @@ export class ChartViewer {
   }
 
   async initBars() {
-    const bars = await this.dataService.fetchBars(this.pair, this.currentTF, this.startTime);
-    this.historicalBars = bars;
-    this.recalculateTSI();
-    this._displayChart(bars);
-    bars.forEach(bar => this.shadeBar(bar));
+    this._seriesBusy = true;
+    try {
+      const bars = await this.dataService.fetchBars(this.pair, this.currentTF, this.startTime);
+      this.historicalBars = bars;
+      this._displayChart(bars);
+      this.recalculateTSI();
+      bars.forEach(bar => this.shadeBar(bar));
+      await this._initTrades();
+    } finally {
+      this._seriesBusy = false;
+    }
   }
 
   async _initLines() {
@@ -154,13 +160,15 @@ export class ChartViewer {
   async _initTrades() {
     try {
       this.allTrades = await this.dataService.fetchTrades(this.pair);
-      this.markers.update(this.allTrades, this.lastTime);
+      const validTimes = new Set(this.historicalBars.map(b => b.time));
+      this.markers.update(this.allTrades, this.lastTime, validTimes);
     } catch (e) { console.error(e); }
   }
 
   // --- TSI ---
 
   recalculateTSI() {
+    if (!this.showTSI) return;
     const bars = this.historicalBars;
     const { tsiData, signalData, tsiRaw, signalRaw } = calculateTSI(bars);
 
@@ -171,12 +179,13 @@ export class ChartViewer {
     }
 
     const times = bars.map(b => b.time);
+    const validTimes = new Set(times);
     this.markers.setTSIMarkers(detectCrosses(tsiRaw, signalRaw, times));
 
     try {
       if (this.tsiSeries) this.tsiSeries.setData(tsiData);
       if (this.sigSeries) this.sigSeries.setData(signalData);
-      this.markers.update(this.allTrades, this.lastTime);
+      this.markers.update(this.allTrades, this.lastTime, validTimes);
     } catch (err) {
       console.error(err);
     }
@@ -185,10 +194,15 @@ export class ChartViewer {
   // --- Display ---
 
   _displayChart(bars) {
-    this.series.setData(bars);
+    const valid = bars.filter(b => b && b.open != null && b.high != null && b.low != null && b.close != null);
+    if (valid.length !== bars.length) {
+      console.warn(`[ChartViewer] dropped ${bars.length - valid.length} bars with null OHLC`);
+    }
+    this.series.setMarkers([]);
+    this.series.setData(valid);
     this.nySeries.setData([]);
-    if (bars.length) {
-      const last = bars[bars.length - 1];
+    if (valid.length) {
+      const last = valid[valid.length - 1];
       this.lastTime = last.time;
       this.lastPrice = last.close;
     }
@@ -320,31 +334,43 @@ export class ChartViewer {
   }
 
   async changeTimeframe(tf) {
-    this.currentTF = tf;
-    this.pauseReplay();
+    this._seriesBusy = true;
+    try {
+      // Cancel any pending initBars from a history_ready event so they
+      // don't race with this TF change and call setData on a half-ready series.
+      clearTimeout(this._historyReadyTimer);
 
-    this.series.setData([]);
-    if (this.showTSI) {
-      this.tsiSeries.setData([]);
-      this.sigSeries.setData([]);
+      // Clear markers NOW while the series still has valid bars from the old TF.
+      this.series.setMarkers([]);
+      this.markers.setTSIMarkers([]);
+
+      this.currentTF = tf;
+      this.pauseReplay();
+
+      if (this.showTSI) {
+        this.tsiSeries.setData([]);
+        this.sigSeries.setData([]);
+      }
+      this.nySeries.setData([]);
+
+      const replayPos = isFinite(this.lastTime) ? this.lastTime : null;
+      let bars = await this.dataService.fetchBars(this.pair, tf, this.startTime);
+
+      if (!this.liveMode && replayPos !== null && bars.length > 0 && replayPos < bars[bars.length - 1].time) {
+        bars = bars.filter(b => b.time <= replayPos);
+      }
+
+      this.historicalBars = bars;
+      this._displayChart(bars);
+      this.recalculateTSI();
+
+      this.socket.emit('set_timeframe', { timeframe: tf, fromTime: this.lastTime });
+      this.chart.timeScale().fitContent();
+      bars.forEach(bar => this.shadeBar(bar));
+      await this._initTrades();
+    } finally {
+      this._seriesBusy = false;
     }
-    this.nySeries.setData([]);
-
-    const replayPos = isFinite(this.lastTime) ? this.lastTime : null;
-    let bars = await this.dataService.fetchBars(this.pair, tf, this.startTime);
-
-    if (!this.liveMode && replayPos !== null && bars.length > 0 && replayPos < bars[bars.length - 1].time) {
-      bars = bars.filter(b => b.time <= replayPos);
-    }
-
-    this.historicalBars = bars;
-    this.recalculateTSI();
-    this._displayChart(bars);
-
-    this.socket.emit('set_timeframe', { timeframe: tf, fromTime: this.lastTime });
-    this.chart.timeScale().fitContent();
-    bars.forEach(bar => this.shadeBar(bar));
-    await this._initTrades();
   }
 
   jumpToDay(direction = 1) {
