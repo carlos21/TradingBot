@@ -810,7 +810,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         def _new_bucket():
             return {"usd": 0.0, "pct": 0.0, "commission": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0,
                     "reentry_win": 0, "reentry_loss": 0, "reentry_be": 0, "all_passed": True,
-                    "velocity": None}
+                    "velocity": None, "start_balance": None}
 
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
@@ -827,6 +827,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 daily[d_key]["all_passed"] = False
             if r.get("velocity") is not None:
                 daily[d_key]["velocity"] = r["velocity"]
+            for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                if bucket[key]["start_balance"] is None:
+                    bucket[key]["start_balance"] = running_balance
+
             for trade, close in (r.get("trade_pairs") or []):
                 if close is None:
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
@@ -842,7 +846,6 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
                         if t_usd is not None:
                             bucket[key]["usd"] += t_usd
-                            bucket[key]["pct"] += t_pct
                             bucket[key]["commission"] += t_comm
                         bucket[key]["sp"] += 1
                     continue
@@ -851,7 +854,6 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
                         if t_usd is not None:
                             bucket[key]["usd"] += t_usd
-                            bucket[key]["pct"] += t_pct
                             bucket[key]["commission"] += t_comm
                         bucket[key]["be"] += 1
                         if is_reentry:
@@ -863,7 +865,6 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
                     if t_usd is not None:
                         bucket[key]["usd"] += t_usd
-                        bucket[key]["pct"] += t_pct
                         bucket[key]["commission"] += t_comm
                     if is_be:    bucket[key]["be"]     += 1
                     elif is_win: bucket[key]["wins"]   += 1
@@ -901,6 +902,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             for key in sorted(data):
                 v        = data[key]
                 balance += v["usd"]
+                sb = v.get("start_balance") or ACCT
+                v["pct"] = v["usd"] / sb * 100 if sb else 0.0
                 parts = []
                 if v["wins"]:    parts.append(f"{GREEN}{BOLD}{v['wins']}W{RST}")
                 if v["losses"]:  parts.append(f"{RED}{BOLD}{v['losses']}L{RST}")

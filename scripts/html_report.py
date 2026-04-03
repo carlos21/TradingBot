@@ -31,6 +31,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     running_balance = account
     for r in summary_results:
         date = dtparser.parse(r["date"]).date()
+        sc_start_balance = running_balance
         trades_data = []
         for trade, close in (r.get("trade_pairs") or []):
             td = compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold,
@@ -39,7 +40,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             if td["outcome"] != "open":
                 running_balance += td["usd"]
         net_usd = sum(t["usd"] for t in trades_data)
-        net_pct = sum(t["pct"] for t in trades_data)
+        net_pct = net_usd / sc_start_balance * 100 if sc_start_balance else 0.0
         net_commission = sum(t.get("commission", 0.0) for t in trades_data)
         enriched.append({
             "name": r["name"],
@@ -67,14 +68,13 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         wins = losses = bes = sps = 0
         reentry_win = reentry_loss = reentry_be = 0
         m_usd = 0.0
-        m_pct = 0.0
         m_commission = 0.0
+        m_start_balance = balance
         for sc in monthly[mk]:
             for t in sc["trades"]:
                 if t["outcome"] == "open":
                     continue
                 m_usd += t["usd"]
-                m_pct += t["pct"]
                 m_commission += t.get("commission", 0.0)
                 is_re = t.get("is_reentry", False)
                 if t["outcome"] == "win":
@@ -92,6 +92,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                     if is_re:
                         reentry_be += 1
         balance += m_usd
+        m_pct = m_usd / m_start_balance * 100 if m_start_balance else 0.0
         month_agg[mk] = {
             "wins": wins, "losses": losses, "be": bes, "sp": sps,
             "usd": m_usd, "pct": m_pct, "balance": balance, "commission": m_commission,
