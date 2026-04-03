@@ -41,6 +41,7 @@ class StrategyOptions:
     reentry_breakeven: Optional[BreakevenConfig] = None  # breakeven config applied only to re-entry trades
     reentry_after_sl: bool = False        # re-enter if price comes back after a SL hit
     reentry_threshold: float = 60.0       # cancel re-entry if price goes this many pts past the line
+    reentry_only: bool = False            # skip initial trade, only take re-entry trades
 
 
 class BaseLiquidityStrategy:
@@ -434,6 +435,8 @@ class BaseLiquidityStrategy:
                 allow, _reason, hold = self._filters_allow_entry(proposed_ctx)
                 if allow:
                     trade = self._build_trade_from_context(proposed_ctx)
+                    if self.options.reentry_only:
+                        trade["is_phantom"] = True
                     self._store_and_emit_open(trade)
                     opened = True
                 elif hold:
@@ -519,10 +522,12 @@ class BaseLiquidityStrategy:
 
             if closed:
                 t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price)
+                is_phantom = t.get("is_phantom", False)
 
                 # Register re-entry opportunity when SL is hit (not on TP, not on re-entry trades)
+                # For reentry_only mode, phantom trades always create reentry opportunities
                 if (
-                    self.options.reentry_after_sl
+                    (self.options.reentry_after_sl or is_phantom)
                     and r_result < 0
                     and not t.get("is_reentry", False)
                 ):
@@ -543,28 +548,31 @@ class BaseLiquidityStrategy:
                             f"SL hit on {direction} trade — watching level={level:.2f} for re-entry (threshold={self.options.reentry_threshold:.0f}pts)"
                         )
 
-                # FIX: Persist the close to DB immediately
-                try:
-                    self.trade_repository.close_trade(
-                        trade_id=t["trade_id"],
-                        exit_price=exit_price,
-                        exit_time=self._ts_to_dt(bar["time"]),
-                        result=r_result
-                    )
-                    print(f"[Strategy] 💾 Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R)")
-                except Exception as e:
-                    print(f"[Strategy] ❌ Failed to persist close for {t['trade_id']}: {e}")
-                    self.analytics.capture_exception(e, {"op": "strategy_persist_close", "trade_id": t["trade_id"]})
+                if is_phantom:
+                    print(f"[Strategy] 👻 Phantom trade closed (Result: {r_result:.2f}R) — not persisted")
+                else:
+                    # Persist the close to DB immediately
+                    try:
+                        self.trade_repository.close_trade(
+                            trade_id=t["trade_id"],
+                            exit_price=exit_price,
+                            exit_time=self._ts_to_dt(bar["time"]),
+                            result=r_result
+                        )
+                        print(f"[Strategy] 💾 Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R)")
+                    except Exception as e:
+                        print(f"[Strategy] ❌ Failed to persist close for {t['trade_id']}: {e}")
+                        self.analytics.capture_exception(e, {"op": "strategy_persist_close", "trade_id": t["trade_id"]})
+                        if self.trade_logger:
+                            self.trade_logger.log(t["trade_id"], "ERROR", str(e))
+
                     if self.trade_logger:
-                        self.trade_logger.log(t["trade_id"], "ERROR", str(e))
+                        event = "SL_HIT" if r_result < 0 else "TP_HIT"
+                        self.trade_logger.log(t["trade_id"], event, f"Exit={exit_price:.2f} Result={r_result:.2f}R")
+                        self.trade_logger.log(t["trade_id"], "CLOSE", "Persisted to DB")
 
-                if self.trade_logger:
-                    event = "SL_HIT" if r_result < 0 else "TP_HIT"
-                    self.trade_logger.log(t["trade_id"], event, f"Exit={exit_price:.2f} Result={r_result:.2f}R")
-                    self.trade_logger.log(t["trade_id"], "CLOSE", "Persisted to DB")
-
-                self.trade_manager.trade_executor.on_trade_close(t['trade_id'], exit_price)
-                self.socketio.emit("trade_close", t)
+                    self.trade_manager.trade_executor.on_trade_close(t['trade_id'], exit_price)
+                    self.socketio.emit("trade_close", t)
             else:
                 remaining.append(t)
 
@@ -654,6 +662,12 @@ class BaseLiquidityStrategy:
         }
 
     def _store_and_emit_open(self, trade: Dict[str, Any]):
+        if trade.get("is_phantom"):
+            trade["trade_id"] = f"phantom-{trade['entry_time']}"
+            self.open_trades.append(trade)
+            print(f"[Strategy] 👻 Phantom trade opened @ {trade['entry']:.2f} (reentry_only mode)")
+            return
+
         td = self.trade_repository.insert_trade(
             pair=trade["pair"],
             trade_type=trade["type"],

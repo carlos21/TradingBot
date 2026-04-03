@@ -139,7 +139,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             if self.options.breakeven or self.options.reentry_breakeven:
                 self._check_breakeven(bar)
 
-            if self.options.reentry_after_sl and self._reentry_opportunities:
+            if (self.options.reentry_after_sl or self.options.reentry_only) and self._reentry_opportunities:
                 self._check_reentry_opportunities(bar)
             
             current_price = bar['close']
@@ -312,6 +312,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     trade = self._build_trade_from_context(proposed_ctx)
                     trade['tf'] = bar.get('tf', '1m')
                     trade['velocity_regime'] = line.get('vat_regime', '')
+                    if self.options.reentry_only:
+                        trade["is_phantom"] = True
                     self._store_and_emit_open(trade)
                     self.analytics.capture_signal_event("ENTRY_SIGNAL", {
                         "line_id": sid, "trigger": trigger_name,
