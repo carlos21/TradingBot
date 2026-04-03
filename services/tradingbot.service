@@ -1,14 +1,14 @@
 [Unit]
-Description=TradingBot Live Sim Server
+Description=TradingBot Live Server
 After=network.target
 
 [Service]
 Type=simple
 User=%i
 WorkingDirectory=/home/%i/TradingBot
-ExecStart=/home/%i/TradingBot/bin/live_sim.sh
+ExecStart=/home/%i/TradingBot/bin/live.sh
 
-# Defaults are in bin/live_sim.sh — override here only if needed
+# Defaults are in bin/live.sh — override here only if needed
 
 Restart=on-failure
 RestartSec=5

@@ -35,16 +35,16 @@ echo ""
 # Generate the actual service file with resolved paths
 cat > /etc/systemd/system/tradingbot.service <<EOF
 [Unit]
-Description=TradingBot Live Sim Server
+Description=TradingBot Live Server
 After=network.target
 
 [Service]
 Type=simple
 User=$WSL_USER
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$PROJECT_DIR/bin/live_sim.sh
+ExecStart=$PROJECT_DIR/bin/live.sh
 
-# Defaults are in bin/live_sim.sh — override here only if needed
+# Defaults are in bin/live.sh — override here only if needed
 Environment=HOME=$WSL_HOME
 Environment=PATH=$WSL_HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 

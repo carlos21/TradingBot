@@ -1,6 +1,6 @@
-# WSL Live Sim Service
+# WSL Live Service
 
-Run the TradingBot in **live mode with a NinjaTrader sim account** as a background service on WSL. The Python Flask server starts automatically when WSL boots, restarts on crash, and streams logs to journald.
+Run the TradingBot in **live trading mode** as a background service on WSL. The Python Flask server starts automatically when WSL boots, restarts on crash, and streams logs to journald.
 
 ---
 
@@ -10,7 +10,7 @@ Run the TradingBot in **live mode with a NinjaTrader sim account** as a backgrou
  Windows                             WSL (Linux)
 ┌──────────────────┐   HTTP    ┌──────────────────────────┐
 │   NinjaTrader    │ ───────── │  TradingBot (port 5001)  │
-│   (Sim Account)  │  :5001   │  systemd service          │
+│                  │  :5001   │  systemd service          │
 │                  │ ◄──────── │                          │
 │  Sends bars/ticks│           │  Returns trade commands   │
 │  Reports fills   │           │  (place/modify/close)     │
@@ -33,7 +33,7 @@ NinjaTrader on Windows pushes market data to the Flask server running inside WSL
 
 | File | Description |
 |------|-------------|
-| `bin/live_sim.sh` | Non-interactive launcher script. Sets `MODE=live` and default env vars, then starts the app. |
+| `bin/live.sh` | Non-interactive launcher script. Sets `MODE=live` and default env vars, then starts the app. |
 | `bin/install_service.sh` | Installs the systemd service with resolved paths for the current user. |
 | `services/tradingbot.service` | Reference systemd unit template (the install script generates the actual file). |
 
@@ -66,13 +66,13 @@ poetry install
 ### 3. Verify the app runs manually first
 
 ```bash
-./bin/live_sim.sh
+./bin/live.sh
 ```
 
 You should see:
 
 ```
-[tradingbot] Starting live sim — pair=MNQ account=Sim101
+[tradingbot] Starting live — pair=MNQ account=FNFTCHCARLOSDUCLOS74105
 ```
 
 and the Flask server listening on port 5001. Press `Ctrl+C` to stop.
@@ -142,7 +142,9 @@ The service uses these environment variables (with defaults):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PAIR` | `MNQ` | Trading pair (e.g., `MNQ`, `NQ`) |
-| `NT_ACCOUNT` | `Sim101` | NinjaTrader account name |
+| `NT_ACCOUNT` | `FNFTCHCARLOSDUCLOS74105` | NinjaTrader account name |
+| `RISK` | `50` | Fixed risk in USD per trade |
+| `RISK_PCT` | _(empty)_ | Risk as % of account balance (overrides RISK if set) |
 
 ### Changing defaults
 
@@ -159,7 +161,7 @@ This opens an override file. Add:
 ```ini
 [Service]
 Environment=PAIR=NQ
-Environment=NT_ACCOUNT=MySimAccount
+Environment=NT_ACCOUNT=MyAccount
 ```
 
 Then reload:
@@ -171,11 +173,11 @@ sudo systemctl restart tradingbot
 
 **Option B — Override in the launcher script:**
 
-Edit `bin/live_sim.sh` and change the defaults:
+Edit `bin/live.sh` and change the defaults:
 
 ```bash
 export PAIR="${PAIR:-NQ}"
-export NT_ACCOUNT="${NT_ACCOUNT:-MySimAccount}"
+export NT_ACCOUNT="${NT_ACCOUNT:-MyAccount}"
 ```
 
 Then restart:
@@ -204,11 +206,11 @@ These are shared between backtest and live mode. Changes require a service resta
 For quick testing or debugging, run the launcher directly:
 
 ```bash
-# With defaults (MNQ, Sim101)
-./bin/live_sim.sh
+# With defaults
+./bin/live.sh
 
 # With overrides
-PAIR=NQ NT_ACCOUNT=Sim201 ./bin/live_sim.sh
+PAIR=NQ NT_ACCOUNT=MyAccount RISK=100 ./bin/live.sh
 ```
 
 Or use the interactive menu:
