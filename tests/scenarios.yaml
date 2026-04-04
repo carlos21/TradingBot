@@ -10,11 +10,11 @@ scenarios:
     expect:
       entry: 20041.50
       sl:    20056.50
-      tp:    19981.50
+      tp:    19966.50
       reentry:
         entry: 20038.00
         sl:    20053.00
-        tp:    19978.00
+        tp:    19963.00
   - name: "NQ - 2025-05-02"
     pair: "NQ"
     tf: "1m"
@@ -26,11 +26,11 @@ scenarios:
     expect:
       entry: 20106.25
       sl:    20136.25
-      tp:    19986.25
+      tp:    19956.25
       reentry:
         entry: 20118.50
         sl:    20133.50
-        tp:    20058.50
+        tp:    20043.50
   - name: "NQ - 2025-05-05"
     pair: "NQ"
     tf: "1m"
@@ -42,11 +42,11 @@ scenarios:
     expect:
       entry: 20160.50
       sl:    20175.50
-      tp:    20100.50
+      tp:    20085.50
       reentry:
         entry: 20151.50
         sl:    20166.50
-        tp:    20091.50
+        tp:    20076.50
   - name: "NQ - 2025-05-06"
     pair: "NQ"
     tf: "3m"
@@ -59,7 +59,7 @@ scenarios:
     expect:
       entry: 19800.25
       sl:    19760.25
-      tp:    19960.25
+      tp:    20000.25
   - name: "NQ - 2025-05-07"
     pair: "NQ"
     tf: "1m"
@@ -70,11 +70,11 @@ scenarios:
     expect:
       entry: 19719.00
       sl:    19689.00
-      tp:    19839.00
+      tp:    19869.00
       reentry:
         entry: 19760.00
         sl:    19740.00
-        tp:    19840.00
+        tp:    19860.00
   - name: "NQ - 2025-05-08"
     pair: "NQ"
     tf: "1m"
@@ -86,11 +86,11 @@ scenarios:
     expect:
       entry: 20132.75
       sl:    20102.75
-      tp:    20252.75
+      tp:    20282.75
       reentry:
         entry: 20129.25
         sl:    20114.25
-        tp:    20189.25
+        tp:    20204.25
   - name: "NQ - 2025-05-09"
     pair: "NQ"
     tf: "1m"
@@ -101,7 +101,7 @@ scenarios:
     expect:
       entry: 20078.50
       sl:    20058.50
-      tp:    20158.50
+      tp:    20178.50
   - name: "NQ - 2025-05-13"
     pair: "NQ"
     tf: "1m"
@@ -113,7 +113,7 @@ scenarios:
     expect:
       entry: 21023.00
       sl:    21063.00
-      tp:    20863.00
+      tp:    20823.00
   - name: "NQ - 2025-05-15"
     pair: "NQ"
     tf: "1m"
@@ -125,7 +125,7 @@ scenarios:
     expect:
       entry: 21515.50
       sl:    21530.50
-      tp:    21455.50
+      tp:    21440.50
   - name: "NQ - 2025-05-16"
     pair: "NQ"
     tf: "1m"
@@ -136,11 +136,11 @@ scenarios:
     expect:
       entry: 21437.75
       sl:    21397.75
-      tp:    21597.75
+      tp:    21637.75
       reentry:
         entry: 21425.50
         sl:    21410.50
-        tp:    21485.50
+        tp:    21500.50
   - name: "NQ - 2025-05-19"
     pair: "NQ"
     tf: "1m"
@@ -153,11 +153,11 @@ scenarios:
     expect:
       entry: 21435.00
       sl:    21450.00
-      tp:    21375.00
+      tp:    21360.00
       reentry:
         entry: 21404.75
         sl:    21419.75
-        tp:    21344.75
+        tp:    21329.75
   - name: "NQ - 2025-05-20"
     pair: "NQ"
     tf: "1m"
@@ -169,11 +169,11 @@ scenarios:
     expect:
       entry: 21413.75
       sl:    21373.75
-      tp:    21573.75
+      tp:    21613.75
       reentry:
         entry: 21397.75
         sl:    21382.75
-        tp:    21457.75
+        tp:    21472.75
   - name: "NQ - 2025-05-21"
     pair: "NQ"
     tf: "1m"
@@ -185,11 +185,11 @@ scenarios:
     expect:
       entry: 21504.25
       sl:    21519.25
-      tp:    21444.25
+      tp:    21429.25
       reentry:
         entry: 21471.25
         sl:    21486.25
-        tp:    21411.25
+        tp:    21396.25
   - name: "NQ - 2025-05-22"
     pair: "NQ"
     tf: "1m"
@@ -200,11 +200,11 @@ scenarios:
     expect:
       entry: 21062.00
       sl:    21042.00
-      tp:    21142.00
+      tp:    21162.00
       reentry:
         entry: 21082.00
         sl:    21067.00
-        tp:    21142.00
+        tp:    21157.00
   - name: "NQ - 2025-05-23"
     pair: "NQ"
     tf: "1m"
@@ -217,7 +217,7 @@ scenarios:
     expect:
       entry: 20825.75
       sl:    20785.75
-      tp:    20985.75
+      tp:    21025.75
   - name: "NQ - 2025-05-26"
     pair: "NQ"
     tf: "5m"
@@ -239,11 +239,11 @@ scenarios:
     expect:
       entry: 21350.25
       sl:    21365.25
-      tp:    21290.25
+      tp:    21275.25
       reentry:
         entry: 21356.00
         sl:    21371.00
-        tp:    21296.00
+        tp:    21281.00
   - name: "NQ - 2025-05-28"
     pair: "NQ"
     tf: "1m"
@@ -254,7 +254,7 @@ scenarios:
     expect:
       entry: 21541.75
       sl:    21571.75
-      tp:    21421.75
+      tp:    21391.75
   - name: "NQ - 2025-05-29"
     pair: "NQ"
     tf: "1m"
@@ -266,7 +266,7 @@ scenarios:
     expect:
       entry: 21577.25
       sl:    21537.25
-      tp:    21737.25
+      tp:    21777.25
   - name: "NQ - 2025-05-30"
     pair: "NQ"
     tf: "1m"
@@ -278,7 +278,7 @@ scenarios:
     expect:
       entry: 21088.00
       sl:    21073.00
-      tp:    21148.00
+      tp:    21163.00
   - name: "NQ - 2025-06-04"
     pair: "NQ"
     tf: "1m"
@@ -289,11 +289,11 @@ scenarios:
     expect:
       entry: 21773.75
       sl:    21788.75
-      tp:    21713.75
+      tp:    21698.75
       reentry:
         entry: 21782.00
         sl:    21797.00
-        tp:    21722.00
+        tp:    21707.00
   - name: "NQ - 2025-06-05"
     pair: "NQ"
     tf: "1m"
@@ -304,11 +304,11 @@ scenarios:
     expect:
       entry: 21831.50
       sl:    21871.50
-      tp:    21671.50
+      tp:    21631.50
       reentry:
         entry: 21855.50
         sl:    21870.50
-        tp:    21795.50
+        tp:    21780.50
   - name: "NQ - 2025-06-09"
     pair: "NQ"
     tf: "1m"
@@ -319,7 +319,7 @@ scenarios:
     expect:
       entry: 21877.50
       sl:    21892.50
-      tp:    21817.50
+      tp:    21802.50
   - name: "NQ - 2025-06-10"
     pair: "NQ"
     tf: "1m"
@@ -330,7 +330,7 @@ scenarios:
     expect:
       entry: 21977.00
       sl:    21992.00
-      tp:    21917.00
+      tp:    21902.00
   - name: "NQ - 2025-06-11"
     pair: "NQ"
     tf: "5m"
@@ -351,7 +351,7 @@ scenarios:
     expect:
       entry: 21955.75
       sl:    21975.75
-      tp:    21875.75
+      tp:    21855.75
   - name: "NQ - 2025-06-13"
     pair: "NQ"
     tf: "1m"
@@ -362,11 +362,11 @@ scenarios:
     expect:
       entry: 21742.00
       sl:    21782.00
-      tp:    21582.00
+      tp:    21542.00
       reentry:
         entry: 21689.25
         sl:    21719.25
-        tp:    21569.25
+        tp:    21539.25
   - name: "NQ - 2025-06-16"
     pair: "NQ"
     tf: "5m"
@@ -418,7 +418,7 @@ scenarios:
     expect:
       entry: 22765.25
       sl:    22750.25
-      tp:    22825.25
+      tp:    22840.25
   - name: "NQ - 2025-07-02"
     pair: "NQ"
     tf: "1m"
@@ -429,7 +429,7 @@ scenarios:
     expect:
       entry: 22610.50
       sl:    22580.50
-      tp:    22730.50
+      tp:    22760.50
   - name: "NQ - 2025-07-03"
     pair: "NQ"
     tf: "1m"
@@ -440,7 +440,7 @@ scenarios:
     expect:
       entry: 22964.00
       sl:    22984.00
-      tp:    22884.00
+      tp:    22864.00
   - name: "NQ - 2025-07-04"
     pair: "NQ"
     tf: "1m"
@@ -461,7 +461,7 @@ scenarios:
     expect:
       entry: 22875.00
       sl:    22835.00
-      tp:    23035.00
+      tp:    23075.00
   - name: "NQ - 2025-07-08"
     pair: "NQ"
     tf: "1m"
@@ -472,11 +472,11 @@ scenarios:
     expect:
       entry: 22896.25
       sl:    22866.25
-      tp:    23016.25
+      tp:    23046.25
       reentry:
         entry: 22896.50
         sl:    22881.50
-        tp:    22956.50
+        tp:    22971.50
   - name: "NQ - 2025-07-09"
     pair: "NQ"
     tf: "1m"
@@ -488,11 +488,11 @@ scenarios:
     expect:
       entry: 23050.50
       sl:    23065.50
-      tp:    22990.50
+      tp:    22975.50
       reentry:
         entry: 23026.25
         sl:    23041.25
-        tp:    22966.25
+        tp:    22951.25
   - name: "NQ - 2025-07-10"
     pair: "NQ"
     tf: "1m"
@@ -504,7 +504,7 @@ scenarios:
     expect:
       entry: 22917.25
       sl:    22902.25
-      tp:    22977.25
+      tp:    22992.25
   - name: "NQ - 2025-07-11"
     pair: "NQ"
     tf: "1m"
@@ -515,11 +515,11 @@ scenarios:
     expect:
       entry: 22991.00
       sl:    23006.00
-      tp:    22931.00
+      tp:    22916.00
       reentry:
         entry: 22984.00
         sl:    22999.00
-        tp:    22924.00
+        tp:    22909.00
   - name: "NQ - 2025-07-14"
     pair: "NQ"
     tf: "1m"
@@ -532,11 +532,11 @@ scenarios:
     expect:
       entry: 23014.00
       sl:    23029.00
-      tp:    22954.00
+      tp:    22939.00
       reentry:
         entry: 23017.50
         sl:    23032.50
-        tp:    22957.50
+        tp:    22942.50
   - name: "NQ - 2025-07-16"
     pair: "NQ"
     tf: "3m"
@@ -547,7 +547,7 @@ scenarios:
     expect:
       entry: 23041.25
       sl:    23081.25
-      tp:    22881.25
+      tp:    22841.25
   - name: "NQ - 2025-07-17"
     pair: "NQ"
     tf: "1m"
@@ -559,7 +559,7 @@ scenarios:
     expect:
       entry: 23084.75
       sl:    23064.75
-      tp:    23164.75
+      tp:    23184.75
   - name: "NQ - 2025-07-18"
     pair: "NQ"
     tf: "1m"
@@ -571,7 +571,7 @@ scenarios:
     expect:
       entry: 23276.00
       sl:    23316.00
-      tp:    23116.00
+      tp:    23076.00
   - name: "NQ - 2025-07-21"
     pair: "NQ"
     tf: "1m"
@@ -582,7 +582,7 @@ scenarios:
     expect:
       entry: 23339.00
       sl:    23354.00
-      tp:    23279.00
+      tp:    23264.00
   - name: "NQ - 2025-07-22"
     pair: "NQ"
     tf: "1m"
@@ -594,11 +594,11 @@ scenarios:
     expect:
       entry: 23156.75
       sl:    23116.75
-      tp:    23316.75
+      tp:    23356.75
       reentry:
         entry: 23176.75
         sl:    23161.75
-        tp:    23236.75
+        tp:    23251.75
   - name: "NQ - 2025-07-23"
     pair: "NQ"
     tf: "1m"
@@ -610,11 +610,11 @@ scenarios:
     expect:
       entry: 23226.00
       sl:    23186.00
-      tp:    23386.00
+      tp:    23426.00
       reentry:
         entry: 23207.00
         sl:    23192.00
-        tp:    23267.00
+        tp:    23282.00
   - name: "NQ - 2025-07-24"
     pair: "NQ"
     tf: "1m"
@@ -635,11 +635,11 @@ scenarios:
     expect:
       entry: 23419.50
       sl:    23434.50
-      tp:    23359.50
+      tp:    23344.50
       reentry:
         entry: 23414.00
         sl:    23429.00
-        tp:    23354.00
+        tp:    23339.00
   - name: "NQ - 2025-07-29"
     pair: "NQ"
     tf: "1m"
@@ -660,11 +660,11 @@ scenarios:
     expect:
       entry: 23422.25
       sl:    23382.25
-      tp:    23582.25
+      tp:    23622.25
       reentry:
         entry: 23414.00
         sl:    23399.00
-        tp:    23474.00
+        tp:    23489.00
   - name: "NQ - 2025-08-01"
     pair: "NQ"
     tf: "1m"
@@ -686,7 +686,7 @@ scenarios:
     expect:
       entry: 23153.75
       sl:    23173.75
-      tp:    23073.75
+      tp:    23053.75
   - name: "NQ - 2025-08-05"
     pair: "NQ"
     tf: "1m"
@@ -698,7 +698,11 @@ scenarios:
     expect:
       entry: 23148.25
       sl:    23133.25
-      tp:    23208.25
+      tp:    23223.25
+      reentry:
+        entry: 23175.75
+        sl:    23160.75
+        tp:    23250.75
   - name: "NQ - 2025-08-06"
     pair: "NQ"
     tf: "1m"
@@ -710,7 +714,7 @@ scenarios:
     expect:
       entry: 23314.75
       sl:    23329.75
-      tp:    23254.75
+      tp:    23239.75
   - name: "NQ - 2025-08-07"
     pair: "NQ"
     tf: "1m"
@@ -722,7 +726,7 @@ scenarios:
     expect:
       entry: 23398.50
       sl:    23383.50
-      tp:    23458.50
+      tp:    23473.50
   - name: "NQ - 2025-08-08"
     pair: "NQ"
     tf: "1m"
@@ -733,7 +737,7 @@ scenarios:
     expect:
       entry: 23753.00
       sl:    23768.00
-      tp:    23693.00
+      tp:    23678.00
   - name: "NQ - 2025-08-12"
     pair: "NQ"
     tf: "1m"
@@ -754,7 +758,7 @@ scenarios:
     expect:
       entry: 23819.75
       sl:    23789.75
-      tp:    23939.75
+      tp:    23969.75
   - name: "NQ - 2025-08-15"
     pair: "NQ"
     tf: "1m"
@@ -765,11 +769,11 @@ scenarios:
     expect:
       entry: 23797.25
       sl:    23767.25
-      tp:    23917.25
+      tp:    23947.25
       reentry:
         entry: 23798.25
         sl:    23783.25
-        tp:    23858.25
+        tp:    23873.25
   - name: "NQ - 2025-08-18"
     pair: "NQ"
     tf: "1m"
@@ -780,7 +784,7 @@ scenarios:
     expect:
       entry: 23749.00
       sl:    23719.00
-      tp:    23869.00
+      tp:    23899.00
   - name: "NQ - 2025-08-19"
     pair: "NQ"
     tf: "1m"
@@ -791,11 +795,11 @@ scenarios:
     expect:
       entry: 23698.50
       sl:    23658.50
-      tp:    23858.50
+      tp:    23898.50
       reentry:
         entry: 23721.75
         sl:    23706.75
-        tp:    23781.75
+        tp:    23796.75
   - name: "NQ - 2025-08-20"
     pair: "NQ"
     tf: "1m"
@@ -808,11 +812,11 @@ scenarios:
     expect:
       entry: 23112.00
       sl:    23092.00
-      tp:    23192.00
+      tp:    23212.00
       reentry:
         entry: 23115.00
         sl:    23100.00
-        tp:    23175.00
+        tp:    23190.00
   - name: "NQ - 2025-08-21"
     pair: "NQ"
     tf: "1m"
@@ -823,7 +827,7 @@ scenarios:
     expect:
       entry: 23128.50
       sl:    23113.50
-      tp:    23188.50
+      tp:    23203.50
   - name: "NQ - 2025-08-22"
     pair: "NQ"
     tf: "1m"
@@ -836,11 +840,11 @@ scenarios:
     expect:
       entry: 23604.50
       sl:    23634.50
-      tp:    23484.50
+      tp:    23454.50
       reentry:
         entry: 23581.75
         sl:    23596.75
-        tp:    23521.75
+        tp:    23506.75
   - name: "NQ - 2025-08-25"
     pair: "NQ"
     tf: "1m"
@@ -852,11 +856,11 @@ scenarios:
     expect:
       entry: 23488.50
       sl:    23448.50
-      tp:    23648.50
+      tp:    23688.50
       reentry:
         entry: 23469.00
         sl:    23454.00
-        tp:    23529.00
+        tp:    23544.00
   - name: "NQ - 2025-08-27"
     pair: "NQ"
     tf: "1m"
@@ -867,7 +871,7 @@ scenarios:
     expect:
       entry: 23650.00
       sl:    23665.00
-      tp:    23590.00
+      tp:    23575.00
   - name: "NQ - 2025-08-28"
     pair: "NQ"
     tf: "1m"
@@ -879,11 +883,11 @@ scenarios:
     expect:
       entry: 23693.50
       sl:    23733.50
-      tp:    23533.50
+      tp:    23493.50
       reentry:
         entry: 23706.00
         sl:    23721.00
-        tp:    23646.00
+        tp:    23631.00
   - name: "NQ - 2025-08-29"
     pair: "NQ"
     tf: "1m"
@@ -895,11 +899,11 @@ scenarios:
     expect:
       entry: 23559.75
       sl:    23519.75
-      tp:    23719.75
+      tp:    23759.75
       reentry:
         entry: 23544.00
         sl:    23529.00
-        tp:    23604.00
+        tp:    23619.00
   - name: "NQ - 2025-09-02"
     pair: "NQ"
     tf: "1m"
@@ -910,7 +914,11 @@ scenarios:
     expect:
       entry: 23087.75
       sl:    23047.75
-      tp:    23247.75
+      tp:    23287.75
+      reentry:
+        entry: 23052.50
+        sl:    23037.50
+        tp:    23127.50
   - name: "NQ - 2025-09-04"
     pair: "NQ"
     tf: "1m"
@@ -921,11 +929,11 @@ scenarios:
     expect:
       entry: 23560.50
       sl:    23575.50
-      tp:    23500.50
+      tp:    23485.50
       reentry:
         entry: 23554.50
         sl:    23569.50
-        tp:    23494.50
+        tp:    23479.50
   - name: "NQ - 2025-09-05"
     pair: "NQ"
     tf: "1m"
@@ -936,7 +944,7 @@ scenarios:
     expect:
       entry: 23890.75
       sl:    23905.75
-      tp:    23830.75
+      tp:    23815.75
   - name: "NQ - 2025-09-08"
     pair: "NQ"
     tf: "3m"
@@ -947,11 +955,11 @@ scenarios:
     expect:
       entry: 23807.50
       sl:    23847.50
-      tp:    23647.50
+      tp:    23607.50
       reentry:
         entry: 23819.75
         sl:    23834.75
-        tp:    23759.75
+        tp:    23744.75
   - name: "NQ - 2025-09-09"
     pair: "NQ"
     tf: "1m"
@@ -962,11 +970,11 @@ scenarios:
     expect:
       entry: 23904.00
       sl:    23919.00
-      tp:    23844.00
+      tp:    23829.00
       reentry:
         entry: 23895.50
         sl:    23910.50
-        tp:    23835.50
+        tp:    23820.50
   - name: "NQ - 2025-09-12"
     pair: "NQ"
     tf: "1m"
@@ -977,7 +985,7 @@ scenarios:
     expect:
       entry: 24068.25
       sl:    24083.25
-      tp:    24008.25
+      tp:    23993.25
   - name: "NQ - 2025-09-24"
     pair: "NQ"
     tf: "1m"
@@ -988,11 +996,11 @@ scenarios:
     expect:
       entry: 24707.75
       sl:    24677.75
-      tp:    24827.75
+      tp:    24857.75
       reentry:
         entry: 24710.75
         sl:    24695.75
-        tp:    24770.75
+        tp:    24785.75
   - name: "NQ - 2025-09-25"
     pair: "NQ"
     tf: "1m"
@@ -1013,7 +1021,7 @@ scenarios:
     expect:
       entry: 24569.00
       sl:    24529.00
-      tp:    24729.00
+      tp:    24769.00
   - name: "NQ - 2025-09-29"
     pair: "NQ"
     tf: "1m"
@@ -1025,11 +1033,11 @@ scenarios:
     expect:
       entry: 24939.25
       sl:    24954.25
-      tp:    24879.25
+      tp:    24864.25
       reentry:
         entry: 24905.75
         sl:    24920.75
-        tp:    24845.75
+        tp:    24830.75
   - name: "NQ - 2025-10-01"
     pair: "NQ"
     tf: "1m"
@@ -1040,11 +1048,11 @@ scenarios:
     expect:
       entry: 24973.00
       sl:    24988.00
-      tp:    24913.00
+      tp:    24898.00
       reentry:
         entry: 24974.25
         sl:    24989.25
-        tp:    24914.25
+        tp:    24899.25
   - name: "NQ - 2025-10-02"
     pair: "NQ"
     tf: "1m"
@@ -1055,11 +1063,11 @@ scenarios:
     expect:
       entry: 25034.75
       sl:    25014.75
-      tp:    25114.75
+      tp:    25134.75
       reentry:
         entry: 25028.25
         sl:    25013.25
-        tp:    25088.25
+        tp:    25103.25
   - name: "NQ - 2025-10-03"
     pair: "NQ"
     tf: "1m"
@@ -1070,7 +1078,7 @@ scenarios:
     expect:
       entry: 24963.25
       sl:    24923.25
-      tp:    25123.25
+      tp:    25163.25
   - name: "NQ - 2025-10-06"
     pair: "NQ"
     tf: "1m"
@@ -1081,7 +1089,7 @@ scenarios:
     expect:
       entry: 25229.50
       sl:    25244.50
-      tp:    25169.50
+      tp:    25154.50
   - name: "NQ - 2025-10-07"
     pair: "NQ"
     tf: "1m"
@@ -1092,7 +1100,7 @@ scenarios:
     expect:
       entry: 25262.00
       sl:    25277.00
-      tp:    25202.00
+      tp:    25187.00
   - name: "NQ - 2025-10-08"
     pair: "NQ"
     tf: "1m"
@@ -1104,11 +1112,11 @@ scenarios:
     expect:
       entry: 25117.00
       sl:    25132.00
-      tp:    25057.00
+      tp:    25042.00
       reentry:
         entry: 25122.75
         sl:    25137.75
-        tp:    25062.75
+        tp:    25047.75
   - name: "NQ - 2025-10-09"
     pair: "NQ"
     tf: "1m"
@@ -1119,11 +1127,11 @@ scenarios:
     expect:
       entry: 25275.75
       sl:    25255.75
-      tp:    25355.75
+      tp:    25375.75
       reentry:
         entry: 25294.25
         sl:    25274.25
-        tp:    25374.25
+        tp:    25394.25
   - name: "NQ - 2025-10-10"
     pair: "NQ"
     tf: "1m"
@@ -1140,7 +1148,7 @@ scenarios:
     expect:
       entry: 24838.25
       sl:    24798.25
-      tp:    24998.25
+      tp:    25038.25
   - name: "NQ - 2025-10-15"
     pair: "NQ"
     tf: "1m"
@@ -1151,7 +1159,7 @@ scenarios:
     expect:
       entry: 25086.25
       sl:    25116.25
-      tp:    24966.25
+      tp:    24936.25
   - name: "NQ - 2025-10-16"
     pair: "NQ"
     tf: "1m"
@@ -1162,7 +1170,7 @@ scenarios:
     expect:
       entry: 25148.75
       sl:    25178.75
-      tp:    25028.75
+      tp:    24998.75
   - name: "NQ - 2025-10-17"
     pair: "NQ"
     tf: "1m"
@@ -1173,11 +1181,11 @@ scenarios:
     expect:
       entry: 25015.00
       sl:    25030.00
-      tp:    24955.00
+      tp:    24940.00
       reentry:
         entry: 25008.25
         sl:    25023.25
-        tp:    24948.25
+        tp:    24933.25
   - name: "NQ - 2025-10-20"
     pair: "NQ"
     tf: "1m"
@@ -1189,7 +1197,7 @@ scenarios:
     expect:
       entry: 25208.75
       sl:    25223.75
-      tp:    25148.75
+      tp:    25133.75
   - name: "NQ - 2025-10-22"
     pair: "NQ"
     tf: "1m"
@@ -1200,7 +1208,7 @@ scenarios:
     expect:
       entry: 25191.50
       sl:    25171.50
-      tp:    25271.50
+      tp:    25291.50
   - name: "NQ - 2025-10-23"
     pair: "NQ"
     tf: "1m"
@@ -1211,11 +1219,11 @@ scenarios:
     expect:
       entry: 25197.50
       sl:    25217.50
-      tp:    25117.50
+      tp:    25097.50
       reentry:
         entry: 25207.00
         sl:    25222.00
-        tp:    25147.00
+        tp:    25132.00
   - name: "NQ - 2025-10-24"
     pair: "NQ"
     tf: "1m"
@@ -1247,11 +1255,11 @@ scenarios:
     expect:
       entry: 26007.75
       sl:    25977.75
-      tp:    26127.75
+      tp:    26157.75
       reentry:
         entry: 25995.25
         sl:    25980.25
-        tp:    26055.25
+        tp:    26070.25
   - name: "NQ - 2025-11-03"
     pair: "NQ"
     tf: "1m"
@@ -1273,7 +1281,7 @@ scenarios:
     expect:
       entry: 25866.25
       sl:    25896.25
-      tp:    25746.25
+      tp:    25716.25
   - name: "NQ - 2025-11-06"
     pair: "NQ"
     tf: "1m"
@@ -1286,7 +1294,7 @@ scenarios:
     expect:
       entry: 25355.50
       sl:    25315.50
-      tp:    25515.50
+      tp:    25555.50
   - name: "NQ - 2025-11-07"
     pair: "NQ"
     tf: "1m"
@@ -1298,7 +1306,7 @@ scenarios:
     expect:
       entry: 24790.25
       sl:    24770.25
-      tp:    24870.25
+      tp:    24890.25
   - name: "NQ - 2025-11-10"
     pair: "NQ"
     tf: "1m"
@@ -1309,11 +1317,11 @@ scenarios:
     expect:
       entry: 25630.50
       sl:    25645.50
-      tp:    25570.50
+      tp:    25555.50
       reentry:
         entry: 25626.00
         sl:    25641.00
-        tp:    25566.00
+        tp:    25551.00
   - name: "NQ - 2025-11-13"
     pair: "NQ"
     tf: "1m"
@@ -1324,7 +1332,7 @@ scenarios:
     expect:
       entry: 25470.00
       sl:    25430.00
-      tp:    25630.00
+      tp:    25670.00
   - name: "NQ - 2025-11-14"
     pair: "NQ"
     tf: "1m"
@@ -1344,11 +1352,11 @@ scenarios:
     expect:
       entry: 25030.50
       sl:    25010.50
-      tp:    25110.50
+      tp:    25130.50
       reentry:
         entry: 25068.50
         sl:    25028.50
-        tp:    25228.50
+        tp:    25268.50
   - name: "NQ - 2025-11-18"
     pair: "NQ"
     tf: "1m"
@@ -1359,7 +1367,7 @@ scenarios:
     expect:
       entry: 24427.75
       sl:    24387.75
-      tp:    24587.75
+      tp:    24627.75
   - name: "NQ - 2025-11-19"
     pair: "NQ"
     tf: "3m"
@@ -1370,7 +1378,7 @@ scenarios:
     expect:
       entry: 24572.75
       sl:    24532.75
-      tp:    24732.75
+      tp:    24772.75
   - name: "NQ - 2025-11-20"
     pair: "NQ"
     tf: "1m"
@@ -1381,7 +1389,7 @@ scenarios:
     expect:
       entry: 25250.25
       sl:    25265.25
-      tp:    25190.25
+      tp:    25175.25
   - name: "NQ - 2025-11-21"
     pair: "NQ"
     tf: "1m"
@@ -1392,11 +1400,11 @@ scenarios:
     expect:
       entry: 24362.25
       sl:    24392.25
-      tp:    24242.25
+      tp:    24212.25
       reentry:
         entry: 24364.50
         sl:    24379.50
-        tp:    24304.50
+        tp:    24289.50
   - name: "NQ - 2025-11-25"
     pair: "NQ"
     tf: "1m"
@@ -1407,7 +1415,7 @@ scenarios:
     expect:
       entry: 25048.50
       sl:    25063.50
-      tp:    24988.50
+      tp:    24973.50
   - name: "NQ - 2025-11-26"
     pair: "NQ"
     tf: "1m"
@@ -1418,7 +1426,7 @@ scenarios:
     expect:
       entry: 25364.00
       sl:    25379.00
-      tp:    25304.00
+      tp:    25289.00
   - name: "NQ - 2025-12-02"
     pair: "NQ"
     tf: "1m"
@@ -1429,7 +1437,7 @@ scenarios:
     expect:
       entry: 25587.50
       sl:    25617.50
-      tp:    25467.50
+      tp:    25437.50
   - name: "NQ - 2025-12-03"
     pair: "NQ"
     tf: "1m"
@@ -1440,7 +1448,7 @@ scenarios:
     expect:
       entry: 25611.00
       sl:    25626.00
-      tp:    25551.00
+      tp:    25536.00
   - name: "NQ - 2025-12-04"
     pair: "NQ"
     tf: "1m"
@@ -1451,7 +1459,7 @@ scenarios:
     expect:
       entry: 25720.75
       sl:    25735.75
-      tp:    25660.75
+      tp:    25645.75
   - name: "NQ - 2025-12-05"
     pair: "NQ"
     tf: "1m"
@@ -1462,7 +1470,7 @@ scenarios:
     expect:
       entry: 25594.25
       sl:    25579.25
-      tp:    25654.25
+      tp:    25669.25
   - name: "NQ - 2025-12-08"
     pair: "NQ"
     tf: "1m"
@@ -1473,7 +1481,7 @@ scenarios:
     expect:
       entry: 25586.75
       sl:    25566.75
-      tp:    25666.75
+      tp:    25686.75
   - name: "NQ - 2025-12-10"
     pair: "NQ"
     tf: "1m"
@@ -1484,7 +1492,7 @@ scenarios:
     expect:
       entry: 25550.75
       sl:    25530.75
-      tp:    25630.75
+      tp:    25650.75
   - name: "NQ - 2025-12-12"
     pair: "NQ"
     tf: "1m"
@@ -1495,7 +1503,7 @@ scenarios:
     expect:
       entry: 25342.75
       sl:    25302.75
-      tp:    25502.75
+      tp:    25542.75
   - name: "NQ - 2025-12-15"
     pair: "NQ"
     tf: "1m"
@@ -1506,11 +1514,11 @@ scenarios:
     expect:
       entry: 25385.75
       sl:    25400.75
-      tp:    25325.75
+      tp:    25310.75
       reentry:
         entry: 25380.00
         sl:    25395.00
-        tp:    25320.00
+        tp:    25305.00
   - name: "NQ - 2025-12-17"
     pair: "NQ"
     tf: "1m"
@@ -1523,7 +1531,7 @@ scenarios:
     expect:
       entry: 25103.00
       sl:    25063.00
-      tp:    25263.00
+      tp:    25303.00
   - name: "NQ - 2025-12-18"
     pair: "NQ"
     tf: "1m"
@@ -1545,7 +1553,7 @@ scenarios:
     expect:
       entry: 25627.00
       sl:    25607.00
-      tp:    25707.00
+      tp:    25727.00
   - name: "NQ - 2025-12-24"
     pair: "NQ"
     tf: "1m"
@@ -1556,11 +1564,11 @@ scenarios:
     expect:
       entry: 25824.50
       sl:    25839.50
-      tp:    25764.50
+      tp:    25749.50
       reentry:
         entry: 25817.75
         sl:    25832.75
-        tp:    25757.75
+        tp:    25742.75
   - name: "NQ - 2025-12-26"
     pair: "NQ"
     tf: "1m"
@@ -1571,11 +1579,11 @@ scenarios:
     expect:
       entry: 25917.25
       sl:    25932.25
-      tp:    25857.25
+      tp:    25842.25
       reentry:
         entry: 25915.25
         sl:    25930.25
-        tp:    25855.25
+        tp:    25840.25
   - name: "NQ - 2025-12-29"
     pair: "NQ"
     tf: "1m"
@@ -1586,7 +1594,11 @@ scenarios:
     expect:
       entry: 25686.25
       sl:    25656.25
-      tp:    25806.25
+      tp:    25836.25
+      reentry:
+        entry: 25698.25
+        sl:    25683.25
+        tp:    25773.25
   - name: "NQ - 2025-12-31"
     pair: "NQ"
     tf: "1m"
@@ -1597,11 +1609,11 @@ scenarios:
     expect:
       entry: 25701.75
       sl:    25716.75
-      tp:    25641.75
+      tp:    25626.75
       reentry:
         entry: 25696.25
         sl:    25711.25
-        tp:    25636.25
+        tp:    25621.25
   - name: "NQ - 2026-01-02"
     pair: "NQ"
     tf: "1m"
@@ -1612,11 +1624,11 @@ scenarios:
     expect:
       entry: 25338.75
       sl:    25323.75
-      tp:    25398.75
+      tp:    25413.75
       reentry:
         entry: 25355.00
         sl:    25340.00
-        tp:    25415.00
+        tp:    25430.00
   - name: "NQ - 2026-01-05"
     pair: "NQ"
     tf: "1m"
@@ -1627,11 +1639,11 @@ scenarios:
     expect:
       entry: 25621.00
       sl:    25651.00
-      tp:    25501.00
+      tp:    25471.00
       reentry:
         entry: 25630.50
         sl:    25645.50
-        tp:    25570.50
+        tp:    25555.50
   - name: "NQ - 2026-01-06"
     pair: "NQ"
     tf: "3m"
@@ -1642,11 +1654,11 @@ scenarios:
     expect:
       entry: 25800.00
       sl:    25815.00
-      tp:    25740.00
+      tp:    25725.00
       reentry:
         entry: 25801.75
         sl:    25816.75
-        tp:    25741.75
+        tp:    25726.75
   - name: "NQ - 2026-01-07"
     pair: "NQ"
     tf: "1m"
@@ -1657,11 +1669,11 @@ scenarios:
     expect:
       entry: 25951.25
       sl:    25966.25
-      tp:    25891.25
+      tp:    25876.25
       reentry:
         entry: 25932.00
         sl:    25947.00
-        tp:    25872.00
+        tp:    25857.00
   - name: "NQ - 2026-01-09"
     pair: "NQ"
     tf: "1m"
@@ -1672,11 +1684,11 @@ scenarios:
     expect:
       entry: 25684.75
       sl:    25644.75
-      tp:    25844.75
+      tp:    25884.75
       reentry:
         entry: 25724.25
         sl:    25704.25
-        tp:    25804.25
+        tp:    25824.25
   - name: "NQ - 2026-01-12"
     pair: "NQ"
     tf: "1m"
@@ -1687,7 +1699,7 @@ scenarios:
     expect:
       entry: 25914.50
       sl:    25934.50
-      tp:    25834.50
+      tp:    25814.50
   - name: "NQ - 2026-01-13"
     pair: "NQ"
     tf: "1m"
@@ -1698,7 +1710,7 @@ scenarios:
     expect:
       entry: 26017.00
       sl:    26047.00
-      tp:    25897.00
+      tp:    25867.00
   - name: "NQ - 2026-01-14"
     pair: "NQ"
     tf: "1m"
@@ -1709,7 +1721,7 @@ scenarios:
     expect:
       entry: 25490.00
       sl:    25470.00
-      tp:    25570.00
+      tp:    25590.00
   - name: "NQ - 2026-01-15"
     pair: "NQ"
     tf: "3m"
@@ -1720,7 +1732,7 @@ scenarios:
     expect:
       entry: 25924.50
       sl:    25954.50
-      tp:    25804.50
+      tp:    25774.50
   - name: "NQ - 2026-01-16"
     pair: "NQ"
     tf: "1m"
@@ -1731,7 +1743,7 @@ scenarios:
     expect:
       entry: 25864.25
       sl:    25894.25
-      tp:    25744.25
+      tp:    25714.25
   - name: "NQ - 2026-01-19"
     pair: "NQ"
     tf: "1m"
@@ -1742,11 +1754,11 @@ scenarios:
     expect:
       entry: 25257.75
       sl:    25242.75
-      tp:    25317.75
+      tp:    25332.75
       reentry:
         entry: 25262.00
         sl:    25247.00
-        tp:    25322.00
+        tp:    25337.00
   - name: "NQ - 2026-01-20"
     pair: "NQ"
     tf: "1m"
@@ -1757,11 +1769,11 @@ scenarios:
     expect:
       entry: 25291.00
       sl:    25331.00
-      tp:    25131.00
+      tp:    25091.00
       reentry:
         entry: 25300.50
         sl:    25330.50
-        tp:    25180.50
+        tp:    25150.50
   - name: "NQ - 2026-01-21"
     pair: "NQ"
     tf: "1m"
@@ -1772,11 +1784,11 @@ scenarios:
     expect:
       entry: 25437.50
       sl:    25452.50
-      tp:    25377.50
+      tp:    25362.50
       reentry:
         entry: 25432.75
         sl:    25447.75
-        tp:    25372.75
+        tp:    25357.75
   - name: "NQ - 2026-01-23"
     pair: "NQ"
     tf: "3m"
@@ -1787,7 +1799,7 @@ scenarios:
     expect:
       entry: 25824.75
       sl:    25844.75
-      tp:    25744.75
+      tp:    25724.75
   - name: "NQ - 2026-01-26"
     pair: "NQ"
     tf: "1m"
@@ -1798,7 +1810,7 @@ scenarios:
     expect:
       entry: 25794.75
       sl:    25824.75
-      tp:    25674.75
+      tp:    25644.75
   - name: "NQ - 2026-01-27"
     pair: "NQ"
     tf: "1m"
@@ -1809,11 +1821,11 @@ scenarios:
     expect:
       entry: 25995.50
       sl:    25955.50
-      tp:    26155.50
+      tp:    26195.50
       reentry:
         entry: 25974.00
         sl:    25959.00
-        tp:    26034.00
+        tp:    26049.00
   - name: "NQ - 2026-01-29"
     pair: "NQ"
     tf: "1m"
@@ -1825,11 +1837,11 @@ scenarios:
     expect:
       entry: 25973.00
       sl:    25933.00
-      tp:    26133.00
+      tp:    26173.00
       reentry:
         entry: 25935.25
         sl:    25920.25
-        tp:    25995.25
+        tp:    26010.25
   - name: "NQ - 2026-01-30"
     pair: "NQ"
     tf: "1m"
@@ -1840,7 +1852,7 @@ scenarios:
     expect:
       entry: 25598.25
       sl:    25568.25
-      tp:    25718.25
+      tp:    25748.25
   - name: "NQ - 2026-02-02"
     pair: "NQ"
     tf: "1m"
@@ -1863,11 +1875,11 @@ scenarios:
     expect:
       entry: 25557.25
       sl:    25527.25
-      tp:    25677.25
+      tp:    25707.25
       reentry:
         entry: 25549.25
         sl:    25534.25
-        tp:    25609.25
+        tp:    25624.25
   - name: "NQ - 2026-02-04"
     pair: "NQ"
     tf: "1m"
@@ -1879,11 +1891,11 @@ scenarios:
     expect:
       entry: 25171.50
       sl:    25131.50
-      tp:    25331.50
+      tp:    25371.50
       reentry:
         entry: 25226.50
         sl:    25186.50
-        tp:    25386.50
+        tp:    25426.50
   - name: "NQ - 2026-02-05"
     pair: "NQ"
     tf: "1m"
@@ -1894,11 +1906,11 @@ scenarios:
     expect:
       entry: 24872.75
       sl:    24912.75
-      tp:    24712.75
+      tp:    24672.75
       reentry:
         entry: 24913.50
         sl:    24928.50
-        tp:    24853.50
+        tp:    24838.50
   - name: "NQ - 2026-02-06"
     pair: "NQ"
     tf: "1m"
@@ -1910,11 +1922,11 @@ scenarios:
     expect:
       entry: 24988.25
       sl:    25003.25
-      tp:    24928.25
+      tp:    24913.25
       reentry:
         entry: 24981.75
         sl:    24996.75
-        tp:    24921.75
+        tp:    24906.75
   - name: "NQ - 2026-02-09"
     pair: "NQ"
     tf: "1m"
@@ -1925,11 +1937,11 @@ scenarios:
     expect:
       entry: 25349.75
       sl:    25364.75
-      tp:    25289.75
+      tp:    25274.75
       reentry:
         entry: 25353.75
         sl:    25368.75
-        tp:    25293.75
+        tp:    25278.75
   - name: "NQ - 2026-02-10"
     pair: "NQ"
     tf: "1m"
@@ -1940,7 +1952,7 @@ scenarios:
     expect:
       entry: 25435.25
       sl:    25450.25
-      tp:    25375.25
+      tp:    25360.25
   - name: "NQ - 2026-02-11"
     pair: "NQ"
     tf: "1m"
@@ -1951,7 +1963,7 @@ scenarios:
     expect:
       entry: 25101.50
       sl:    25061.50
-      tp:    25261.50
+      tp:    25301.50
   - name: "NQ - 2026-02-12"
     pair: "NQ"
     tf: "1m"
@@ -1962,7 +1974,7 @@ scenarios:
     expect:
       entry: 25411.75
       sl:    25426.75
-      tp:    25351.75
+      tp:    25336.75
   - name: "NQ - 2026-02-13"
     pair: "NQ"
     tf: "1m"
@@ -1973,7 +1985,7 @@ scenarios:
     expect:
       entry: 24688.25
       sl:    24648.25
-      tp:    24848.25
+      tp:    24888.25
   - name: "NQ - 2026-02-17"
     pair: "NQ"
     tf: "1m"
@@ -1984,7 +1996,7 @@ scenarios:
     expect:
       entry: 24776.50
       sl:    24816.50
-      tp:    24616.50
+      tp:    24576.50
   - name: "NQ - 2026-02-18"
     pair: "NQ"
     tf: "1m"
@@ -1995,11 +2007,11 @@ scenarios:
     expect:
       entry: 24804.50
       sl:    24764.50
-      tp:    24964.50
+      tp:    25004.50
       reentry:
         entry: 24782.75
         sl:    24767.75
-        tp:    24842.75
+        tp:    24857.75
   - name: "NQ - 2026-02-19"
     pair: "NQ"
     tf: "1m"
@@ -2010,11 +2022,11 @@ scenarios:
     expect:
       entry: 24908.75
       sl:    24948.75
-      tp:    24748.75
+      tp:    24708.75
       reentry:
         entry: 24926.50
         sl:    24941.50
-        tp:    24866.50
+        tp:    24851.50
   - name: "NQ - 2026-02-20"
     pair: "NQ"
     tf: "1m"
@@ -2025,11 +2037,11 @@ scenarios:
     expect:
       entry: 24748.25
       sl:    24718.25
-      tp:    24868.25
+      tp:    24898.25
       reentry:
         entry: 24780.50
         sl:    24750.50
-        tp:    24900.50
+        tp:    24930.50
   - name: "NQ - 2026-02-23"
     pair: "NQ"
     tf: "1m"
@@ -2040,11 +2052,11 @@ scenarios:
     expect:
       entry: 24976.75
       sl:    25016.75
-      tp:    24816.75
+      tp:    24776.75
       reentry:
         entry: 25011.75
         sl:    25026.75
-        tp:    24951.75
+        tp:    24936.75
   - name: "NQ - 2026-02-24"
     pair: "NQ"
     tf: "1m"
@@ -2055,11 +2067,11 @@ scenarios:
     expect:
       entry: 24739.00
       sl:    24709.00
-      tp:    24859.00
+      tp:    24889.00
       reentry:
         entry: 24720.50
         sl:    24705.50
-        tp:    24780.50
+        tp:    24795.50
   - name: "NQ - 2026-02-25"
     pair: "NQ"
     tf: "1m"
@@ -2070,11 +2082,11 @@ scenarios:
     expect:
       entry: 25326.00
       sl:    25346.00
-      tp:    25246.00
+      tp:    25226.00
       reentry:
         entry: 25321.00
         sl:    25336.00
-        tp:    25261.00
+        tp:    25246.00
   - name: "NQ - 2026-02-26"
     pair: "NQ"
     tf: "1m"
@@ -2085,11 +2097,11 @@ scenarios:
     expect:
       entry: 24939.75
       sl:    24899.75
-      tp:    25099.75
+      tp:    25139.75
       reentry:
         entry: 24932.25
         sl:    24917.25
-        tp:    24992.25
+        tp:    25007.25
   - name: "NQ - 2026-02-27"
     pair: "NQ"
     tf: "1m"
@@ -2100,11 +2112,11 @@ scenarios:
     expect:
       entry: 24823.50
       sl:    24808.50
-      tp:    24883.50
+      tp:    24898.50
       reentry:
         entry: 24866.00
         sl:    24851.00
-        tp:    24926.00
+        tp:    24941.00
   - name: "NQ - 2026-03-02"
     pair: "NQ"
     tf: "1m"
@@ -2115,11 +2127,11 @@ scenarios:
     expect:
       entry: 24915.50
       sl:    24945.50
-      tp:    24795.50
+      tp:    24765.50
       reentry:
         entry: 24920.50
         sl:    24940.50
-        tp:    24840.50
+        tp:    24820.50
   - name: "NQ - 2026-03-03"
     pair: "NQ"
     tf: "1m"
@@ -2130,7 +2142,7 @@ scenarios:
     expect:
       entry: 24376.00
       sl:    24346.00
-      tp:    24496.00
+      tp:    24526.00
   - name: "NQ - 2026-03-04"
     pair: "NQ"
     tf: "1m"
@@ -2141,7 +2153,11 @@ scenarios:
     expect:
       entry: 25126.25
       sl:    25146.25
-      tp:    25046.25
+      tp:    25026.25
+      reentry:
+        entry: 25091.50
+        sl:    25106.50
+        tp:    25016.50
   - name: "NQ - 2026-03-05"
     pair: "NQ"
     tf: "1m"
@@ -2152,7 +2168,7 @@ scenarios:
     expect:
       entry: 24976.25
       sl:    24961.25
-      tp:    25036.25
+      tp:    25051.25
   - name: "NQ - 2026-03-06"
     pair: "NQ"
     tf: "1m"
@@ -2164,11 +2180,11 @@ scenarios:
     expect:
       entry: 24823.50
       sl:    24783.50
-      tp:    24983.50
+      tp:    25023.50
       reentry:
         entry: 24786.50
         sl:    24771.50
-        tp:    24846.50
+        tp:    24861.50
   - name: "NQ - 2026-03-09"
     pair: "NQ"
     tf: "1m"
@@ -2179,11 +2195,11 @@ scenarios:
     expect:
       entry: 24459.00
       sl:    24499.00
-      tp:    24299.00
+      tp:    24259.00
       reentry:
         entry: 24483.50
         sl:    24498.50
-        tp:    24423.50
+        tp:    24408.50
   - name: "NQ - 2026-03-10"
     pair: "NQ"
     tf: "1m"
@@ -2194,11 +2210,11 @@ scenarios:
     expect:
       entry: 25004.00
       sl:    25044.00
-      tp:    24844.00
+      tp:    24804.00
       reentry:
         entry: 24998.25
         sl:    25038.25
-        tp:    24838.25
+        tp:    24798.25
   - name: "NQ - 2026-03-11"
     pair: "NQ"
     tf: "1m"
@@ -2209,7 +2225,7 @@ scenarios:
     expect:
       entry: 25115.25
       sl:    25155.25
-      tp:    24955.25
+      tp:    24915.25
   - name: "NQ - 2026-03-13"
     pair: "NQ"
     tf: "1m"
@@ -2220,7 +2236,7 @@ scenarios:
     expect:
       entry: 24770.75
       sl:    24810.75
-      tp:    24610.75
+      tp:    24570.75
   - name: "NQ - 2026-03-16"
     pair: "NQ"
     tf: "1m"
@@ -2241,11 +2257,11 @@ scenarios:
     expect:
       entry: 24836.50
       sl:    24806.50
-      tp:    24956.50
+      tp:    24986.50
       reentry:
         entry: 24859.00
         sl:    24844.00
-        tp:    24919.00
+        tp:    24934.00
   - name: "NQ - 2026-03-19"
     pair: "NQ"
     tf: "1m"
@@ -2256,7 +2272,7 @@ scenarios:
     expect:
       entry: 24372.00
       sl:    24332.00
-      tp:    24532.00
+      tp:    24572.00
   - name: "NQ - 2026-03-20"
     pair: "NQ"
     tf: "1m"
@@ -2267,11 +2283,11 @@ scenarios:
     expect:
       entry: 24283.00
       sl:    24263.00
-      tp:    24363.00
+      tp:    24383.00
       reentry:
         entry: 24271.25
         sl:    24256.25
-        tp:    24331.25
+        tp:    24346.25
   - name: "NQ - 2026-03-23"
     pair: "NQ"
     tf: "1m"
@@ -2282,7 +2298,7 @@ scenarios:
     expect:
       entry: 24349.25
       sl:    24309.25
-      tp:    24509.25
+      tp:    24549.25
   - name: "NQ - 2026-03-24"
     pair: "NQ"
     tf: "1m"
@@ -2293,11 +2309,11 @@ scenarios:
     expect:
       entry: 24188.00
       sl:    24148.00
-      tp:    24348.00
+      tp:    24388.00
       reentry:
         entry: 24207.00
         sl:    24192.00
-        tp:    24267.00
+        tp:    24282.00
   - name: "NQ - 2026-03-25"
     pair: "NQ"
     tf: "1m"
@@ -2308,7 +2324,7 @@ scenarios:
     expect:
       entry: 24317.25
       sl:    24287.25
-      tp:    24437.25
+      tp:    24467.25
   - name: "NQ - 2026-03-26"
     pair: "NQ"
     tf: "1m"
@@ -2321,7 +2337,7 @@ scenarios:
     expect:
       entry: 23787.75
       sl:    23757.75
-      tp:    23907.75
+      tp:    23937.75
   - name: "NQ - 2026-03-27"
     pair: "NQ"
     tf: "5m"
@@ -2344,11 +2360,11 @@ scenarios:
     expect:
       entry: 23417.00
       sl:    23457.00
-      tp:    23257.00
+      tp:    23217.00
       reentry:
         entry: 23416.75
         sl:    23436.75
-        tp:    23336.75
+        tp:    23316.75
   - name: "NQ - 2026-04-01"
     pair: "NQ"
     tf: "1m"
@@ -2359,8 +2375,8 @@ scenarios:
     expect:
       entry: 24089.50
       sl:    24129.50
-      tp:    23929.50
+      tp:    23889.50
       reentry:
         entry: 24143.75
         sl:    24183.75
-        tp:    23983.75
+        tp:    23943.75

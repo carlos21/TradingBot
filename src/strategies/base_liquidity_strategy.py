@@ -75,7 +75,7 @@ class BaseLiquidityStrategy:
         sl_levels: Optional[List[float]] = None,
         sl_level_tolerance: float = 5.0,
         min_cross_depth: float = 0.0,
-        rr_ratio: float = 4.0,
+        rr_ratio: float = 5.0,
         trade_logger=None,
         analytics: AnalyticsReporter = None,
         trigger_state_repo: LineTriggerStateRepository = None,
@@ -168,6 +168,72 @@ class BaseLiquidityStrategy:
         pair = self.trade_manager.pair
         for line_id, state in self.strategy_lines.items():
             self.trigger_state_repo.save(str(line_id), pair, state)
+
+    def restore_trigger_states(self, pair: str):
+        """Overlay persisted trigger states onto bootstrapped lines."""
+        with self.lock:
+            saved = self.trigger_state_repo.load_all(pair)
+            restored = 0
+            for line_id, line_state in self.strategy_lines.items():
+                persisted = saved.get(str(line_id))
+                if persisted:
+                    # Keep level/creation_ts from fresh bootstrap (authoritative for geometry),
+                    # restore everything else (direction, extreme, trigger stages, etc.)
+                    level = line_state["level"]
+                    creation_ts = line_state["creation_ts"]
+                    line_state.update(persisted)
+                    line_state["level"] = level
+                    line_state["creation_ts"] = creation_ts
+                    restored += 1
+            if restored:
+                print(f"[Strategy] Restored trigger state for {restored}/{len(self.strategy_lines)} lines")
+
+    def restore_open_trades(self):
+        """Sync open trades from TradeManager into strategy's in-memory list."""
+        with self.lock:
+            if not self.open_trades and self.trade_manager.open_trades:
+                for t in self.trade_manager.open_trades:
+                    if t.get('status') == 'open':
+                        self.open_trades.append(dict(t))
+                if self.open_trades:
+                    print(f"[Strategy] Restored {len(self.open_trades)} open trade(s) from DB")
+
+    def restore_reentry_opportunities(self, pair: str):
+        """Rebuild pending re-entry opportunities from recently SL'd trades in DB."""
+        if not (self.options.reentry_after_sl or self.options.reentry_only):
+            return
+
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=4)
+
+        trades = self.trade_repository.list_trades(pair)
+        restored = 0
+        for t in trades:
+            if t.result is None or t.result >= 0:
+                continue
+            if t.exit_time is None or t.exit_time < cutoff:
+                continue
+            if t.params and t.params.get("is_reentry"):
+                continue
+            line_level = t.params.get("line_level") if t.params else None
+            if line_level is None:
+                continue
+            already_watching = any(
+                opp["level"] == line_level and opp["direction"] == t.trade_type
+                for opp in self._reentry_opportunities
+            )
+            if already_watching:
+                continue
+            self._reentry_opportunities.append({
+                "level": line_level,
+                "direction": t.trade_type,
+                "pair": pair,
+                "extreme_excursion": line_level,
+            })
+            restored += 1
+            print(f"[ReEntry] Restored re-entry watch: {t.trade_type} @ level={line_level:.2f}")
+        if restored:
+            print(f"[Strategy] Restored {restored} re-entry opportunity(ies) from DB")
 
     def _reset_line_state(self, line_state: Dict[str, Any]):
         """If we keep the line, reset so it can trigger again in the future."""
@@ -688,7 +754,10 @@ class BaseLiquidityStrategy:
             take_profit=trade["take_profit"],
             risk=trade["risk"],
             entry_time=self._ts_to_dt(trade["entry_time"]),
-            params={},
+            params={
+                "line_level": trade.get("line_level"),
+                "is_reentry": trade.get("is_reentry", False),
+            },
         )
         trade["trade_id"] = td.trade_id
         self.open_trades.append(trade)

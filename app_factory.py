@@ -196,6 +196,9 @@ def create_app(
             print(f"[LiveMode] Warming up strategy with {len(bars)} historical bars...")
             for bar in bars:
                 tstrategy.on_raw_bar(bar)
+            tstrategy.restore_trigger_states(pair)
+            tstrategy.restore_open_trades()
+            tstrategy.restore_reentry_opportunities(pair)
             print("[LiveMode] Warmup complete, ready for live bars.")
             # Tell any connected browsers to reload chart data
             socketio.emit('history_ready', {'count': len(bars)})
@@ -208,7 +211,7 @@ def create_app(
         def _on_before_refresh():
             """Reset strategy and re-add DB lines before fresh bars arrive."""
             print("[LiveMode] Refresh: resetting strategy...")
-            tstrategy.reset()
+            tstrategy.reset(preserve_trigger_state=True)
             loader.reset()
             # Re-add persistent lines with their real creation timestamp so the
             # existing guards in liquidity_strategy_v2 skip historical bars that
@@ -231,6 +234,8 @@ def create_app(
             # FIX: Force timestamp to 0 for existing DB lines so they are valid for ALL history.
             # This prevents "future" creation dates (e.g. 2025) from blocking trades on 2024 data.
             tstrategy.add_strategy_line(l.line_id, l.price, creation_timestamp=0)
+        if live_mode:
+            tstrategy.restore_open_trades()
 
     # ---------------- HTTP endpoints (capturing the injected deps) ----------------
 

@@ -12,7 +12,7 @@ class TestStrategyNumbers:
         assert sn.sl_levels is None
         assert sn.sl_level_tolerance == 5.0
         assert sn.min_cross_depth == 0.0
-        assert sn.rr_ratio == 4.0
+        assert sn.rr_ratio == 5.0
 
     def test_all_fields(self):
         sn = StrategyNumbers(

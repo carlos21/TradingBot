@@ -47,10 +47,8 @@ def run_all(yaml_path: str, results_json: str, extra_args: list = None) -> bool:
         "--outdir", "./scenarios_out",
         "--port", "5002",
         "--bars-per-second", "5000",
-        "--mode", "sim",
         "--quiet",
         "--no-snapshot",
-        "--no-breakeven",
         "--results-json", results_json,
     ]
     if extra_args:

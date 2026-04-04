@@ -55,4 +55,4 @@ class TestNinjaTraderExecutor:
             "stop_loss": 21080.0, "take_profit": 20680.0,
         }
         ex.on_trade_open(trade)
-        assert ds.commands[0]["rr_ratio"] == 4.0
+        assert ds.commands[0]["rr_ratio"] == 5.0

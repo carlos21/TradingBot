@@ -29,7 +29,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         sl_levels: Optional[List[float]] = None,
         sl_level_tolerance: float = 5.0,
         min_cross_depth: float = 0.0,
-        rr_ratio: float = 4.0,
+        rr_ratio: float = 5.0,
         trade_logger=None,
         analytics=None,
         trigger_state_repo=None,
@@ -80,10 +80,11 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             }
             self._tf_histories[tf] = deque(maxlen=100)
 
-    def reset(self):
+    def reset(self, preserve_trigger_state: bool = False):
         with self.lock:
-            for line_id in list(self.strategy_lines.keys()):
-                self.trigger_state_repo.delete(str(line_id))
+            if not preserve_trigger_state:
+                for line_id in list(self.strategy_lines.keys()):
+                    self.trigger_state_repo.delete(str(line_id))
             self.strategy_lines.clear()
             self.open_trades.clear()
             self.trade_manager.open_trades.clear()

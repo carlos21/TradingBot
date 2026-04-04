@@ -205,7 +205,7 @@ def write_test_scenario_yaml(sc: dict):
 # Test runner
 # ---------------------------------------------------------------------------
 
-def run_discovery(results_json_path: str, rr_ratio: float = 4.0) -> bool:
+def run_discovery(results_json_path: str, rr_ratio: float = 5.0) -> bool:
     """Run run_scenarios.py against test_scenario.yaml and write results JSON."""
     cmd = [
         "poetry", "run", "python", "scripts/run_scenarios.py",

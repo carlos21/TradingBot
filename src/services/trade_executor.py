@@ -34,7 +34,7 @@ class NinjaTraderExecutor(TradeExecutor):
             "direction": trade["type"],
             "entry_price": trade["entry"],
             "sl_points": trade["risk"],
-            "rr_ratio": trade.get("rr_ratio", 4.0),
+            "rr_ratio": trade.get("rr_ratio", 5.0),
         }
         if self._risk_usd is not None:
             cmd["risk_usd"] = self._risk_usd
