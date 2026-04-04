@@ -5,6 +5,7 @@ from src.models import LineData, TradeData
 from src.services.trade_executor import TradeExecutor
 from src.notifier import Notifier
 from src.analytics import AnalyticsReporter
+from src.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository as FakeLineTriggerStateRepository
 
 class DummySocketIO:
     def __init__(self):

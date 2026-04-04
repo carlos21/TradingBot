@@ -30,8 +30,18 @@ class Trade(Base):
     logs         = Column(JSON,    nullable=True)       # per-trade lifecycle log entries
     created_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+
+class LineTriggerState(Base):
+    __tablename__ = "line_trigger_state"
+
+    line_id    = Column(String(50), primary_key=True)
+    pair       = Column(String(10), nullable=False)
+    state_json = Column(JSON, nullable=False, default=dict)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+
+
 db = None
-    
+
 @contextmanager
 def get_db_session():
     db_session = db.get_session()

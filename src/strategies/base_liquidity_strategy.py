@@ -10,6 +10,7 @@ from src.analytics import AnalyticsReporter, NoOpReporter
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
+from src.repositories.line_trigger_state_repository import LineTriggerStateRepository, InMemoryLineTriggerStateRepository
 from src.services.trade_manager import TradeManager
 from zoneinfo import ZoneInfo
 
@@ -77,6 +78,7 @@ class BaseLiquidityStrategy:
         rr_ratio: float = 4.0,
         trade_logger=None,
         analytics: AnalyticsReporter = None,
+        trigger_state_repo: LineTriggerStateRepository = None,
     ):
         self.min_stop_loss = float(min_stop_loss)
         self.max_bounce    = float(max_bounce)
@@ -93,6 +95,7 @@ class BaseLiquidityStrategy:
         self.trade_logger = trade_logger
         self.analytics = analytics or NoOpReporter()
         self.sl_level_tolerance = float(sl_level_tolerance)
+        self.trigger_state_repo: LineTriggerStateRepository = trigger_state_repo or InMemoryLineTriggerStateRepository()
 
         self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
         self.open_trades: List[Dict[str, Any]] = []
@@ -141,21 +144,30 @@ class BaseLiquidityStrategy:
         """
         print(f"[Strategy] ➕ add_strategy_line id={id} level={level} ts={creation_timestamp}")
         with self.lock:
-            self.strategy_lines[id] = {
+            state = {
                 "level":       float(level),
                 "direction":   None,
                 "extreme":     0.0,
                 "creation_ts": float(creation_timestamp),
             }
+            self.strategy_lines[id] = state
+            self.trigger_state_repo.save(str(id), self.trade_manager.pair, state)
 
     def remove_strategy_line(self, id: Any):
         with self.lock:
             self.strategy_lines.pop(id, None)
+        self.trigger_state_repo.delete(str(id))
         try:
             self.line_repository.delete_line(id)
         except DBNotFoundException:
             pass
         self.socketio.emit("line_removed", {"id": id})
+
+    def _persist_all_line_states(self):
+        """Write current trigger state for every active line to the repo."""
+        pair = self.trade_manager.pair
+        for line_id, state in self.strategy_lines.items():
+            self.trigger_state_repo.save(str(line_id), pair, state)
 
     def _reset_line_state(self, line_state: Dict[str, Any]):
         """If we keep the line, reset so it can trigger again in the future."""

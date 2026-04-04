@@ -8,6 +8,7 @@ load_dotenv()
 from app_factory import create_app, Repositories
 from src.repositories.lines_repository import SQLLineRepository
 from src.repositories.trades_repository import SQLTradeRepository
+from src.repositories.line_trigger_state_repository import SQLiteLineTriggerStateRepository
 from src.data_sources.csv_datasource import CSVDataSource
 from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource, NinjaTraderConfig
 from src.services.trade_executor import NinjaTraderExecutor
@@ -78,8 +79,9 @@ def build_prod():
     # 1. DB & Repositories
     database.setup_database()
     repos = Repositories(
-        lines = SQLLineRepository(),
-        trades= SQLTradeRepository(),
+        lines         = SQLLineRepository(),
+        trades        = SQLTradeRepository(),
+        trigger_state = SQLiteLineTriggerStateRepository(),
     )
 
     # 2. Configuration
@@ -133,8 +135,9 @@ def build_prod():
 def build_live():
     database.setup_database()
     repos = Repositories(
-        lines=SQLLineRepository(),
-        trades=SQLTradeRepository(),
+        lines         = SQLLineRepository(),
+        trades        = SQLTradeRepository(),
+        trigger_state = SQLiteLineTriggerStateRepository(),
     )
 
     notifier = _build_notifier()

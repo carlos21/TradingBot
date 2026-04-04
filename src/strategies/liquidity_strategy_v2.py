@@ -32,6 +32,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         rr_ratio: float = 4.0,
         trade_logger=None,
         analytics=None,
+        trigger_state_repo=None,
     ):
         self.timeframes = timeframes or ["5m"]
         
@@ -62,6 +63,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             rr_ratio=rr_ratio,
             trade_logger=trade_logger,
             analytics=analytics,
+            trigger_state_repo=trigger_state_repo,
         )
 
         self.candle_config = candle_config
@@ -80,6 +82,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
     def reset(self):
         with self.lock:
+            for line_id in list(self.strategy_lines.keys()):
+                self.trigger_state_repo.delete(str(line_id))
             self.strategy_lines.clear()
             self.open_trades.clear()
             self.trade_manager.open_trades.clear()
@@ -252,6 +256,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
                 state["buf"] = [bar]
                 state["start"] = window_start
+
+        self._persist_all_line_states()
 
     def _on_strategy_bar(self, bar: Dict[str, Any]):
         with self.lock:

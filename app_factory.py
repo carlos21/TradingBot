@@ -21,6 +21,7 @@ from src.strategies.entry_context import (
 )
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
+from src.repositories.line_trigger_state_repository import LineTriggerStateRepository, InMemoryLineTriggerStateRepository
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2, LiveLiquidityStrategyV2
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.strategies.triggers import three_candle_reversal_trigger, wick_near_line_trigger
@@ -32,6 +33,11 @@ from src.analytics import AnalyticsReporter, NoOpReporter
 class Repositories:
     lines: LineRepository
     trades: TradeRepository
+    trigger_state: LineTriggerStateRepository = None
+
+    def __post_init__(self):
+        if self.trigger_state is None:
+            self.trigger_state = InMemoryLineTriggerStateRepository()
 
 @dataclass
 class AppWiring:
@@ -125,6 +131,7 @@ def create_app(
         candle_config   = candle_config,
         trade_logger    = trade_logger,
         analytics       = analytics,
+        trigger_state_repo = repos.trigger_state,
     )
 
     # Wire different bar processing paths based on mode
