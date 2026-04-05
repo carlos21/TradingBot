@@ -59,8 +59,8 @@ export class TradeHistory {
           <td class="px-4 py-3">${trade.exit_price ? trade.exit_price.toFixed(2) : '-'}</td>
           <td class="px-4 py-3 ${pnlClass}">${pnlText}</td>
           <td class="px-4 py-3">
-            <span class="px-2 py-1 rounded text-xs font-medium ${this.getResultBadgeClass(trade.result_type, trade.status)}">
-              ${trade.result_type || (trade.status === 'open' ? 'OPEN' : 'CLOSED')}
+            <span class="px-2 py-1 rounded text-xs font-medium ${this.getResultBadgeClass(trade.result_type)}">
+              ${trade.result_type || '-'}
             </span>
           </td>
           <td class="px-4 py-3 text-sm text-gray-400">${this.formatTime(trade.entry_time)}</td>
@@ -120,14 +120,14 @@ export class TradeHistory {
     }
   }
 
-  getResultBadgeClass(resultType, status) {
-    if (status === 'open') return 'bg-blue-900 text-blue-300';
+  getResultBadgeClass(resultType) {
     switch (resultType) {
-      case 'TP': return 'bg-green-900 text-green-300';
-      case 'SL': return 'bg-red-900 text-red-300';
-      case 'SP': return 'bg-yellow-900 text-yellow-300';
-      case 'OFFLINE': return 'bg-gray-700 text-gray-300';
-      default: return 'bg-gray-700 text-gray-300';
+      case 'TP': return 'bg-green-600 text-white';
+      case 'SL': return 'bg-red-600 text-white';
+      case 'BE': return 'bg-yellow-500 text-black';
+      case 'SP': return 'bg-blue-500 text-white';
+      case 'OFFLINE': return 'bg-gray-600 text-white';
+      default: return 'bg-gray-600 text-gray-300';
     }
   }
 

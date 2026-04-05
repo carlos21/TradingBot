@@ -87,12 +87,14 @@ class TradeStatistics:
     winning_trades: int
     losing_trades: int
     win_rate: float
-    total_pnl: float
-    avg_pnl: float
-    avg_win: float
-    avg_loss: float
+    total_pnl: float  # R-multiples
+    avg_pnl: float    # R-multiples
+    avg_win: float    # R-multiples
+    avg_loss: float   # R-multiples
     profit_factor: float
     avg_r_multiple: float
+    total_pnl_usd: float = 0.0  # Dollar amount
+    avg_pnl_usd: float = 0.0    # Dollar amount
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -102,7 +104,9 @@ class TradeStatistics:
             "losing_trades": self.losing_trades,
             "win_rate": round(self.win_rate, 4),
             "total_pnl": round(self.total_pnl, 2),
+            "total_pnl_usd": round(self.total_pnl_usd, 2),
             "avg_pnl": round(self.avg_pnl, 2),
+            "avg_pnl_usd": round(self.avg_pnl_usd, 2),
             "avg_win": round(self.avg_win, 2),
             "avg_loss": round(self.avg_loss, 2),
             "profit_factor": round(self.profit_factor, 2) if self.profit_factor != float('inf') else None,

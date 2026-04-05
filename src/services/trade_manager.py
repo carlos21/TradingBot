@@ -327,21 +327,33 @@ class TradeManager:
             None
         )
 
-        # If not in memory, try to fetch from DB to calculate PnL, or just close it blindly
+        # If not in memory, try to fetch from DB to calculate PnL
         if not trade:
-            print(f"[TradeManager] ⚠️ Trade {trade_id} not in memory, closing in DB directly.")
-            # Fallback: just close in DB
-            self.trade_repository.close_trade(
-                trade_id=trade_id,
-                exit_price=exit_price,
-                exit_time=datetime.fromtimestamp(exit_time, tz=timezone.utc),
-                result=0.0
-            )
-            return {
-                'trade_id': trade_id,
-                'exit_price': exit_price,
-                'result': 0.0
-            }
+            print(f"[TradeManager] ⚠️ Trade {trade_id} not in memory, fetching from DB.")
+            trade_data = self.trade_repository.get_trade(trade_id)
+            if trade_data:
+                trade = {
+                    'trade_id': trade_data.trade_id,
+                    'type': trade_data.trade_type,
+                    'entry': trade_data.entry_price,
+                    'stop_loss': trade_data.stop_loss,
+                    'take_profit': trade_data.take_profit,
+                    'risk': trade_data.risk,
+                }
+            else:
+                # Fallback: just close in DB with unknown result_type
+                self.trade_repository.close_trade(
+                    trade_id=trade_id,
+                    exit_price=exit_price,
+                    exit_time=datetime.fromtimestamp(exit_time, tz=timezone.utc),
+                    result=0.0,
+                    result_type=None
+                )
+                return {
+                    'trade_id': trade_id,
+                    'exit_price': exit_price,
+                    'result': 0.0
+                }
 
 
         # calculate P&L (R-Multiple)
@@ -355,13 +367,27 @@ class TradeManager:
 
         result = pnl_points / risk
 
+        # Determine result type based on exit price
+        sl = trade.get('stop_loss', trade.get('sl', trade.get('orig_sl')))
+        tp = trade.get('take_profit', trade.get('tp'))
+        entry = trade.get('entry', trade.get('entry_price'))
+        
+        if sl and abs(exit_price - sl) < 0.5:
+            result_type = "SL"
+        elif tp and abs(exit_price - tp) < 0.5:
+            result_type = "TP"
+        elif entry and abs(exit_price - entry) < 0.5:
+            result_type = "BE"
+        else:
+            result_type = "SP"
+
         # persist close
         self.trade_repository.close_trade(
             trade_id=trade_id,
             exit_price=exit_price,
             exit_time=datetime.fromtimestamp(exit_time, tz=timezone.utc),
             result=result,
-            result_type=None
+            result_type=result_type
         )
 
         if self.trade_logger:

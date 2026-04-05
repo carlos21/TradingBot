@@ -218,14 +218,16 @@ class AdminApp {
     if (winRateEl) winRateEl.textContent = formatPercent(stats.win_rate);
     if (winLossEl) winLossEl.textContent = `${stats.winning_trades}W / ${stats.losing_trades}L`;
 
-    // P&L
-    const totalPnlEl = document.getElementById('stat-total-pnl');
-    const avgPnlEl = document.getElementById('stat-avg-pnl');
-    if (totalPnlEl) {
-      totalPnlEl.textContent = formatCurrency(stats.total_pnl);
-      totalPnlEl.className = `text-3xl font-bold ${stats.total_pnl >= 0 ? 'text-green-400' : 'text-red-400'}`;
+    // P&L (USD)
+    const totalPnlUsdEl = document.getElementById('stat-total-pnl-usd');
+    const totalPnlREl = document.getElementById('stat-total-pnl-r');
+    const avgPnlUsdEl = document.getElementById('stat-avg-pnl-usd');
+    if (totalPnlUsdEl) {
+      totalPnlUsdEl.textContent = formatCurrency(stats.total_pnl_usd);
+      totalPnlUsdEl.className = `text-3xl font-bold ${stats.total_pnl_usd >= 0 ? 'text-green-400' : 'text-red-400'}`;
     }
-    if (avgPnlEl) avgPnlEl.textContent = `avg: ${formatCurrency(stats.avg_pnl)}`;
+    if (totalPnlREl) totalPnlREl.textContent = `R: ${stats.total_pnl?.toFixed(1) || '-'}`;
+    if (avgPnlUsdEl) avgPnlUsdEl.textContent = `avg: ${formatCurrency(stats.avg_pnl_usd)}`;
 
     // Profit factor
     const profitFactorEl = document.getElementById('stat-profit-factor');

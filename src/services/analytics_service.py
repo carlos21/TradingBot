@@ -45,19 +45,23 @@ class AnalyticsService:
         winning = [t for t in closed_trades if (t.result or 0) > 0]
         losing = [t for t in closed_trades if (t.result or 0) <= 0]
         
-        total_pnl = sum(t.result or 0 for t in closed_trades)
+        # R-multiple calculations
+        total_pnl_r = sum(t.result or 0 for t in closed_trades)
         win_rate = len(winning) / len(closed_trades) if closed_trades else 0.0
-        
-        avg_pnl = total_pnl / len(closed_trades) if closed_trades else 0.0
-        avg_win = sum(t.result or 0 for t in winning) / len(winning) if winning else 0.0
-        avg_loss = sum(t.result or 0 for t in losing) / len(losing) if losing else 0.0
+        avg_pnl_r = total_pnl_r / len(closed_trades) if closed_trades else 0.0
+        avg_win_r = sum(t.result or 0 for t in winning) / len(winning) if winning else 0.0
+        avg_loss_r = sum(t.result or 0 for t in losing) / len(losing) if losing else 0.0
         
         gross_profit = sum(t.result or 0 for t in winning)
         gross_loss = abs(sum(t.result or 0 for t in losing))
         profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
         
+        # Dollar PnL calculations (result * risk)
+        total_pnl_usd = sum((t.result or 0) * t.risk for t in closed_trades)
+        avg_pnl_usd = total_pnl_usd / len(closed_trades) if closed_trades else 0.0
+        
         # Calculate average R-multiple
-        r_multiples = [(t.result or 0) / t.risk for t in closed_trades if t.risk > 0]
+        r_multiples = [(t.result or 0) for t in closed_trades]
         avg_r = sum(r_multiples) / len(r_multiples) if r_multiples else 0.0
         
         return TradeStatistics(
@@ -66,10 +70,12 @@ class AnalyticsService:
             winning_trades=len(winning),
             losing_trades=len(losing),
             win_rate=win_rate,
-            total_pnl=total_pnl,
-            avg_pnl=avg_pnl,
-            avg_win=avg_win,
-            avg_loss=avg_loss,
+            total_pnl=total_pnl_r,
+            total_pnl_usd=total_pnl_usd,
+            avg_pnl=avg_pnl_r,
+            avg_pnl_usd=avg_pnl_usd,
+            avg_win=avg_win_r,
+            avg_loss=avg_loss_r,
             profit_factor=profit_factor,
             avg_r_multiple=avg_r,
         )
@@ -143,6 +149,7 @@ class AnalyticsService:
         label_map = {
             "SL": "Stop Loss",
             "TP": "Take Profit",
+            "BE": "Breakeven",
             "SP": "Session End",
             "OFFLINE": "Offline Close",
             "OTHER": "Other",

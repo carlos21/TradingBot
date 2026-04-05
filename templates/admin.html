@@ -75,13 +75,20 @@
         </div>
         
         <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
-          <div class="text-gray-400 text-sm mb-1">Total P&L</div>
-          <div id="stat-total-pnl" class="text-3xl font-bold">-</div>
-          <div id="stat-avg-pnl" class="text-sm text-gray-400 mt-1">avg: -</div>
+          <div class="text-gray-400 text-sm mb-1">Total P&L ($)</div>
+          <div id="stat-total-pnl-usd" class="text-3xl font-bold">-</div>
+          <div class="flex gap-2 text-xs text-gray-400 mt-1">
+            <span id="stat-total-pnl-r" class="text-gray-500">R: -</span>
+            <span>|</span>
+            <span id="stat-avg-pnl-usd">avg: -</span>
+          </div>
         </div>
         
         <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
-          <div class="text-gray-400 text-sm mb-1">Profit Factor</div>
+          <div class="text-gray-400 text-sm mb-1 flex items-center gap-1">
+            Profit Factor
+            <span class="text-xs text-gray-500 cursor-help" title="Profit Factor = Gross Profit / Gross Loss. > 1.0 is profitable, > 2.0 is excellent.">ⓘ</span>
+          </div>
           <div id="stat-profit-factor" class="text-3xl font-bold text-white">-</div>
           <div id="stat-avg-r" class="text-sm text-gray-400 mt-1">avg R: -</div>
         </div>
