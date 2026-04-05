@@ -11,10 +11,12 @@ from flask_socketio import SocketIO, emit
 from src.bars_loader import BarsLoader
 from src.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
+from src.controllers.admin_controller import AdminController
 from src.data_sources.combined_datasource import CombinedDataSource
 from src.services.trade_manager import TradeManager
 from src.services.trade_executor import TradeExecutor
 from src.services.trade_logger import TradeLogger
+from src.services.analytics_service import AnalyticsService
 from src.strategies.base_liquidity_strategy import StrategyOptions
 from src.strategies.entry_context import (
     open_trades_limit_filter, max_bounce_filter
@@ -48,6 +50,7 @@ class AppWiring:
     trade_manager: TradeManager
     lines_controller: LinesController
     trades_controller: TradesController
+    admin_controller: AdminController
     data_source: CombinedDataSource
     pair: str
     live_mode: bool = False
@@ -227,6 +230,10 @@ def create_app(
 
     lines_controller  = LinesController(repos.lines, loader, tstrategy)
     trades_controller = TradesController(loader, trade_manager)
+    
+    # Initialize analytics service and admin controller
+    analytics_service = AnalyticsService(repos.trades)
+    admin_controller = AdminController(analytics_service, repos.lines)
 
     # Optionally load any preexisting lines from repo into the in-memory strategy
     if bootstrap_existing_lines:
@@ -589,9 +596,56 @@ def create_app(
             creation_timestamp=creation_time
         )
 
+    @app.route('/api/lines/<string:line_id>', methods=['GET'])
+    def get_line(line_id):
+        return lines_controller.get_line(line_id)
+
+    @app.route('/api/lines/<string:line_id>', methods=['PUT'])
+    def update_line(line_id):
+        data = request.get_json() or {}
+        if 'price' not in data:
+            abort(400, 'Must provide {"price":...}')
+        try:
+            price = float(data['price'])
+        except ValueError:
+            abort(400, "Field 'price' must be a number")
+        return lines_controller.update_line(line_id, price)
+
     @app.route('/api/lines/<string:line_id>', methods=['DELETE'])
     def delete_line(line_id):
         return lines_controller.delete_line(line_id)
+
+    # --- Admin Dashboard Routes ---
+    @app.route('/admin')
+    def admin_dashboard():
+        return render_template('admin.html')
+
+    @app.route('/api/admin/stats', methods=['GET'])
+    def admin_stats():
+        pair = request.args.get('pair')
+        if not pair:
+            abort(400, "Query param 'pair' is required")
+        return admin_controller.get_dashboard_stats(pair)
+
+    @app.route('/api/admin/trades', methods=['GET'])
+    def admin_trades():
+        pair = request.args.get('pair')
+        if not pair:
+            abort(400, "Query param 'pair' is required")
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        return admin_controller.get_trade_history(pair, limit, offset)
+
+    @app.route('/api/admin/trades/<string:trade_id>', methods=['GET'])
+    def admin_trade_detail(trade_id):
+        return admin_controller.get_trade_details(trade_id)
+
+    @app.route('/api/admin/analytics', methods=['GET'])
+    def admin_analytics():
+        pair = request.args.get('pair')
+        if not pair:
+            abort(400, "Query param 'pair' is required")
+        return admin_controller.get_analytics(pair)
 
     @app.route('/api/trades', methods=['GET'])
     def list_trades():
@@ -773,6 +827,7 @@ def create_app(
         trade_manager=trade_manager,
         lines_controller=lines_controller,
         trades_controller=trades_controller,
+        admin_controller=admin_controller,
         data_source=data_source,
         pair=pair,
         live_mode=live_mode,

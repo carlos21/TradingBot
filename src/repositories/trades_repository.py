@@ -67,6 +67,16 @@ class TradeRepository(ABC):
         """Return the log entries for a trade."""
         pass
 
+    @abstractmethod
+    def get_trade(self, trade_id: str) -> Optional[TradeData]:
+        """Get a single trade by ID."""
+        pass
+
+    @abstractmethod
+    def get_all_trades(self, pair: str) -> List[TradeData]:
+        """Get all trades for a pair (for analytics service to process)."""
+        pass
+
 
 class SQLTradeRepository(TradeRepository):
 
@@ -253,5 +263,22 @@ class SQLTradeRepository(TradeRepository):
         with get_db_session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
             result = list(t.logs or []) if t else []
+            db.close()
+            return result
+
+    def get_trade(self, trade_id: str) -> Optional[TradeData]:
+        with get_db_session() as db:
+            t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+            if not t:
+                db.close()
+                return None
+            result = self._make_trade_data(t)
+            db.close()
+            return result
+
+    def get_all_trades(self, pair: str) -> List[TradeData]:
+        with get_db_session() as db:
+            rows = db.query(Trade).filter(Trade.pair == pair).all()
+            result = [self._make_trade_data(t) for t in rows]
             db.close()
             return result

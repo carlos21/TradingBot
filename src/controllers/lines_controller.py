@@ -66,6 +66,39 @@ class LinesController:
             'creation_date': line.creation_date.isoformat()
         }), 201
 
+    def get_line(self, line_id: str):
+        """Get a single line by ID."""
+        line = self.line_repository.get_line(line_id)
+        if not line:
+            abort(404, f"Line id={line_id} not found")
+        return jsonify({
+            'id': line.line_id,
+            'pair': line.pair,
+            'price': line.price,
+            'creation_date': line.creation_date.isoformat()
+        }), 200
+
+    def update_line(self, line_id: str, price: float):
+        """Update a line's price."""
+        from src.dbexception import DBNotFoundException
+        try:
+            line = self.line_repository.update_line(line_id, price)
+            # Update in strategy as well
+            self.liquidity_strategy.update_strategy_line(line_id, price)
+            if self.bars_loader.socketio:
+                self.bars_loader.socketio.emit('line_updated', {
+                    'id': line_id,
+                    'price': price
+                })
+            return jsonify({
+                'id': line.line_id,
+                'pair': line.pair,
+                'price': line.price,
+                'creation_date': line.creation_date.isoformat()
+            }), 200
+        except DBNotFoundException:
+            abort(404, f"Line id={line_id} not found")
+
     def delete_line(self, line_id):
         try:
             self.line_repository.delete_line(line_id)

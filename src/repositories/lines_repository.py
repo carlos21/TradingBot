@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional, List
 from src.database.database import Line, get_db_session
-from src.dbexception import DBException
+from src.dbexception import DBException, DBNotFoundException
 from src.models import LineData
 from datetime import datetime, timezone
 
@@ -20,7 +20,17 @@ class LineRepository(ABC):
         pass
 
     @abstractmethod
+    def get_line(self, line_id: str) -> Optional[LineData]:
+        """Get a single line by ID."""
+        pass
+
+    @abstractmethod
     def list_lines(self, pair: str) -> List[LineData]:
+        pass
+
+    @abstractmethod
+    def update_line(self, line_id: str, price: float) -> LineData:
+        """Update a line's price."""
         pass
 
     @abstractmethod
@@ -64,6 +74,18 @@ class SQLLineRepository(LineRepository):
                 creation_date=self._ensure_utc_aware(new_line.creation_date),
             )
 
+    def get_line(self, line_id: str) -> Optional[LineData]:
+        with get_db_session() as db:
+            row = db.query(Line).filter(Line.line_id == line_id).one_or_none()
+            if not row:
+                return None
+            return LineData(
+                line_id=row.line_id,
+                pair=row.pair,
+                price=row.price,
+                creation_date=self._ensure_utc_aware(row.creation_date),
+            )
+
     def list_lines(self, pair: str) -> List[LineData]:
         with get_db_session() as db:
             rows = (
@@ -80,6 +102,29 @@ class SQLLineRepository(LineRepository):
                 )
                 for row in rows
             ]
+    
+    def update_line(self, line_id: str, price: float) -> LineData:
+        with get_db_session() as db:
+            row = db.query(Line).filter(Line.line_id == line_id).one_or_none()
+            if not row:
+                db.close()
+                raise DBNotFoundException(f"Line {line_id} not found")
+            row.price = price
+            try:
+                db.commit()
+                db.refresh(row)
+            except Exception as e:
+                db.rollback()
+                raise DBException(message=str(e))
+            finally:
+                db.close()
+            
+            return LineData(
+                line_id=row.line_id,
+                pair=row.pair,
+                price=row.price,
+                creation_date=self._ensure_utc_aware(row.creation_date),
+            )
          
     def delete_line(self, line_id: str) -> None:
         with get_db_session() as db:

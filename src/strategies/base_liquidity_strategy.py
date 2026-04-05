@@ -163,6 +163,14 @@ class BaseLiquidityStrategy:
             pass
         self.socketio.emit("line_removed", {"id": id})
 
+    def update_strategy_line(self, id: Any, level: float):
+        """Update an existing strategy line's price level."""
+        with self.lock:
+            if id in self.strategy_lines:
+                self.strategy_lines[id]["level"] = float(level)
+                print(f"[Strategy] ✏️ update_strategy_line id={id} new_level={level}")
+        self.socketio.emit("line_updated", {"id": id, "level": level})
+
     def _persist_all_line_states(self):
         """Write current trigger state for every active line to the repo."""
         pair = self.trade_manager.pair

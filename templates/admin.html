@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Trading Bot Admin</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  
+  <!-- Custom Admin CSS -->
+  <link rel="stylesheet" href="/static/css/admin.css" />
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+  <!-- Sidebar -->
+  <aside class="fixed left-0 top-0 h-full w-64 bg-gray-800 border-r border-gray-700 z-50">
+    <div class="p-6 border-b border-gray-700">
+      <h1 class="text-xl font-bold text-blue-400">Trading Bot Admin</h1>
+      <p id="pairDisplay" class="text-sm text-gray-400 mt-1">Loading...</p>
+    </div>
+    
+    <nav class="p-4 space-y-2">
+      <button data-tab="overview" class="nav-btn w-full text-left px-4 py-3 rounded-lg bg-blue-600 text-white font-medium transition-colors">
+        📊 Overview
+      </button>
+      <button data-tab="trades" class="nav-btn w-full text-left px-4 py-3 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors">
+        💼 Trade History
+      </button>
+      <button data-tab="lines" class="nav-btn w-full text-left px-4 py-3 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors">
+        📈 Strategy Lines
+      </button>
+      <button data-tab="analytics" class="nav-btn w-full text-left px-4 py-3 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors">
+        📉 Analytics
+      </button>
+    </nav>
+    
+    <div class="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-700">
+      <a href="/" class="block text-center text-gray-400 hover:text-white transition-colors">
+        ← Back to Chart
+      </a>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="ml-64 p-8">
+    <!-- Overview Tab -->
+    <div id="overview-tab" class="tab-content">
+      <h2 class="text-2xl font-bold mb-6">Dashboard Overview</h2>
+      
+      <!-- Stats Cards -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <div class="text-gray-400 text-sm mb-1">Total Trades</div>
+          <div id="stat-total-trades" class="text-3xl font-bold text-white">-</div>
+          <div id="stat-open-trades" class="text-sm text-yellow-400 mt-1">- open</div>
+        </div>
+        
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <div class="text-gray-400 text-sm mb-1">Win Rate</div>
+          <div id="stat-win-rate" class="text-3xl font-bold text-white">-</div>
+          <div id="stat-win-loss" class="text-sm text-gray-400 mt-1">- / -</div>
+        </div>
+        
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <div class="text-gray-400 text-sm mb-1">Total P&L</div>
+          <div id="stat-total-pnl" class="text-3xl font-bold">-</div>
+          <div id="stat-avg-pnl" class="text-sm text-gray-400 mt-1">avg: -</div>
+        </div>
+        
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <div class="text-gray-400 text-sm mb-1">Profit Factor</div>
+          <div id="stat-profit-factor" class="text-3xl font-bold text-white">-</div>
+          <div id="stat-avg-r" class="text-sm text-gray-400 mt-1">avg R: -</div>
+        </div>
+      </div>
+      
+      <!-- Quick Charts -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <h3 class="text-lg font-semibold mb-4">Equity Curve</h3>
+          <canvas id="overview-equity-chart"></canvas>
+        </div>
+        
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <h3 class="text-lg font-semibold mb-4">Result Distribution</h3>
+          <canvas id="overview-result-chart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trades Tab -->
+    <div id="trades-tab" class="tab-content hidden">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-2xl font-bold">Trade History</h2>
+        <button id="export-trades-btn" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition-colors">
+          Export CSV
+        </button>
+      </div>
+      
+      <!-- Trades Table -->
+      <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+        <div class="overflow-x-auto">
+          <table id="trades-table" class="w-full text-left">
+            <thead class="bg-gray-700 text-gray-300">
+              <tr>
+                <th class="px-4 py-3">Trade ID</th>
+                <th class="px-4 py-3">Type</th>
+                <th class="px-4 py-3">Entry</th>
+                <th class="px-4 py-3">Exit</th>
+                <th class="px-4 py-3">P&L</th>
+                <th class="px-4 py-3">Result</th>
+                <th class="px-4 py-3">Time</th>
+                <th class="px-4 py-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="trades-tbody" class="divide-y divide-gray-700">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+        
+        <!-- Pagination -->
+        <div class="px-4 py-3 bg-gray-700 flex justify-between items-center">
+          <span id="trades-pagination-info" class="text-sm text-gray-400">Showing 0 of 0 trades</span>
+          <div class="space-x-2">
+            <button id="trades-prev-btn" class="px-3 py-1 bg-gray-600 rounded hover:bg-gray-500 disabled:opacity-50" disabled>Previous</button>
+            <button id="trades-next-btn" class="px-3 py-1 bg-gray-600 rounded hover:bg-gray-500 disabled:opacity-50" disabled>Next</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Lines Tab -->
+    <div id="lines-tab" class="tab-content hidden">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-2xl font-bold">Strategy Lines</h2>
+        <button id="add-line-btn" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition-colors">
+          + Add Line
+        </button>
+      </div>
+      
+      <!-- Lines Table -->
+      <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+        <table id="lines-table" class="w-full text-left">
+          <thead class="bg-gray-700 text-gray-300">
+            <tr>
+              <th class="px-4 py-3">Line ID</th>
+              <th class="px-4 py-3">Price Level</th>
+              <th class="px-4 py-3">Created</th>
+              <th class="px-4 py-3">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="lines-tbody" class="divide-y divide-gray-700">
+            <!-- Populated by JS -->
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Analytics Tab -->
+    <div id="analytics-tab" class="tab-content hidden">
+      <h2 class="text-2xl font-bold mb-6">Detailed Analytics</h2>
+      
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <h3 class="text-lg font-semibold mb-4">Trades by Hour</h3>
+          <canvas id="analytics-hour-chart"></canvas>
+        </div>
+        
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <h3 class="text-lg font-semibold mb-4">Trades by Day of Week</h3>
+          <canvas id="analytics-day-chart"></canvas>
+        </div>
+        
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <h3 class="text-lg font-semibold mb-4">Monthly P&L</h3>
+          <canvas id="analytics-monthly-chart"></canvas>
+        </div>
+        
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <h3 class="text-lg font-semibold mb-4">P&L Distribution</h3>
+          <canvas id="analytics-pnl-dist-chart"></canvas>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Trade Detail Modal -->
+  <div id="trade-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-gray-800 rounded-xl max-w-3xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+      <div class="p-6 border-b border-gray-700 flex justify-between items-center">
+        <h3 id="modal-trade-title" class="text-xl font-bold">Trade Details</h3>
+        <button id="close-trade-modal" class="text-gray-400 hover:text-white text-2xl">&times;</button>
+      </div>
+      <div class="p-6 overflow-y-auto">
+        <div id="modal-trade-details" class="grid grid-cols-2 gap-4 mb-6">
+          <!-- Populated by JS -->
+        </div>
+        <h4 class="font-semibold mb-3">Trade Logs</h4>
+        <div id="modal-trade-logs" class="space-y-2 max-h-64 overflow-y-auto">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Line Modal (Add/Edit) -->
+  <div id="line-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-gray-800 rounded-xl max-w-md w-full p-6">
+      <h3 id="line-modal-title" class="text-xl font-bold mb-4">Add Line</h3>
+      <form id="line-form">
+        <input type="hidden" id="line-id" />
+        <div class="mb-4">
+          <label class="block text-sm text-gray-400 mb-2">Price Level</label>
+          <input type="number" id="line-price" step="0.01" required 
+                 class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none" />
+        </div>
+        <div class="flex justify-end space-x-3">
+          <button type="button" id="cancel-line-modal" class="px-4 py-2 text-gray-400 hover:text-white transition-colors">Cancel</button>
+          <button type="submit" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium transition-colors">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Load Admin App Scripts -->
+  <script type="module" src="/static/js/admin/AdminApp.js"></script>
+</body>
+</html>
