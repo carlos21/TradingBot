@@ -49,12 +49,9 @@ export class TradeHistory {
       const pnlText = trade.pnl_usd !== null && trade.pnl_usd !== undefined 
         ? `$${trade.pnl_usd.toFixed(2)}` 
         : (result !== null && result !== undefined ? `${result.toFixed(2)}R` : '-');
-      // Calculate % return on account based on actual dollar P&L
+      // Calculate % return on account: result (R) × risk_pct (% of account risked)
       let pctText = '-';
-      if (trade.pnl_usd !== null && trade.pnl_usd !== undefined && trade.risk_dollars) {
-        const pct = (trade.pnl_usd / trade.risk_dollars) * 100;
-        pctText = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
-      } else if (result !== null && result !== undefined && trade.risk_pct) {
+      if (result !== null && result !== undefined && trade.risk_pct) {
         const pct = result * trade.risk_pct;
         pctText = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
       }
