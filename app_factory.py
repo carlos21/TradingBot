@@ -110,6 +110,10 @@ def create_app(
         trade_logger=trade_logger,
         notifier=notifier,
         analytics=analytics,
+        point_value=numbers.point_value,
+        account_balance=numbers.account_balance,
+        risk_per_trade=numbers.risk_per_trade,
+        risk_pct_per_trade=numbers.risk_pct_per_trade,
     )
 
     # Initialize strategy — LiveLiquidityStrategyV2 disables Python SL/TP/session-end
@@ -125,6 +129,10 @@ def create_app(
         sl_level_tolerance = numbers.sl_level_tolerance,
         min_cross_depth = numbers.min_cross_depth,
         rr_ratio        = numbers.rr_ratio,
+        point_value     = numbers.point_value,
+        account_balance = numbers.account_balance,
+        risk_per_trade  = numbers.risk_per_trade,
+        risk_pct_per_trade = numbers.risk_pct_per_trade,
         socketio        = socketio,
         line_repository = repos.lines,
         trade_repository= repos.trades,
@@ -779,10 +787,15 @@ def create_app(
                 return jsonify({"error": str(e)}), 500
 
             # 4. Clear Trades (Fix for leaking trades between scenarios)
-            if hasattr(repos.trades, 'clear'):
-                repos.trades.clear()
+            # Only clear in-memory fakes; SQL trades persist across scenarios
+            if hasattr(repos.trades, 'clear_in_memory'):
+                repos.trades.clear_in_memory()
 
-            # 5. Reset DataSource history
+            # 5. Clear trade_manager open trades to prevent leaks between scenarios
+            trade_manager.open_trades.clear()
+            trade_manager._monitored_trades.clear()
+
+            # 6. Reset DataSource history
             data = request.get_json() or {}
             start_ts = data.get('start_time')
             end_ts   = data.get('end_time')
@@ -793,7 +806,7 @@ def create_app(
                 except TypeError:
                     data_source.reset()
 
-            # 6. WARM UP STRATEGY (Without lines)
+            # 7. WARM UP STRATEGY (Without lines)
             played = getattr(data_source, '_played_bars', None) or getattr(data_source, '_historical_bars', [])
             if played:
                 print(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")

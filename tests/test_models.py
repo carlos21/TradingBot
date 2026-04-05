@@ -41,11 +41,16 @@ class TestTradeData:
             stop_loss=90.0,
             take_profit=130.0,
             risk=10.0,
+            risk_dollars=None,
+            risk_pct=None,
+            contracts=None,
             entry_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
             exit_price=None,
             exit_time=None,
             result=None,
             result_type=None,
+            fees=None,
+            pnl_usd=None,
             params=None,
         )
         defaults.update(overrides)

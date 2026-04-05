@@ -22,22 +22,36 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
         if mode == "sim":
             usd = risk * actual_r if actual_r > 0 else -risk
         else:  # real
-            entry = trade.get("entry") or trade.get("entry_price")
-            orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-            if entry is None or orig_sl is None:
-                usd = 0.0
+            # Use stored pnl_usd if available (single source of truth)
+            stored_pnl = close.get("pnl_usd")
+            if stored_pnl is not None:
+                usd = stored_pnl
+                commission = close.get("fees", 0.0)
             else:
-                sl_pts = round(abs(entry - orig_sl), 4)
-                if sl_pts <= 0:
+                # Fallback: recalculate (legacy path)
+                if trade is None:
                     usd = 0.0
                 else:
-                    contracts = max(1, round(risk / (sl_pts * nq_pv)))
-                    fees = contracts * fee_per_rt
-                    commission = fees
-                    if actual_r > 0:
-                        usd = contracts * (actual_r * sl_pts) * nq_pv - fees
+                    entry = trade.get("entry") or trade.get("entry_price")
+                    orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+                    # Use stored risk field (ticks) for PnL calculation
+                    risk_pts = trade.get("risk")
+                    if entry is None or orig_sl is None:
+                        usd = 0.0
                     else:
-                        usd = -(contracts * sl_pts * nq_pv) - fees
+                        sl_pts_price = round(abs(entry - orig_sl), 4)
+                        # Use stored risk if available, otherwise fall back to price diff
+                        sl_pts = risk_pts if risk_pts is not None else sl_pts_price
+                        if sl_pts <= 0:
+                            usd = 0.0
+                        else:
+                            contracts = max(1, round(risk / (sl_pts_price * nq_pv)))
+                            fees = contracts * fee_per_rt
+                            commission = fees
+                            if actual_r > 0:
+                                usd = contracts * (actual_r * sl_pts) * nq_pv - fees
+                            else:
+                                usd = -(contracts * sl_pts * nq_pv) - fees
         pct_base = balance if (risk_pct is not None and balance) else account
         pct = usd / pct_base * 100 if pct_base else 0.0
         return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry, "commission": commission}
@@ -48,22 +62,36 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
     if mode == "sim":
         usd = risk * actual_r if actual_r > 0 else -risk
     else:  # real
-        entry = trade.get("entry") or trade.get("entry_price")
-        orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-        if entry is None or orig_sl is None:
-            usd = 0.0
+        # Use stored pnl_usd if available (single source of truth)
+        stored_pnl = close.get("pnl_usd")
+        if stored_pnl is not None:
+            usd = stored_pnl
+            commission = close.get("fees", 0.0)
         else:
-            sl_pts = round(abs(entry - orig_sl), 4)
-            if sl_pts <= 0:
+            # Fallback: recalculate (legacy path)
+            if trade is None:
                 usd = 0.0
             else:
-                contracts = max(1, round(risk / (sl_pts * nq_pv)))
-                fees = contracts * fee_per_rt
-                commission = fees
-                if actual_r > 0:
-                    usd = contracts * (actual_r * sl_pts) * nq_pv - fees
+                entry = trade.get("entry") or trade.get("entry_price")
+                orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+                # Use stored risk field (ticks) for PnL calculation
+                risk_pts = trade.get("risk")
+                if entry is None or orig_sl is None:
+                    usd = 0.0
                 else:
-                    usd = -(contracts * sl_pts * nq_pv) - fees
+                    sl_pts_price = round(abs(entry - orig_sl), 4)
+                    # Use stored risk if available, otherwise fall back to price diff
+                    sl_pts = risk_pts if risk_pts is not None else sl_pts_price
+                    if sl_pts <= 0:
+                        usd = 0.0
+                    else:
+                        contracts = max(1, round(risk / (sl_pts_price * nq_pv)))
+                        fees = contracts * fee_per_rt
+                        commission = fees
+                        if actual_r > 0:
+                            usd = contracts * (actual_r * sl_pts) * nq_pv - fees
+                        else:
+                            usd = -(contracts * sl_pts * nq_pv) - fees
 
     pct_base = balance if (risk_pct is not None and balance) else account
     pct = usd / pct_base * 100 if pct_base else 0.0

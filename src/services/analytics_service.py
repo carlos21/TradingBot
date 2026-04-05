@@ -35,7 +35,9 @@ class AnalyticsService:
                 losing_trades=0,
                 win_rate=0.0,
                 total_pnl=0.0,
+                total_pnl_usd=0.0,
                 avg_pnl=0.0,
+                avg_pnl_usd=0.0,
                 avg_win=0.0,
                 avg_loss=0.0,
                 profit_factor=0.0,
@@ -56,8 +58,12 @@ class AnalyticsService:
         gross_loss = abs(sum(t.result or 0 for t in losing))
         profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
         
-        # Dollar PnL calculations (result * risk)
-        total_pnl_usd = sum((t.result or 0) * t.risk for t in closed_trades)
+        # Dollar PnL: prefer stored pnl_usd (includes fees), fallback for legacy trades
+        total_pnl_usd = sum(
+            t.pnl_usd if t.pnl_usd is not None
+            else (t.result or 0) * (t.risk_dollars if t.risk_dollars else t.risk)
+            for t in closed_trades
+        )
         avg_pnl_usd = total_pnl_usd / len(closed_trades) if closed_trades else 0.0
         
         # Calculate average R-multiple
@@ -219,11 +225,16 @@ class AnalyticsService:
             stop_loss=trade.stop_loss,
             take_profit=trade.take_profit,
             risk=trade.risk,
+            risk_dollars=trade.risk_dollars,
+            risk_pct=trade.risk_pct,
+            contracts=trade.contracts,
             entry_time=trade.entry_time.timestamp(),
             exit_price=trade.exit_price,
             exit_time=trade.exit_time.timestamp() if trade.exit_time else None,
             result=trade.result,
             result_type=trade.result_type,
+            fees=trade.fees,
+            pnl_usd=trade.pnl_usd,
             status="closed" if trade.exit_time else "open",
             logs=logs,
         )

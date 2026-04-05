@@ -18,6 +18,10 @@ class StrategyNumbers:
     sl_level_tolerance: float = 5.0
     min_cross_depth: float = 0.0
     rr_ratio: float = 5.0  # Risk:Reward ratio for TP calculation
+    point_value: float = 2.0         # dollar value per point (MNQ = $2)
+    account_balance: float = 50000.0  # account balance for risk % calculation
+    risk_per_trade: Optional[float] = None  # fixed $ risk per trade (from RISK env var)
+    risk_pct_per_trade: Optional[float] = None  # % of account to risk per trade (from RISK_PCT env var)
 
 @dataclass
 class CandleConfig:

@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from src.analytics import AnalyticsReporter, NoOpReporter
 from src.dbexception import DBNotFoundException
+from src.financial_calc import FinancialCalc
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
 from src.repositories.line_trigger_state_repository import LineTriggerStateRepository, InMemoryLineTriggerStateRepository
@@ -67,6 +68,10 @@ class BaseLiquidityStrategy:
         trade_repository: TradeRepository,
         trade_manager: TradeManager,
         extra_sl_space: float,
+        point_value: float,
+        account_balance: float,
+        risk_per_trade: Optional[float] = None,
+        risk_pct_per_trade: Optional[float] = None,
         fixed_stop_loss: Optional[float] = None,
         max_stop_loss: Optional[float] = None,
         strategy_tf: str = "5m",
@@ -84,6 +89,10 @@ class BaseLiquidityStrategy:
         self.max_bounce    = float(max_bounce)
         self.min_cross_depth = float(min_cross_depth)
         self.rr_ratio = float(rr_ratio)
+        self.point_value = float(point_value)
+        self.account_balance = float(account_balance)
+        self.risk_per_trade = risk_per_trade
+        self.risk_pct_per_trade = risk_pct_per_trade
         self.socketio      = socketio
         self.line_repository  = line_repository
         self.trade_repository = trade_repository
@@ -369,14 +378,18 @@ class BaseLiquidityStrategy:
                 pnl = t["entry"] - exit_price
 
             r_result = pnl / risk
-            t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price)
-
+            contracts = t.get("contracts") or 1
+            t_fees = FinancialCalc.fees(contracts)
+            t_pnl_usd = FinancialCalc.pnl_usd(contracts, r_result, risk, self.point_value, t_fees)
+            t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd)
             try:
                 self.trade_repository.close_trade(
                     trade_id=t["trade_id"],
                     exit_price=exit_price,
                     exit_time=self._ts_to_dt(bar["time"]),
-                    result=r_result
+                    result=r_result,
+                    fees=t_fees,
+                    pnl_usd=t_pnl_usd,
                 )
                 print(f"[Strategy] 🕐 SESSION END closed {t['trade_id']} @ {exit_price} (Result: {r_result:.2f}R)")
             except Exception as e:
@@ -613,7 +626,12 @@ class BaseLiquidityStrategy:
                     closed = True
 
             if closed:
-                t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price)
+                # Compute fees/pnl_usd before updating dict so Socket.IO event includes them
+                contracts = t.get("contracts") or 1
+                risk_pts = t.get("risk", 0) or 1.0
+                t_fees = FinancialCalc.fees(contracts)
+                t_pnl_usd = FinancialCalc.pnl_usd(contracts, r_result, risk_pts, self.point_value, t_fees)
+                t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd)
                 is_phantom = t.get("is_phantom", False)
 
                 # Register re-entry opportunity when SL is hit (not on TP, not on re-entry trades)
@@ -643,13 +661,14 @@ class BaseLiquidityStrategy:
                 if is_phantom:
                     print(f"[Strategy] 👻 Phantom trade closed (Result: {r_result:.2f}R) — not persisted")
                 else:
-                    # Persist the close to DB immediately
                     try:
                         self.trade_repository.close_trade(
                             trade_id=t["trade_id"],
                             exit_price=exit_price,
                             exit_time=self._ts_to_dt(bar["time"]),
-                            result=r_result
+                            result=r_result,
+                            fees=t_fees,
+                            pnl_usd=t_pnl_usd,
                         )
                         print(f"[Strategy] 💾 Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R)")
                     except Exception as e:
@@ -731,6 +750,17 @@ class BaseLiquidityStrategy:
         trade["line_level"] = ctx.level
         return trade
 
+    def _calc_contracts(self, risk_per_contract: float) -> int:
+        """Calculate number of contracts, matching NinjaTrader's logic."""
+        if risk_per_contract <= 0:
+            return 1
+        risk_budget = FinancialCalc.risk_budget(
+            self.account_balance, self.risk_per_trade, self.risk_pct_per_trade
+        )
+        if risk_budget <= 0:
+            return 1
+        return FinancialCalc.contracts(risk_budget, risk_per_contract)
+
     def _make_trade_dict(
         self,
         bar: Dict[str, Any],
@@ -740,17 +770,24 @@ class BaseLiquidityStrategy:
         take_profit: float,
         risk: float,
     ) -> Dict[str, Any]:
+        risk_per_contract = risk * self.point_value
+        contracts = self._calc_contracts(risk_per_contract)
+        risk_dollars = risk_per_contract * contracts
+        risk_pct = (risk_dollars / self.account_balance * 100) if self.account_balance > 0 else None
         return {
-            "pair":        bar["pair"],
-            "type":        trade_type,
-            "entry":       entry,
-            "stop_loss":   stop_loss,
-            "orig_sl":     stop_loss,
-            "take_profit": take_profit,
-            "risk":        risk,
-            "rr_ratio":    self.rr_ratio,
-            "status":      "open",
-            "entry_time":  bar["time"],
+            "pair":         bar["pair"],
+            "type":         trade_type,
+            "entry":        entry,
+            "stop_loss":    stop_loss,
+            "orig_sl":      stop_loss,
+            "take_profit":  take_profit,
+            "risk":         risk,
+            "risk_dollars": risk_dollars,
+            "risk_pct":     risk_pct,
+            "contracts":    contracts,
+            "rr_ratio":     self.rr_ratio,
+            "status":       "open",
+            "entry_time":   bar["time"],
         }
 
     def _store_and_emit_open(self, trade: Dict[str, Any]):
@@ -772,6 +809,9 @@ class BaseLiquidityStrategy:
                 "line_level": trade.get("line_level"),
                 "is_reentry": trade.get("is_reentry", False),
             },
+            risk_dollars=trade.get("risk_dollars"),
+            risk_pct=trade.get("risk_pct"),
+            contracts=trade.get("contracts"),
         )
         trade["trade_id"] = td.trade_id
         self.open_trades.append(trade)
@@ -786,6 +826,9 @@ class BaseLiquidityStrategy:
                 'stop_loss':   trade["stop_loss"],
                 'take_profit': trade["take_profit"],
                 'risk':        trade["risk"],
+                'risk_dollars': trade.get("risk_dollars"),
+                'risk_pct':    trade.get("risk_pct"),
+                'contracts':   trade.get("contracts"),
                 'entry_time':  trade["entry_time"],
                 'status':      'open'
             }
@@ -798,12 +841,20 @@ class BaseLiquidityStrategy:
             self.trade_logger.log(trade["trade_id"], "CMD_SENT", "place_order → NinjaTrader")
 
     def _store_and_emit_close(self, trade: Dict[str, Any]):
+        contracts = trade.get("contracts") or 1
+        risk_pts = trade.get("risk", 0) or 1.0
+        t_fees = FinancialCalc.fees(contracts)
+        t_pnl_usd = FinancialCalc.pnl_usd(contracts, trade["result"], risk_pts, self.point_value, t_fees)
+        trade["fees"] = t_fees
+        trade["pnl_usd"] = t_pnl_usd
         self.socketio.emit("trade_close", trade)
         self.trade_repository.close_trade(
             trade_id=trade["trade_id"],
             exit_price=trade["exit_price"],
             exit_time=self._ts_to_dt(trade["exit_time"]),
             result=trade["result"],
+            fees=t_fees,
+            pnl_usd=t_pnl_usd,
         )
 
     # ----- utils -----

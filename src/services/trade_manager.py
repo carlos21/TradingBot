@@ -6,6 +6,7 @@ from src.repositories.trades_repository import TradeRepository
 from src.services.trade_executor import TradeExecutor, NoOpExecutor
 from src.notifier import Notifier, NoOpNotifier
 from src.analytics import AnalyticsReporter, NoOpReporter
+from src.financial_calc import FinancialCalc
 
 
 class TradeManager:
@@ -14,6 +15,8 @@ class TradeManager:
     """
 
     def __init__(self, trade_repository: TradeRepository, socketio,
+                 point_value: float, account_balance: float,
+                 risk_per_trade: float = None, risk_pct_per_trade: float = None,
                  pair: str = 'NQ',
                  session_end_time: str = None, session_tz: str = None,
                  broker_mode: str = 'futures', broker_spread: float = 0.0,
@@ -41,6 +44,10 @@ class TradeManager:
         self.trade_logger     = trade_logger
         self.notifier         = notifier or NoOpNotifier()
         self.analytics        = analytics or NoOpReporter()
+        self.point_value      = float(point_value)
+        self.account_balance  = float(account_balance)
+        self.risk_per_trade   = risk_per_trade
+        self.risk_pct_per_trade = risk_pct_per_trade
 
         # Session end close config
         self._session_end_time = None
@@ -54,6 +61,27 @@ class TradeManager:
 
         # RESUME: Load any open trades from the DB so we can manage them
         self._load_open_trades_from_db()
+
+    def _calc_contracts(self, risk_per_contract: float) -> int:
+        """Calculate number of contracts, matching NinjaTrader's logic."""
+        if risk_per_contract <= 0:
+            return 1
+        risk_budget = FinancialCalc.risk_budget(
+            self.account_balance, self.risk_per_trade, self.risk_pct_per_trade
+        )
+        if risk_budget <= 0:
+            return 1
+        return FinancialCalc.contracts(risk_budget, risk_per_contract)
+
+    def _calc_close_financials(self, trade: dict, result: float) -> tuple[float, float]:
+        """Return (fees, pnl_usd) for a closing trade using FinancialCalc."""
+        contracts = trade.get('contracts') or 1
+        risk = trade.get('risk', 0)
+        if risk <= 0:
+            risk = 1.0
+        fees = FinancialCalc.fees(contracts)
+        pnl_usd = FinancialCalc.pnl_usd(contracts, result, risk, self.point_value, fees)
+        return fees, pnl_usd
 
     def _load_open_trades_from_db(self):
         """
@@ -75,6 +103,9 @@ class TradeManager:
                         'stop_loss':   t.stop_loss,
                         'take_profit': t.take_profit,
                         'risk':        t.risk,
+                        'risk_dollars': t.risk_dollars,
+                        'risk_pct':    t.risk_pct,
+                        'contracts':   t.contracts,
                         'status':      'open',
                         'entry_time':  t.entry_time.timestamp()
                     }
@@ -164,6 +195,7 @@ class TradeManager:
                 pnl_points = trade['entry'] - exit_price
 
             result = pnl_points / risk
+            fees, pnl_usd = self._calc_close_financials(trade, result)
 
             print(f"[TradeManager] 📉 Closing trade {trade['trade_id']} (Result: {result:.2f}R, Type: {result_type}) at {bar['time']}")
 
@@ -173,7 +205,9 @@ class TradeManager:
                     exit_price = exit_price,
                     exit_time  = exit_time,
                     result     = result,
-                    result_type = result_type
+                    result_type = result_type,
+                    fees       = fees,
+                    pnl_usd    = pnl_usd,
                 )
                 print(f"[TradeManager] 💾 DB Updated for Trade {trade['trade_id']} (Closed)")
             except Exception as e:
@@ -203,7 +237,9 @@ class TradeManager:
                 'exit_price': exit_price,
                 'exit_time':  bar['time'],
                 'result':     result,
-                'result_type': result_type
+                'result_type': result_type,
+                'fees':       fees,
+                'pnl_usd':   pnl_usd,
             })
 
     def _check_session_end_close(self, bar: dict):
@@ -234,6 +270,7 @@ class TradeManager:
                 pnl_points = trade['entry'] - exit_price
 
             result = pnl_points / risk
+            fees, pnl_usd = self._calc_close_financials(trade, result)
 
             result_type = "BE" if result <= 0.001 else "SP"
 
@@ -245,7 +282,9 @@ class TradeManager:
                     exit_price=exit_price,
                     exit_time=exit_time,
                     result=result,
-                    result_type=result_type
+                    result_type=result_type,
+                    fees=fees,
+                    pnl_usd=pnl_usd,
                 )
             except Exception as e:
                 print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
@@ -271,7 +310,9 @@ class TradeManager:
                 'exit_price': exit_price,
                 'exit_time':  bar['time'],
                 'result':     result,
-                'result_type': result_type
+                'result_type': result_type,
+                'fees':       fees,
+                'pnl_usd':   pnl_usd,
             })
 
     def open_trade(self, pair: str, trade_type: str, entry_price: float,
@@ -280,6 +321,11 @@ class TradeManager:
         """
         Open a new trade with precomputed parameters.
         """
+        risk_per_contract = risk * self.point_value
+        contracts = self._calc_contracts(risk_per_contract)
+        risk_dollars = risk_per_contract * contracts
+        risk_pct = (risk_dollars / self.account_balance * 100) if self.account_balance > 0 else None
+
         # persist open trade
         td = self.trade_repository.insert_trade(
             pair=pair,
@@ -289,7 +335,10 @@ class TradeManager:
             take_profit=take_profit,
             risk=risk,
             entry_time=datetime.fromtimestamp(entry_time, tz=timezone.utc),
-            params={}
+            params={},
+            risk_dollars=risk_dollars,
+            risk_pct=risk_pct,
+            contracts=contracts,
         )
         trade = {
             'trade_id':   td.trade_id,
@@ -299,6 +348,9 @@ class TradeManager:
             'stop_loss':  stop_loss,
             'take_profit':take_profit,
             'risk':       risk,
+            'risk_dollars': risk_dollars,
+            'risk_pct':   risk_pct,
+            'contracts':  contracts,
             'entry_time': entry_time
         }
         # track in-memory
@@ -366,12 +418,13 @@ class TradeManager:
             pnl_points = trade['entry'] - exit_price
 
         result = pnl_points / risk
+        fees, pnl_usd = self._calc_close_financials(trade, result)
 
         # Determine result type based on exit price
         sl = trade.get('stop_loss', trade.get('sl', trade.get('orig_sl')))
         tp = trade.get('take_profit', trade.get('tp'))
         entry = trade.get('entry', trade.get('entry_price'))
-        
+
         if sl and abs(exit_price - sl) < 0.5:
             result_type = "SL"
         elif tp and abs(exit_price - tp) < 0.5:
@@ -387,7 +440,9 @@ class TradeManager:
             exit_price=exit_price,
             exit_time=datetime.fromtimestamp(exit_time, tz=timezone.utc),
             result=result,
-            result_type=result_type
+            result_type=result_type,
+            fees=fees,
+            pnl_usd=pnl_usd,
         )
 
         if self.trade_logger:
@@ -407,7 +462,9 @@ class TradeManager:
             'exit_price':exit_price,
             'exit_time': exit_time,
             'result':    result,
-            'result_type': None
+            'result_type': result_type,
+            'fees':      fees,
+            'pnl_usd':  pnl_usd,
         }
         self.socketio.emit('trade_close', payload)
 
@@ -435,6 +492,7 @@ class TradeManager:
                 pnl_points = trade['entry'] - exit_price
 
             result = pnl_points / risk
+            fees, pnl_usd = self._calc_close_financials(trade, result)
 
             result_type = "BE" if result <= 0.001 else "SP"
 
@@ -446,7 +504,9 @@ class TradeManager:
                     exit_price=exit_price,
                     exit_time=exit_time,
                     result=result,
-                    result_type=result_type
+                    result_type=result_type,
+                    fees=fees,
+                    pnl_usd=pnl_usd,
                 )
             except Exception as e:
                 print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
@@ -472,7 +532,9 @@ class TradeManager:
                 'exit_price': exit_price,
                 'exit_time':  final_time,
                 'result':     result,
-                'result_type': result_type
+                'result_type': result_type,
+                'fees':       fees,
+                'pnl_usd':   pnl_usd,
             })
 
     def update_local_trade_sl(self, trade_id: str, new_sl: float):
@@ -520,6 +582,15 @@ class TradeManager:
         else:
             trade['risk'] = abs(trade['stop_loss'] - entry_price)
 
+        # Recalculate dollar risk and risk %
+        risk_per_contract = trade['risk'] * self.point_value
+        risk_budget = FinancialCalc.risk_budget(
+            self.account_balance, self.risk_per_trade, self.risk_pct_per_trade
+        )
+        contracts = FinancialCalc.contracts(risk_budget, risk_per_contract) if risk_budget > 0 else 1
+        trade['risk_dollars'] = risk_per_contract * contracts
+        trade['risk_pct'] = (trade['risk_dollars'] / self.account_balance * 100) if self.account_balance > 0 else None
+
         print(f"[TradeManager] 📡 ENTRY FILL: {trade_id} @ {entry_price} "
               f"(was {old_entry}, slippage={entry_price - old_entry:+.2f}) "
               f"SL={trade['stop_loss']} TP={trade['take_profit']}")
@@ -536,6 +607,9 @@ class TradeManager:
                 self.trade_repository.update_stop_loss(trade_id, stop_loss)
             if take_profit is not None:
                 self.trade_repository.update_take_profit(trade_id, take_profit)
+            self.trade_repository.update_risk_fields(
+                trade_id, trade['risk'], trade['risk_dollars'], trade.get('risk_pct')
+            )
         except Exception as e:
             print(f"[TradeManager] ❌ DB ERROR on entry fill for {trade_id}: {e}")
             self.analytics.capture_exception(e, {"op": "broker_entry_fill", "trade_id": trade_id})
@@ -550,6 +624,8 @@ class TradeManager:
             'stop_loss':   trade['stop_loss'],
             'take_profit': trade['take_profit'],
             'risk':        trade['risk'],
+            'risk_dollars': trade.get('risk_dollars'),
+            'risk_pct':    trade.get('risk_pct'),
         })
 
     def handle_broker_fill(self, trade_id: str, exit_price: float, result_type: str = None):
@@ -580,6 +656,7 @@ class TradeManager:
             pnl_points = trade['entry'] - exit_price
 
         result = pnl_points / risk
+        fees, pnl_usd = self._calc_close_financials(trade, result)
 
         # Auto-detect result_type if not provided
         if not result_type:
@@ -605,7 +682,9 @@ class TradeManager:
                 exit_price=exit_price,
                 exit_time=exit_time,
                 result=result,
-                result_type=result_type
+                result_type=result_type,
+                fees=fees,
+                pnl_usd=pnl_usd,
             )
         except Exception as e:
             print(f"[TradeManager] ❌ DB ERROR on broker fill for {trade_id}: {e}")
@@ -628,5 +707,7 @@ class TradeManager:
             'exit_price':  exit_price,
             'exit_time':   exit_time.timestamp(),
             'result':      result,
-            'result_type': result_type
+            'result_type': result_type,
+            'fees':        fees,
+            'pnl_usd':    pnl_usd,
         })

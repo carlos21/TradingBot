@@ -97,7 +97,11 @@ class FakeTradeRepository:
         self.inserted = []
         self.closed = []
 
-    def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None):
+    def clear_in_memory(self):
+        """Alias used by __reset_all to clear only in-memory fakes between scenarios."""
+        self.clear()
+
+    def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None, risk_dollars=None, risk_pct=None, contracts=None):
         self._seq += 1
         trade_id = f"T{self._seq}"
 
@@ -109,6 +113,9 @@ class FakeTradeRepository:
             "stop_loss": stop_loss,
             "take_profit": take_profit,
             "risk": risk,
+            "risk_dollars": risk_dollars,
+            "risk_pct": risk_pct,
+            "contracts": contracts,
             "entry_time": entry_time,
             "params": params
         })
@@ -120,11 +127,16 @@ class FakeTradeRepository:
             stop_loss=stop_loss,
             take_profit=take_profit,
             risk=risk,
+            risk_dollars=risk_dollars,
+            risk_pct=risk_pct,
+            contracts=contracts,
             entry_time=entry_time,
             exit_price=None,
             exit_time=None,
             result=None,
             result_type=None,
+            fees=None,
+            pnl_usd=None,
             params=params,
         )
 
@@ -145,14 +157,24 @@ class FakeTradeRepository:
             if t['trade_id'] == trade_id:
                 t['entry'] = new_entry_price
                 return
+
+    def update_risk_fields(self, trade_id, risk, risk_dollars, risk_pct):
+        for t in self.inserted:
+            if t['trade_id'] == trade_id:
+                t['risk'] = risk
+                t['risk_dollars'] = risk_dollars
+                t['risk_pct'] = risk_pct
+                return
     
-    def close_trade(self, trade_id, exit_price, exit_time, result, result_type=None):
+    def close_trade(self, trade_id, exit_price, exit_time, result, result_type=None, fees=None, pnl_usd=None):
         self.closed.append({
             "trade_id": trade_id,
             "exit_price": exit_price,
             "exit_time": exit_time,
             "result": result,
-            "result_type": result_type
+            "result_type": result_type,
+            "fees": fees,
+            "pnl_usd": pnl_usd,
         })
 
     def append_trade_log(self, trade_id: str, event: str, message: str) -> None:
@@ -180,11 +202,16 @@ class FakeTradeRepository:
                     stop_loss=t['stop_loss'],
                     take_profit=t['take_profit'],
                     risk=t['risk'],
+                    risk_dollars=t.get('risk_dollars'),
+                    risk_pct=t.get('risk_pct'),
+                    contracts=t.get('contracts'),
                     entry_time=t['entry_time'],
                     exit_price=closed_info['exit_price'] if closed_info else None,
                     exit_time=closed_info['exit_time'] if closed_info else None,
                     result=closed_info['result'] if closed_info else None,
                     result_type=closed_info.get('result_type') if closed_info else None,
+                    fees=closed_info.get('fees') if closed_info else None,
+                    pnl_usd=closed_info.get('pnl_usd') if closed_info else None,
                     params=t.get('params'),
                     created_at=datetime.utcnow()
                 )
@@ -214,11 +241,16 @@ class FakeTradeRepository:
                 stop_loss=t['stop_loss'],
                 take_profit=t['take_profit'],
                 risk=t['risk'],
+                risk_dollars=t.get('risk_dollars'),
+                risk_pct=t.get('risk_pct'),
+                contracts=t.get('contracts'),
                 entry_time=t['entry_time'],
                 exit_price=exit_price,
                 exit_time=exit_time,
                 result=result,
                 result_type=result_type,
+                fees=closed_info.get('fees') if closed_info else None,
+                pnl_usd=closed_info.get('pnl_usd') if closed_info else None,
                 params=t.get('params'),
                 created_at=datetime.utcnow()
             ))

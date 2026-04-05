@@ -114,7 +114,9 @@ def build_prod():
     )
 
     # 4. Strategy Logic
-    numbers = get_prod_strategy_numbers()
+    risk_usd = float(os.environ["RISK"]) if os.environ.get("RISK") else None
+    risk_pct = float(os.environ["RISK_PCT"]) if os.environ.get("RISK_PCT") else None
+    numbers = get_prod_strategy_numbers(risk_per_trade=risk_usd, risk_pct_per_trade=risk_pct)
     candle_config = get_prod_candle_config()
     options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
 
@@ -158,7 +160,7 @@ def build_live():
     else:
         print("[tradingbot] Risk config: none (NinjaTrader will use 1 contract)")
 
-    numbers = get_prod_strategy_numbers()
+    numbers = get_prod_strategy_numbers(risk_per_trade=risk_usd, risk_pct_per_trade=risk_pct)
     candle_config = get_prod_candle_config()
     options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
 

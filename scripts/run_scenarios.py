@@ -34,6 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from app_factory import create_app, Repositories
 from src.data_sources.csv_datasource import CSVDataSource
+from src.financial_calc import FinancialCalc
 from src.prod_config import (
     get_prod_strategy_numbers,
     get_prod_candle_config,
@@ -103,16 +104,16 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 # Server Process Logic
 # -------------------------------------------------------------------------
 
-def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False):
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None):
     try:
-        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist)
+        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist, risk_per_trade, risk_pct_per_trade)
     except Exception as e:
         import traceback
         sys.stderr.write(f"\n❌ Server process crashed: {e}\n")
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
 
-def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False):
+def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None):
     if quiet:
         sys.stdout = open(os.devnull, 'w')
         import logging
@@ -123,9 +124,11 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
     # Use real SQL repositories if persist flag is set
     if persist:
         database.setup_database()
+        trade_repo = SQLTradeRepository()
+        trade_repo.clear()  # Clear stale trades from previous runs
         repos = Repositories(
             lines=SQLLineRepository(),
-            trades=SQLTradeRepository()
+            trades=trade_repo
         )
     else:
         repos = Repositories(
@@ -141,7 +144,7 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
         bars_per_second=bars_per_second,
     )
 
-    numbers = get_prod_strategy_numbers(rr_ratio=rr_ratio)
+    numbers = get_prod_strategy_numbers(rr_ratio=rr_ratio, risk_per_trade=risk_per_trade, risk_pct_per_trade=risk_pct_per_trade)
     candle_config = get_prod_candle_config()
     options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
 
@@ -477,7 +480,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
     server_proc = Process(
         target=run_test_server,
-        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr, args.persist)
+        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr, args.persist, args.risk, getattr(args, 'risk_pct', None))
     )
     server_proc.start()
 
@@ -609,10 +612,19 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 captured_trades = await page.evaluate("window.__trades")
                 captured_closes = await page.evaluate("window.__closes")
                 # Build (trade, close) pairs for every trade in this scenario
-                trade_pairs = [
-                    (t, (captured_closes or {}).get(str(t.get("trade_id", ""))))
-                    for t in (captured_trades or [])
-                ]
+                trade_pairs = []
+                trade_ids_seen = set()
+                # First, add all trades with their closes
+                for t in (captured_trades or []):
+                    tid = str(t.get("trade_id", ""))
+                    trade_ids_seen.add(tid)
+                    close = (captured_closes or {}).get(tid)
+                    trade_pairs.append((t, close))
+                # Second, add any closes that don't have matching trades
+                # (trades that opened before scenario started)
+                for tid, close in (captured_closes or {}).items():
+                    if tid not in trade_ids_seen:
+                        trade_pairs.append((None, close))
                 # Net R across all closed trades → determines won/lost for the scenario
                 closed_results = [c["result"] for _, c in trade_pairs if c is not None]
                 net_result = sum(closed_results) if closed_results else None
@@ -711,7 +723,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     RISK_PCT     = getattr(args, 'risk_pct', None)  # percentage risk per trade (e.g. 1.0 = 1%)
     RISK_USD_FIX = args.risk      # fixed risk per trade in USD (configurable via --risk)
     NQ_PV        = 2.0       # $ per point, MNQ micro contract
-    FEE_PER_RT   = 1.50      # $ round-trip per contract (Tradovate monthly + CME micro exchange fees)
+    FEE_PER_RT   = FinancialCalc.DEFAULT_FEE_PER_RT
     BE_THRESHOLD = 0.5       # R below this is considered breakeven
 
     def get_risk(balance):
@@ -787,25 +799,45 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         for trade, close in trade_pairs:
             if close is None:
                 continue
-            entry   = trade.get("entry") or trade.get("entry_price")
-            orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-            if entry is None or orig_sl is None:
-                continue
-            sl_pts = round(abs(entry - orig_sl), 4)
-            if sl_pts <= 0:
-                continue
-            risk = get_risk(bal)
-            contracts = max(1, round(risk / (sl_pts * NQ_PV)))
-            fees = contracts * FEE_PER_RT
-            actual_r = close.get("result", 0.0)
-            if actual_r > 0:
-                trade_usd = contracts * (actual_r * sl_pts) * NQ_PV - fees
+            # Use stored pnl_usd from strategy if available (single source of truth)
+            stored_pnl = close.get("pnl_usd")
+            if stored_pnl is not None:
+                trade_usd = stored_pnl
+                if trade is not None:
+                    contracts = trade.get("contracts") or 1
+                    entry = trade.get("entry") or trade.get("entry_price")
+                    orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+                    sl_pts_price = round(abs(entry - orig_sl), 4) if entry and orig_sl else 0
+                    # Use stored risk (ticks) for display, fallback to price diff
+                    risk_pts = trade.get("risk")
+                    sl_pts = risk_pts if risk_pts is not None else sl_pts_price
+                else:
+                    contracts = 1
+                    sl_pts = 0
             else:
-                trade_usd = -(contracts * sl_pts * NQ_PV) - fees
+                # Fallback: recalculate (legacy path)
+                if trade is None:
+                    continue
+                entry   = trade.get("entry") or trade.get("entry_price")
+                orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+                if entry is None or orig_sl is None:
+                    continue
+                sl_pts_price = round(abs(entry - orig_sl), 4)
+                if sl_pts_price <= 0:
+                    continue
+                # Use stored risk (ticks) for PnL, price diff for contracts
+                risk_pts = trade.get("risk")
+                sl_pts = risk_pts if risk_pts is not None else sl_pts_price
+                risk = get_risk(bal)
+                contracts = FinancialCalc.contracts(risk, sl_pts_price * NQ_PV)
+                fees = FinancialCalc.fees(contracts, FEE_PER_RT)
+                actual_r = close.get("result", 0.0)
+                trade_usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, NQ_PV, fees)
             total_usd += trade_usd
             bal += trade_usd
             has_closed = True
-            detail_parts.append(f"{contracts}c@{sl_pts:.0f}pt")
+            if trade is not None:
+                detail_parts.append(f"{contracts}c@{sl_pts:.0f}pt")
         if not has_closed:
             return None, None, None, ""
         actual_pct = total_usd / ACCT * 100
@@ -829,20 +861,31 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         running_balance = ACCT
 
         for r in summary_results:
-            date  = dtparser.parse(r["date"]).date()
-            d_key = str(date)
-            iso   = date.isocalendar()
-            w_key = f"{iso.year}-W{iso.week:02d}"
-            m_key = date.strftime("%Y-%m")
+            scenario_date = dtparser.parse(r["date"]).date()
             if r["status"] != "PASS":
-                daily[d_key]["all_passed"] = False
+                daily[str(scenario_date)]["all_passed"] = False
             if r.get("velocity") is not None:
-                daily[d_key]["velocity"] = r["velocity"]
-            for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
-                if bucket[key]["start_balance"] is None:
-                    bucket[key]["start_balance"] = running_balance
+                daily[str(scenario_date)]["velocity"] = r["velocity"]
 
             for trade, close in (r.get("trade_pairs") or []):
+                # Use trade exit time for bucketing (not scenario date)
+                if close is not None and close.get("exit_time"):
+                    exit_dt = datetime.fromtimestamp(close["exit_time"], tz=pair_tz)
+                    d_key = str(exit_dt.date())
+                    iso = exit_dt.isocalendar()
+                    w_key = f"{iso.year}-W{iso.week:02d}"
+                    m_key = exit_dt.strftime("%Y-%m")
+                else:
+                    # Fallback to scenario date for open trades
+                    d_key = str(scenario_date)
+                    iso = scenario_date.isocalendar()
+                    w_key = f"{iso.year}-W{iso.week:02d}"
+                    m_key = scenario_date.strftime("%Y-%m")
+
+                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                    if bucket[key]["start_balance"] is None:
+                        bucket[key]["start_balance"] = running_balance
+
                 if close is None:
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
                         bucket[key]["open"] += 1
@@ -851,7 +894,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 t_usd, t_pct, actual_r, t_comm = per_trade_fn(trade, close, running_balance)
                 if t_usd is not None:
                     running_balance += t_usd
-                is_reentry = trade.get("is_reentry", False)
+                is_reentry = trade.get("is_reentry", False) if trade else False
 
                 if result_type == "SP":
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
@@ -1078,18 +1121,30 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         return usd, usd / balance * 100, actual_r, 0.0
 
     def _per_trade_real(trade, close, balance=ACCT):
+        # Use stored pnl_usd from strategy if available (single source of truth)
+        stored_pnl = close.get("pnl_usd")
+        stored_fees = close.get("fees") or 0.0
+        actual_r = close.get("result", 0.0)
+        if stored_pnl is not None:
+            return stored_pnl, stored_pnl / balance * 100, actual_r, stored_fees
+        # Fallback: recalculate (legacy close events without pnl_usd)
+        if trade is None:
+            return None, None, 0.0, 0.0
         risk = get_risk(balance)
         entry   = trade.get("entry") or trade.get("entry_price")
         orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
         if entry is None or orig_sl is None:
             return None, None, 0.0, 0.0
-        sl_pts = round(abs(entry - orig_sl), 4)
-        if sl_pts <= 0:
+        # sl_pts_price is used for contracts calculation
+        sl_pts_price = round(abs(entry - orig_sl), 4)
+        if sl_pts_price <= 0:
             return None, None, 0.0, 0.0
-        contracts = max(1, round(risk / (sl_pts * NQ_PV)))
-        fees = contracts * FEE_PER_RT
-        actual_r = close.get("result", 0.0)
-        usd = (contracts * (actual_r * sl_pts) * NQ_PV - fees) if actual_r > 0 else -(contracts * sl_pts * NQ_PV) - fees
+        # Use stored risk field (ticks) for PnL calculation, fallback to price diff
+        risk_pts = trade.get("risk")
+        sl_pts = risk_pts if risk_pts is not None else sl_pts_price
+        contracts = FinancialCalc.contracts(risk, sl_pts_price * NQ_PV)
+        fees = FinancialCalc.fees(contracts, FEE_PER_RT)
+        usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, NQ_PV, fees)
         return usd, usd / balance * 100, actual_r, fees
 
     risk_desc = f"{RISK_PCT}% of balance" if RISK_PCT is not None else f"${RISK_USD_FIX:,.0f} fixed"
@@ -1126,16 +1181,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 if sl_pts <= 0:
                     continue
                 risk = get_risk(bal)
-                contracts = max(1, round(risk / (sl_pts * NQ_PV)))
+                contracts = FinancialCalc.contracts(risk, sl_pts * NQ_PV)
                 # CFD costs: round-trip spread + commission
                 spread_cost = contracts * cfd_spread * NQ_PV
                 commission_cost = contracts * cfd_commission
                 total_cost = spread_cost + commission_cost
                 actual_r = close.get("result", 0.0)
-                if actual_r > 0:
-                    trade_usd = contracts * (actual_r * sl_pts) * NQ_PV - total_cost
-                else:
-                    trade_usd = -(contracts * sl_pts * NQ_PV) - total_cost
+                trade_usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, NQ_PV, total_cost)
                 total_usd += trade_usd
                 bal += trade_usd
                 has_closed = True
@@ -1156,12 +1208,12 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             sl_pts = round(abs(entry - orig_sl), 4)
             if sl_pts <= 0:
                 return None, None, 0.0, 0.0
-            contracts = max(1, round(risk / (sl_pts * NQ_PV)))
+            contracts = FinancialCalc.contracts(risk, sl_pts * NQ_PV)
             spread_cost = contracts * cfd_spread * NQ_PV
             commission_cost = contracts * cfd_commission
             total_cost = spread_cost + commission_cost
             actual_r = close.get("result", 0.0)
-            usd = (contracts * (actual_r * sl_pts) * NQ_PV - total_cost) if actual_r > 0 else -(contracts * sl_pts * NQ_PV) - total_cost
+            usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, NQ_PV, total_cost)
             return usd, usd / balance * 100, actual_r, total_cost
 
         _print_results(

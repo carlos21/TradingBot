@@ -20,7 +20,10 @@ class TradeRepository(ABC):
         take_profit: float,
         risk: float,
         entry_time: datetime,
-        params: dict | None = None
+        params: dict | None = None,
+        risk_dollars: float | None = None,
+        risk_pct: float | None = None,
+        contracts: float | None = None,
     ) -> TradeData:
         """Create & persist a new Trade."""
         pass
@@ -46,13 +49,20 @@ class TradeRepository(ABC):
         pass
 
     @abstractmethod
+    def update_risk_fields(self, trade_id: str, risk: float, risk_dollars: float, risk_pct: float) -> TradeData:
+        """Update risk, risk_dollars, and risk_pct after broker fill recalculation."""
+        pass
+
+    @abstractmethod
     def close_trade(
         self,
         trade_id: str,
         exit_price: float,
         exit_time: datetime,
         result: float,
-        result_type: Optional[str] = None
+        result_type: Optional[str] = None,
+        fees: Optional[float] = None,
+        pnl_usd: Optional[float] = None,
     ) -> TradeData:
         """Mark a trade as closed, recording exit details."""
         pass
@@ -102,11 +112,16 @@ class SQLTradeRepository(TradeRepository):
             stop_loss=t.stop_loss,
             take_profit=t.take_profit,
             risk=t.risk,
+            risk_dollars=t.risk_dollars,
+            risk_pct=t.risk_pct,
+            contracts=t.contracts,
             entry_time=self._ensure_utc(t.entry_time),
             exit_price=t.exit_price,
             exit_time=self._ensure_utc(t.exit_time),
             result=t.result,
             result_type=t.result_type,
+            fees=t.fees,
+            pnl_usd=t.pnl_usd,
             params=t.params,
             logs=t.logs or [],
             created_at=self._ensure_utc(t.created_at),
@@ -121,7 +136,10 @@ class SQLTradeRepository(TradeRepository):
         take_profit: float,
         risk: float,
         entry_time: datetime,
-        params: Optional[dict] = None
+        params: Optional[dict] = None,
+        risk_dollars: Optional[float] = None,
+        risk_pct: Optional[float] = None,
+        contracts: Optional[float] = None,
     ) -> TradeData:
         with get_db_session() as db:
             t = Trade(
@@ -132,6 +150,9 @@ class SQLTradeRepository(TradeRepository):
                 stop_loss=stop_loss,
                 take_profit=take_profit,
                 risk=risk,
+                risk_dollars=risk_dollars,
+                risk_pct=risk_pct,
+                contracts=contracts,
                 entry_time=entry_time,
                 params=params or {}
             )
@@ -210,13 +231,35 @@ class SQLTradeRepository(TradeRepository):
 
         return self._make_trade_data(t)
 
+    def update_risk_fields(self, trade_id: str, risk: float, risk_dollars: float, risk_pct: float) -> TradeData:
+        with get_db_session() as db:
+            t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+            if not t:
+                db.close()
+                raise DBNotFoundException(f"Trade {trade_id} not found")
+            t.risk = risk
+            t.risk_dollars = risk_dollars
+            t.risk_pct = risk_pct
+            try:
+                db.commit()
+                db.refresh(t)
+            except Exception as e:
+                db.rollback()
+                raise DBException(str(e))
+            finally:
+                db.close()
+
+        return self._make_trade_data(t)
+
     def close_trade(
         self,
         trade_id: str,
         exit_price: float,
         exit_time: datetime,
         result: float,
-        result_type: Optional[str] = None
+        result_type: Optional[str] = None,
+        fees: Optional[float] = None,
+        pnl_usd: Optional[float] = None,
     ) -> TradeData:
         with get_db_session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
@@ -227,6 +270,8 @@ class SQLTradeRepository(TradeRepository):
             t.exit_time = exit_time
             t.result = result
             t.result_type = result_type
+            t.fees = fees
+            t.pnl_usd = pnl_usd
             try:
                 db.commit()
                 db.refresh(t)
@@ -282,3 +327,15 @@ class SQLTradeRepository(TradeRepository):
             result = [self._make_trade_data(t) for t in rows]
             db.close()
             return result
+
+    def clear(self):
+        """Delete all trades. Used by scenario runner to reset between runs."""
+        with get_db_session() as db:
+            db.query(Trade).delete()
+            try:
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                raise DBException(str(e))
+            finally:
+                db.close()

@@ -21,11 +21,16 @@ class Trade(Base):
     stop_loss    = Column(Float,   nullable=False)
     take_profit  = Column(Float,   nullable=False)
     risk         = Column(Float,   nullable=False)
+    risk_dollars = Column(Float,   nullable=True)
+    risk_pct     = Column(Float,   nullable=True)
+    contracts    = Column(Float,   nullable=True)
     entry_time   = Column(DateTime(timezone=True), nullable=False)
     exit_price   = Column(Float,   nullable=True)
     exit_time    = Column(DateTime(timezone=True), nullable=True)
     result       = Column(Float,   nullable=True)       # e.g. PnL or +1/–1 flag
     result_type  = Column(String(10), nullable=True)    # "SL", "TP", or "SP"
+    fees         = Column(Float,   nullable=True)
+    pnl_usd      = Column(Float,   nullable=True)
     params       = Column(JSON,    nullable=True)       # any extra metadata (e.g. {"rr": "1:4"})
     logs         = Column(JSON,    nullable=True)       # per-trade lifecycle log entries
     created_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
@@ -64,3 +69,21 @@ def setup_database():
                 conn.execute(text("ALTER TABLE trades ADD COLUMN logs JSON"))
                 conn.commit()
             print("[DB] Auto-migrated: added 'logs' column to trades table")
+        if 'risk_dollars' not in columns:
+            with db.get_engine().connect() as conn:
+                conn.execute(text("ALTER TABLE trades ADD COLUMN risk_dollars FLOAT"))
+                conn.execute(text("ALTER TABLE trades ADD COLUMN risk_pct FLOAT"))
+                conn.execute(text("ALTER TABLE trades ADD COLUMN contracts FLOAT"))
+                conn.commit()
+            print("[DB] Auto-migrated: added 'risk_dollars', 'risk_pct', 'contracts' columns to trades table")
+        elif 'contracts' not in columns:
+            with db.get_engine().connect() as conn:
+                conn.execute(text("ALTER TABLE trades ADD COLUMN contracts FLOAT"))
+                conn.commit()
+            print("[DB] Auto-migrated: added 'contracts' column to trades table")
+        if 'fees' not in columns:
+            with db.get_engine().connect() as conn:
+                conn.execute(text("ALTER TABLE trades ADD COLUMN fees FLOAT"))
+                conn.execute(text("ALTER TABLE trades ADD COLUMN pnl_usd FLOAT"))
+                conn.commit()
+            print("[DB] Auto-migrated: added 'fees', 'pnl_usd' columns to trades table")
