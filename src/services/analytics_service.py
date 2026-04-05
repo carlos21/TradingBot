@@ -157,7 +157,6 @@ class AnalyticsService:
             "TP": "Take Profit",
             "BE": "Breakeven",
             "SP": "Session End",
-            "OFFLINE": "Offline Close",
             "OTHER": "Other",
         }
         
@@ -264,6 +263,9 @@ class AnalyticsService:
                 "stop_loss": t.stop_loss,
                 "take_profit": t.take_profit,
                 "risk": t.risk,
+                "risk_dollars": t.risk_dollars,
+                "risk_pct": t.risk_pct,
+                "pnl_usd": t.pnl_usd,
                 "entry_time": t.entry_time.timestamp(),
                 "exit_price": t.exit_price,
                 "exit_time": t.exit_time.timestamp() if t.exit_time else None,

@@ -473,7 +473,7 @@ def create_app(
                         exit_price=0,
                         exit_time=datetime.now(tz=timezone.utc),
                         result=0.0,
-                        result_type="OFFLINE"
+                        result_type="SP"
                     )
                     # Remove from trade_manager in-memory
                     trade_manager.open_trades = [

@@ -381,13 +381,15 @@ class BaseLiquidityStrategy:
             contracts = t.get("contracts") or 1
             t_fees = FinancialCalc.fees(contracts)
             t_pnl_usd = FinancialCalc.pnl_usd(contracts, r_result, risk, self.point_value, t_fees)
-            t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd)
+            result_type = "BE" if r_result <= 0.001 else "SP"
+            t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, result_type=result_type)
             try:
                 self.trade_repository.close_trade(
                     trade_id=t["trade_id"],
                     exit_price=exit_price,
                     exit_time=self._ts_to_dt(bar["time"]),
                     result=r_result,
+                    result_type=result_type,
                     fees=t_fees,
                     pnl_usd=t_pnl_usd,
                 )
@@ -597,6 +599,7 @@ class BaseLiquidityStrategy:
             closed = False
             exit_price = 0.0
             r_result = 0.0
+            result_type = None
 
             if t["type"] == "long":
                 if low <= t["stop_loss"]:
@@ -604,12 +607,14 @@ class BaseLiquidityStrategy:
                     exit_price = t["stop_loss"]
                     pnl = exit_price - t["entry"]
                     r_result = pnl / risk
+                    result_type = "SL"
                     closed = True
                 elif high >= t["take_profit"]:
                     # Hit TP
                     exit_price = t["take_profit"]
                     pnl = exit_price - t["entry"]
                     r_result = pnl / risk
+                    result_type = "TP"
                     closed = True
             else:  # short
                 if high >= t["stop_loss"]:
@@ -617,12 +622,14 @@ class BaseLiquidityStrategy:
                     exit_price = t["stop_loss"]
                     pnl = t["entry"] - exit_price
                     r_result = pnl / risk
+                    result_type = "SL"
                     closed = True
                 elif low <= t["take_profit"]:
                     # Hit TP
                     exit_price = t["take_profit"]
                     pnl = t["entry"] - exit_price
                     r_result = pnl / risk
+                    result_type = "TP"
                     closed = True
 
             if closed:
@@ -631,7 +638,7 @@ class BaseLiquidityStrategy:
                 risk_pts = t.get("risk", 0) or 1.0
                 t_fees = FinancialCalc.fees(contracts)
                 t_pnl_usd = FinancialCalc.pnl_usd(contracts, r_result, risk_pts, self.point_value, t_fees)
-                t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd)
+                t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, result_type=result_type)
                 is_phantom = t.get("is_phantom", False)
 
                 # Register re-entry opportunity when SL is hit (not on TP, not on re-entry trades)
@@ -667,10 +674,11 @@ class BaseLiquidityStrategy:
                             exit_price=exit_price,
                             exit_time=self._ts_to_dt(bar["time"]),
                             result=r_result,
+                            result_type=result_type,
                             fees=t_fees,
                             pnl_usd=t_pnl_usd,
                         )
-                        print(f"[Strategy] 💾 Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R)")
+                        print(f"[Strategy] 💾 Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R, Type: {result_type})")
                     except Exception as e:
                         print(f"[Strategy] ❌ Failed to persist close for {t['trade_id']}: {e}")
                         self.analytics.capture_exception(e, {"op": "strategy_persist_close", "trade_id": t["trade_id"]})
@@ -678,7 +686,7 @@ class BaseLiquidityStrategy:
                             self.trade_logger.log(t["trade_id"], "ERROR", str(e))
 
                     if self.trade_logger:
-                        event = "SL_HIT" if r_result < 0 else "TP_HIT"
+                        event = f"{result_type}_HIT"
                         self.trade_logger.log(t["trade_id"], event, f"Exit={exit_price:.2f} Result={r_result:.2f}R")
                         self.trade_logger.log(t["trade_id"], "CLOSE", "Persisted to DB")
 
@@ -847,12 +855,30 @@ class BaseLiquidityStrategy:
         t_pnl_usd = FinancialCalc.pnl_usd(contracts, trade["result"], risk_pts, self.point_value, t_fees)
         trade["fees"] = t_fees
         trade["pnl_usd"] = t_pnl_usd
+        # Determine result_type if not already set
+        result_type = trade.get("result_type")
+        if not result_type:
+            # Infer from result value: BE if near 0, otherwise based on SL/TP proximity
+            entry = trade.get("entry")
+            sl = trade.get("stop_loss")
+            tp = trade.get("take_profit")
+            exit_px = trade.get("exit_price")
+            if entry and abs(exit_px - entry) < 0.5:
+                result_type = "BE"
+            elif sl and abs(exit_px - sl) < 0.5:
+                result_type = "SL"
+            elif tp and abs(exit_px - tp) < 0.5:
+                result_type = "TP"
+            else:
+                result_type = "SP"
+            trade["result_type"] = result_type
         self.socketio.emit("trade_close", trade)
         self.trade_repository.close_trade(
             trade_id=trade["trade_id"],
             exit_price=trade["exit_price"],
             exit_time=self._ts_to_dt(trade["exit_time"]),
             result=trade["result"],
+            result_type=result_type,
             fees=t_fees,
             pnl_usd=t_pnl_usd,
         )

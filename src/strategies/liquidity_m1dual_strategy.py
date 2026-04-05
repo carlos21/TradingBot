@@ -201,10 +201,27 @@ class LiquidityDualM1Strategy:
         self.socketio.emit('trade_open', trade)
 
     def _store_and_emit_close(self, trade: dict):
+        # Determine result_type if not already set
+        result_type = trade.get('result_type')
+        if not result_type:
+            entry = trade.get('entry')
+            sl = trade.get('stop_loss')
+            tp = trade.get('take_profit')
+            exit_px = trade.get('exit_price')
+            if entry and abs(exit_px - entry) < 0.5:
+                result_type = "BE"
+            elif sl and abs(exit_px - sl) < 0.5:
+                result_type = "SL"
+            elif tp and abs(exit_px - tp) < 0.5:
+                result_type = "TP"
+            else:
+                result_type = "SP"
+            trade['result_type'] = result_type
         self.socketio.emit('trade_close', trade)
         self.trade_repository.close_trade(
             trade_id=trade['trade_id'],
             exit_price=trade['exit_price'],
             exit_time=datetime.fromtimestamp(trade['exit_time'], tz=timezone.utc),
-            result=trade['result']
+            result=trade['result'],
+            result_type=result_type
         )

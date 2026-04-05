@@ -33,11 +33,12 @@ export class TradeLogs {
   }
 
   render(trade) {
-    // Title
-    const statusColor = trade.status === 'open' ? 'text-yellow-400' : 'text-gray-400';
+    // Title - show full trade ID and result badge with colored background
+    const resultLabel = trade.result_type || (trade.status === 'open' ? 'OPEN' : 'CLOSED');
+    const resultBadgeClass = this.getResultBadgeBackgroundClass(trade.result_type);
     this.titleEl.innerHTML = `
-      Trade ${trade.trade_id.substring(0, 8)}... 
-      <span class="text-sm ${statusColor}">(${trade.status.toUpperCase()})</span>
+      Trade ${trade.trade_id} 
+      <span class="px-2 py-1 rounded text-xs font-medium ${resultBadgeClass}">${resultLabel}</span>
     `;
 
     // Details Grid
@@ -62,13 +63,15 @@ export class TradeLogs {
         <div class="font-semibold text-green-400">${trade.take_profit.toFixed(2)}</div>
       </div>
       <div class="bg-gray-700 rounded-lg p-3">
-        <div class="text-xs text-gray-400 mb-1">Risk</div>
-        <div class="font-semibold">${trade.risk.toFixed(2)}</div>
+        <div class="text-xs text-gray-400 mb-1">Risk $</div>
+        <div class="font-semibold">${trade.risk_dollars ? '$' + trade.risk_dollars.toFixed(2) : '-'}</div>
       </div>
       <div class="bg-gray-700 rounded-lg p-3">
         <div class="text-xs text-gray-400 mb-1">P&L</div>
         <div class="font-semibold ${pnlClass}">
-          ${trade.result !== null ? `$${trade.result.toFixed(2)}` : '-'}
+          ${trade.pnl_usd !== null && trade.pnl_usd !== undefined 
+            ? `$${trade.pnl_usd.toFixed(2)}` 
+            : (trade.result !== null ? `${trade.result.toFixed(2)}R` : '-')}
         </div>
       </div>
       <div class="bg-gray-700 rounded-lg p-3">
@@ -78,6 +81,10 @@ export class TradeLogs {
       <div class="bg-gray-700 rounded-lg p-3">
         <div class="text-xs text-gray-400 mb-1">Exit Time</div>
         <div class="font-semibold text-sm">${trade.exit_time ? this.formatDateTime(trade.exit_time) : '-'}</div>
+      </div>
+      <div class="bg-gray-700 rounded-lg p-3">
+        <div class="text-xs text-gray-400 mb-1">Contracts</div>
+        <div class="font-semibold">${trade.contracts || '-'}</div>
       </div>
     `;
 
@@ -107,6 +114,26 @@ export class TradeLogs {
     if (eventUpper.includes('FILL') || eventUpper.includes('COMPLETE') || eventUpper.includes('TP')) return 'success';
     if (eventUpper.includes('WARNING') || eventUpper.includes('SL')) return 'warning';
     return '';
+  }
+
+  getResultBadgeClass(resultType) {
+    switch (resultType) {
+      case 'TP': return 'text-green-400';
+      case 'SL': return 'text-red-400';
+      case 'BE': return 'text-yellow-400';
+      case 'SP': return 'text-blue-400';
+      default: return 'text-gray-400';
+    }
+  }
+
+  getResultBadgeBackgroundClass(resultType) {
+    switch (resultType) {
+      case 'TP': return 'bg-green-600 text-white';
+      case 'SL': return 'bg-red-600 text-white';
+      case 'BE': return 'bg-yellow-500 text-black';
+      case 'SP': return 'bg-blue-500 text-white';
+      default: return 'bg-gray-600 text-gray-300';
+    }
   }
 
   formatDateTime(timestamp) {

@@ -28,7 +28,7 @@ class Trade(Base):
     exit_price   = Column(Float,   nullable=True)
     exit_time    = Column(DateTime(timezone=True), nullable=True)
     result       = Column(Float,   nullable=True)       # e.g. PnL or +1/–1 flag
-    result_type  = Column(String(10), nullable=True)    # "SL", "TP", or "SP"
+    result_type  = Column(String(10), nullable=True)    # "TP", "SL", "BE", or "SP"
     fees         = Column(Float,   nullable=True)
     pnl_usd      = Column(Float,   nullable=True)
     params       = Column(JSON,    nullable=True)       # any extra metadata (e.g. {"rr": "1:4"})

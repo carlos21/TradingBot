@@ -515,6 +515,7 @@ class TestCrashRecoveryEdgeCases:
                 exit_price=rt["stop_loss"],
                 exit_time=datetime.fromtimestamp(last_time, tz=timezone.utc),
                 result=-1.0,
+                result_type="SL",
             )
         del strat1
 

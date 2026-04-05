@@ -393,13 +393,13 @@ class TradeManager:
                     'risk': trade_data.risk,
                 }
             else:
-                # Fallback: just close in DB with unknown result_type
+                # Fallback: just close in DB with SP (unknown reason)
                 self.trade_repository.close_trade(
                     trade_id=trade_id,
                     exit_price=exit_price,
                     exit_time=datetime.fromtimestamp(exit_time, tz=timezone.utc),
                     result=0.0,
-                    result_type=None
+                    result_type="SP"
                 )
                 return {
                     'trade_id': trade_id,
@@ -665,7 +665,7 @@ class TradeManager:
             elif abs(exit_price - trade['take_profit']) < 0.5:
                 result_type = "TP"
             else:
-                result_type = "MANUAL"
+                result_type = "SP"
 
         exit_time = datetime.now(tz=timezone.utc)
 

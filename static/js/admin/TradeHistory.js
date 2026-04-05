@@ -37,7 +37,7 @@ export class TradeHistory {
 
     if (!this.trades || this.trades.length === 0) {
       console.log('[TradeHistory] No trades to display');
-      tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">No trades found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">No trades found</td></tr>';
       return;
     }
     console.log(`[TradeHistory] Rendering ${this.trades.length} trades`);
@@ -45,11 +45,22 @@ export class TradeHistory {
     tbody.innerHTML = this.trades.map(trade => {
       const result = trade.result;
       const pnlClass = result > 0 ? 'pnl-positive' : result < 0 ? 'pnl-negative' : '';
-      const pnlText = result !== null && result !== undefined ? `$${result.toFixed(2)}` : '-';
+      // Show actual dollar P&L (pnl_usd from backend)
+      const pnlText = trade.pnl_usd !== null && trade.pnl_usd !== undefined 
+        ? `$${trade.pnl_usd.toFixed(2)}` 
+        : (result !== null && result !== undefined ? `${result.toFixed(2)}R` : '-');
+      // Calculate % return on account based on actual dollar P&L
+      let pctText = '-';
+      if (trade.pnl_usd !== null && trade.pnl_usd !== undefined && trade.risk_dollars) {
+        const pct = (trade.pnl_usd / trade.risk_dollars) * 100;
+        pctText = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+      } else if (result !== null && result !== undefined && trade.risk_pct) {
+        const pct = result * trade.risk_pct;
+        pctText = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+      }
       
       return `
         <tr class="cursor-pointer transition-colors" data-trade-id="${trade.trade_id}">
-          <td class="px-4 py-3 font-mono text-sm">${trade.trade_id.substring(0, 8)}...</td>
           <td class="px-4 py-3">
             <span class="px-2 py-1 rounded text-xs font-medium ${trade.type === 'long' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}">
               ${trade.type.toUpperCase()}
@@ -58,6 +69,7 @@ export class TradeHistory {
           <td class="px-4 py-3">${trade.entry.toFixed(2)}</td>
           <td class="px-4 py-3">${trade.exit_price ? trade.exit_price.toFixed(2) : '-'}</td>
           <td class="px-4 py-3 ${pnlClass}">${pnlText}</td>
+          <td class="px-4 py-3 ${pnlClass}">${pctText}</td>
           <td class="px-4 py-3">
             <span class="px-2 py-1 rounded text-xs font-medium ${this.getResultBadgeClass(trade.result_type)}">
               ${trade.result_type || '-'}
@@ -126,7 +138,6 @@ export class TradeHistory {
       case 'SL': return 'bg-red-600 text-white';
       case 'BE': return 'bg-yellow-500 text-black';
       case 'SP': return 'bg-blue-500 text-white';
-      case 'OFFLINE': return 'bg-gray-600 text-white';
       default: return 'bg-gray-600 text-gray-300';
     }
   }

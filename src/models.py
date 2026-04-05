@@ -42,7 +42,7 @@ class TradeData:
     exit_price: Optional[float]
     exit_time: Optional[datetime]
     result: Optional[float]       # e.g. PnL or +1/–1 flag
-    result_type: Optional[str]    # "SL", "TP", or "SP"
+    result_type: Optional[str]    # "TP", "SL", "BE", or "SP"
     fees: Optional[float]
     pnl_usd: Optional[float]
     params: Optional[Dict[str, Any]]

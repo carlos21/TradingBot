@@ -26,7 +26,7 @@ def get_prod_strategy_numbers(rr_ratio: float = 3.3,
         rr_ratio=rr_ratio,
         point_value=2.0,        # MNQ: $2 per point
         account_balance=100000.0,
-        risk_per_trade=risk_per_trade,
+        risk_per_trade=1000,
         risk_pct_per_trade=risk_pct_per_trade,
     )
 
