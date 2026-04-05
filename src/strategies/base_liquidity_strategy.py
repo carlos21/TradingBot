@@ -151,7 +151,12 @@ class BaseLiquidityStrategy:
                 "creation_ts": float(creation_timestamp),
             }
             self.strategy_lines[id] = state
-            self.trigger_state_repo.save(str(id), self.trade_manager.pair, state)
+            # Only persist fresh state if no persisted state exists for this line.
+            # Avoids overwriting saved trigger state during bootstrap/recovery.
+            # Ongoing persistence is handled by _persist_all_line_states() on each bar.
+            existing = self.trigger_state_repo.load_all(self.trade_manager.pair)
+            if str(id) not in existing:
+                self.trigger_state_repo.save(str(id), self.trade_manager.pair, state)
 
     def remove_strategy_line(self, id: Any):
         with self.lock:
@@ -206,13 +211,14 @@ class BaseLiquidityStrategy:
                 if self.open_trades:
                     print(f"[Strategy] Restored {len(self.open_trades)} open trade(s) from DB")
 
-    def restore_reentry_opportunities(self, pair: str):
+    def restore_reentry_opportunities(self, pair: str, reference_time: datetime = None):
         """Rebuild pending re-entry opportunities from recently SL'd trades in DB."""
         if not (self.options.reentry_after_sl or self.options.reentry_only):
             return
 
         from datetime import timedelta
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=4)
+        ref = reference_time or datetime.now(timezone.utc)
+        cutoff = ref - timedelta(hours=4)
 
         trades = self.trade_repository.list_trades(pair)
         restored = 0
