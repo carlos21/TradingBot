@@ -10,14 +10,27 @@ export class ApiClient {
 
   async init() {
     // Get the pair from the API
+    console.log('[ApiClient] Initializing, fetching pair...');
     const response = await this.get('/api/pair');
+    console.log('[ApiClient] Got pair response:', response);
     this.pair = response.pair;
+    // Also store the default pair
+    this.defaultPair = response.pair;
     return this.pair;
   }
 
+  setPair(pair) {
+    console.log(`[ApiClient] Setting pair to: ${pair}`);
+    this.pair = pair;
+  }
+
   async get(url) {
+    console.log(`[ApiClient] GET ${url}`);
     const response = await fetch(`${this.baseUrl}${url}`);
+    console.log(`[ApiClient] Response status: ${response.status}`);
     if (!response.ok) {
+      const text = await response.text();
+      console.error(`[ApiClient] Error response: ${text}`);
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
     return response.json();

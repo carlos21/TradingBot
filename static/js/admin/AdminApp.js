@@ -23,9 +23,17 @@ class AdminApp {
 
   async init() {
     try {
+      // Mark JS as loaded
+      const debugEl = document.getElementById('js-debug');
+      if (debugEl) debugEl.textContent = 'JS Loaded ✓';
+      
       // Initialize API and get pair
+      console.log('[AdminApp] Starting init...');
       const pair = await this.api.init();
-      document.getElementById('pairDisplay').textContent = `Pair: ${pair}`;
+      console.log(`[AdminApp] Got pair: ${pair}`);
+      
+      // Set up pair selector
+      this.setupPairSelector();
       
       // Set up navigation
       this.setupNavigation();
@@ -40,6 +48,19 @@ class AdminApp {
         this.tradeHistory.exportToCSV();
       });
       
+      // Set up test button
+      document.getElementById('test-load-btn')?.addEventListener('click', async () => {
+        console.log('[Test] Manual trade load triggered');
+        try {
+          const result = await this.api.getTrades(5, 0);
+          console.log('[Test] Direct API result:', result);
+          alert(`Loaded ${result.total} trades total. First 5: ${JSON.stringify(result.trades.slice(0, 2), null, 2)}`);
+        } catch (e) {
+          console.error('[Test] Error:', e);
+          alert('Error: ' + e.message);
+        }
+      });
+      
       // Load initial data for overview
       await this.loadOverviewData();
       
@@ -50,12 +71,30 @@ class AdminApp {
     }
   }
 
+  setupPairSelector() {
+    const selector = document.getElementById('pairSelector');
+    if (!selector) return;
+    
+    // Set current pair
+    selector.value = this.api.pair;
+    
+    selector.addEventListener('change', (e) => {
+      const newPair = e.target.value;
+      console.log(`[AdminApp] Pair changed to: ${newPair}`);
+      this.api.setPair(newPair);
+      // Reload current tab data
+      this.switchTab(this.currentTab);
+    });
+  }
+
   setupNavigation() {
     const navButtons = document.querySelectorAll('.nav-btn');
+    console.log(`[AdminApp] Found ${navButtons.length} nav buttons`);
     
     navButtons.forEach(btn => {
       btn.addEventListener('click', () => {
         const tab = btn.dataset.tab;
+        console.log(`[AdminApp] Navigating to tab: ${tab}`);
         this.switchTab(tab);
       });
     });
@@ -87,11 +126,13 @@ class AdminApp {
     this.currentTab = tab;
 
     // Load tab-specific data
+    console.log(`[AdminApp] Loading data for tab: ${tab}`);
     switch (tab) {
       case 'overview':
         this.loadOverviewData();
         break;
       case 'trades':
+        console.log('[AdminApp] Loading trades...');
         this.tradeHistory.load();
         break;
       case 'lines':
@@ -105,13 +146,16 @@ class AdminApp {
 
   async loadOverviewData() {
     try {
+      console.log('[AdminApp] Loading overview data...');
       // Load stats
       const stats = await this.api.getStats();
+      console.log('[AdminApp] Got stats:', stats);
       this.statsData = stats;
       this.renderStats(stats);
 
       // Load analytics for charts
       const analytics = await this.api.getAnalytics();
+      console.log('[AdminApp] Got analytics:', analytics);
       this.analyticsData = analytics;
       
       // Render overview charts
@@ -119,6 +163,7 @@ class AdminApp {
       this.charts.renderResultDistribution('overview-result-chart', analytics.result_distribution);
     } catch (error) {
       console.error('[AdminApp] Failed to load overview data:', error);
+      alert('Failed to load overview data: ' + error.message);
     }
   }
 
@@ -140,6 +185,12 @@ class AdminApp {
   }
 
   renderStats(stats) {
+    console.log('[AdminApp] Rendering stats:', stats);
+    if (!stats) {
+      console.warn('[AdminApp] No stats to render');
+      return;
+    }
+    
     // Format helpers
     const formatNumber = (n) => n !== undefined && n !== null ? n.toLocaleString() : '-';
     const formatPercent = (n) => n !== undefined && n !== null ? `${(n * 100).toFixed(1)}%` : '-';
@@ -153,7 +204,12 @@ class AdminApp {
     // Total trades
     const totalEl = document.getElementById('stat-total-trades');
     const openEl = document.getElementById('stat-open-trades');
-    if (totalEl) totalEl.textContent = formatNumber(stats.total_trades);
+    console.log(`[AdminApp] Setting total_trades: ${stats.total_trades}`);
+    if (totalEl) {
+      totalEl.textContent = formatNumber(stats.total_trades);
+    } else {
+      console.error('[AdminApp] stat-total-trades element not found');
+    }
     if (openEl) openEl.textContent = `${formatNumber(stats.open_trades)} open`;
 
     // Win rate
@@ -179,8 +235,21 @@ class AdminApp {
   }
 }
 
+// Global error handling
+window.addEventListener('error', (e) => {
+  console.error('[Global Error]', e.message, e.filename, e.lineno);
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[Unhandled Promise Rejection]', e.reason);
+});
+
 // Initialize when DOM is ready
 document.addEventListener('DOMContentLoaded', () => {
+  console.log('[AdminApp] DOM ready, initializing app...');
   const app = new AdminApp();
-  app.init();
+  app.init().catch(err => {
+    console.error('[AdminApp] Init failed:', err);
+    alert('Failed to initialize: ' + err.message);
+  });
 });

@@ -15,11 +15,21 @@
   <link rel="stylesheet" href="/static/css/admin.css" />
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen">
+  <!-- Debug indicator -->
+  <div id="js-debug" style="position:fixed;top:0;right:0;background:red;color:white;padding:4px 8px;z-index:9999;font-size:12px;">JS Loading...</div>
   <!-- Sidebar -->
   <aside class="fixed left-0 top-0 h-full w-64 bg-gray-800 border-r border-gray-700 z-50">
     <div class="p-6 border-b border-gray-700">
       <h1 class="text-xl font-bold text-blue-400">Trading Bot Admin</h1>
-      <p id="pairDisplay" class="text-sm text-gray-400 mt-1">Loading...</p>
+      <div class="mt-2 flex items-center space-x-2">
+        <label class="text-sm text-gray-400">Pair:</label>
+        <select id="pairSelector" class="bg-gray-700 text-white text-sm rounded px-2 py-1 border border-gray-600">
+          <option value="NQ">NQ</option>
+          <option value="MNQ">MNQ</option>
+          <option value="ES">ES</option>
+        </select>
+        <span id="pairDisplay" class="text-sm text-gray-400 hidden">Loading...</span>
+      </div>
     </div>
     
     <nav class="p-4 space-y-2">
@@ -95,9 +105,14 @@
     <div id="trades-tab" class="tab-content hidden">
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold">Trade History</h2>
-        <button id="export-trades-btn" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition-colors">
-          Export CSV
-        </button>
+        <div class="space-x-2">
+          <button id="test-load-btn" class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg text-sm font-medium transition-colors">
+            Test Load
+          </button>
+          <button id="export-trades-btn" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition-colors">
+            Export CSV
+          </button>
+        </div>
       </div>
       
       <!-- Trades Table -->

@@ -58,6 +58,29 @@ class FakeLineRepository:
             creation_date=obj.creation_date
         )
 
+    def get_line(self, line_id: str) -> Optional[LineData]:
+        obj = self._store.get(line_id)
+        if not obj:
+            return None
+        return LineData(
+            line_id=obj.line_id,
+            pair=obj.pair,
+            price=obj.price,
+            creation_date=obj.creation_date
+        )
+
+    def update_line(self, line_id: str, price: float) -> LineData:
+        obj = self._store.get(line_id)
+        if not obj:
+            raise Exception(f"Line {line_id} not found")
+        obj.price = price
+        return LineData(
+            line_id=obj.line_id,
+            pair=obj.pair,
+            price=obj.price,
+            creation_date=obj.creation_date
+        )
+
     def delete_line(self, line_id):
         if line_id in self._store:
             del self._store[line_id]
@@ -144,6 +167,31 @@ class FakeTradeRepository:
             if t['trade_id'] == trade_id:
                 return t.get('logs', [])
         return []
+
+    def get_trade(self, trade_id: str) -> Optional[TradeData]:
+        for t in self.inserted:
+            if t['trade_id'] == trade_id:
+                closed_info = next((c for c in self.closed if c['trade_id'] == trade_id), None)
+                return TradeData(
+                    trade_id=t['trade_id'],
+                    pair=t['pair'],
+                    trade_type=t['type'],
+                    entry_price=t['entry'],
+                    stop_loss=t['stop_loss'],
+                    take_profit=t['take_profit'],
+                    risk=t['risk'],
+                    entry_time=t['entry_time'],
+                    exit_price=closed_info['exit_price'] if closed_info else None,
+                    exit_time=closed_info['exit_time'] if closed_info else None,
+                    result=closed_info['result'] if closed_info else None,
+                    result_type=closed_info.get('result_type') if closed_info else None,
+                    params=t.get('params'),
+                    created_at=datetime.utcnow()
+                )
+        return None
+
+    def get_all_trades(self, pair: str) -> List[TradeData]:
+        return self.list_trades(pair)
 
     def list_trades(self, pair: str) -> List[TradeData]:
         results = []

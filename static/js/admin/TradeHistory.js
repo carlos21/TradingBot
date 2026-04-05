@@ -13,20 +13,39 @@ export class TradeHistory {
   }
 
   async load() {
-    const result = await this.api.getTrades(this.limit, this.offset);
-    this.trades = result.trades;
-    this.total = result.total;
-    this.render();
-    this.updatePagination();
+    try {
+      console.log('[TradeHistory] Loading trades...');
+      const result = await this.api.getTrades(this.limit, this.offset);
+      console.log('[TradeHistory] Got result:', result);
+      this.trades = result.trades || [];
+      this.total = result.total || 0;
+      this.render();
+      this.updatePagination();
+    } catch (error) {
+      console.error('[TradeHistory] Failed to load trades:', error);
+      alert('Failed to load trades: ' + error.message);
+    }
   }
 
   render() {
+    console.log('[TradeHistory] Rendering trades:', this.trades);
     const tbody = document.getElementById('trades-tbody');
-    if (!tbody) return;
+    if (!tbody) {
+      console.error('[TradeHistory] tbody element not found!');
+      return;
+    }
+
+    if (!this.trades || this.trades.length === 0) {
+      console.log('[TradeHistory] No trades to display');
+      tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">No trades found</td></tr>';
+      return;
+    }
+    console.log(`[TradeHistory] Rendering ${this.trades.length} trades`);
 
     tbody.innerHTML = this.trades.map(trade => {
-      const pnlClass = trade.result > 0 ? 'pnl-positive' : trade.result < 0 ? 'pnl-negative' : '';
-      const pnlText = trade.result !== null ? `$${trade.result.toFixed(2)}` : '-';
+      const result = trade.result;
+      const pnlClass = result > 0 ? 'pnl-positive' : result < 0 ? 'pnl-negative' : '';
+      const pnlText = result !== null && result !== undefined ? `$${result.toFixed(2)}` : '-';
       
       return `
         <tr class="cursor-pointer transition-colors" data-trade-id="${trade.trade_id}">
@@ -40,8 +59,8 @@ export class TradeHistory {
           <td class="px-4 py-3">${trade.exit_price ? trade.exit_price.toFixed(2) : '-'}</td>
           <td class="px-4 py-3 ${pnlClass}">${pnlText}</td>
           <td class="px-4 py-3">
-            <span class="px-2 py-1 rounded text-xs font-medium ${this.getResultBadgeClass(trade.result_type)}">
-              ${trade.result_type || 'OPEN'}
+            <span class="px-2 py-1 rounded text-xs font-medium ${this.getResultBadgeClass(trade.result_type, trade.status)}">
+              ${trade.result_type || (trade.status === 'open' ? 'OPEN' : 'CLOSED')}
             </span>
           </td>
           <td class="px-4 py-3 text-sm text-gray-400">${this.formatTime(trade.entry_time)}</td>
@@ -101,12 +120,14 @@ export class TradeHistory {
     }
   }
 
-  getResultBadgeClass(resultType) {
+  getResultBadgeClass(resultType, status) {
+    if (status === 'open') return 'bg-blue-900 text-blue-300';
     switch (resultType) {
       case 'TP': return 'bg-green-900 text-green-300';
       case 'SL': return 'bg-red-900 text-red-300';
       case 'SP': return 'bg-yellow-900 text-yellow-300';
-      default: return 'bg-blue-900 text-blue-300';
+      case 'OFFLINE': return 'bg-gray-700 text-gray-300';
+      default: return 'bg-gray-700 text-gray-300';
     }
   }
 

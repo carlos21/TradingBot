@@ -40,6 +40,9 @@ from src.prod_config import (
     get_prod_strategy_options
 )
 from tests.fakes import FakeLineRepository, FakeTradeRepository
+from src.repositories.lines_repository import SQLLineRepository
+from src.repositories.trades_repository import SQLTradeRepository
+from src.database import database
 from scripts.html_report import generate_html_report
 
 APP_HOST = "127.0.0.1"
@@ -100,16 +103,16 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 # Server Process Logic
 # -------------------------------------------------------------------------
 
-def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0):
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False):
     try:
-        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio)
+        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist)
     except Exception as e:
         import traceback
         sys.stderr.write(f"\n❌ Server process crashed: {e}\n")
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
 
-def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0):
+def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False):
     if quiet:
         sys.stdout = open(os.devnull, 'w')
         import logging
@@ -117,10 +120,18 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
 
     os.environ["LINE_REMOVAL_MODE"] = "ON_EVALUATE"
 
-    repos = Repositories(
-        lines=FakeLineRepository(),
-        trades=FakeTradeRepository()
-    )
+    # Use real SQL repositories if persist flag is set
+    if persist:
+        database.setup_database()
+        repos = Repositories(
+            lines=SQLLineRepository(),
+            trades=SQLTradeRepository()
+        )
+    else:
+        repos = Repositories(
+            lines=FakeLineRepository(),
+            trades=FakeTradeRepository()
+        )
 
     ds = CSVDataSource(
         pair="NQ",
@@ -466,7 +477,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
     server_proc = Process(
         target=run_test_server,
-        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr)
+        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr, args.persist)
     )
     server_proc.start()
 
@@ -1243,6 +1254,8 @@ def main():
                     help="CFD commission per round-trip lot in USD (default: 5.0)")
     ap.add_argument("--rr", type=float, default=4.0,
                     help="Risk:Reward ratio for TP calculation (default: 4.0)")
+    ap.add_argument("--persist", action="store_true", default=False,
+                    help="Persist scenario trades to the database (default: false, uses in-memory storage)")
     args = ap.parse_args()
 
     yaml_path = Path(args.yaml)
