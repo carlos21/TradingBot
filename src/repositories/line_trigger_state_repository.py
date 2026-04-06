@@ -1,27 +1,17 @@
-from abc import ABC, abstractmethod
+"""Line trigger state repository implementations.
+
+Provides both SQL and in-memory implementations for persisting trigger state.
+"""
+
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from src.dbexception import DBException
+from src.repositories.interfaces import LineTriggerStateRepository as ILineTriggerStateRepository
 
 
-class LineTriggerStateRepository(ABC):
-    """Persists per-line trigger state so it survives a restart."""
-
-    @abstractmethod
-    def save(self, line_id: str, pair: str, state: Dict[str, Any]) -> None:
-        """Upsert the full state dict for a line."""
-
-    @abstractmethod
-    def load_all(self, pair: str) -> Dict[str, Dict[str, Any]]:
-        """Return all persisted line states for a pair, keyed by line_id."""
-
-    @abstractmethod
-    def delete(self, line_id: str) -> None:
-        """Remove a line's persisted state."""
-
-
-class SQLiteLineTriggerStateRepository(LineTriggerStateRepository):
+class SQLiteLineTriggerStateRepository(ILineTriggerStateRepository):
+    """SQL-based trigger state repository."""
 
     def save(self, line_id: str, pair: str, state: Dict[str, Any]) -> None:
         from src.database.database import get_db_session, LineTriggerState as _ORM
@@ -44,6 +34,15 @@ class SQLiteLineTriggerStateRepository(LineTriggerStateRepository):
                 db.rollback()
                 raise DBException(message=str(e))
 
+    def load(self, line_id: str) -> Optional[Dict[str, Any]]:
+        """Load state for a single line."""
+        from src.database.database import get_db_session, LineTriggerState as _ORM
+        with get_db_session() as db:
+            row = db.query(_ORM).filter_by(line_id=line_id).first()
+            if row:
+                return dict(row.state_json or {})
+            return None
+
     def load_all(self, pair: str) -> Dict[str, Dict[str, Any]]:
         from src.database.database import get_db_session, LineTriggerState as _ORM
         with get_db_session() as db:
@@ -61,7 +60,7 @@ class SQLiteLineTriggerStateRepository(LineTriggerStateRepository):
                 raise DBException(message=str(e))
 
 
-class InMemoryLineTriggerStateRepository(LineTriggerStateRepository):
+class InMemoryLineTriggerStateRepository(ILineTriggerStateRepository):
     """No-op in-memory implementation for tests and backtest runs."""
 
     def __init__(self):
@@ -70,8 +69,16 @@ class InMemoryLineTriggerStateRepository(LineTriggerStateRepository):
     def save(self, line_id: str, pair: str, state: Dict[str, Any]) -> None:
         self._store[line_id] = dict(state)
 
+    def load(self, line_id: str) -> Optional[Dict[str, Any]]:
+        """Load state for a single line."""
+        return self._store.get(line_id)
+
     def load_all(self, pair: str) -> Dict[str, Dict[str, Any]]:
         return dict(self._store)
 
     def delete(self, line_id: str) -> None:
         self._store.pop(line_id, None)
+
+
+# Backward compatibility alias
+LineTriggerStateRepository = ILineTriggerStateRepository

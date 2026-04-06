@@ -309,41 +309,19 @@ class CSVDataSource(CombinedDataSource):
             self._current_group_start = start
 
     def _aggregate_whole_history_from_list(self, bars: List[Dict], tf: str) -> List[Dict]:
-        unit = tf[-1]
-        num  = int(tf[:-1])
-        if unit == 'm':        window_secs = num * 60
-        elif unit == 'h':      window_secs = num * 3600
-        else:                  raise ValueError(f"Unsupported timeframe '{tf}'")
-
-        from collections import defaultdict
-        buckets: Dict[int, List[Dict]] = defaultdict(list)
-        for bar in bars:
-            win = (bar['time'] // window_secs) * window_secs
-            buckets[win].append(bar)
-
+        from src.utils.bar_aggregator import BarAggregator
+        
+        buckets = BarAggregator.bucket_by_timeframe(bars, tf)
+        
         agg_bars = []
-        for win in sorted(buckets):
+        for win in sorted(buckets.keys()):
             group = buckets[win]
             if group:
-                agg_bars.append(
-                    self._aggregate_time_window(group, win, window_secs)
-                )
+                agg_bars.append(BarAggregator.aggregate(group))
         return agg_bars
 
     def _aggregate_time_window(
         self, bars: List[Dict], window_start: int, window_secs: int
     ) -> Dict:
-        open_  = bars[0]['open']
-        close_ = bars[-1]['close']
-        high   = max(b['high'] for b in bars)
-        low    = min(b['low']  for b in bars)
-        volume = sum(b['volume'] for b in bars)
-        return {
-            'time':   window_start,
-            'open':   open_,
-            'high':   high,
-            'low':    low,
-            'close':  close_,
-            'volume': volume,
-            'pair':   bars[0]['pair']
-        }
+        from src.utils.bar_aggregator import BarAggregator
+        return BarAggregator.aggregate_with_window(bars, window_start, window_secs)

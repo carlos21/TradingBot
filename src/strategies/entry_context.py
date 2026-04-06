@@ -4,6 +4,8 @@ from enum import Enum
 from typing import Callable, Sequence, Optional, Tuple, Dict, Any, List
 from zoneinfo import ZoneInfo
 
+from src.types import Direction
+
 
 # Map pairs to their primary trading timezone.
 # This allows the filter to automatically convert UTC timestamps to the 
@@ -23,7 +25,7 @@ PAIR_TIMEZONES = {
 class EntryContext:
     strategy: 'LiquidityStrategy'
     line_id: Any
-    direction: str            # 'long' or 'short'
+    direction: Direction      # Direction enum (LONG or SHORT)
     level: float
     bar: Dict[str, Any]       # aggregated bar dict
     close: float
@@ -31,6 +33,16 @@ class EntryContext:
     high: float
     extreme: float            # lowest (long) / highest (short) seen during cross
     cross_depth: float        # bounce depth used by filters like max_bounce
+    
+    @property
+    def is_long(self) -> bool:
+        """Check if entry is long direction."""
+        return self.direction.is_long
+    
+    @property
+    def is_short(self) -> bool:
+        """Check if entry is short direction."""
+        return self.direction.is_short
     
 # A function that receives the entry "context" and decides if we should open.
 EntryFilter = Callable[['EntryContext'], Tuple[bool, str]]

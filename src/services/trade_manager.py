@@ -7,7 +7,7 @@ from src.services.trade_executor import TradeExecutor, NoOpExecutor
 from src.notifier import Notifier, NoOpNotifier
 from src.analytics import AnalyticsReporter, NoOpReporter
 from src.financial_calc import FinancialCalc
-from src.financial_calc import FinancialCalc
+from src.types import Direction
 
 
 class TradeManager:
@@ -193,7 +193,7 @@ class TradeManager:
             contracts = trade.get('contracts') or 1
             
             result, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-                trade_type=trade['type'],
+                direction=Direction.from_string(trade['type']),
                 entry_price=trade['entry'],
                 exit_price=exit_price,
                 stop_loss=trade['stop_loss'],
@@ -272,7 +272,7 @@ class TradeManager:
 
             # Use unified FinancialCalc for ALL close metrics (single source of truth)
             result, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
-                trade_type=trade['type'],
+                direction=Direction.from_string(trade['type']),
                 entry_price=trade['entry'],
                 exit_price=exit_price,
                 stop_loss=trade['stop_loss'],
@@ -427,7 +427,7 @@ class TradeManager:
         entry = trade.get('entry', trade.get('entry_price'))
 
         result, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type=trade['type'],
+            direction=Direction.from_string(trade['type']),
             entry_price=entry,
             exit_price=exit_price,
             stop_loss=sl,
@@ -491,7 +491,7 @@ class TradeManager:
 
             # Use unified FinancialCalc for ALL close metrics (single source of truth)
             result, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
-                trade_type=trade['type'],
+                direction=Direction.from_string(trade['type']),
                 entry_price=trade['entry'],
                 exit_price=exit_price,
                 stop_loss=trade['stop_loss'],
@@ -656,7 +656,7 @@ class TradeManager:
             risk = 1.0
 
         result, fees, pnl_usd, detected_result_type = FinancialCalc.calculate_close_metrics(
-            trade_type=trade['type'],
+            direction=Direction.from_string(trade['type']),
             entry_price=trade['entry'],
             exit_price=exit_price,
             stop_loss=trade['stop_loss'],

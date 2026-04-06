@@ -125,12 +125,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         self._reset_trigger_state(line_state)
 
     def _parse_tf_seconds(self, tf: str) -> int:
-        unit = tf[-1].lower()
-        val = int(tf[:-1])
-        if unit == 'm': return val * 60
-        if unit == 'h': return val * 3600
-        if unit == 'd': return val * 86400
-        return val
+        from src.utils.bar_aggregator import BarAggregator
+        return BarAggregator.parse_timeframe(tf)
 
     def get_history(self, tf: str, count: int) -> List[Dict[str, Any]]:
         hist = self._tf_histories.get(tf, [])

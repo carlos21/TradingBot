@@ -155,7 +155,9 @@ class TestWickNearLineTrigger:
         # body = 0.3, range = 3, body_ratio = 0.1, lower_wick_ratio = (100.5-98)/3 = 0.83
         result = wick_near_line_trigger(s, "L1", line, bar)
         assert result is not None
-        assert result.direction == "long"
+        # Direction can be enum or string
+        from src.types import Direction
+        assert result.direction == Direction.LONG or result.direction == "long"
 
     def test_body_too_big_rejects(self):
         s = _make_strategy_mock()
@@ -194,7 +196,9 @@ class TestDouble5mCrossTrigger:
         bar4 = _bar(time=4, open_=99.5, high=102, low=99, close=101, tf="5m")
         result = double_5m_cross_trigger(s, "L1", line, bar4)
         assert result is not None
-        assert result.direction == "long"
+        # Direction can be enum or string
+        from src.types import Direction
+        assert result.direction == Direction.LONG or result.direction == "long"
 
     def test_short_full_cycle(self):
         s = _make_strategy_mock()
@@ -216,7 +220,9 @@ class TestDouble5mCrossTrigger:
         bar4 = _bar(time=4, open_=100.5, high=101, low=98, close=99, tf="5m")
         result = double_5m_cross_trigger(s, "L1", line, bar4)
         assert result is not None
-        assert result.direction == "short"
+        # Direction can be enum or string
+        from src.types import Direction
+        assert result.direction == Direction.SHORT or result.direction == "short"
 
     def test_no_direction_returns_none(self):
         s = _make_strategy_mock()
@@ -310,4 +316,6 @@ class TestThreeCandleReversalTrigger:
         s.get_history = MagicMock(return_value=[c1, c2, c3])
         result = three_candle_reversal_trigger(s, "L1", line, c3)
         assert result is not None
-        assert result.direction == "short"
+        # Direction can be enum or string
+        from src.types import Direction
+        assert result.direction == Direction.SHORT or result.direction == "short"

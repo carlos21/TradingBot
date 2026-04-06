@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from src.analytics import AnalyticsReporter, NoOpReporter
 from src.dbexception import DBNotFoundException
 from src.financial_calc import FinancialCalc
+from src.types import Direction
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
 from src.repositories.line_trigger_state_repository import LineTriggerStateRepository, InMemoryLineTriggerStateRepository
@@ -268,21 +269,8 @@ class BaseLiquidityStrategy:
     # ----- Aggregation -----
 
     def _aggregate_bars(self, bars: List[Dict[str, Any]], window_start: int, window_secs: int) -> Dict[str, Any]:
-        high   = max(b["high"] for b in bars)
-        low    = min(b["low"] for b in bars)
-        open_  = bars[0]["open"]
-        close_ = bars[-1]["close"]
-        volume = sum(b["volume"] for b in bars)
-        pair   = bars[0]["pair"]
-        return {
-            "time":   window_start + window_secs,
-            "open":   open_,
-            "high":   high,
-            "low":    low,
-            "close":  close_,
-            "volume": volume,
-            "pair":   pair,
-        }
+        from src.utils.bar_aggregator import BarAggregator
+        return BarAggregator.aggregate_with_window(bars, window_start, window_secs)
 
     def on_raw_bar(self, bar: Dict[str, Any]):
         """
@@ -378,7 +366,7 @@ class BaseLiquidityStrategy:
 
             # Use unified FinancialCalc for ALL close metrics (single source of truth)
             r_result, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
-                trade_type=t["type"],
+                direction=Direction.from_string(t["type"]),
                 entry_price=t["entry"],
                 exit_price=exit_price,
                 stop_loss=t["stop_loss"],
@@ -452,7 +440,7 @@ class BaseLiquidityStrategy:
                     self.log_decision(bar["time"], "1m", lid, "ENTRY",
                                       f"Re-entry LONG @ {bar['close']:.2f} — close above line={level:.2f} (max adverse={adverse:.1f}pts)")
                     ctx = EntryContext(
-                        strategy=self, line_id=None, direction="long", level=level,
+                        strategy=self, line_id=None, direction=Direction.LONG, level=level,
                         bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
                         extreme=level, cross_depth=0.0,
                     )
@@ -474,7 +462,7 @@ class BaseLiquidityStrategy:
                     self.log_decision(bar["time"], "1m", lid, "ENTRY",
                                       f"Re-entry SHORT @ {bar['close']:.2f} — close below line={level:.2f} (max adverse={adverse:.1f}pts)")
                     ctx = EntryContext(
-                        strategy=self, line_id=None, direction="short", level=level,
+                        strategy=self, line_id=None, direction=Direction.SHORT, level=level,
                         bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
                         extreme=level, cross_depth=0.0,
                     )
@@ -636,7 +624,7 @@ class BaseLiquidityStrategy:
                 risk_pts = t.get("risk", 0) or 1.0
                 
                 r_result, t_fees, t_pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-                    trade_type=t["type"],
+                    direction=Direction.from_string(t["type"]),
                     entry_price=t["entry"],
                     exit_price=exit_price,
                     stop_loss=t["stop_loss"],
@@ -663,7 +651,7 @@ class BaseLiquidityStrategy:
                             "direction": direction,
                             "pair": t["pair"],
                             # track the most adverse price seen since SL hit
-                            "extreme_excursion": bar["low"] if direction == "long" else bar["high"],
+                            "extreme_excursion": bar["low"] if direction == Direction.LONG else bar["high"],
                         })
                         print(f"[ReEntry] 🎯 SL hit on {direction} @ {t['pair']}. Watching level={level} for re-entry.")
                         self.log_decision(
@@ -723,7 +711,7 @@ class BaseLiquidityStrategy:
 
         if self.sl_levels:
             # Tiered SL: compute distance to extreme, then pick smallest tier that covers it
-            if ctx.direction == "long":
+            if ctx.is_long:
                 distance = max(entry - ctx.extreme, self.min_stop_loss)
             else:
                 distance = max(ctx.extreme - entry, self.min_stop_loss)
@@ -742,7 +730,7 @@ class BaseLiquidityStrategy:
         else:
             # Use Dynamic Risk (Distance to Extreme + Extra Space)
             extra = self.extra_sl_space
-            if ctx.direction == "long":
+            if ctx.is_long:
                 raw_risk = max(entry - ctx.extreme, self.min_stop_loss)
             else:
                 raw_risk = max(ctx.extreme - entry, self.min_stop_loss)
@@ -754,7 +742,7 @@ class BaseLiquidityStrategy:
                 print(f"[Strategy] ⚠️ Risk {eff_risk:.2f} exceeds Max {self.max_stop_loss}. Capping it.")
                 eff_risk = self.max_stop_loss
 
-        if ctx.direction == "long":
+        if ctx.is_long:
             sl = entry - eff_risk
             tp = entry + self.rr_ratio * eff_risk
             trade = self._make_trade_dict(ctx.bar, "long", entry, sl, tp, eff_risk)

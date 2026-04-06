@@ -1,98 +1,30 @@
-from abc import ABC, abstractmethod
+"""Trade repository implementations.
+
+Provides both the standard repository (per-operation sessions) and
+the Unit of Work compatible implementation.
+"""
+
 from typing import List, Optional
 from datetime import datetime, timezone
-from src.database.database import Trade, Line, get_db_session
+from threading import Lock
+
+from src.database.database import Trade, get_db_session
 from src.dbexception import DBException, DBNotFoundException
 from src.models import TradeData
+from src.repositories.interfaces import TradeRepository as ITradeRepository
 
 import uuid
 
 
-class TradeRepository(ABC):
-
-    @abstractmethod
-    def insert_trade(
-        self,
-        pair: str,
-        trade_type: str,
-        entry_price: float,
-        stop_loss: float,
-        take_profit: float,
-        risk: float,
-        entry_time: datetime,
-        params: dict | None = None,
-        risk_dollars: float | None = None,
-        risk_pct: float | None = None,
-        contracts: float | None = None,
-    ) -> TradeData:
-        """Create & persist a new Trade."""
-        pass
-
-    @abstractmethod
-    def list_trades(self, pair: str) -> List[TradeData]:
-        """Return all trades for a given symbol."""
-        pass
-
-    @abstractmethod
-    def update_stop_loss(self, trade_id: str, new_stop_loss: float) -> TradeData:
-        """Adjust an existing trade’s stop loss."""
-        pass
-
-    @abstractmethod
-    def update_take_profit(self, trade_id: str, new_take_profit: float) -> TradeData:
-        """Adjust an existing trade's take profit."""
-        pass
-
-    @abstractmethod
-    def update_entry_price(self, trade_id: str, new_entry_price: float) -> TradeData:
-        """Update a trade's entry price (e.g. after broker fill confirms actual price)."""
-        pass
-
-    @abstractmethod
-    def update_risk_fields(self, trade_id: str, risk: float, risk_dollars: float, risk_pct: float) -> TradeData:
-        """Update risk, risk_dollars, and risk_pct after broker fill recalculation."""
-        pass
-
-    @abstractmethod
-    def close_trade(
-        self,
-        trade_id: str,
-        exit_price: float,
-        exit_time: datetime,
-        result: float,
-        result_type: Optional[str] = None,
-        fees: Optional[float] = None,
-        pnl_usd: Optional[float] = None,
-    ) -> TradeData:
-        """Mark a trade as closed, recording exit details."""
-        pass
-
-    @abstractmethod
-    def append_trade_log(self, trade_id: str, event: str, message: str) -> None:
-        """Append a timestamped log entry to a trade's logs."""
-        pass
-
-    @abstractmethod
-    def get_trade_logs(self, trade_id: str) -> list:
-        """Return the log entries for a trade."""
-        pass
-
-    @abstractmethod
-    def get_trade(self, trade_id: str) -> Optional[TradeData]:
-        """Get a single trade by ID."""
-        pass
-
-    @abstractmethod
-    def get_all_trades(self, pair: str) -> List[TradeData]:
-        """Get all trades for a pair (for analytics service to process)."""
-        pass
-
-
-class SQLTradeRepository(TradeRepository):
+class SQLTradeRepository(ITradeRepository):
+    """SQL-based trade repository with per-operation sessions.
+    
+    Each operation opens and closes its own database session.
+    For multi-operation transactions, use UnitOfWork instead.
+    """
 
     def __init__(self):
-        import threading
-        self._log_lock = threading.Lock()
+        self._log_lock = Lock()
 
     def _ensure_utc(self, dt: Optional[datetime]) -> Optional[datetime]:
         """Helper to ensure a datetime is UTC-aware."""
@@ -102,8 +34,8 @@ class SQLTradeRepository(TradeRepository):
             return dt.replace(tzinfo=timezone.utc)
         return dt
 
-    def _make_trade_data(self, t: 'Trade') -> TradeData:
-        """Convert an ORM Trade row to a TradeData DTO."""
+    def _make_trade_data(self, t: Trade) -> TradeData:
+        """Convert Trade ORM object to TradeData DTO."""
         return TradeData(
             trade_id=t.trade_id,
             pair=t.pair,
@@ -322,11 +254,7 @@ class SQLTradeRepository(TradeRepository):
             return result
 
     def get_all_trades(self, pair: str) -> List[TradeData]:
-        with get_db_session() as db:
-            rows = db.query(Trade).filter(Trade.pair == pair).all()
-            result = [self._make_trade_data(t) for t in rows]
-            db.close()
-            return result
+        return self.list_trades(pair)
 
     def clear(self):
         """Delete all trades. Used by scenario runner to reset between runs."""
@@ -339,3 +267,7 @@ class SQLTradeRepository(TradeRepository):
                 raise DBException(str(e))
             finally:
                 db.close()
+
+
+# Backward compatibility alias
+TradeRepository = ITradeRepository

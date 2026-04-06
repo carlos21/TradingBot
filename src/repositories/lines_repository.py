@@ -1,50 +1,41 @@
-from abc import ABC, abstractmethod
+"""Line repository implementations.
+
+Provides both the standard repository (per-operation sessions) and
+the Unit of Work compatible implementation.
+"""
+
 from typing import Optional, List
+from datetime import datetime, timezone
+
 from src.database.database import Line, get_db_session
 from src.dbexception import DBException, DBNotFoundException
 from src.models import LineData
-from datetime import datetime, timezone
+from src.repositories.interfaces import LineRepository as ILineRepository
 
 import uuid
 
 
-class LineRepository(ABC):
-
-    @abstractmethod
-    def insert_line(
-        self,
-        pair: str, 
-        price: float,
-        creation_date: Optional[datetime] = None
-    ) -> LineData:
-        pass
-
-    @abstractmethod
-    def get_line(self, line_id: str) -> Optional[LineData]:
-        """Get a single line by ID."""
-        pass
-
-    @abstractmethod
-    def list_lines(self, pair: str) -> List[LineData]:
-        pass
-
-    @abstractmethod
-    def update_line(self, line_id: str, price: float) -> LineData:
-        """Update a line's price."""
-        pass
-
-    @abstractmethod
-    def delete_line(self, line_id: str):
-        pass
-
-
-class SQLLineRepository(LineRepository):
+class SQLLineRepository(ILineRepository):
+    """SQL-based line repository with per-operation sessions.
+    
+    Each operation opens and closes its own database session.
+    For multi-operation transactions, use UnitOfWork instead.
+    """
 
     def _ensure_utc_aware(self, dt: datetime) -> datetime:
         """SQLite often strips timezone info; re-attach UTC when missing."""
         if dt.tzinfo is None:
             return dt.replace(tzinfo=timezone.utc)
         return dt
+
+    def _make_line_data(self, line: Line) -> LineData:
+        """Convert Line ORM object to LineData DTO."""
+        return LineData(
+            line_id=line.line_id,
+            pair=line.pair,
+            price=line.price,
+            creation_date=self._ensure_utc_aware(line.creation_date),
+        )
 
     def insert_line(self, pair: str, price: float, creation_date: Optional[datetime] = None) -> LineData:
         with get_db_session() as db:
@@ -67,24 +58,14 @@ class SQLLineRepository(LineRepository):
             finally:
                 db.close()
 
-            return LineData(
-                line_id=new_line.line_id,
-                pair=new_line.pair,
-                price=new_line.price,
-                creation_date=self._ensure_utc_aware(new_line.creation_date),
-            )
+            return self._make_line_data(new_line)
 
     def get_line(self, line_id: str) -> Optional[LineData]:
         with get_db_session() as db:
             row = db.query(Line).filter(Line.line_id == line_id).one_or_none()
             if not row:
                 return None
-            return LineData(
-                line_id=row.line_id,
-                pair=row.pair,
-                price=row.price,
-                creation_date=self._ensure_utc_aware(row.creation_date),
-            )
+            return self._make_line_data(row)
 
     def list_lines(self, pair: str) -> List[LineData]:
         with get_db_session() as db:
@@ -93,15 +74,7 @@ class SQLLineRepository(LineRepository):
                   .filter(Line.pair == pair)
                   .all()
             )
-            return [
-                LineData(
-                    line_id=row.line_id,
-                    pair=row.pair,
-                    price=row.price,
-                    creation_date=self._ensure_utc_aware(row.creation_date),
-                )
-                for row in rows
-            ]
+            return [self._make_line_data(row) for row in rows]
     
     def update_line(self, line_id: str, price: float) -> LineData:
         with get_db_session() as db:
@@ -119,12 +92,7 @@ class SQLLineRepository(LineRepository):
             finally:
                 db.close()
             
-            return LineData(
-                line_id=row.line_id,
-                pair=row.pair,
-                price=row.price,
-                creation_date=self._ensure_utc_aware(row.creation_date),
-            )
+            return self._make_line_data(row)
          
     def delete_line(self, line_id: str) -> None:
         with get_db_session() as db:
@@ -138,3 +106,7 @@ class SQLLineRepository(LineRepository):
                 raise DBException(message=str(e))
             finally:
                 db.close()
+
+
+# Backward compatibility alias
+LineRepository = ILineRepository

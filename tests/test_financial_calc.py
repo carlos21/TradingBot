@@ -2,6 +2,7 @@
 
 import pytest
 from src.financial_calc import FinancialCalc
+from src.types import Direction
 
 
 class TestContracts:
@@ -329,60 +330,60 @@ class TestCalculateRMultiple:
     def test_calculate_r_multiple_long_win(self):
         """Long trade with profit."""
         result = FinancialCalc.calculate_r_multiple(
-            trade_type="long", entry_price=100.0, exit_price=110.0, risk_points=10.0
+            direction=Direction.LONG, entry_price=100.0, exit_price=110.0, risk_points=10.0
         )
         assert abs(result - 1.0) < 0.001
 
     def test_calculate_r_multiple_long_loss(self):
         """Long trade with loss."""
         result = FinancialCalc.calculate_r_multiple(
-            trade_type="long", entry_price=100.0, exit_price=90.0, risk_points=10.0
+            direction=Direction.LONG, entry_price=100.0, exit_price=90.0, risk_points=10.0
         )
         assert abs(result - (-1.0)) < 0.001
 
     def test_calculate_r_multiple_short_win(self):
         """Short trade with profit."""
         result = FinancialCalc.calculate_r_multiple(
-            trade_type="short", entry_price=100.0, exit_price=90.0, risk_points=10.0
+            direction=Direction.SHORT, entry_price=100.0, exit_price=90.0, risk_points=10.0
         )
         assert abs(result - 1.0) < 0.001
 
     def test_calculate_r_multiple_short_loss(self):
         """Short trade with loss."""
         result = FinancialCalc.calculate_r_multiple(
-            trade_type="short", entry_price=100.0, exit_price=110.0, risk_points=10.0
+            direction=Direction.SHORT, entry_price=100.0, exit_price=110.0, risk_points=10.0
         )
         assert abs(result - (-1.0)) < 0.001
 
-    def test_calculate_r_multiple_buy_sell_aliases(self):
-        """Should accept 'buy' and 'sell' as aliases."""
-        result_buy = FinancialCalc.calculate_r_multiple(
-            trade_type="buy", entry_price=100.0, exit_price=110.0, risk_points=10.0
+    def test_calculate_r_multiple_from_string(self):
+        """Should accept string and convert to Direction."""
+        result_long = FinancialCalc.calculate_r_multiple(
+            direction=Direction.from_string("long"), entry_price=100.0, exit_price=110.0, risk_points=10.0
         )
-        result_sell = FinancialCalc.calculate_r_multiple(
-            trade_type="sell", entry_price=100.0, exit_price=90.0, risk_points=10.0
+        result_short = FinancialCalc.calculate_r_multiple(
+            direction=Direction.from_string("short"), entry_price=100.0, exit_price=90.0, risk_points=10.0
         )
-        assert abs(result_buy - 1.0) < 0.001
-        assert abs(result_sell - 1.0) < 0.001
+        assert abs(result_long - 1.0) < 0.001
+        assert abs(result_short - 1.0) < 0.001
 
     def test_calculate_r_multiple_multiple_r(self):
         """Multiple R win."""
         result = FinancialCalc.calculate_r_multiple(
-            trade_type="long", entry_price=100.0, exit_price=130.0, risk_points=10.0
+            direction=Direction.LONG, entry_price=100.0, exit_price=130.0, risk_points=10.0
         )
         assert abs(result - 3.0) < 0.001
 
     def test_calculate_r_multiple_fractional(self):
         """Fractional R result."""
         result = FinancialCalc.calculate_r_multiple(
-            trade_type="long", entry_price=100.0, exit_price=105.0, risk_points=10.0
+            direction=Direction.LONG, entry_price=100.0, exit_price=105.0, risk_points=10.0
         )
         assert abs(result - 0.5) < 0.001
 
     def test_calculate_r_multiple_zero_risk_defaults_to_one(self):
         """Zero risk should default to 1.0 to avoid division by zero."""
         result = FinancialCalc.calculate_r_multiple(
-            trade_type="long", entry_price=100.0, exit_price=110.0, risk_points=0.0
+            direction=Direction.LONG, entry_price=100.0, exit_price=110.0, risk_points=0.0
         )
         # risk defaults to 1.0, so 10 points / 1 = 10R
         assert abs(result - 10.0) < 0.001
@@ -390,7 +391,7 @@ class TestCalculateRMultiple:
     def test_calculate_r_multiple_negative_risk(self):
         """Negative risk should default to 1.0."""
         result = FinancialCalc.calculate_r_multiple(
-            trade_type="long", entry_price=100.0, exit_price=110.0, risk_points=-5.0
+            direction=Direction.LONG, entry_price=100.0, exit_price=110.0, risk_points=-5.0
         )
         assert abs(result - 10.0) < 0.001
 
@@ -401,7 +402,7 @@ class TestCalculateCloseMetrics:
     def test_calculate_close_metrics_tp_hit(self):
         """Full close metrics for TP hit."""
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="long",
+            direction=Direction.LONG,
             entry_price=100.0,
             exit_price=110.0,
             stop_loss=90.0,
@@ -418,7 +419,7 @@ class TestCalculateCloseMetrics:
     def test_calculate_close_metrics_sl_hit(self):
         """Full close metrics for SL hit."""
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="long",
+            direction=Direction.LONG,
             entry_price=100.0,
             exit_price=90.0,
             stop_loss=90.0,
@@ -435,7 +436,7 @@ class TestCalculateCloseMetrics:
     def test_calculate_close_metrics_breakeven(self):
         """Full close metrics for breakeven (SL at entry)."""
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="long",
+            direction=Direction.LONG,
             entry_price=100.0,
             exit_price=100.0,  # Exit at entry
             stop_loss=100.0,   # SL at entry
@@ -451,7 +452,7 @@ class TestCalculateCloseMetrics:
     def test_calculate_close_metrics_short_trade(self):
         """Full close metrics for short trade."""
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="short",
+            direction=Direction.SHORT,
             entry_price=100.0,
             exit_price=90.0,  # Price went down (win for short)
             stop_loss=110.0,
@@ -466,7 +467,7 @@ class TestCalculateCloseMetrics:
     def test_calculate_close_metrics_session_close(self):
         """Full close metrics for manual/unknown close."""
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="long",
+            direction=Direction.LONG,
             entry_price=100.0,
             exit_price=105.0,  # In the middle
             stop_loss=90.0,
@@ -481,7 +482,7 @@ class TestCalculateCloseMetrics:
     def test_calculate_close_metrics_custom_fees(self):
         """Should accept custom fee per contract."""
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="long",
+            direction=Direction.LONG,
             entry_price=100.0,
             exit_price=110.0,
             stop_loss=90.0,
@@ -542,7 +543,7 @@ class TestIntegrationScenarios:
 
         # Trade closes at TP
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="long",
+            direction=Direction.LONG,
             entry_price=entry,
             exit_price=tp,
             stop_loss=sl,
@@ -567,7 +568,7 @@ class TestIntegrationScenarios:
         risk = 100.0
 
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="long",
+            direction=Direction.LONG,
             entry_price=entry,
             exit_price=sl,
             stop_loss=sl,
@@ -592,7 +593,7 @@ class TestIntegrationScenarios:
         risk = 100.0
 
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="long",
+            direction=Direction.LONG,
             entry_price=entry,
             exit_price=entry,  # Stopped at entry
             stop_loss=sl,
@@ -614,7 +615,7 @@ class TestIntegrationScenarios:
         risk = 100.0
 
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="short",
+            direction=Direction.SHORT,
             entry_price=entry,
             exit_price=tp,
             stop_loss=sl,
@@ -636,7 +637,7 @@ class TestIntegrationScenarios:
         risk = 100.0
 
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="short",
+            direction=Direction.SHORT,
             entry_price=entry,
             exit_price=sl,
             stop_loss=sl,
@@ -673,7 +674,7 @@ class TestEdgeCases:
     def test_very_large_r_result(self):
         """Should handle very large R results."""
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="long",
+            direction=Direction.LONG,
             entry_price=100.0,
             exit_price=200.0,  # 10R win
             stop_loss=90.0,
@@ -688,7 +689,7 @@ class TestEdgeCases:
     def test_very_small_numbers(self):
         """Should handle very small price movements."""
         result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            trade_type="long",
+            direction=Direction.LONG,
             entry_price=0.0001,
             exit_price=0.00011,
             stop_loss=0.00009,

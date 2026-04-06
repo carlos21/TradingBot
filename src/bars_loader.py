@@ -182,15 +182,8 @@ class BarsLoader:
 
                 # Combine buffered completed 1m bars + this partial tick
                 if self._1m_buffer:
-                    bar_for_emit = {
-                        'time': window_start,
-                        'open': self._1m_buffer[0]['open'],
-                        'high': max(max(b['high'] for b in self._1m_buffer), bar_for_emit['high']),
-                        'low': min(min(b['low'] for b in self._1m_buffer), bar_for_emit['low']),
-                        'close': bar_for_emit['close'],
-                        'volume': sum(b['volume'] for b in self._1m_buffer) + bar_for_emit.get('volume', 0),
-                        'pair': bar_for_emit.get('pair', self._1m_buffer[0]['pair']),
-                    }
+                    from src.utils.bar_aggregator import BarAggregator
+                    bar_for_emit = BarAggregator.merge_partial(bar_for_emit, self._1m_buffer, window_start)
 
             self.socketio.emit('bar', bar_for_emit)
             return

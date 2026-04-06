@@ -3,6 +3,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List
 from src.strategies.entry_context import EntryContext, EntryTrigger
+from src.types import Direction
 
 # --- CONFIGURATION ---
 FAST_MOVE_LOOKBACK   = 5      # Check the last 5 bars (15m)
@@ -112,13 +113,13 @@ def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_
     # 1. CHECK FOR RESET
     # If we haven't reset yet, check if the lines are currently in the "bad" direction
     if not line.get("tsi_reset_occurred", False):
-        if dir_ == "long":
+        if dir_ == Direction.LONG:
             # Reset condition: Blue is BELOW Orange (Bearish state)
             if t_curr < s_curr:
                 line["tsi_reset_occurred"] = True
                 strategy.log_decision(bar['time'], tf, line_id, "TSI_RESET", 
                     f"TSI Reset detected (Blue < Orange). Ready for Rescue Cross.")
-        elif dir_ == "short":
+        elif dir_ == Direction.SHORT:
             # Reset condition: Blue is ABOVE Orange (Bullish state)
             if t_curr > s_curr:
                 line["tsi_reset_occurred"] = True
@@ -128,11 +129,11 @@ def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_
     # 2. CHECK FOR TRIGGER (Only if Reset has occurred)
     if line.get("tsi_reset_occurred", False):
         rescue = False
-        if dir_ == "long":
+        if dir_ == Direction.LONG:
             # Rescue Long: Blue crosses ABOVE Orange
             if t_prev <= s_prev and t_curr > s_curr: 
                 rescue = True
-        elif dir_ == "short":
+        elif dir_ == Direction.SHORT:
             # Rescue Short: Blue crosses BELOW Orange
             if t_prev >= s_prev and t_curr < s_curr: 
                 rescue = True
@@ -167,8 +168,9 @@ def tsi_cross_trigger(
        - Wait for TSI RESCUE (Reset + Cross).
     -1: Invalidated/Dead.
     """
-    dir_ = line.get("direction")
-    if dir_ is None: return None
+    dir_str = line.get("direction")
+    if dir_str is None: return None
+    dir_ = Direction.from_string(dir_str)
 
     lvl = line["level"]
     
@@ -182,9 +184,9 @@ def tsi_cross_trigger(
         return None
 
     # 1. Interaction Check
-    if dir_ == "long":
+    if dir_ == Direction.LONG:
         if line['extreme'] > lvl: return None
-    elif dir_ == "short":
+    elif dir_ == Direction.SHORT:
         if line['extreme'] < lvl: return None
 
     tf = bar.get('tf')
@@ -210,9 +212,9 @@ def tsi_cross_trigger(
     if line["tsi_stage"] == 0:
         has_crossed = False
         
-        if dir_ == "long":
+        if dir_ == Direction.LONG:
             if (prev_tsi <= prev_sig) and (curr_tsi > curr_sig): has_crossed = True
-        elif dir_ == "short":
+        elif dir_ == Direction.SHORT:
             if (prev_tsi >= prev_sig) and (curr_tsi < curr_sig): has_crossed = True
         
         if has_crossed:
@@ -221,12 +223,12 @@ def tsi_cross_trigger(
             velocity_score = _calculate_velocity_score(hist_1m, FAST_MOVE_LOOKBACK)
             
             is_fast = False
-            if dir_ == "long" and velocity_score < -FAST_MOVE_THRESHOLD: is_fast = True
-            elif dir_ == "short" and velocity_score > FAST_MOVE_THRESHOLD: is_fast = True
+            if dir_ == Direction.LONG and velocity_score < -FAST_MOVE_THRESHOLD: is_fast = True
+            elif dir_ == Direction.SHORT and velocity_score > FAST_MOVE_THRESHOLD: is_fast = True
 
             if is_fast:
                 line["tsi_stage"] = 1
-                line["tsi_ref_price"] = bar["low"] if dir_ == "long" else bar["high"]
+                line["tsi_ref_price"] = bar["low"] if dir_ == Direction.LONG else bar["high"]
                 line["tsi_reset_occurred"] = False 
                 
                 strategy.log_decision(bar['time'], tf, line_id, "TSI_FAST", 
@@ -240,9 +242,9 @@ def tsi_cross_trigger(
         
         # A) CHECK INVALIDATION
         invalidated = False
-        if dir_ == "long":
+        if dir_ == Direction.LONG:
             if bar['close'] < (lvl - PROTECTION_INVALIDATION_DIST): invalidated = True
-        elif dir_ == "short":
+        elif dir_ == Direction.SHORT:
             if bar['close'] > (lvl + PROTECTION_INVALIDATION_DIST): invalidated = True
         
         if invalidated:
@@ -255,9 +257,9 @@ def tsi_cross_trigger(
         ref = line["tsi_ref_price"]
         swept = False
         
-        if dir_ == "long":
+        if dir_ == Direction.LONG:
             if bar["low"] < ref: swept = True
-        elif dir_ == "short":
+        elif dir_ == Direction.SHORT:
             if bar["high"] > ref: swept = True
             
         if swept:
@@ -271,9 +273,9 @@ def tsi_cross_trigger(
         
         # A) CHECK INVALIDATION (Still applies)
         invalidated = False
-        if dir_ == "long":
+        if dir_ == Direction.LONG:
             if bar['close'] < (lvl - PROTECTION_INVALIDATION_DIST): invalidated = True
-        elif dir_ == "short":
+        elif dir_ == Direction.SHORT:
             if bar['close'] > (lvl + PROTECTION_INVALIDATION_DIST): invalidated = True
         
         if invalidated:
@@ -302,9 +304,9 @@ def _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf):
     curr_tsi, prev_tsi = tsi_line[-1], tsi_line[-2]
     curr_sig, prev_sig = sig_line[-1], sig_line[-2]
 
-    if dir_ == "long" and prev_tsi <= prev_sig and curr_tsi > curr_sig:
+    if dir_ == Direction.LONG and prev_tsi <= prev_sig and curr_tsi > curr_sig:
         return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
-    if dir_ == "short" and prev_tsi >= prev_sig and curr_tsi < curr_sig:
+    if dir_ == Direction.SHORT and prev_tsi >= prev_sig and curr_tsi < curr_sig:
         return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
 
     # No cross – record values so we can see how far TSI is from crossing
@@ -341,8 +343,8 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
 
     if stage == 0:
         crossed = (
-            (dir_ == "long"  and prev_tsi <= prev_sig and curr_tsi > curr_sig) or
-            (dir_ == "short" and prev_tsi >= prev_sig and curr_tsi < curr_sig)
+            (dir_ == Direction.LONG  and prev_tsi <= prev_sig and curr_tsi > curr_sig) or
+            (dir_ == Direction.SHORT and prev_tsi >= prev_sig and curr_tsi < curr_sig)
         )
         if crossed:
             line[stage_key] = 1
@@ -355,8 +357,8 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
         # Check if price has moved too far from the line after the 1st cross
         if max_dist > 0:
             too_far = (
-                (dir_ == "long"  and bar['close'] > lvl + max_dist) or
-                (dir_ == "short" and bar['close'] < lvl - max_dist)
+                (dir_ == Direction.LONG  and bar['close'] > lvl + max_dist) or
+                (dir_ == Direction.SHORT and bar['close'] < lvl - max_dist)
             )
             if too_far:
                 dist = abs(bar['close'] - lvl)
@@ -370,8 +372,8 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
         # Step A: check for reset (TSI going against trade direction)
         if not line.get(reset_key, False):
             reset = (
-                (dir_ == "long"  and curr_tsi < curr_sig) or
-                (dir_ == "short" and curr_tsi > curr_sig)
+                (dir_ == Direction.LONG  and curr_tsi < curr_sig) or
+                (dir_ == Direction.SHORT and curr_tsi > curr_sig)
             )
             if reset:
                 line[reset_key] = True
@@ -381,8 +383,8 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
         # Step B: once reset, look for 2nd cross
         if line.get(reset_key, False):
             crossed2 = (
-                (dir_ == "long"  and prev_tsi <= prev_sig and curr_tsi > curr_sig) or
-                (dir_ == "short" and prev_tsi >= prev_sig and curr_tsi < curr_sig)
+                (dir_ == Direction.LONG  and prev_tsi <= prev_sig and curr_tsi > curr_sig) or
+                (dir_ == Direction.SHORT and prev_tsi >= prev_sig and curr_tsi < curr_sig)
             )
             if crossed2:
                 line[stage_key] = 0
@@ -440,18 +442,19 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
         line: Dict[str, Any],
         bar: Dict[str, Any],
     ) -> Optional[EntryContext]:
-        dir_ = line.get("direction")
-        if dir_ is None:
+        dir_str = line.get("direction")
+        if dir_str is None:
             return None
+        dir_ = Direction.from_string(dir_str) if isinstance(dir_str, str) else dir_str
 
         lvl = line["level"]
         if not bar.get('tf'):
             return None
 
         # Interaction check: price must have touched the line
-        if dir_ == "long"  and line['extreme'] > lvl:
+        if dir_ == Direction.LONG  and line['extreme'] > lvl:
             return None
-        if dir_ == "short" and line['extreme'] < lvl:
+        if dir_ == Direction.SHORT and line['extreme'] < lvl:
             return None
 
         tf = bar['tf']
@@ -501,16 +504,16 @@ velocity_adaptive_tsi_trigger = make_velocity_adaptive_tsi_trigger()
 
 
 def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val):
-    if dir_ == "long":
+    if dir_ == Direction.LONG:
         true_extreme = min(line['extreme'], bar['low'])
         cross_depth = max(0.0, lvl - true_extreme)
         strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_CROSS", f"Long Trigger: TSI({tsi_val:.2f}) > Sig({sig_val:.2f})")
-        return EntryContext(strategy, line_id, "long", lvl, bar, bar['close'], bar['low'], bar['high'], true_extreme, cross_depth)
+        return EntryContext(strategy, line_id, Direction.LONG, lvl, bar, bar['close'], bar['low'], bar['high'], true_extreme, cross_depth)
     else:
         true_extreme = max(line['extreme'], bar['high'])
         cross_depth = max(0.0, true_extreme - lvl)
         strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_CROSS", f"Short Trigger: TSI({tsi_val:.2f}) < Sig({sig_val:.2f})")
-        return EntryContext(strategy, line_id, "short", lvl, bar, bar['close'], bar['low'], bar['high'], true_extreme, cross_depth)
+        return EntryContext(strategy, line_id, Direction.SHORT, lvl, bar, bar['close'], bar['low'], bar['high'], true_extreme, cross_depth)
 
 # --- HELPER FUNCTIONS FOR TSI ---
 
@@ -540,7 +543,6 @@ def _calculate_tsi_series(closes: List[float], long_len: int, short_len: int, si
     signal_values = _calculate_ema(tsi_values, sig_len)
     return tsi_values, signal_values
 
-# ... (wick_near_line_trigger, three_candle_reversal_trigger, double_5m_cross_trigger remain unchanged) ...
 def wick_near_line_trigger(
     strategy: "LiquidityStrategyV2",
     line_id: Any,
@@ -548,8 +550,9 @@ def wick_near_line_trigger(
     bar: Dict[str, Any],
 ) -> Optional[EntryContext]:
     
-    dir_ = line.get("direction")
-    if dir_ is None: return None
+    dir_str = line.get("direction")
+    if dir_str is None: return None
+    dir_ = Direction.from_string(dir_str) if isinstance(dir_str, str) else dir_str
 
     lvl = line["level"]
     
@@ -579,7 +582,7 @@ def wick_near_line_trigger(
     lower_ratio = lower_wick / rng
 
     # 3. Check Wick Size based on direction
-    if dir_ == "long":
+    if dir_ == Direction.LONG:
         if lower_ratio < cfg.wick_min_ratio:
             strategy.log_decision(
                 bar['time'], bar.get('tf'), line_id, "WICK_FAIL", 
@@ -618,8 +621,9 @@ def three_candle_reversal_trigger(
     bar: Dict[str, Any],
 ) -> Optional[EntryContext]:
     
-    dir_ = line.get("direction")
-    if dir_ is None: return None
+    dir_str = line.get("direction")
+    if dir_str is None: return None
+    dir_ = Direction.from_string(dir_str)
 
     tf = bar.get('tf')
     if not tf: return None
@@ -644,7 +648,7 @@ def three_candle_reversal_trigger(
     if not c2_touches:
         return None
 
-    if dir_ == "short":
+    if dir_ == Direction.SHORT:
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
         if b2_ratio > cfg.hammer_body_max_ratio: 
             strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Body {b2_ratio:.2f} > Max {cfg.hammer_body_max_ratio}")
@@ -664,7 +668,7 @@ def three_candle_reversal_trigger(
         return EntryContext(
             strategy=strategy,
             line_id=line_id,
-            direction="short",
+            direction=Direction.SHORT,
             level=lvl,
             bar=c3,
             close=c3['close'],
@@ -674,7 +678,7 @@ def three_candle_reversal_trigger(
             cross_depth=cross_depth 
         )
 
-    elif dir_ == "long":
+    elif dir_ == Direction.LONG:
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
         if b2_ratio > cfg.hammer_body_max_ratio: 
             strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Body {b2_ratio:.2f} > Max {cfg.hammer_body_max_ratio}")
@@ -694,7 +698,7 @@ def three_candle_reversal_trigger(
         return EntryContext(
             strategy=strategy,
             line_id=line_id,
-            direction="long",
+            direction=Direction.LONG,
             level=lvl,
             bar=c3,
             close=c3['close'],
@@ -722,8 +726,9 @@ def double_5m_cross_trigger(
     """
     
     tf = bar.get('tf', 'unknown')
-    dir_ = line.get("direction")
-    if dir_ is None: return None
+    dir_str = line.get("direction")
+    if dir_str is None: return None
+    dir_ = Direction.from_string(dir_str)
 
     lvl = line["level"]
     close = bar["close"]
@@ -742,7 +747,7 @@ def double_5m_cross_trigger(
 
     stage = line["d5_stage"]
 
-    if dir_ == "long":
+    if dir_ == Direction.LONG:
         # --- LONG LOGIC ---
         
         # 1. Initial Dip
@@ -780,7 +785,7 @@ def double_5m_cross_trigger(
                 return EntryContext(
                     strategy=strategy,
                     line_id=line_id,
-                    direction="long",
+                    direction=Direction.LONG,
                     level=lvl,
                     bar=bar,
                     close=close,
@@ -790,7 +795,7 @@ def double_5m_cross_trigger(
                     cross_depth=cross_depth
                 )
 
-    elif dir_ == "short":
+    elif dir_ == Direction.SHORT:
         # --- SHORT LOGIC ---
 
         # 1. Initial Pop
@@ -828,7 +833,7 @@ def double_5m_cross_trigger(
                 return EntryContext(
                     strategy=strategy,
                     line_id=line_id,
-                    direction="short",
+                    direction=Direction.SHORT,
                     level=lvl,
                     bar=bar,
                     close=close,

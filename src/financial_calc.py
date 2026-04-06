@@ -1,7 +1,9 @@
 """Single source of truth for trade financial calculations (contracts, fees, PNL, result types)."""
 
 from __future__ import annotations
-from typing import Tuple, Literal
+from typing import Tuple
+
+from src.types import Direction
 
 
 class FinancialCalc:
@@ -175,7 +177,7 @@ class FinancialCalc:
 
     @staticmethod
     def calculate_r_multiple(
-        trade_type: Literal["buy", "sell", "long", "short"],
+        direction: Direction,
         entry_price: float,
         exit_price: float,
         risk_points: float,
@@ -183,7 +185,7 @@ class FinancialCalc:
         """Calculate R-multiple result for a trade.
         
         Args:
-            trade_type: Trade direction (buy/sell/long/short)
+            direction: Trade direction (Direction enum)
             entry_price: Entry price
             exit_price: Exit price
             risk_points: Risk in points (distance from entry to original SL)
@@ -193,19 +195,17 @@ class FinancialCalc:
         """
         if risk_points <= 0:
             risk_points = 1.0
-            
-        is_buy = trade_type in ("buy", "long")
         
-        if is_buy:
+        if direction.is_long:
             pnl_points = exit_price - entry_price
-        else:
+        else:  # SHORT
             pnl_points = entry_price - exit_price
             
         return pnl_points / risk_points
 
     @staticmethod
     def calculate_close_metrics(
-        trade_type: Literal["buy", "sell", "long", "short"],
+        direction: Direction,
         entry_price: float,
         exit_price: float,
         stop_loss: float,
@@ -223,7 +223,7 @@ class FinancialCalc:
         Returns all values needed to persist a trade close.
         
         Args:
-            trade_type: Trade direction
+            direction: Trade direction (Direction enum)
             entry_price: Entry price
             exit_price: Exit price
             stop_loss: Stop loss price (for result type detection)
@@ -240,7 +240,7 @@ class FinancialCalc:
         """
         # Calculate R-multiple
         result_r = FinancialCalc.calculate_r_multiple(
-            trade_type, entry_price, exit_price, risk_points
+            direction, entry_price, exit_price, risk_points
         )
         
         # Calculate fees

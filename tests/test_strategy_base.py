@@ -11,6 +11,7 @@ from src.strategies.base_liquidity_strategy import (
     LineRemovalMode,
 )
 from src.strategies.entry_context import EntryContext
+from src.types import Direction
 from tests.conftest import make_bar, make_strategy
 from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter
 from src.services.trade_manager import TradeManager
@@ -88,7 +89,7 @@ class TestSLSelection:
 
 class TestBuildTrade:
 
-    def _make_ctx(self, strat, direction="long", close=100.0, extreme=90.0, level=100.0, bar_time=1000):
+    def _make_ctx(self, strat, direction=Direction.LONG, close=100.0, extreme=90.0, level=100.0, bar_time=1000):
         bar = make_bar(time=bar_time, close=close, pair="NQ")
         return EntryContext(
             strategy=strat, line_id="L1", direction=direction,
@@ -99,7 +100,7 @@ class TestBuildTrade:
 
     def test_long_fixed_sl(self):
         strat = _make_base(fixed_stop_loss=20, sl_levels=None)
-        ctx = self._make_ctx(strat, direction="long", close=100, extreme=85)
+        ctx = self._make_ctx(strat, direction=Direction.LONG, close=100, extreme=85)
         trade = strat._build_trade_from_context(ctx)
         assert trade["type"] == "long"
         assert trade["stop_loss"] == 80.0   # 100 - 20
@@ -108,7 +109,7 @@ class TestBuildTrade:
 
     def test_short_fixed_sl(self):
         strat = _make_base(fixed_stop_loss=20, sl_levels=None)
-        ctx = self._make_ctx(strat, direction="short", close=100, extreme=115)
+        ctx = self._make_ctx(strat, direction=Direction.SHORT, close=100, extreme=115)
         trade = strat._build_trade_from_context(ctx)
         assert trade["type"] == "short"
         assert trade["stop_loss"] == 120.0  # 100 + 20
@@ -116,7 +117,7 @@ class TestBuildTrade:
 
     def test_tiered_sl(self):
         strat = _make_base(fixed_stop_loss=None, sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
-        ctx = self._make_ctx(strat, direction="long", close=100, extreme=83)
+        ctx = self._make_ctx(strat, direction=Direction.LONG, close=100, extreme=83)
         # distance = max(100-83, 10) = 17; pick 15 since 15+3=18>=17
         trade = strat._build_trade_from_context(ctx)
         assert trade["risk"] == 15.0
@@ -124,7 +125,7 @@ class TestBuildTrade:
     def test_max_stop_loss_cap(self):
         strat = _make_base(fixed_stop_loss=None, sl_levels=None, max_stop_loss=25)
         # Dynamic risk: distance = max(100-70, 10) = 30; capped at 25
-        ctx = self._make_ctx(strat, direction="long", close=100, extreme=70)
+        ctx = self._make_ctx(strat, direction=Direction.LONG, close=100, extreme=70)
         trade = strat._build_trade_from_context(ctx)
         assert trade["risk"] == 25.0
 
