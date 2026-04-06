@@ -11,7 +11,13 @@ def _deps():
     sio = DummySocketIO()
     lr = FakeLineRepository()
     tr = FakeTradeRepository()
-    tm = TradeManager(tr, sio, trade_executor=FakeTradeExecutor(), analytics=FakeAnalyticsReporter())
+    tm = TradeManager(
+        tr, sio,
+        trade_executor=FakeTradeExecutor(),
+        analytics=FakeAnalyticsReporter(),
+        point_value=2.0,
+        account_balance=100000.0,
+    )
     return sio, lr, tr, tm
 
 

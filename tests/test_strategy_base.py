@@ -21,7 +21,13 @@ def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=Non
     sio = socketio or DummySocketIO()
     lr = line_repo or FakeLineRepository()
     tr = trade_repo or FakeTradeRepository()
-    tm = trade_manager or TradeManager(tr, sio, trade_executor=FakeTradeExecutor(), analytics=FakeAnalyticsReporter())
+    tm = trade_manager or TradeManager(
+        tr, sio,
+        trade_executor=FakeTradeExecutor(),
+        analytics=FakeAnalyticsReporter(),
+        point_value=2.0,
+        account_balance=100000.0,
+    )
     return BaseLiquidityStrategy(
         min_stop_loss=10.0,
         max_bounce=90.0,
@@ -34,6 +40,8 @@ def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=Non
         options=options or StrategyOptions(),
         sl_levels=sl_levels,
         rr_ratio=3.3,
+        point_value=2.0,
+        account_balance=100000.0,
         **kwargs,
     )
 
@@ -238,7 +246,13 @@ class TestBreakeven:
     def test_long_breakeven_triggered(self):
         sio = DummySocketIO()
         tr = FakeTradeRepository()
-        tm = TradeManager(tr, sio, trade_executor=FakeTradeExecutor(), analytics=FakeAnalyticsReporter())
+        tm = TradeManager(
+            tr, sio,
+            trade_executor=FakeTradeExecutor(),
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+        )
         strat = _make_base(
             socketio=sio, trade_repo=tr, trade_manager=tm,
             options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
@@ -273,7 +287,13 @@ class TestStoreAndEmitOpen:
     def test_persists_and_tracks(self):
         sio = DummySocketIO()
         tr = FakeTradeRepository()
-        tm = TradeManager(tr, sio, trade_executor=FakeTradeExecutor(), analytics=FakeAnalyticsReporter())
+        tm = TradeManager(
+            tr, sio,
+            trade_executor=FakeTradeExecutor(),
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+        )
         strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
         trade = {
             "pair": "NQ", "type": "long", "entry": 100,

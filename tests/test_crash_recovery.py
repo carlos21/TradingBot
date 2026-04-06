@@ -81,6 +81,8 @@ def make_recovery_strategy(
         pair="NQ",
         trade_executor=te,
         analytics=ana,
+        point_value=2.0,
+        account_balance=100000.0,
     )
 
     if options_override is not None:
@@ -106,6 +108,8 @@ def make_recovery_strategy(
         min_cross_depth=5.0,
         rr_ratio=5.0,
         trigger_state_repo=trigger_state_repo,
+        point_value=2.0,
+        account_balance=100000.0,
     )
 
 

@@ -13,6 +13,8 @@ def _make_manager(**overrides):
         pair="NQ",
         trade_executor=FakeTradeExecutor(),
         analytics=FakeAnalyticsReporter(),
+        point_value=2.0,
+        account_balance=100000.0,
     )
     defaults.update(overrides)
     return TradeManager(**defaults)

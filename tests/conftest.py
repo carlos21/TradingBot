@@ -51,6 +51,8 @@ def trade_manager(trade_repo, socketio, trade_executor, analytics):
         pair="NQ",
         trade_executor=trade_executor,
         analytics=analytics,
+        point_value=2.0,
+        account_balance=100000.0,
     )
 
 
@@ -107,6 +109,8 @@ def make_strategy(
         min_cross_depth=min_cross_depth,
         rr_ratio=rr_ratio,
         trade_logger=trade_logger,
+        point_value=2.0,
+        account_balance=100000.0,
     )
 
 
