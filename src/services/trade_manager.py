@@ -7,6 +7,7 @@ from src.services.trade_executor import TradeExecutor, NoOpExecutor
 from src.notifier import Notifier, NoOpNotifier
 from src.analytics import AnalyticsReporter, NoOpReporter
 from src.financial_calc import FinancialCalc
+from src.financial_calc import FinancialCalc
 
 
 class TradeManager:
@@ -184,18 +185,23 @@ class TradeManager:
 
             exit_price = trade['stop_loss'] if hit_sl else trade['take_profit']
             exit_time  = datetime.fromtimestamp(bar['time'], tz=ZoneInfo('UTC'))
-            result_type = "SL" if hit_sl else "TP"
 
+            # Use unified FinancialCalc for ALL close metrics (single source of truth)
             risk = trade.get('risk', 0)
-            if risk <= 0: risk = 1.0
-
-            if is_buy:
-                pnl_points = exit_price - trade['entry']
-            else:
-                pnl_points = trade['entry'] - exit_price
-
-            result = pnl_points / risk
-            fees, pnl_usd = self._calc_close_financials(trade, result)
+            if risk <= 0:
+                risk = 1.0
+            contracts = trade.get('contracts') or 1
+            
+            result, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
+                trade_type=trade['type'],
+                entry_price=trade['entry'],
+                exit_price=exit_price,
+                stop_loss=trade['stop_loss'],
+                take_profit=trade['take_profit'],
+                risk_points=risk,
+                contracts=contracts,
+                point_value=self.point_value,
+            )
 
             print(f"[TradeManager] 📉 Closing trade {trade['trade_id']} (Result: {result:.2f}R, Type: {result_type}) at {bar['time']}")
 
@@ -262,17 +268,20 @@ class TradeManager:
             risk = trade.get('risk', 0)
             if risk <= 0:
                 risk = 1.0
+            contracts = trade.get('contracts') or 1
 
-            is_buy = trade['type'] in ('buy', 'long')
-            if is_buy:
-                pnl_points = exit_price - trade['entry']
-            else:
-                pnl_points = trade['entry'] - exit_price
-
-            result = pnl_points / risk
-            fees, pnl_usd = self._calc_close_financials(trade, result)
-
-            result_type = "BE" if result <= 0.001 else "SP"
+            # Use unified FinancialCalc for ALL close metrics (single source of truth)
+            result, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
+                trade_type=trade['type'],
+                entry_price=trade['entry'],
+                exit_price=exit_price,
+                stop_loss=trade['stop_loss'],
+                take_profit=trade['take_profit'],
+                risk_points=risk,
+                contracts=contracts,
+                point_value=self.point_value,
+            )
+            result_type = FinancialCalc.calculate_session_end_result_type(result)
 
             print(f"[TradeManager] 🕐 SESSION END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: {result_type})")
 
@@ -408,31 +417,25 @@ class TradeManager:
                 }
 
 
-        # calculate P&L (R-Multiple)
+        # Use unified FinancialCalc for ALL close metrics (single source of truth)
         risk = trade.get('risk', 0)
-        if risk <= 0: risk = 1.0
+        if risk <= 0:
+            risk = 1.0
 
-        if trade['type'] in ('buy', 'long'):
-            pnl_points = exit_price - trade['entry']
-        else:
-            pnl_points = trade['entry'] - exit_price
-
-        result = pnl_points / risk
-        fees, pnl_usd = self._calc_close_financials(trade, result)
-
-        # Determine result type based on exit price
         sl = trade.get('stop_loss', trade.get('sl', trade.get('orig_sl')))
         tp = trade.get('take_profit', trade.get('tp'))
         entry = trade.get('entry', trade.get('entry_price'))
 
-        if sl and abs(exit_price - sl) < 0.5:
-            result_type = "SL"
-        elif tp and abs(exit_price - tp) < 0.5:
-            result_type = "TP"
-        elif entry and abs(exit_price - entry) < 0.5:
-            result_type = "BE"
-        else:
-            result_type = "SP"
+        result, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
+            trade_type=trade['type'],
+            entry_price=entry,
+            exit_price=exit_price,
+            stop_loss=sl,
+            take_profit=tp,
+            risk_points=risk,
+            contracts=trade.get('contracts') or 1,
+            point_value=self.point_value,
+        )
 
         # persist close
         self.trade_repository.close_trade(
@@ -484,17 +487,20 @@ class TradeManager:
             risk = trade.get('risk', 0)
             if risk <= 0:
                 risk = 1.0
+            contracts = trade.get('contracts') or 1
 
-            is_buy = trade['type'] in ('buy', 'long')
-            if is_buy:
-                pnl_points = exit_price - trade['entry']
-            else:
-                pnl_points = trade['entry'] - exit_price
-
-            result = pnl_points / risk
-            fees, pnl_usd = self._calc_close_financials(trade, result)
-
-            result_type = "BE" if result <= 0.001 else "SP"
+            # Use unified FinancialCalc for ALL close metrics (single source of truth)
+            result, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
+                trade_type=trade['type'],
+                entry_price=trade['entry'],
+                exit_price=exit_price,
+                stop_loss=trade['stop_loss'],
+                take_profit=trade['take_profit'],
+                risk_points=risk,
+                contracts=contracts,
+                point_value=self.point_value,
+            )
+            result_type = FinancialCalc.calculate_session_end_result_type(result)
 
             print(f"[TradeManager] 🎬 STREAM END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: {result_type})")
 
@@ -644,28 +650,25 @@ class TradeManager:
             print(f"[TradeManager] ⚠️ Broker fill for {trade_id} but trade not in memory (already closed?)")
             return
 
-        # Calculate P&L
+        # Use unified FinancialCalc for ALL close metrics (single source of truth)
         risk = trade.get('risk', 0)
         if risk <= 0:
             risk = 1.0
 
-        is_buy = trade['type'] in ('buy', 'long')
-        if is_buy:
-            pnl_points = exit_price - trade['entry']
-        else:
-            pnl_points = trade['entry'] - exit_price
+        result, fees, pnl_usd, detected_result_type = FinancialCalc.calculate_close_metrics(
+            trade_type=trade['type'],
+            entry_price=trade['entry'],
+            exit_price=exit_price,
+            stop_loss=trade['stop_loss'],
+            take_profit=trade['take_profit'],
+            risk_points=risk,
+            contracts=trade.get('contracts') or 1,
+            point_value=self.point_value,
+        )
 
-        result = pnl_points / risk
-        fees, pnl_usd = self._calc_close_financials(trade, result)
-
-        # Auto-detect result_type if not provided
+        # Use provided result_type if given, otherwise use detected type
         if not result_type:
-            if abs(exit_price - trade['stop_loss']) < 0.5:
-                result_type = "SL"
-            elif abs(exit_price - trade['take_profit']) < 0.5:
-                result_type = "TP"
-            else:
-                result_type = "SP"
+            result_type = detected_result_type
 
         exit_time = datetime.now(tz=timezone.utc)
 

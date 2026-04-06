@@ -28,6 +28,17 @@ export class AnalyticsCharts {
       this.charts[canvasId].destroy();
     }
 
+    // Filter to only show labels at month boundaries (non-empty labels)
+    // and create a filtered set of labels for display
+    const monthLabels = [];
+    const monthIndices = [];
+    data.labels.forEach((label, idx) => {
+      if (label && label.trim() !== '') {
+        monthLabels.push(label);
+        monthIndices.push(idx);
+      }
+    });
+
     this.charts[canvasId] = new Chart(ctx, {
       type: 'line',
       data: {
@@ -48,10 +59,33 @@ export class AnalyticsCharts {
         maintainAspectRatio: false,
         plugins: {
           legend: { display: false },
+          tooltip: {
+            callbacks: {
+              title: (items) => {
+                // Show the actual month label for this data point
+                const idx = items[0].dataIndex;
+                // Find nearest month label
+                for (let i = idx; i >= 0; i--) {
+                  if (data.labels[i] && data.labels[i].trim() !== '') {
+                    return data.labels[i];
+                  }
+                }
+                return '';
+              }
+            }
+          }
         },
         scales: {
           x: {
-            ticks: { color: '#9ca3af', maxTicksLimit: 8 },
+            ticks: { 
+              color: '#9ca3af', 
+              maxTicksLimit: 8,
+              callback: function(val, index) {
+                // Only show month labels (non-empty ones)
+                const label = this.getLabelForValue(val);
+                return label && label.trim() !== '' ? label : '';
+              }
+            },
             grid: { color: '#374151' },
           },
           y: {
@@ -71,7 +105,17 @@ export class AnalyticsCharts {
       this.charts[canvasId].destroy();
     }
 
-    const colors = [this.colors.success, this.colors.danger, this.colors.warning, this.colors.gray];
+    // Define consistent colors for each result type
+    // TP = green (success), SL = red (danger), BE = yellow (warning), SP = blue
+    const resultColors = {
+      'TP': this.colors.success,   // TP - Green
+      'SL': this.colors.danger,    // SL - Red
+      'BE': '#f59e0b',             // BE - Amber/Yellow
+      'SP': '#3b82f6',             // SP - Blue
+    };
+
+    // Map labels to consistent colors
+    const backgroundColors = data.labels.map(label => resultColors[label] || this.colors.gray);
 
     this.charts[canvasId] = new Chart(ctx, {
       type: 'doughnut',
@@ -79,7 +123,7 @@ export class AnalyticsCharts {
         labels: data.labels,
         datasets: [{
           data: data.data,
-          backgroundColor: colors,
+          backgroundColor: backgroundColors,
           borderWidth: 0,
         }],
       },
@@ -91,6 +135,17 @@ export class AnalyticsCharts {
             position: 'right',
             labels: { color: '#9ca3af' },
           },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                const label = context.label || '';
+                const value = context.raw || 0;
+                const total = context.chart._metasets[context.datasetIndex].total;
+                const percentage = total > 0 ? ((value / total) * 100).toFixed(1) : 0;
+                return `${label}: ${value} (${percentage}%)`;
+              }
+            }
+          }
         },
       },
     });

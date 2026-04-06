@@ -35,6 +35,9 @@ if str(PROJECT_ROOT) not in sys.path:
 from app_factory import create_app, Repositories
 from src.data_sources.csv_datasource import CSVDataSource
 from src.financial_calc import FinancialCalc
+
+# Use unified BE threshold from FinancialCalc
+BE_THRESHOLD = FinancialCalc.DEFAULT_BE_THRESHOLD_R  # Threshold for considering a trade as breakeven (in R)
 from src.prod_config import (
     get_prod_strategy_numbers,
     get_prod_candle_config,
@@ -724,7 +727,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     RISK_USD_FIX = args.risk      # fixed risk per trade in USD (configurable via --risk)
     NQ_PV        = 2.0       # $ per point, MNQ micro contract
     FEE_PER_RT   = FinancialCalc.DEFAULT_FEE_PER_RT
-    BE_THRESHOLD = 0.5       # R below this is considered breakeven
+    # BE_THRESHOLD is now imported from FinancialCalc (unified single source of truth)
 
     def get_risk(balance):
         """Return risk amount in USD — either fixed or percentage of current balance."""
@@ -914,7 +917,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                             bucket[key]["reentry_be"] += 1
                     continue
 
-                is_be  = actual_r > 0 and actual_r < BE_THRESHOLD
+                # Use unified BE threshold from FinancialCalc
+                is_be = actual_r > 0 and FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD)
                 is_win = actual_r >= BE_THRESHOLD
                 for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
                     if t_usd is not None:

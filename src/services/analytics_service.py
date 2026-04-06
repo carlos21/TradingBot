@@ -4,6 +4,7 @@ from datetime import datetime
 from collections import defaultdict
 
 from src.repositories.trades_repository import TradeRepository
+from src.analytics import TradeStatistics
 from src.analytics import (
     TradeStatistics,
     TimeSeriesData,
@@ -70,6 +71,9 @@ class AnalyticsService:
         r_multiples = [(t.result or 0) for t in closed_trades]
         avg_r = sum(r_multiples) / len(r_multiples) if r_multiples else 0.0
         
+        # Calculate average monthly profit
+        avg_profit_monthly = self._calculate_avg_profit_monthly(closed_trades)
+        
         return TradeStatistics(
             total_trades=total,
             open_trades=len(open_trades),
@@ -84,6 +88,7 @@ class AnalyticsService:
             avg_loss=avg_loss_r,
             profit_factor=profit_factor,
             avg_r_multiple=avg_r,
+            avg_profit_monthly=avg_profit_monthly,
         )
 
     def get_equity_curve(self, pair: str) -> TimeSeriesData:
@@ -94,17 +99,30 @@ class AnalyticsService:
         # Sort by exit time
         closed_trades.sort(key=lambda t: t.exit_time)
         
+        if not closed_trades:
+            return TimeSeriesData(labels=[], values=[])
+        
         labels = []
         values = []
         cumulative = 0.0
         
-        for i, trade in enumerate(closed_trades):
+        # Track current month for labeling
+        current_month = None
+        month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                       "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        
+        for trade in closed_trades:
             cumulative += trade.result or 0
-            # Label every 10th trade or use date
-            if i % 10 == 0:
-                labels.append(trade.exit_time.strftime("%m/%d"))
+            
+            # Label at month boundaries (when month changes)
+            trade_month = (trade.exit_time.year, trade.exit_time.month)
+            if trade_month != current_month:
+                current_month = trade_month
+                month_label = f"{month_names[trade.exit_time.month - 1]} {trade.exit_time.year}"
+                labels.append(month_label)
             else:
                 labels.append("")
+            
             values.append(cumulative)
         
         return TimeSeriesData(labels=labels, values=values)
@@ -151,13 +169,12 @@ class AnalyticsService:
             result_type = trade.result_type or "OTHER"
             result_counts[result_type] += 1
         
-        # Map to readable labels
+        # Map to short labels as requested (TP, SL, SP, BE)
         label_map = {
-            "SL": "Stop Loss",
-            "TP": "Take Profit",
-            "BE": "Breakeven",
-            "SP": "Session End",
-            "OTHER": "Other",
+            "SL": "SL",
+            "TP": "TP",
+            "BE": "BE",
+            "SP": "SP",
         }
         
         labels = [label_map.get(k, k) for k in result_counts.keys()]
@@ -237,6 +254,26 @@ class AnalyticsService:
             status="closed" if trade.exit_time else "open",
             logs=logs,
         )
+
+    def _calculate_avg_profit_monthly(self, closed_trades: List) -> float:
+        """Calculate average profit per month based on closed trades."""
+        if not closed_trades:
+            return 0.0
+        
+        # Group PnL by month
+        monthly_pnl = defaultdict(float)
+        for trade in closed_trades:
+            if trade.exit_time:
+                month_key = trade.exit_time.strftime("%Y-%m")
+                pnl_usd = trade.pnl_usd if trade.pnl_usd is not None else \
+                    (trade.result or 0) * (trade.risk_dollars if trade.risk_dollars else trade.risk)
+                monthly_pnl[month_key] += pnl_usd
+        
+        if not monthly_pnl:
+            return 0.0
+        
+        # Calculate average across all months with trades
+        return sum(monthly_pnl.values()) / len(monthly_pnl)
 
     def get_paginated_trades(
         self, 

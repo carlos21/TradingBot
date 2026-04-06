@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
+from src.strategies.base_liquidity_strategy import BE_TRESHOLD_POINTS
 
 
 class LiquidityDualM1Strategy:
@@ -208,7 +209,8 @@ class LiquidityDualM1Strategy:
             sl = trade.get('stop_loss')
             tp = trade.get('take_profit')
             exit_px = trade.get('exit_price')
-            if entry and abs(exit_px - entry) < 0.5:
+            # Check BE first (SL might be at entry for breakeven trades)
+            if entry and abs(exit_px - entry) < BE_TRESHOLD_POINTS:
                 result_type = "BE"
             elif sl and abs(exit_px - sl) < 0.5:
                 result_type = "SL"

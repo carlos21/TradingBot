@@ -229,10 +229,15 @@ class AdminApp {
     if (totalPnlREl) totalPnlREl.textContent = `R: ${stats.total_pnl?.toFixed(1) || '-'}`;
     if (avgPnlUsdEl) avgPnlUsdEl.textContent = `avg: ${formatCurrency(stats.avg_pnl_usd)}`;
 
-    // Profit factor
-    const profitFactorEl = document.getElementById('stat-profit-factor');
+    // Avg Profit Monthly
+    const avgProfitMonthlyEl = document.getElementById('stat-avg-profit-monthly');
     const avgREl = document.getElementById('stat-avg-r');
-    if (profitFactorEl) profitFactorEl.textContent = stats.profit_factor?.toFixed(2) || '-';
+    if (avgProfitMonthlyEl) {
+      const avgMonthly = stats.avg_profit_monthly;
+      avgProfitMonthlyEl.textContent = avgMonthly !== undefined && avgMonthly !== null ? 
+        `${avgMonthly >= 0 ? '+' : '-'}$${Math.abs(avgMonthly).toFixed(2)}` : '-';
+      avgProfitMonthlyEl.className = `text-3xl font-bold ${avgMonthly >= 0 ? 'text-green-400' : 'text-red-400'}`;
+    }
     if (avgREl) avgREl.textContent = `avg R: ${stats.avg_r_multiple?.toFixed(2) || '-'}`;
   }
 }

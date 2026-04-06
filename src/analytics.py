@@ -95,6 +95,7 @@ class TradeStatistics:
     avg_r_multiple: float
     total_pnl_usd: float = 0.0  # Dollar amount
     avg_pnl_usd: float = 0.0    # Dollar amount
+    avg_profit_monthly: float = 0.0  # Average monthly profit in dollars
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -111,6 +112,7 @@ class TradeStatistics:
             "avg_loss": round(self.avg_loss, 2),
             "profit_factor": round(self.profit_factor, 2) if self.profit_factor != float('inf') else None,
             "avg_r_multiple": round(self.avg_r_multiple, 2),
+            "avg_profit_monthly": round(self.avg_profit_monthly, 2),
         }
 
 

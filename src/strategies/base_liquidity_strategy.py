@@ -21,6 +21,9 @@ from src.strategies.entry_context import (
     EntryTrigger,
 )
 
+# Re-export for backward compatibility - use FinancialCalc.DEFAULT_BE_THRESHOLD_POINTS
+BE_TRESHOLD_POINTS = FinancialCalc.DEFAULT_BE_THRESHOLD_POINTS
+
 
 class LineRemovalMode(str, Enum):
     ON_EVALUATE = "on_evaluate"   # remove line after we evaluated it
@@ -371,17 +374,20 @@ class BaseLiquidityStrategy:
             risk = t.get("risk", 1.0)
             if risk <= 0:
                 risk = 1.0
-
-            if t["type"] == "long":
-                pnl = exit_price - t["entry"]
-            else:
-                pnl = t["entry"] - exit_price
-
-            r_result = pnl / risk
             contracts = t.get("contracts") or 1
-            t_fees = FinancialCalc.fees(contracts)
-            t_pnl_usd = FinancialCalc.pnl_usd(contracts, r_result, risk, self.point_value, t_fees)
-            result_type = "BE" if r_result <= 0.001 else "SP"
+
+            # Use unified FinancialCalc for ALL close metrics (single source of truth)
+            r_result, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
+                trade_type=t["type"],
+                entry_price=t["entry"],
+                exit_price=exit_price,
+                stop_loss=t["stop_loss"],
+                take_profit=t["take_profit"],
+                risk_points=risk,
+                contracts=contracts,
+                point_value=self.point_value,
+            )
+            result_type = FinancialCalc.calculate_session_end_result_type(r_result)
             t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, result_type=result_type)
             try:
                 self.trade_repository.close_trade(
@@ -601,43 +607,44 @@ class BaseLiquidityStrategy:
             r_result = 0.0
             result_type = None
 
+            exit_price = None
+            hit_sl = False
+            hit_tp = False
+
             if t["type"] == "long":
                 if low <= t["stop_loss"]:
-                    # Hit SL
                     exit_price = t["stop_loss"]
-                    pnl = exit_price - t["entry"]
-                    r_result = pnl / risk
-                    result_type = "SL"
+                    hit_sl = True
                     closed = True
                 elif high >= t["take_profit"]:
-                    # Hit TP
                     exit_price = t["take_profit"]
-                    pnl = exit_price - t["entry"]
-                    r_result = pnl / risk
-                    result_type = "TP"
+                    hit_tp = True
                     closed = True
             else:  # short
                 if high >= t["stop_loss"]:
-                    # Hit SL
                     exit_price = t["stop_loss"]
-                    pnl = t["entry"] - exit_price
-                    r_result = pnl / risk
-                    result_type = "SL"
+                    hit_sl = True
                     closed = True
                 elif low <= t["take_profit"]:
-                    # Hit TP
                     exit_price = t["take_profit"]
-                    pnl = t["entry"] - exit_price
-                    r_result = pnl / risk
-                    result_type = "TP"
+                    hit_tp = True
                     closed = True
 
-            if closed:
-                # Compute fees/pnl_usd before updating dict so Socket.IO event includes them
+            if closed and exit_price is not None:
+                # Use unified FinancialCalc for ALL close metrics (single source of truth)
                 contracts = t.get("contracts") or 1
                 risk_pts = t.get("risk", 0) or 1.0
-                t_fees = FinancialCalc.fees(contracts)
-                t_pnl_usd = FinancialCalc.pnl_usd(contracts, r_result, risk_pts, self.point_value, t_fees)
+                
+                r_result, t_fees, t_pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
+                    trade_type=t["type"],
+                    entry_price=t["entry"],
+                    exit_price=exit_price,
+                    stop_loss=t["stop_loss"],
+                    take_profit=t["take_profit"],
+                    risk_points=risk_pts,
+                    contracts=contracts,
+                    point_value=self.point_value,
+                )
                 t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, result_type=result_type)
                 is_phantom = t.get("is_phantom", False)
 
@@ -855,22 +862,19 @@ class BaseLiquidityStrategy:
         t_pnl_usd = FinancialCalc.pnl_usd(contracts, trade["result"], risk_pts, self.point_value, t_fees)
         trade["fees"] = t_fees
         trade["pnl_usd"] = t_pnl_usd
-        # Determine result_type if not already set
+        # Determine result_type if not already set (use unified FinancialCalc)
         result_type = trade.get("result_type")
         if not result_type:
-            # Infer from result value: BE if near 0, otherwise based on SL/TP proximity
             entry = trade.get("entry")
             sl = trade.get("stop_loss")
             tp = trade.get("take_profit")
             exit_px = trade.get("exit_price")
-            if entry and abs(exit_px - entry) < 0.5:
-                result_type = "BE"
-            elif sl and abs(exit_px - sl) < 0.5:
-                result_type = "SL"
-            elif tp and abs(exit_px - tp) < 0.5:
-                result_type = "TP"
-            else:
-                result_type = "SP"
+            result_type = FinancialCalc.determine_result_type(
+                exit_price=exit_px,
+                entry_price=entry,
+                stop_loss=sl,
+                take_profit=tp,
+            )
             trade["result_type"] = result_type
         self.socketio.emit("trade_close", trade)
         self.trade_repository.close_trade(
