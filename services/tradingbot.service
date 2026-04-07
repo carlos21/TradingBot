@@ -6,9 +6,9 @@ After=network.target
 Type=simple
 User=%i
 WorkingDirectory=/home/%i/TradingBot
-ExecStart=/home/%i/TradingBot/bin/live.sh
+ExecStart=/home/%i/TradingBot/bin/start_live.sh
 
-# Defaults are in bin/live.sh — override here only if needed
+# Defaults are in bin/start_live.sh — override here only if needed
 
 Restart=on-failure
 RestartSec=5

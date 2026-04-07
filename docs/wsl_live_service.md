@@ -33,7 +33,7 @@ NinjaTrader on Windows pushes market data to the Flask server running inside WSL
 
 | File | Description |
 |------|-------------|
-| `bin/live.sh` | Non-interactive launcher script. Sets `MODE=live` and default env vars, then starts the app. |
+| `bin/start_live.sh` | Non-interactive launcher script. Sets `MODE=live` and default env vars, then starts the app. |
 | `bin/install_service.sh` | Installs the systemd service with resolved paths for the current user. |
 | `services/tradingbot.service` | Reference systemd unit template (the install script generates the actual file). |
 
@@ -66,7 +66,7 @@ poetry install
 ### 3. Verify the app runs manually first
 
 ```bash
-./bin/live.sh
+./bin/start_live.sh
 ```
 
 You should see:
@@ -207,17 +207,10 @@ For quick testing or debugging, run the launcher directly:
 
 ```bash
 # With defaults
-./bin/live.sh
+./bin/start_live.sh
 
 # With overrides
-PAIR=NQ NT_ACCOUNT=MyAccount RISK=100 ./bin/live.sh
-```
-
-Or use the interactive menu:
-
-```bash
-./bin/start.sh
-# Select "live", enter pair and account when prompted
+PAIR=NQ NT_ACCOUNT=MyAccount RISK=100 ./bin/start_live.sh
 ```
 
 ---

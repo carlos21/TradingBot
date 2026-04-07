@@ -42,9 +42,9 @@ After=network.target
 Type=simple
 User=$WSL_USER
 WorkingDirectory=$PROJECT_DIR
-ExecStart=$PROJECT_DIR/bin/live.sh
+ExecStart=$PROJECT_DIR/bin/start_live.sh
 
-# Defaults are in bin/live.sh — override here only if needed
+# Defaults are in bin/start_live.sh — override here only if needed
 Environment=HOME=$WSL_HOME
 Environment=PATH=$WSL_HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
 
