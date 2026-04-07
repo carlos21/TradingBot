@@ -394,9 +394,7 @@ class BaseLiquidityStrategy:
                 if self.trade_logger:
                     self.trade_logger.log(t["trade_id"], "ERROR", str(e))
 
-            if self.trade_logger:
-                self.trade_logger.log(t["trade_id"], "SESSION_END", f"Close @ {exit_price:.2f} Result={r_result:.2f}R")
-                self.trade_logger.log(t["trade_id"], "CLOSE", "Persisted to DB")
+            # Note: Logging is handled by TradeManager to avoid duplicates
 
             self.socketio.emit("trade_close", t)
 
@@ -680,10 +678,7 @@ class BaseLiquidityStrategy:
                         if self.trade_logger:
                             self.trade_logger.log(t["trade_id"], "ERROR", str(e))
 
-                    if self.trade_logger:
-                        event = f"{result_type}_HIT"
-                        self.trade_logger.log(t["trade_id"], event, f"Exit={exit_price:.2f} Result={r_result:.2f}R")
-                        self.trade_logger.log(t["trade_id"], "CLOSE", "Persisted to DB")
+                    # Note: SL_HIT/TP_HIT/CLOSE logging is handled by TradeManager to avoid duplicates
 
                     self.trade_manager.trade_executor.on_trade_close(t['trade_id'], exit_price)
                     self.socketio.emit("trade_close", t)
