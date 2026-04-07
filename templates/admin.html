@@ -109,18 +109,25 @@
     <div id="trades-tab" class="tab-content hidden">
       <div class="flex justify-between items-center mb-6">
         <h2 class="text-2xl font-bold">Trade History</h2>
-        <div class="space-x-2">
-          <button id="test-load-btn" class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg text-sm font-medium transition-colors">
-            Test Load
-          </button>
-          <button id="export-trades-btn" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition-colors">
-            Export CSV
-          </button>
+        <div class="flex items-center space-x-4">
+          <!-- View Toggle -->
+          <div class="view-toggle">
+            <button id="view-table-btn" class="view-btn active">Table</button>
+            <button id="view-calendar-btn" class="view-btn">Calendar</button>
+          </div>
+          <div class="space-x-2">
+            <button id="test-load-btn" class="px-4 py-2 bg-yellow-600 hover:bg-yellow-700 rounded-lg text-sm font-medium transition-colors">
+              Test Load
+            </button>
+            <button id="export-trades-btn" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg text-sm font-medium transition-colors">
+              Export CSV
+            </button>
+          </div>
         </div>
       </div>
       
-      <!-- Trades Table -->
-      <div class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+      <!-- Table View -->
+      <div id="trades-table-view" class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
         <div class="overflow-x-auto">
           <table id="trades-table" class="w-full text-left">
             <thead class="bg-gray-700 text-gray-300">
@@ -148,6 +155,23 @@
             <button id="trades-prev-btn" class="px-3 py-1 bg-gray-600 rounded hover:bg-gray-500 disabled:opacity-50" disabled>Previous</button>
             <button id="trades-next-btn" class="px-3 py-1 bg-gray-600 rounded hover:bg-gray-500 disabled:opacity-50" disabled>Next</button>
           </div>
+        </div>
+      </div>
+
+      <!-- Calendar View -->
+      <div id="trades-calendar-view" class="hidden">
+        <!-- Month Navigation -->
+        <div class="month-nav mb-4">
+          <button id="cal-prev-btn" class="nav-arrow">&larr;</button>
+          <div id="cal-month-pills" class="flex space-x-2 overflow-x-auto">
+            <!-- Populated by JS -->
+          </div>
+          <button id="cal-next-btn" class="nav-arrow">&rarr;</button>
+        </div>
+        
+        <!-- Calendar Container -->
+        <div id="calendar-container" class="calendar-card">
+          <!-- Populated by JS -->
         </div>
       </div>
     </div>

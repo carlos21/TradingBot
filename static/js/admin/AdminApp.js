@@ -5,6 +5,7 @@
 import { ApiClient } from './ApiClient.js';
 import { AnalyticsCharts } from './AnalyticsCharts.js';
 import { TradeHistory } from './TradeHistory.js';
+import { TradeCalendar } from './TradeCalendar.js';
 import { TradeLogs } from './TradeLogs.js';
 import { LineManager } from './LineManager.js';
 
@@ -13,12 +14,14 @@ class AdminApp {
     this.api = new ApiClient();
     this.charts = new AnalyticsCharts();
     this.tradeHistory = new TradeHistory(this.api);
+    this.tradeCalendar = new TradeCalendar(this.api);
     this.tradeLogs = new TradeLogs(this.api);
     this.lineManager = new LineManager(this.api);
     
     this.currentTab = 'overview';
     this.analyticsData = null;
     this.statsData = null;
+    this.currentTradeView = 'table'; // 'table' or 'calendar'
   }
 
   async init() {
@@ -43,10 +46,17 @@ class AdminApp {
         this.tradeLogs.show(tradeId);
       };
       
+      this.tradeCalendar.onTradeClick = (tradeId) => {
+        this.tradeLogs.show(tradeId);
+      };
+      
       // Set up export button
       document.getElementById('export-trades-btn')?.addEventListener('click', () => {
         this.tradeHistory.exportToCSV();
       });
+      
+      // Set up view toggle buttons
+      this.setupViewToggle();
       
       // Set up test button
       document.getElementById('test-load-btn')?.addEventListener('click', async () => {
@@ -63,6 +73,9 @@ class AdminApp {
       
       // Load initial data for overview
       await this.loadOverviewData();
+      
+      // Load initial trade view
+      this.switchTradeView('table');
       
       console.log('[AdminApp] Initialized successfully');
     } catch (error) {
@@ -133,7 +146,7 @@ class AdminApp {
         break;
       case 'trades':
         console.log('[AdminApp] Loading trades...');
-        this.tradeHistory.load();
+        this.loadTradeData();
         break;
       case 'lines':
         this.lineManager.load();
@@ -141,6 +154,39 @@ class AdminApp {
       case 'analytics':
         this.loadAnalyticsData();
         break;
+    }
+  }
+
+  setupViewToggle() {
+    const tableBtn = document.getElementById('view-table-btn');
+    const calendarBtn = document.getElementById('view-calendar-btn');
+    
+    if (tableBtn) {
+      tableBtn.addEventListener('click', () => this.switchTradeView('table'));
+    }
+    
+    if (calendarBtn) {
+      calendarBtn.addEventListener('click', () => this.switchTradeView('calendar'));
+    }
+  }
+
+  switchTradeView(view) {
+    this.currentTradeView = view;
+    
+    if (view === 'table') {
+      this.tradeCalendar.hide();
+      this.tradeHistory.load();
+    } else {
+      this.tradeHistory.hide?.() || document.getElementById('trades-table-view')?.classList.add('hidden');
+      this.tradeCalendar.show();
+    }
+  }
+
+  loadTradeData() {
+    if (this.currentTradeView === 'table') {
+      this.tradeHistory.load();
+    } else {
+      this.tradeCalendar.load();
     }
   }
 

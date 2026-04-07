@@ -174,4 +174,21 @@ export class TradeHistory {
     a.click();
     URL.revokeObjectURL(url);
   }
+
+  hide() {
+    const tableView = document.getElementById('trades-table-view');
+    const tableBtn = document.getElementById('view-table-btn');
+    if (tableView) tableView.classList.add('hidden');
+    if (tableBtn) tableBtn.classList.remove('active');
+  }
+
+  show() {
+    const tableView = document.getElementById('trades-table-view');
+    const tableBtn = document.getElementById('view-table-btn');
+    const calendarBtn = document.getElementById('view-calendar-btn');
+    if (tableView) tableView.classList.remove('hidden');
+    if (tableBtn) tableBtn.classList.add('active');
+    if (calendarBtn) calendarBtn.classList.remove('active');
+    this.load();
+  }
 }
