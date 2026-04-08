@@ -107,16 +107,16 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 # Server Process Logic
 # -------------------------------------------------------------------------
 
-def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None):
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0):
     try:
-        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist, risk_per_trade, risk_pct_per_trade)
+        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist, risk_per_trade, risk_pct_per_trade, account_balance)
     except Exception as e:
         import traceback
         sys.stderr.write(f"\n❌ Server process crashed: {e}\n")
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
 
-def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None):
+def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0):
     if quiet:
         sys.stdout = open(os.devnull, 'w')
         import logging
@@ -148,6 +148,9 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
     )
 
     numbers = get_prod_strategy_numbers(rr_ratio=rr_ratio, risk_per_trade=risk_per_trade, risk_pct_per_trade=risk_pct_per_trade)
+    # Override account_balance with the value from command line
+    from dataclasses import replace
+    numbers = replace(numbers, account_balance=account_balance)
     candle_config = get_prod_candle_config()
     options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
 
@@ -481,9 +484,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     broker_mode = 'cfd' if mode in ('real_cfd', ) else 'futures'
     broker_spread = getattr(args, 'cfd_spread', 0.0) if broker_mode == 'cfd' else 0.0
 
+    # When risk_pct is set, pass None for risk_per_trade so percentage takes precedence
+    risk_per_trade = None if getattr(args, 'risk_pct', None) is not None else args.risk
     server_proc = Process(
         target=run_test_server,
-        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr, args.persist, args.risk, getattr(args, 'risk_pct', None))
+        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr, args.persist, risk_per_trade, getattr(args, 'risk_pct', None), args.account)
     )
     server_proc.start()
 

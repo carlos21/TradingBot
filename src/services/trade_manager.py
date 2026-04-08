@@ -203,7 +203,8 @@ class TradeManager:
                 point_value=self.point_value,
             )
 
-            print(f"[TradeManager] 📉 Closing trade {trade['trade_id']} (Result: {result:.2f}R, Type: {result_type}) at {bar['time']}")
+            # Update account balance with realized P&L for percentage-based risk compounding
+            self.account_balance += pnl_usd
 
             try:
                 self.trade_repository.close_trade(
@@ -283,7 +284,8 @@ class TradeManager:
             )
             result_type = FinancialCalc.calculate_session_end_result_type(result)
 
-            print(f"[TradeManager] 🕐 SESSION END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: {result_type})")
+            # Update account balance with realized P&L for percentage-based risk compounding
+            self.account_balance += pnl_usd
 
             try:
                 self.trade_repository.close_trade(

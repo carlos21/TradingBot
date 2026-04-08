@@ -752,8 +752,12 @@ class BaseLiquidityStrategy:
         """Calculate number of contracts, matching NinjaTrader's logic."""
         if risk_per_contract <= 0:
             return 1
+        # Use trade manager's account balance if available (for percentage-based risk compounding)
+        account_balance = self.account_balance
+        if self.trade_manager is not None:
+            account_balance = self.trade_manager.account_balance
         risk_budget = FinancialCalc.risk_budget(
-            self.account_balance, self.risk_per_trade, self.risk_pct_per_trade
+            account_balance, self.risk_per_trade, self.risk_pct_per_trade
         )
         if risk_budget <= 0:
             return 1
@@ -771,7 +775,11 @@ class BaseLiquidityStrategy:
         risk_per_contract = risk * self.point_value
         contracts = self._calc_contracts(risk_per_contract)
         risk_dollars = risk_per_contract * contracts
-        risk_pct = (risk_dollars / self.account_balance * 100) if self.account_balance > 0 else None
+        # Use trade manager's account balance if available (for percentage-based risk compounding)
+        account_balance = self.account_balance
+        if self.trade_manager is not None:
+            account_balance = self.trade_manager.account_balance
+        risk_pct = (risk_dollars / account_balance * 100) if account_balance > 0 else None
         return {
             "pair":         bar["pair"],
             "type":         trade_type,
