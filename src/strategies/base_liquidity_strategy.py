@@ -192,7 +192,9 @@ class BaseLiquidityStrategy:
     def _persist_all_line_states(self):
         """Write current trigger state for every active line to the repo."""
         pair = self.trade_manager.pair
-        for line_id, state in self.strategy_lines.items():
+        with self.lock:
+            items = list(self.strategy_lines.items())
+        for line_id, state in items:
             self.trigger_state_repo.save(str(line_id), pair, state)
 
     def restore_trigger_states(self, pair: str):
