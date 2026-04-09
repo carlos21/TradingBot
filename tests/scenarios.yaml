@@ -2403,8 +2403,7 @@ scenarios:
     expect:
       entry: 24324.25
       sl:    24364.25
-      tp:    24164.25
-
+      tp:    24124.25
   - name: "NQ - 2026-04-07"
     pair: "NQ"
     tf: "1m"
@@ -2416,4 +2415,15 @@ scenarios:
     expect:
       entry: 23961.50
       sl:    23941.50
-      tp:    24041.50
+      tp:    24061.50
+  - name: "NQ - 2026-04-08"
+    pair: "NQ"
+    tf: "1m"
+    start: "2026-04-08 06:00:00Z"
+    end:   "2026-04-08 16:00:00Z"
+    lines:
+      - { price: 25242.75, at: "2026-04-08 02:00:00Z" }
+    expect:
+      entry: 25239.25
+      sl:    25254.25
+      tp:    25164.25
