@@ -78,94 +78,120 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
             else if (State == State.DataLoaded)
             {
-                pc      = new Series<double>(this, MaximumBarsLookBack.Infinite);
-                abspc   = new Series<double>(this, MaximumBarsLookBack.Infinite);
-                ema1pc  = new Series<double>(this, MaximumBarsLookBack.Infinite);
-                ema2pc  = new Series<double>(this, MaximumBarsLookBack.Infinite);
-                ema1apc = new Series<double>(this, MaximumBarsLookBack.Infinite);
-                ema2apc = new Series<double>(this, MaximumBarsLookBack.Infinite);
-                tsiRaw  = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                try
+                {
+                    pc      = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                    abspc   = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                    ema1pc  = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                    ema2pc  = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                    ema1apc = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                    ema2apc = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                    tsiRaw  = new Series<double>(this, MaximumBarsLookBack.Infinite);
 
-                // #00E676 (bullish green) and #FF1744 (bearish red) — match chart.html exactly
-                bullBrush = new SolidColorBrush(Color.FromRgb(0x00, 0xE6, 0x76));
-                bullBrush.Freeze();
-                bearBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x17, 0x44));
-                bearBrush.Freeze();
+                    // #00E676 (bullish green) and #FF1744 (bearish red) — match chart.html exactly
+                    bullBrush = new SolidColorBrush(Color.FromRgb(0x00, 0xE6, 0x76));
+                    bullBrush.Freeze();
+                    bearBrush = new SolidColorBrush(Color.FromRgb(0xFF, 0x17, 0x44));
+                    bearBrush.Freeze();
+
+                    Print("[TradingBotTSI] Data loaded successfully");
+                }
+                catch (Exception ex)
+                {
+                    Print(string.Format("[TradingBotTSI] ERROR in DataLoaded: {0}", ex.Message));
+                }
+            }
+            else if (State == State.Terminated)
+            {
+                Print("[TradingBotTSI] Indicator terminated");
             }
         }
 
         protected override void OnBarUpdate()
         {
-            // Always paint zero line
-            Values[PLOT_ZERO][0] = 0;
-
-            // --- Bar 0: seed everything with 0 (matches Python pc[0] = 0) ---
-            if (CurrentBar == 0)
+            try
             {
-                pc[0]      = 0;
-                abspc[0]   = 0;
-                ema1pc[0]  = 0;
-                ema2pc[0]  = 0;
-                ema1apc[0] = 0;
-                ema2apc[0] = 0;
-                tsiRaw[0]  = 0;
-                Values[PLOT_TSI][0]    = 0;
-                Values[PLOT_SIGNAL][0] = 0;
-                return;
+                // Always paint zero line
+                Values[PLOT_ZERO][0] = 0;
+
+                // --- Bar 0: seed everything with 0 (matches Python pc[0] = 0) ---
+                if (CurrentBar == 0)
+                {
+                    pc[0]      = 0;
+                    abspc[0]   = 0;
+                    ema1pc[0]  = 0;
+                    ema2pc[0]  = 0;
+                    ema1apc[0] = 0;
+                    ema2apc[0] = 0;
+                    tsiRaw[0]  = 0;
+                    Values[PLOT_TSI][0]    = 0;
+                    Values[PLOT_SIGNAL][0] = 0;
+                    return;
+                }
+
+                // Validate we have enough bars
+                if (IsFirstTickOfBar && CurrentBar % 1000 == 0)
+                {
+                    Print(string.Format("[TradingBotTSI] Processing bar {0}", CurrentBar));
+                }
+
+                // Pre-compute EMA smoothing factors
+                double alphaL   = 2.0 / (LongLen   + 1);
+                double alphaS   = 2.0 / (ShortLen  + 1);
+                double alphaSig = 2.0 / (SignalLen  + 1);
+
+                // --- Price change ---
+                double diff = Close[0] - Close[1];
+                pc[0]    = diff;
+                abspc[0] = Math.Abs(diff);
+
+                // --- EMA(pc, LongLen) ---
+                ema1pc[0] = pc[0] * alphaL + ema1pc[1] * (1.0 - alphaL);
+
+                // --- EMA(EMA(pc, LongLen), ShortLen) ---
+                ema2pc[0] = ema1pc[0] * alphaS + ema2pc[1] * (1.0 - alphaS);
+
+                // --- EMA(abs_pc, LongLen) ---
+                ema1apc[0] = abspc[0] * alphaL + ema1apc[1] * (1.0 - alphaL);
+
+                // --- EMA(EMA(abs_pc, LongLen), ShortLen) ---
+                ema2apc[0] = ema1apc[0] * alphaS + ema2apc[1] * (1.0 - alphaS);
+
+                // --- TSI = 100 * (numerator / denominator) ---
+                tsiRaw[0] = ema2apc[0] != 0.0
+                    ? 100.0 * (ema2pc[0] / ema2apc[0])
+                    : 0.0;
+
+                Values[PLOT_TSI][0] = tsiRaw[0];
+
+                // --- Signal = EMA(TSI, SignalLen) ---
+                Values[PLOT_SIGNAL][0] = tsiRaw[0] * alphaSig + Values[PLOT_SIGNAL][1] * (1.0 - alphaSig);
+
+                // --- Crossover arrows on the price panel (mirrors MarketManager.js logic) ---
+                // Need at least 2 bars so we have a previous TSI and Signal value
+                if (CurrentBar < 2) return;
+
+                double currTsi = tsiRaw[0];
+                double prevTsi = tsiRaw[1];
+                double currSig = Values[PLOT_SIGNAL][0];
+                double prevSig = Values[PLOT_SIGNAL][1];
+
+                // Bullish cross: TSI crosses ABOVE Signal — green arrow below bar
+                if (prevTsi <= prevSig && currTsi > currSig)
+                {
+                    Draw.ArrowUp(this, "bull_" + CurrentBar, false, 0,
+                        Low[0] - 2 * TickSize, bullBrush);
+                }
+                // Bearish cross: TSI crosses BELOW Signal — red arrow above bar
+                else if (prevTsi >= prevSig && currTsi < currSig)
+                {
+                    Draw.ArrowDown(this, "bear_" + CurrentBar, false, 0,
+                        High[0] + 2 * TickSize, bearBrush);
+                }
             }
-
-            // Pre-compute EMA smoothing factors
-            double alphaL   = 2.0 / (LongLen   + 1);
-            double alphaS   = 2.0 / (ShortLen  + 1);
-            double alphaSig = 2.0 / (SignalLen  + 1);
-
-            // --- Price change ---
-            double diff = Close[0] - Close[1];
-            pc[0]    = diff;
-            abspc[0] = Math.Abs(diff);
-
-            // --- EMA(pc, LongLen) ---
-            ema1pc[0] = pc[0] * alphaL + ema1pc[1] * (1.0 - alphaL);
-
-            // --- EMA(EMA(pc, LongLen), ShortLen) ---
-            ema2pc[0] = ema1pc[0] * alphaS + ema2pc[1] * (1.0 - alphaS);
-
-            // --- EMA(abs_pc, LongLen) ---
-            ema1apc[0] = abspc[0] * alphaL + ema1apc[1] * (1.0 - alphaL);
-
-            // --- EMA(EMA(abs_pc, LongLen), ShortLen) ---
-            ema2apc[0] = ema1apc[0] * alphaS + ema2apc[1] * (1.0 - alphaS);
-
-            // --- TSI = 100 * (numerator / denominator) ---
-            tsiRaw[0] = ema2apc[0] != 0.0
-                ? 100.0 * (ema2pc[0] / ema2apc[0])
-                : 0.0;
-
-            Values[PLOT_TSI][0] = tsiRaw[0];
-
-            // --- Signal = EMA(TSI, SignalLen) ---
-            Values[PLOT_SIGNAL][0] = tsiRaw[0] * alphaSig + Values[PLOT_SIGNAL][1] * (1.0 - alphaSig);
-
-            // --- Crossover arrows on the price panel (mirrors MarketManager.js logic) ---
-            // Need at least 2 bars so we have a previous TSI and Signal value
-            if (CurrentBar < 2) return;
-
-            double currTsi = tsiRaw[0];
-            double prevTsi = tsiRaw[1];
-            double currSig = Values[PLOT_SIGNAL][0];
-            double prevSig = Values[PLOT_SIGNAL][1];
-
-            // Bullish cross: TSI crosses ABOVE Signal — green arrow below bar
-            if (prevTsi <= prevSig && currTsi > currSig)
+            catch (Exception ex)
             {
-                Draw.ArrowUp(this, "bull_" + CurrentBar, false, 0,
-                    Low[0] - 2 * TickSize, bullBrush);
-            }
-            // Bearish cross: TSI crosses BELOW Signal — red arrow above bar
-            else if (prevTsi >= prevSig && currTsi < currSig)
-            {
-                Draw.ArrowDown(this, "bear_" + CurrentBar, false, 0,
-                    High[0] + 2 * TickSize, bearBrush);
+                Print(string.Format("[TradingBotTSI] ERROR in OnBarUpdate (bar {0}): {1}", CurrentBar, ex.Message));
             }
         }
 
