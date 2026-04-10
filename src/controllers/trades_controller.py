@@ -1,14 +1,16 @@
 from flask import abort, jsonify
 from src.bars_loader import BarsLoader
 from src.services.trade_manager import TradeManager
+from src.utils.app_logger import ILogger
 from datetime import datetime, timezone
 
 
 class TradesController:
 
-    def __init__(self, bars_loader: BarsLoader, trade_manager: TradeManager):
+    def __init__(self, bars_loader: BarsLoader, trade_manager: TradeManager, logger: ILogger):
         self.bars_loader = bars_loader
         self.trade_manager = trade_manager
+        self.logger = logger
 
     def _get_virtual_now(self) -> float:
         """
@@ -35,9 +37,9 @@ class TradesController:
         trades = self.trade_manager.trade_repository.list_trades(pair)
         
         # --- DEBUG LOG ---
-        print(f"[TradesController] list_trades('{pair}') found {len(trades)} trades.")
+        self.logger.info(f"[TradesController] list_trades('{pair}') found {len(trades)} trades.")
         for i, t in enumerate(trades):
-            print(f"  [{i}] ID={t.trade_id} EntryTime={t.entry_time.timestamp()} ExitTime={t.exit_time.timestamp() if t.exit_time else 'None'}")
+            self.logger.info(f"  [{i}] ID={t.trade_id} EntryTime={t.entry_time.timestamp()} ExitTime={t.exit_time.timestamp() if t.exit_time else 'None'}")
         # -----------------
 
         data = []
@@ -85,7 +87,7 @@ class TradesController:
         
         # FIX: Use virtual time so the trade appears on the chart
         entry_time = self._get_virtual_now()
-        print(f"[TradesController] Opening Trade at Virtual Time: {entry_time}")
+        self.logger.info(f"[TradesController] Opening Trade at Virtual Time: {entry_time}")
         
         trade = self.trade_manager.open_trade(
             pair, trade_type, entry_price,
@@ -111,7 +113,7 @@ class TradesController:
 
         # FIX: Use virtual time
         exit_time = self._get_virtual_now()
-        print(f"[TradesController] Closing Trade {trade_id} at Virtual Time: {exit_time}")
+        self.logger.info(f"[TradesController] Closing Trade {trade_id} at Virtual Time: {exit_time}")
 
         payload = self.trade_manager.close_trade(trade_id, exit_price, exit_time)
 

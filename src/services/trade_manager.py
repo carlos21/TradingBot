@@ -8,6 +8,7 @@ from src.notifier import Notifier, NoOpNotifier
 from src.analytics import AnalyticsReporter, NoOpReporter
 from src.financial_calc import FinancialCalc
 from src.types import Direction
+from src.utils.app_logger import ILogger
 
 
 class TradeManager:
@@ -17,6 +18,7 @@ class TradeManager:
 
     def __init__(self, trade_repository: TradeRepository, socketio,
                  point_value: float, account_balance: float,
+                 logger: ILogger,
                  risk_per_trade: float = None, risk_pct_per_trade: float = None,
                  pair: str = 'NQ',
                  session_end_time: str = None, session_tz: str = None,
@@ -45,6 +47,7 @@ class TradeManager:
         self.trade_logger     = trade_logger
         self.notifier         = notifier or NoOpNotifier()
         self.analytics        = analytics or NoOpReporter()
+        self.logger           = logger
         self.point_value      = float(point_value)
         self.account_balance  = float(account_balance)
         self.risk_per_trade   = risk_per_trade
@@ -112,15 +115,15 @@ class TradeManager:
                     }
                     self.open_trades.append(trade_dict)
                     count += 1
-                    print(f"[TradeManager] 📥 LOADED OPEN TRADE: ID={t.trade_id} Entry={t.entry_price} SL={t.stop_loss} TP={t.take_profit} EntryTime={t.entry_time}")
+                    self.logger.info(f"[TradeManager] LOADED OPEN TRADE: ID={t.trade_id} Entry={t.entry_price} SL={t.stop_loss} TP={t.take_profit} EntryTime={t.entry_time}")
             
             if count > 0:
-                print(f"[TradeManager] ♻️ Resumed {count} open trades from DB.")
+                self.logger.info(f"[TradeManager] Resumed {count} open trades from DB.")
             else:
-                print("[TradeManager] No open trades found in DB to resume.")
+                self.logger.info("[TradeManager] No open trades found in DB to resume.")
                 
         except Exception as e:
-            print(f"[TradeManager] ⚠️ Failed to load open trades on init: {e}")
+            self.logger.error(f"[TradeManager] Failed to load open trades on init: {e}")
             self.analytics.capture_exception(e, {"op": "load_open_trades"})
             self.notifier.send(f"[TradeManager] Failed to load open trades on init: {e}")
 
@@ -143,7 +146,7 @@ class TradeManager:
                 continue
 
             if trade['trade_id'] not in self._monitored_trades:
-                print(f"[TradeManager] 🟢 ACTIVATING Trade {trade['trade_id']} at {bar['time']} (Replay caught up to Entry)")
+                self.logger.info(f"[TradeManager] ACTIVATING Trade {trade['trade_id']} at {bar['time']} (Replay caught up to Entry)")
                 self._monitored_trades.add(trade['trade_id'])
 
             ttype = trade['type']
@@ -168,17 +171,17 @@ class TradeManager:
             if is_buy:
                 if bar['low'] <= adjusted_sl:
                     hit_sl = True
-                    print(f"[TradeManager] 🛑 BUY SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
+                    self.logger.info(f"[TradeManager] BUY SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
                 elif bar['high'] >= adjusted_tp:
                     hit_tp = True
-                    print(f"[TradeManager] 💰 BUY TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
+                    self.logger.info(f"[TradeManager] BUY TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
             elif is_sell:
                 if bar['high'] >= adjusted_sl:
                     hit_sl = True
-                    print(f"[TradeManager] 🛑 SELL SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
+                    self.logger.info(f"[TradeManager] SELL SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
                 elif bar['low'] <= adjusted_tp:
                     hit_tp = True
-                    print(f"[TradeManager] 💰 SELL TP HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
+                    self.logger.info(f"[TradeManager] SELL TP HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
 
             if not hit_sl and not hit_tp:
                 continue
@@ -216,9 +219,9 @@ class TradeManager:
                     fees       = fees,
                     pnl_usd    = pnl_usd,
                 )
-                print(f"[TradeManager] 💾 DB Updated for Trade {trade['trade_id']} (Closed)")
+                self.logger.info(f"[TradeManager] DB Updated for Trade {trade['trade_id']} (Closed)")
             except Exception as e:
-                print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
+                self.logger.error(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
                 self.analytics.capture_exception(e, {"op": "close_trade_sl_tp", "trade_id": trade['trade_id']})
                 if self.trade_logger:
                     self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
@@ -298,7 +301,7 @@ class TradeManager:
                     pnl_usd=pnl_usd,
                 )
             except Exception as e:
-                print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
+                self.logger.error(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
                 self.analytics.capture_exception(e, {"op": "session_end_close", "trade_id": trade['trade_id']})
                 if self.trade_logger:
                     self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
@@ -368,7 +371,7 @@ class TradeManager:
         self.open_trades.append(trade)
         self._monitored_trades.add(td.trade_id) # Mark as monitored since we just opened it
 
-        print(f"[TradeManager] ✅ Registered OPEN trade {trade['trade_id']} @ {entry_time}")
+        self.logger.info(f"[TradeManager] Registered OPEN trade {trade['trade_id']} @ {entry_time}")
 
         self.analytics.capture_trade_event("TRADE_OPEN", {
             "trade_id": trade['trade_id'], "pair": pair, "type": trade_type,
@@ -392,7 +395,7 @@ class TradeManager:
 
         # If not in memory, try to fetch from DB to calculate PnL
         if not trade:
-            print(f"[TradeManager] ⚠️ Trade {trade_id} not in memory, fetching from DB.")
+            self.logger.warning(f"[TradeManager] Trade {trade_id} not in memory, fetching from DB.")
             trade_data = self.trade_repository.get_trade(trade_id)
             if trade_data:
                 trade = {
@@ -480,7 +483,7 @@ class TradeManager:
         Close any remaining open trades at stream end (end of day/replay).
         Uses the final bar's close price and time. Marks with result_type="SP".
         """
-        print(f"[TradeManager] 🎬 STREAM END CALLBACK FIRED! close_price={final_close_price}, time={final_time}")
+        self.logger.info(f"[TradeManager] STREAM END CALLBACK FIRED! close_price={final_close_price}, time={final_time}")
         print(f"[TradeManager] Open trades count: {len(self.open_trades)}")
         for trade in list(self.open_trades):
             exit_price = final_close_price
@@ -504,7 +507,7 @@ class TradeManager:
             )
             result_type = FinancialCalc.calculate_session_end_result_type(result)
 
-            print(f"[TradeManager] 🎬 STREAM END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: {result_type})")
+            self.logger.info(f"[TradeManager] STREAM END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: {result_type})")
 
             try:
                 self.trade_repository.close_trade(
@@ -517,7 +520,7 @@ class TradeManager:
                     pnl_usd=pnl_usd,
                 )
             except Exception as e:
-                print(f"[TradeManager] ❌ DB ERROR closing trade {trade['trade_id']}: {e}")
+                self.logger.error(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
                 self.analytics.capture_exception(e, {"op": "stream_end_close", "trade_id": trade['trade_id']})
                 if self.trade_logger:
                     self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
@@ -553,9 +556,9 @@ class TradeManager:
             if t['trade_id'] == trade_id:
                 old_sl = t['stop_loss']
                 t['stop_loss'] = new_sl
-                print(f"[TradeManager] 🔄 Synced SL for {trade_id}: {old_sl} -> {new_sl}")
+                self.logger.info(f"[TradeManager] Synced SL for {trade_id}: {old_sl} -> {new_sl}")
                 return
-        print(f"[TradeManager] ⚠️ Could not find trade {trade_id} to update SL")
+        self.logger.warning(f"[TradeManager] Could not find trade {trade_id} to update SL")
 
     def handle_broker_entry_fill(self, trade_id: str, entry_price: float,
                                 stop_loss: float = None, take_profit: float = None):
@@ -599,7 +602,7 @@ class TradeManager:
         trade['risk_dollars'] = risk_per_contract * contracts
         trade['risk_pct'] = (trade['risk_dollars'] / self.account_balance * 100) if self.account_balance > 0 else None
 
-        print(f"[TradeManager] 📡 ENTRY FILL: {trade_id} @ {entry_price} "
+        self.logger.info(f"[TradeManager] ENTRY FILL: {trade_id} @ {entry_price} "
               f"(was {old_entry}, slippage={entry_price - old_entry:+.2f}) "
               f"SL={trade['stop_loss']} TP={trade['take_profit']}")
 
@@ -619,7 +622,7 @@ class TradeManager:
                 trade_id, trade['risk'], trade['risk_dollars'], trade.get('risk_pct')
             )
         except Exception as e:
-            print(f"[TradeManager] ❌ DB ERROR on entry fill for {trade_id}: {e}")
+            self.logger.error(f"[TradeManager] DB ERROR on entry fill for {trade_id}: {e}")
             self.analytics.capture_exception(e, {"op": "broker_entry_fill", "trade_id": trade_id})
             if self.trade_logger:
                 self.trade_logger.log(trade_id, "ERROR", str(e))
@@ -674,7 +677,7 @@ class TradeManager:
 
         exit_time = datetime.now(tz=timezone.utc)
 
-        print(f"[TradeManager] 📡 BROKER FILL: {trade_id} @ {exit_price} "
+        self.logger.info(f"[TradeManager] BROKER FILL: {trade_id} @ {exit_price} "
               f"(Result: {result:.2f}R, Type: {result_type})")
 
         if self.trade_logger:
@@ -692,7 +695,7 @@ class TradeManager:
                 pnl_usd=pnl_usd,
             )
         except Exception as e:
-            print(f"[TradeManager] ❌ DB ERROR on broker fill for {trade_id}: {e}")
+            self.logger.error(f"[TradeManager] DB ERROR on broker fill for {trade_id}: {e}")
             self.analytics.capture_exception(e, {"op": "broker_fill", "trade_id": trade_id})
             if self.trade_logger:
                 self.trade_logger.log(trade_id, "ERROR", str(e))

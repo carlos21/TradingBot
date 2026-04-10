@@ -6,6 +6,7 @@ from typing import Callable, Dict, List, Optional
 
 from .combined_datasource import CombinedDataSource
 from src.notifier import Notifier, NoOpNotifier
+from src.utils.app_logger import ILogger
 
 
 @dataclass
@@ -20,11 +21,13 @@ class NinjaTraderDataSource(CombinedDataSource):
     (Flask routes call the ingest_* methods directly).
     """
 
-    def __init__(self, cfg: NinjaTraderConfig, notifier: Notifier = None):
+    def __init__(self, cfg: NinjaTraderConfig, notifier: Notifier = None, logger: ILogger = None):
         self._cfg = cfg
         self._notifier = notifier or NoOpNotifier()
+        self.logger = logger
         self.pair = cfg.pair
         self._historical_bars: List[Dict] = []
+        self._bars_lock = threading.RLock()  # Protects _historical_bars from race conditions
         self._live = False
 
         # BarsLoader compat
@@ -63,17 +66,20 @@ class NinjaTraderDataSource(CombinedDataSource):
         """Signal NinjaTrader to resend history. Wakes the hanging await_command GET."""
         with self._refresh_lock:
             if self._refreshing:
-                print("[NTDataSrc] Refresh already in progress, skipping", flush=True)
+                if self.logger:
+                    self.logger.info("[NTDataSrc] Refresh already in progress, skipping")
                 return
             # Check if a refresh command is already queued
             for cmd in self._command_queue:
                 if cmd.get("command") == "request_history":
-                    print("[NTDataSrc] Refresh already pending, skipping", flush=True)
+                    if self.logger:
+                        self.logger.info("[NTDataSrc] Refresh already pending, skipping")
                     return
             self._refreshing = True
             self._refresh_days = days
         self.enqueue_command({"command": "request_history", "days": days})
-        print(f"[NTDataSrc] Refresh signaled ({days} days)", flush=True)
+        if self.logger:
+            self.logger.info(f"[NTDataSrc] Refresh signaled ({days} days)")
 
     def await_command(self, timeout: float = 30.0) -> Optional[Dict]:
         """Block until a command is available (called by NinjaTrader's hanging GET).
@@ -98,24 +104,27 @@ class NinjaTraderDataSource(CombinedDataSource):
         cutoff = int(_time.time()) - (days * 86400)
 
         # Keep bars older than the refresh window
-        preserved = [b for b in self._historical_bars if b["time"] < cutoff]
-        removed = len(self._historical_bars) - len(preserved)
-        print(
-            f"[NTDataSrc] Refresh start — keeping {len(preserved)} bars before cutoff, "
-            f"removing {removed} bars from last {days} day(s)",
-            flush=True,
-        )
+        with self._bars_lock:
+            preserved = [b for b in self._historical_bars if b["time"] < cutoff]
+            removed = len(self._historical_bars) - len(preserved)
+        if self.logger:
+            self.logger.info(
+                f"[NTDataSrc] Refresh start — keeping {len(preserved)} bars before cutoff, "
+                f"removing {removed} bars from last {days} day(s)"
+            )
 
         if self.on_before_refresh:
             try:
                 self.on_before_refresh()
             except Exception as e:
-                print(f"[NTDataSrc] ERROR in on_before_refresh: {e}", flush=True)
+                if self.logger:
+                    self.logger.error(f"[NTDataSrc] ERROR in on_before_refresh: {e}")
                 import traceback
                 traceback.print_exc()
                 self._notifier.send(f"[NTDataSrc] ERROR in on_before_refresh: {e}")
 
-        self._historical_bars = preserved
+        with self._bars_lock:
+            self._historical_bars = preserved
         self._live = False
         self._current_bar = None
         # Keep _last_history_time based on preserved bars so gap detection still works
@@ -136,32 +145,36 @@ class NinjaTraderDataSource(CombinedDataSource):
 
         new_time = bar["time"]
 
-        # Check for duplicate
-        if self._historical_bars:
-            last_time = self._historical_bars[-1]["time"]
-            if new_time == last_time:
-                last_dt = datetime.fromtimestamp(last_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-                print(f"[NTDataSrc] WARNING: Duplicate live bar at {last_dt}, skipping", flush=True)
-                return False
-
-            # Fast path: bar arrives in order (most common case)
-            if new_time > last_time:
-                self._historical_bars.append(bar)
-            else:
-                # Out-of-order arrival — insert in sorted position
-                times = [b["time"] for b in self._historical_bars]
-                idx = bisect.bisect_left(times, new_time)
-                if idx < len(times) and times[idx] == new_time:
-                    # Duplicate at an earlier position
-                    dup_dt = datetime.fromtimestamp(new_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-                    print(f"[NTDataSrc] WARNING: Duplicate live bar at {dup_dt} (out-of-order), skipping", flush=True)
+        with self._bars_lock:
+            # Check for duplicate
+            if self._historical_bars:
+                last_time = self._historical_bars[-1]["time"]
+                if new_time == last_time:
+                    last_dt = datetime.fromtimestamp(last_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                    if self.logger:
+                        self.logger.warning(f"[NTDataSrc] Duplicate live bar at {last_dt}, skipping")
                     return False
-                self._historical_bars.insert(idx, bar)
-                new_dt = datetime.fromtimestamp(new_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-                last_dt = datetime.fromtimestamp(last_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-                print(f"[NTDataSrc] WARNING: Live bar {new_dt} arrived OUT OF ORDER (last was {last_dt}), inserted at correct position", flush=True)
-        else:
-            self._historical_bars.append(bar)
+
+                # Fast path: bar arrives in order (most common case)
+                if new_time > last_time:
+                    self._historical_bars.append(bar)
+                else:
+                    # Out-of-order arrival — insert in sorted position
+                    times = [b["time"] for b in self._historical_bars]
+                    idx = bisect.bisect_left(times, new_time)
+                    if idx < len(times) and times[idx] == new_time:
+                        # Duplicate at an earlier position
+                        dup_dt = datetime.fromtimestamp(new_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                        if self.logger:
+                            self.logger.warning(f"[NTDataSrc] Duplicate live bar at {dup_dt} (out-of-order), skipping")
+                        return False
+                    self._historical_bars.insert(idx, bar)
+                    new_dt = datetime.fromtimestamp(new_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                    last_dt = datetime.fromtimestamp(last_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                    if self.logger:
+                        self.logger.warning(f"[NTDataSrc] Live bar {new_dt} arrived OUT OF ORDER (last was {last_dt}), inserted at correct position")
+            else:
+                self._historical_bars.append(bar)
 
         # After inserting, check for gaps in the live region only
         # (from _last_history_time onward)
@@ -176,37 +189,45 @@ class NinjaTraderDataSource(CombinedDataSource):
         """
         from datetime import datetime, timezone
 
-        if not self._last_history_time or len(self._historical_bars) < 2:
+        if not self._last_history_time:
             return
 
-        # Find where live bars start
-        start_idx = None
-        for i, b in enumerate(self._historical_bars):
-            if b["time"] > self._last_history_time:
-                start_idx = i
-                break
-        if start_idx is None or start_idx < 1:
-            return
+        with self._bars_lock:
+            if len(self._historical_bars) < 2:
+                return
 
-        # Check continuity from the last history bar through all live bars
-        for i in range(start_idx, len(self._historical_bars)):
-            prev_time = self._historical_bars[i - 1]["time"]
-            curr_time = self._historical_bars[i]["time"]
-            if curr_time != prev_time + 60:
-                gap_minutes = (curr_time - prev_time) // 60
-                prev_dt = datetime.fromtimestamp(prev_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-                curr_dt = datetime.fromtimestamp(curr_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-                # Don't crash yet — bars might still be in-flight (out-of-order HTTP).
-                # Log prominently so we can see if gaps persist.
-                print(
-                    f"[NTDataSrc] ⚠ LIVE GAP: {gap_minutes}min gap between {prev_dt} and {curr_dt} "
-                    f"(might be in-flight, will recheck on next bar)",
-                    flush=True
-                )
+            # Find where live bars start
+            start_idx = None
+            for i, b in enumerate(self._historical_bars):
+                if b["time"] > self._last_history_time:
+                    start_idx = i
+                    break
+            if start_idx is None or start_idx < 1:
+                return
+
+            # Check continuity from the last history bar through all live bars
+            for i in range(start_idx, len(self._historical_bars)):
+                prev_time = self._historical_bars[i - 1]["time"]
+                curr_time = self._historical_bars[i]["time"]
+                if curr_time != prev_time + 60:
+                    gap_minutes = (curr_time - prev_time) // 60
+                    prev_dt = datetime.fromtimestamp(prev_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                    curr_dt = datetime.fromtimestamp(curr_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                    # Don't crash yet — bars might still be in-flight (out-of-order HTTP).
+                    # Log prominently so we can see if gaps persist.
+                    if self.logger:
+                        self.logger.warning(
+                            f"[NTDataSrc] LIVE GAP: {gap_minutes}min gap between {prev_dt} and {curr_dt} "
+                            f"(might be in-flight, will recheck on next bar)"
+                        )
 
     def ingest_bars(self, bars: List[Dict]):
         """Add a batch of historical bars (before HISTORY_END)."""
+        import time
         from datetime import datetime, timezone
+        
+        start = time.monotonic()
+        new_bars = []
         for raw in bars:
             bar = {
                 "time": int(raw["time"]),
@@ -217,26 +238,79 @@ class NinjaTraderDataSource(CombinedDataSource):
                 "volume": int(raw.get("volume", 0)),
                 "pair": raw.get("pair", self._cfg.pair),
             }
-            self._historical_bars.append(bar)
+            new_bars.append(bar)
             dt = datetime.fromtimestamp(bar["time"], tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             print(f"[NTDataSrc] 1m BAR ADDED (history): {dt} O={bar['open']} H={bar['high']} L={bar['low']} C={bar['close']} V={bar['volume']}", flush=True)
+        
+        # Add all bars at once under lock
+        with self._bars_lock:
+            self._historical_bars.extend(new_bars)
+        
+        elapsed = (time.monotonic() - start) * 1000
+        if elapsed > 100:  # Log slow operations
+            print(f"[NTDataSrc] ingest_bars: {len(bars)} bars processed in {elapsed:.1f}ms", flush=True)
 
     def mark_history_complete(self):
         """Called when NinjaTrader signals HISTORY_END (initial or refresh)."""
+        import traceback
+        
         with self._refresh_lock:
             self._refreshing = False
         self._live = True
-        if self._historical_bars:
-            self._last_history_time = self._historical_bars[-1]["time"]
-        print(f"[NTDataSrc] History complete ({len(self._historical_bars)} bars), last_time={self._last_history_time}, switching to live", flush=True)
+        with self._bars_lock:
+            bar_count = len(self._historical_bars)
+            if self._historical_bars:
+                self._last_history_time = self._historical_bars[-1]["time"]
+            # Make a copy of bars to pass to callback so background thread
+            # doesn't race with live bar ingestion
+            bars_copy = list(self._historical_bars)
+        if self.logger:
+            self.logger.info(f"[NTDataSrc] History complete ({bar_count} bars), last_time={self._last_history_time}, switching to live")
         if self.on_history_complete:
             try:
-                self.on_history_complete(self._historical_bars)
+                self.on_history_complete(bars_copy)
+            except AttributeError as e:
+                # Specific handling for 'namespace' or other attribute errors
+                tb = traceback.format_exc()
+                error_type = type(e).__name__
+                error_detail = f"[{error_type}] {str(e)}"
+                
+                if self.logger:
+                    self.logger.error(f"[NTDataSrc] AttributeError in on_history_complete: {error_detail}")
+                    self.logger.error(f"[NTDataSrc] Traceback:\n{tb}")
+                
+                # Try to extract more context about what object is missing the attribute
+                if "'" in str(e) and "'" in str(e).split("'"):
+                    attr_name = str(e).split("'")[1] if "'" in str(e) else "unknown"
+                    error_detail += f" (missing attribute: '{attr_name}')"
+                
+                self._notifier.send(f"[NTDataSrc] CRITICAL: {error_detail}")
+                raise  # Re-raise so caller knows something went wrong
+                
+            except TypeError as e:
+                tb = traceback.format_exc()
+                error_type = type(e).__name__
+                if self.logger:
+                    self.logger.error(f"[NTDataSrc] TypeError in on_history_complete: {e}")
+                    self.logger.error(f"[NTDataSrc] Traceback:\n{tb}")
+                self._notifier.send(f"[NTDataSrc] TypeError in on_history_complete: {e}")
+                raise
+                
             except Exception as e:
-                print(f"[NTDataSrc] ERROR in on_history_complete: {e}", flush=True)
-                import traceback
-                traceback.print_exc()
-                self._notifier.send(f"[NTDataSrc] ERROR in on_history_complete: {e}")
+                error_type = type(e).__name__
+                tb = traceback.format_exc()
+                
+                # Build detailed error message
+                error_msg = f"[NTDataSrc] ERROR in on_history_complete: [{error_type}] {e}"
+                
+                # Log full traceback for debugging
+                if self.logger:
+                    self.logger.error(error_msg)
+                    self.logger.error(f"[NTDataSrc] Full traceback:\n{tb}")
+                
+                # Send notification with error type and message
+                self._notifier.send(f"[NTDataSrc] {error_msg}")
+                raise
 
     def ingest_live_bar(self, raw: Dict):
         """Process a single live bar from NinjaTrader.
@@ -267,9 +341,12 @@ class NinjaTraderDataSource(CombinedDataSource):
                 if not added:
                     return  # duplicate, skip
             else:
-                # Pre-history bar — just append
-                self._historical_bars.append(bar)
-            print(f"[NTDataSrc] 1m BAR ADDED (live): {dt} O={bar['open']} H={bar['high']} L={bar['low']} C={bar['close']} V={bar['volume']} total_bars={len(self._historical_bars)}", flush=True)
+                # Pre-history bar — just append (under lock)
+                with self._bars_lock:
+                    self._historical_bars.append(bar)
+            with self._bars_lock:
+                bar_count = len(self._historical_bars)
+            print(f"[NTDataSrc] 1m BAR ADDED (live): {dt} O={bar['open']} H={bar['high']} L={bar['low']} C={bar['close']} V={bar['volume']} total_bars={bar_count}", flush=True)
         if self.on_live_bar:
             self.on_live_bar(bar)
 
@@ -315,12 +392,14 @@ class NinjaTraderDataSource(CombinedDataSource):
     # ---- CombinedDataSource interface ---------------------------------------
 
     def load_historical_bars(self, timeframe: str = '1m', start_time: int = None) -> List[Dict]:
-        bars = self._historical_bars
+        with self._bars_lock:
+            bars = list(self._historical_bars)  # Copy under lock
         if start_time is not None:
             bars = [b for b in bars if b['time'] >= start_time]
 
         if timeframe == '1m':
-            return list(bars)
+            # Return deep copies to avoid race conditions with live bar ingestion
+            return [{k: v for k, v in b.items()} for b in bars]
 
         # Aggregate into higher timeframes
         unit = timeframe[-1]

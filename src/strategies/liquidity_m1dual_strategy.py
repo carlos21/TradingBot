@@ -5,6 +5,7 @@ from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
 from src.strategies.base_liquidity_strategy import BE_TRESHOLD_POINTS
+from src.utils.app_logger import ILogger
 
 
 class LiquidityDualM1Strategy:
@@ -21,7 +22,8 @@ class LiquidityDualM1Strategy:
         socketio,
         line_repository: LineRepository,
         trade_repository: TradeRepository,
-        extra_sl_space: dict[str, float]
+        extra_sl_space: dict[str, float],
+        logger: ILogger,
     ):
         self.min_stop_loss = min_stop_loss
         self.max_bounce = max_bounce
@@ -29,6 +31,7 @@ class LiquidityDualM1Strategy:
         self.line_repository = line_repository
         self.trade_repository = trade_repository
         self.extra_sl_space = extra_sl_space
+        self.logger = logger
 
         # Tracks pending lines: id -> { level, direction, crosses, extreme }
         self.strategy_lines = {}
@@ -48,7 +51,7 @@ class LiquidityDualM1Strategy:
                 'crosses': 0,
                 'extreme': extreme_init
             }
-        print(f"[DualM1] ➕ Added line id={id}, level={level}, direction={direction}, extreme_init={extreme_init}")
+        self.logger.info(f"[DualM1] Added line id={id}, level={level}, direction={direction}, extreme_init={extreme_init}")
 
     def remove_strategy_line(self, id: str):
         with self.lock:
@@ -83,29 +86,29 @@ class LiquidityDualM1Strategy:
                     if s['crosses'] == 0 and o > lvl and c < lvl:
                         s['crosses'] = 1
                         s['extreme'] = l
-                        print(f"[DualM1][{sid}] first cross: low={l}, extreme set to={l}")
+                        self.logger.info(f"[DualM1][{sid}] first cross: low={l}, extreme set to={l}")
                     # after first cross, track bounce lows and check entry cross
                     elif s['crosses'] == 1:
                         # update bounce extreme
                         if l < s['extreme']:
                             old_extreme = s['extreme']
                             s['extreme'] = l
-                            print(f"[DualM1][{sid}] bounce update: low={l}, extreme updated from {old_extreme} to {l}")
+                            self.logger.info(f"[DualM1][{sid}] bounce update: low={l}, extreme updated from {old_extreme} to {l}")
                         # entry cross condition
                         if o < lvl and c > lvl:
                             s['crosses'] = 2
                             depth = lvl - s['extreme']
-                            print(f"[DualM1][{sid}] entry cross: lvl={lvl}, extreme={s['extreme']}, depth={depth}, max_bounce={self.max_bounce}")
+                            self.logger.info(f"[DualM1][{sid}] entry cross: lvl={lvl}, extreme={s['extreme']}, depth={depth}, max_bounce={self.max_bounce}")
                             if depth <= self.max_bounce:
                                 entry = c
                                 risk = max(entry - s['extreme'], self.min_stop_loss)
                                 sl = s['extreme']
                                 tp = entry + 4 * risk
-                                print(f"[DualM1][{sid}] Opening LONG → entry={entry}, sl={sl}, tp={tp}, risk={risk}")
+                                self.logger.info(f"[DualM1][{sid}] Opening LONG → entry={entry}, sl={sl}, tp={tp}, risk={risk}")
                                 trade = self._make_trade_dict(bar, 'long', entry, sl, tp, risk)
                                 self._store_and_emit_open(trade)
                             else:
-                                print(f"[DualM1][{sid}] depth {depth} > max_bounce, skipping open")
+                                self.logger.info(f"[DualM1][{sid}] depth {depth} > max_bounce, skipping open")
                             self.remove_strategy_line(sid)
                             break
 
@@ -115,27 +118,27 @@ class LiquidityDualM1Strategy:
                     if s['crosses'] == 0 and o < lvl and c > lvl:
                         s['crosses'] = 1
                         s['extreme'] = h
-                        print(f"[DualM1][{sid}] first cross short: high={h}, extreme set to={h}")
+                        self.logger.info(f"[DualM1][{sid}] first cross short: high={h}, extreme set to={h}")
                     # after first cross, track bounce highs and check entry cross
                     elif s['crosses'] == 1:
                         if h > s['extreme']:
                             old_extreme = s['extreme']
                             s['extreme'] = h
-                            print(f"[DualM1][{sid}] bounce update short: high={h}, extreme updated from {old_extreme} to {h}")
+                            self.logger.info(f"[DualM1][{sid}] bounce update short: high={h}, extreme updated from {old_extreme} to {h}")
                         if o > lvl and c < lvl:
                             s['crosses'] = 2
                             depth = s['extreme'] - lvl
-                            print(f"[DualM1][{sid}] entry cross short: lvl={lvl}, extreme={s['extreme']}, depth={depth}, max_bounce={self.max_bounce}")
+                            self.logger.info(f"[DualM1][{sid}] entry cross short: lvl={lvl}, extreme={s['extreme']}, depth={depth}, max_bounce={self.max_bounce}")
                             if depth <= self.max_bounce:
                                 entry = c
                                 risk = max(s['extreme'] - entry, self.min_stop_loss)
                                 sl = s['extreme']
                                 tp = entry - 4 * risk
-                                print(f"[DualM1][{sid}] Opening SHORT → entry={entry}, sl={sl}, tp={tp}, risk={risk}")
+                                self.logger.info(f"[DualM1][{sid}] Opening SHORT → entry={entry}, sl={sl}, tp={tp}, risk={risk}")
                                 trade = self._make_trade_dict(bar, 'short', entry, sl, tp, risk)
                                 self._store_and_emit_open(trade)
                             else:
-                                print(f"[DualM1][{sid}] depth {depth} > max_bounce, skipping open short")
+                                self.logger.info(f"[DualM1][{sid}] depth {depth} > max_bounce, skipping open short")
                             self.remove_strategy_line(sid)
                             break
 

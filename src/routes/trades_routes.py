@@ -4,6 +4,7 @@ from flask import Flask, jsonify, request, abort
 from src.controllers.trades_controller import TradesController
 from src.repositories.trades_repository import TradeRepository
 from src.services.trade_logger import TradeLogger
+from src.utils.app_logger import ILogger
 
 
 def register_trades_routes(
@@ -12,6 +13,7 @@ def register_trades_routes(
     trades_repo: TradeRepository,
     pair: str,
     trade_logger: TradeLogger,
+    logger: ILogger,
 ):
     """Register trade management routes.
     

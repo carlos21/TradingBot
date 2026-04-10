@@ -4,6 +4,7 @@ from typing import Optional
 
 from src.services.analytics_service import AnalyticsService
 from src.repositories.lines_repository import LineRepository
+from src.utils.app_logger import ILogger
 
 
 class AdminController:
@@ -13,9 +14,11 @@ class AdminController:
         self,
         analytics_service: AnalyticsService,
         line_repository: LineRepository,
+        logger: ILogger,
     ):
         self._analytics = analytics_service
         self._lines_repo = line_repository
+        self.logger = logger
 
     def get_dashboard_stats(self, pair: str):
         """Get overall dashboard statistics."""

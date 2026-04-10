@@ -6,13 +6,15 @@ from src.bars_loader import BarsLoader
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
+from src.utils.app_logger import ILogger
 
 class LinesController:
 
-    def __init__(self, line_repository: LineRepository, bars_loader: BarsLoader, liquidity_strategy: LiquidityStrategyV2):
+    def __init__(self, line_repository: LineRepository, bars_loader: BarsLoader, liquidity_strategy: LiquidityStrategyV2, logger: ILogger):
         self.line_repository = line_repository
         self.bars_loader = bars_loader
         self.liquidity_strategy = liquidity_strategy
+        self.logger = logger
 
     def list_lines(self, pair: str):
         lines = self.line_repository.list_lines(pair)
@@ -32,13 +34,13 @@ class LinesController:
         # 1. Resolve the Date
         if creation_timestamp is not None:
             c_date = datetime.fromtimestamp(float(creation_timestamp), tz=timezone.utc)
-            print(f"[LinesController] Using Provided Time: {c_date}")
+            self.logger.info(f"[LinesController] Using Provided Time: {c_date}")
         elif self.bars_loader._last_played_ts > 0:
             c_date = datetime.fromtimestamp(self.bars_loader._last_played_ts, tz=timezone.utc)
-            print(f"[LinesController] Using Loader Replay Time: {c_date}")
+            self.logger.info(f"[LinesController] Using Loader Replay Time: {c_date}")
         else:
             c_date = datetime.fromtimestamp(0, tz=timezone.utc)
-            print(f"[LinesController] Loader not started -> Defaulting to Epoch 0 (1970)")
+            self.logger.info(f"[LinesController] Loader not started -> Defaulting to Epoch 0 (1970)")
 
         # 2. Persist
         line = self.line_repository.insert_line(

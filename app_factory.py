@@ -24,6 +24,7 @@ from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.notifier import Notifier, NoOpNotifier
 from src.analytics import AnalyticsReporter, NoOpReporter
+from src.utils.app_logger import ILogger, ConsoleLogger, FileAndConsoleLogger
 
 # Route modules
 from src.routes import (
@@ -61,6 +62,7 @@ class AppWiring:
     data_source: CombinedDataSource
     pair: str
     live_mode: bool = False
+    logger: Optional[ILogger] = None
 
 
 def _setup_logging(app: Flask):
@@ -82,6 +84,7 @@ def _create_bar_callbacks(
     data_source: CombinedDataSource,
     repos: Repositories,
     pair: str,
+    logger: ILogger,
 ):
     """Create bar processing callbacks based on mode.
     
@@ -104,7 +107,7 @@ def _create_bar_callbacks(
                     continue
                 tid = t['trade_id']
                 if tid not in _close_commands_sent:
-                    print(f"[LiveMode] SESSION END — sending close_order to NT for {tid}")
+                    logger.info(f"[LiveMode] SESSION END — sending close_order to NT for {tid}")
                     trade_manager.trade_logger.log(tid, "SESSION_END", "Sending close_order to NinjaTrader")
                     trade_manager.trade_logger.log(tid, "CMD_SENT", "close_order → NinjaTrader")
                     trade_manager.trade_executor.on_trade_close(tid, bar['close'])
@@ -120,7 +123,7 @@ def _create_bar_callbacks(
             for t in list(trade_manager.open_trades):
                 tid = t['trade_id']
                 if tid not in _close_commands_sent:
-                    print(f"[LiveMode] STREAM END — sending close_order to NT for {tid}")
+                    logger.info(f"[LiveMode] STREAM END — sending close_order to NT for {tid}")
                     trade_manager.trade_logger.log(tid, "SESSION_END", "Stream end — sending close_order to NinjaTrader")
                     trade_manager.trade_logger.log(tid, "CMD_SENT", "close_order → NinjaTrader")
                     trade_manager.trade_executor.on_trade_close(tid, close_price)
@@ -142,19 +145,46 @@ def _setup_live_mode_callbacks(
     loader: BarsLoader,
     repos: Repositories,
     pair: str,
+    logger: ILogger,
+    socketio: SocketIO,
 ):
     """Setup callbacks for live mode data source."""
+    import threading
+    
+    def _do_warmup(bars):
+        """Background thread: process historical bars."""
+        try:
+            start = __import__('time').monotonic()
+            for i, bar in enumerate(bars):
+                strategy.on_raw_bar(bar)
+                # Log progress every 5000 bars
+                if (i + 1) % 5000 == 0:
+                    logger.info(f"[LiveMode] Warmup progress: {i+1}/{len(bars)} bars...")
+            
+            strategy.restore_trigger_states(pair)
+            strategy.restore_open_trades()
+            strategy.restore_reentry_opportunities(pair)
+            
+            elapsed = __import__('time').monotonic() - start
+            logger.info(f"[LiveMode] Warmup complete in {elapsed:.1f}s, ready for live bars.")
+            
+            # Tell any connected browsers to reload chart data
+            try:
+                socketio.emit('history_ready', {'count': len(bars)}, broadcast=True)
+            except Exception as e:
+                logger.error(f"[LiveMode] Failed to emit history_ready: {type(e).__name__}: {e}")
+        except Exception as e:
+            logger.error(f"[LiveMode] ERROR during warmup: {type(e).__name__}: {e}")
+            import traceback
+            logger.error(traceback.format_exc())
+    
     def _on_history_complete(bars):
-        print(f"[LiveMode] Warming up strategy with {len(bars)} historical bars...")
-        for bar in bars:
-            strategy.on_raw_bar(bar)
-        strategy.restore_trigger_states(pair)
-        strategy.restore_open_trades()
-        strategy.restore_reentry_opportunities(pair)
-        print("[LiveMode] Warmup complete, ready for live bars.")
-        # Tell any connected browsers to reload chart data
-        from flask_socketio import emit
-        emit('history_ready', {'count': len(bars)}, broadcast=True)
+        """Return immediately, process bars in background thread."""
+        logger.info(f"[LiveMode] Received {len(bars)} historical bars, starting background warmup...")
+        # Start background thread to process bars - don't block HTTP response
+        thread = threading.Thread(target=_do_warmup, args=(bars,), name="HistoryWarmup")
+        thread.daemon = True
+        thread.start()
     
     def _on_live_bar(bar):
         # Route through BarsLoader so bars get aggregated into
@@ -163,7 +193,7 @@ def _setup_live_mode_callbacks(
     
     def _on_before_refresh():
         """Reset strategy and re-add DB lines before fresh bars arrive."""
-        print("[LiveMode] Refresh: resetting strategy...")
+        logger.info("[LiveMode] Refresh: resetting strategy...")
         strategy.reset(preserve_trigger_state=True)
         loader.reset()
         # Re-add persistent lines with their real creation timestamp so the
@@ -172,7 +202,7 @@ def _setup_live_mode_callbacks(
         # (the repo enforces this), so .timestamp() gives correct epoch seconds.
         for l in repos.lines.list_lines(pair):
             strategy.add_strategy_line(l.line_id, l.price, creation_timestamp=l.creation_date.timestamp())
-        print("[LiveMode] Refresh: strategy reset, ready for fresh bars.")
+        logger.info("[LiveMode] Refresh: strategy reset, ready for fresh bars.")
     
     data_source.on_history_complete = _on_history_complete
     data_source.on_live_bar = _on_live_bar
@@ -202,9 +232,16 @@ def create_app(
     """
     app = Flask(__name__)
     CORS(app)
-    socketio = SocketIO(app, cors_allowed_origins="*")
+    # Use threading async mode for better performance with local NinjaTrader
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
     
     _setup_logging(app)
+    
+    # Create the appropriate logger based on mode
+    if live_mode:
+        logger: ILogger = FileAndConsoleLogger(log_dir="logs")
+    else:
+        logger: ILogger = ConsoleLogger()
     
     if notifier is None:
         notifier = NoOpNotifier()
@@ -230,6 +267,7 @@ def create_app(
         account_balance=numbers.account_balance,
         risk_per_trade=numbers.risk_per_trade,
         risk_pct_per_trade=numbers.risk_pct_per_trade,
+        logger=logger,
     )
 
     # Initialize strategy
@@ -257,39 +295,41 @@ def create_app(
         trade_logger    = trade_logger,
         analytics       = analytics,
         trigger_state_repo = repos.trigger_state,
+        logger          = logger,
     )
 
     # Create bar callbacks based on mode
     bar_callback, stream_end_callback = _create_bar_callbacks(
-        live_mode, trade_manager, tstrategy, None, data_source, repos, pair
+        live_mode, trade_manager, tstrategy, None, data_source, repos, pair, logger
     )
 
     loader = BarsLoader(
         data_source=data_source,
         socketio=socketio,
         bar_callback=bar_callback,
-        stream_end_callback=stream_end_callback
+        stream_end_callback=stream_end_callback,
+        logger=logger,
     )
     loader.live_mode = live_mode
     
     # Update callback to reference loader (for _check_live_session_end)
     bar_callback, stream_end_callback = _create_bar_callbacks(
-        live_mode, trade_manager, tstrategy, loader, data_source, repos, pair
+        live_mode, trade_manager, tstrategy, loader, data_source, repos, pair, logger
     )
     loader.bar_callback = bar_callback
     loader.stream_end_callback = stream_end_callback
 
     # In live mode, wire direct callbacks on the data source
     if live_mode:
-        _setup_live_mode_callbacks(data_source, tstrategy, loader, repos, pair)
+        _setup_live_mode_callbacks(data_source, tstrategy, loader, repos, pair, logger, socketio)
 
     # Create controllers
-    lines_controller = LinesController(repos.lines, loader, tstrategy)
-    trades_controller = TradesController(loader, trade_manager)
+    lines_controller = LinesController(repos.lines, loader, tstrategy, logger=logger)
+    trades_controller = TradesController(loader, trade_manager, logger=logger)
     
     # Initialize analytics service and admin controller
     analytics_service = AnalyticsService(repos.trades)
-    admin_controller = AdminController(analytics_service, repos.lines)
+    admin_controller = AdminController(analytics_service, repos.lines, logger=logger)
 
     # Optionally load any preexisting lines from repo into the in-memory strategy
     if bootstrap_existing_lines:
@@ -301,15 +341,15 @@ def create_app(
             tstrategy.restore_open_trades()
 
     # Register routes
-    register_core_routes(app, pair, data_source)
-    register_lines_routes(app, lines_controller)
-    register_trades_routes(app, trades_controller, repos.trades, pair, trade_logger)
-    register_admin_routes(app, admin_controller)
+    register_core_routes(app, pair, data_source, logger=logger)
+    register_lines_routes(app, lines_controller, logger=logger)
+    register_trades_routes(app, trades_controller, repos.trades, pair, trade_logger, logger=logger)
+    register_admin_routes(app, admin_controller, logger=logger)
     register_debug_routes(
         app, tstrategy, loader, trade_manager, repos.lines, repos.trades,
-        data_source, pair, notifier, analytics
+        data_source, pair, notifier, analytics, logger=logger
     )
-    register_socketio_handlers(socketio, loader, data_source, live_mode)
+    register_socketio_handlers(socketio, loader, data_source, live_mode, logger=logger)
     
     # Register live mode routes only when in live mode
     if live_mode:
@@ -317,7 +357,7 @@ def create_app(
         if isinstance(data_source, NinjaTraderDataSource):
             register_nt_routes(
                 app, data_source, trade_manager, repos.trades, trade_logger,
-                tstrategy, pair, notifier
+                tstrategy, pair, notifier, logger=logger
             )
 
     # Global error handler
@@ -338,4 +378,5 @@ def create_app(
         data_source=data_source,
         pair=pair,
         live_mode=live_mode,
+        logger=logger,
     )

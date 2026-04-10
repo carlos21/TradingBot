@@ -9,6 +9,7 @@ from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 from src.data_sources.combined_datasource import CombinedDataSource
 from src.notifier import Notifier
 from src.analytics import AnalyticsReporter
+from src.utils.app_logger import ILogger
 
 
 def register_debug_routes(
@@ -22,6 +23,7 @@ def register_debug_routes(
     pair: str,
     notifier: Notifier,
     analytics: AnalyticsReporter,
+    logger: ILogger,
 ):
     """Register debug and test helper routes.
     
@@ -84,14 +86,14 @@ def register_debug_routes(
             # 7. WARM UP STRATEGY (Without lines)
             played = getattr(data_source, '_played_bars', None) or getattr(data_source, '_historical_bars', [])
             if played:
-                print(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")
+                logger.info(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")
                 for bar in played:
                     strategy.on_raw_bar(bar)
-                print("[Reset] Warmup complete.")
+                logger.info("[Reset] Warmup complete.")
 
             return jsonify({"status": "OK"})
         except Exception as e:
-            print(f"[Reset] Critical error: {e}")
+            logger.error(f"[Reset] Critical error: {e}")
             analytics.capture_exception(e, {"op": "reset_all"})
             notifier.send(f"[Reset] Critical error: {e}")
             return jsonify({"error": str(e)}), 500

@@ -3,6 +3,7 @@
 from flask_socketio import SocketIO, emit
 from src.bars_loader import BarsLoader
 from src.data_sources.combined_datasource import CombinedDataSource
+from src.utils.app_logger import ILogger
 
 
 def register_socketio_handlers(
@@ -10,6 +11,7 @@ def register_socketio_handlers(
     loader: BarsLoader,
     data_source: CombinedDataSource,
     live_mode: bool,
+    logger: ILogger,
 ):
     """Register Socket.IO event handlers.
     

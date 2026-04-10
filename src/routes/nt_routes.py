@@ -1,5 +1,6 @@
 """NinjaTrader integration HTTP routes - Live mode only."""
 
+import traceback
 from datetime import datetime, timezone
 from flask import Flask, jsonify, request, abort
 from src.repositories.trades_repository import TradeRepository
@@ -8,6 +9,7 @@ from src.services.trade_manager import TradeManager
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource
 from src.notifier import Notifier
+from src.utils.app_logger import ILogger
 
 
 def register_nt_routes(
@@ -19,6 +21,7 @@ def register_nt_routes(
     strategy: LiquidityStrategyV2,
     pair: str,
     notifier: Notifier,
+    logger: ILogger,
 ):
     """Register NinjaTrader integration routes.
     
@@ -37,36 +40,85 @@ def register_nt_routes(
     
     # E2E test state tracking
     _test_sequences: dict = {}
+    
+    def _timed_endpoint(func):
+        """Decorator to log slow endpoint performance."""
+        import time
+        from functools import wraps
+        
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            start = time.monotonic()
+            try:
+                return func(*args, **kwargs)
+            finally:
+                elapsed = (time.monotonic() - start) * 1000
+                if elapsed > 50:  # Log if slower than 50ms
+                    logger.warning(f"[NT Routes] SLOW: {func.__name__} took {elapsed:.1f}ms")
+        return wrapper
+    
+    def _format_error_detail(endpoint: str, e: Exception) -> str:
+        """Format detailed error information for logging."""
+        error_type = type(e).__name__
+        error_msg = str(e)
+        tb = traceback.format_exc()
+        
+        # Log full details to logger
+        logger.error(f"[NT Routes] ERROR in {endpoint}: [{error_type}] {error_msg}")
+        logger.error(f"[NT Routes] Traceback:\n{tb}")
+        
+        return f"[{error_type}] {error_msg}"
 
     @app.route('/api/nt/await_command', methods=['GET'])
     def nt_await_command():
         """Long-poll: NinjaTrader hangs here until Python has a command."""
-        cmd = data_source.await_command(timeout=30.0)
-        if cmd:
-            print(f"[NT LongPoll] Sending command: {cmd}", flush=True)
-            return jsonify(cmd)
-        return jsonify({'command': None})
+        try:
+            cmd = data_source.await_command(timeout=30.0)
+            if cmd:
+                logger.info(f"[NT LongPoll] Sending command: {cmd}")
+                return jsonify(cmd)
+            return jsonify({'command': None})
+        except Exception as e:
+            detail = _format_error_detail('await_command', e)
+            notifier.send(f"[NT Routes] CRITICAL: await_command failed: {detail}")
+            return jsonify({'error': detail, 'command': None}), 500
 
     @app.route('/api/nt/refresh_start', methods=['POST'])
     def nt_refresh_start():
-        print("[NT Ingest] REFRESH_START received", flush=True)
+        logger.info("[NT Ingest] REFRESH_START received")
         data_source.handle_refresh_start()
         return jsonify({'ok': True})
 
     @app.route('/api/nt/bars', methods=['POST'])
+    @_timed_endpoint
     def nt_ingest_bars():
-        bars = request.get_json()
-        if not isinstance(bars, list):
-            abort(400, 'Expected JSON array of bar objects')
-        data_source.ingest_bars(bars)
-        print(f"[NT Ingest] Received {len(bars)} bars, total={len(data_source._historical_bars)}", flush=True)
-        return jsonify({'ok': True, 'count': len(bars)})
+        try:
+            bars = request.get_json()
+            if not isinstance(bars, list):
+                abort(400, 'Expected JSON array of bar objects')
+            data_source.ingest_bars(bars)
+            logger.info(f"[NT Ingest] Received {len(bars)} bars, total={len(data_source._historical_bars)}")
+            return jsonify({'ok': True, 'count': len(bars)})
+        except Exception as e:
+            detail = _format_error_detail('ingest_bars', e)
+            return jsonify({'error': detail, 'ok': False}), 500
 
     @app.route('/api/nt/history_end', methods=['POST'])
+    @_timed_endpoint
     def nt_history_end():
-        print(f"[NT Ingest] HISTORY_END received", flush=True)
-        data_source.mark_history_complete()
-        return jsonify({'ok': True})
+        try:
+            logger.info("[NT Ingest] HISTORY_END received")
+            data_source.mark_history_complete()
+            return jsonify({'ok': True})
+        except AttributeError as e:
+            detail = _format_error_detail('history_end (AttributeError)', e)
+            notifier.send(f"[NT Routes] CRITICAL: history_end AttributeError: {detail}")
+            # Return 500 so NinjaTrader knows something went wrong
+            return jsonify({'error': detail, 'ok': False}), 500
+        except Exception as e:
+            detail = _format_error_detail('history_end', e)
+            notifier.send(f"[NT Routes] CRITICAL: history_end failed: {detail}")
+            return jsonify({'error': detail, 'ok': False}), 500
 
     @app.route('/api/nt/tick', methods=['POST'])
     def nt_ingest_tick():
@@ -75,13 +127,20 @@ def register_nt_routes(
         return jsonify({'ok': True})
 
     @app.route('/api/nt/bar', methods=['POST'])
+    @_timed_endpoint
     def nt_ingest_live_bar():
-        bar = request.get_json()
-        ts = int(bar.get('time', 0))
-        dt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%H:%M:%S')
-        print(f"[NT /bar] COMPLETED bar time={dt} ({ts}) O={bar.get('open')} H={bar.get('high')} L={bar.get('low')} C={bar.get('close')}", flush=True)
-        data_source.ingest_live_bar(bar)
-        return jsonify({'ok': True})
+        try:
+            bar = request.get_json()
+            if not bar:
+                abort(400, 'Expected JSON bar object')
+            ts = int(bar.get('time', 0))
+            dt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%H:%M:%S')
+            logger.info(f"[NT /bar] COMPLETED bar time={dt} ({ts}) O={bar.get('open')} H={bar.get('high')} L={bar.get('low')} C={bar.get('close')}")
+            data_source.ingest_live_bar(bar)
+            return jsonify({'ok': True})
+        except Exception as e:
+            detail = _format_error_detail('ingest_live_bar', e)
+            return jsonify({'error': detail, 'ok': False}), 500
 
     @app.route('/api/nt/partial', methods=['POST'])
     def nt_ingest_partial():
@@ -146,7 +205,7 @@ def register_nt_routes(
             "tp": tp,
         }
 
-        print(f"[E2E Test] Started scenario={scenario} trade_id={trade_id}", flush=True)
+        logger.info(f"[E2E Test] Started scenario={scenario} trade_id={trade_id}")
         return jsonify({
             "ok": True, "trade_id": trade_id, "scenario": scenario,
             "entry_price": entry_price, "sl": sl, "tp": tp
@@ -183,6 +242,7 @@ def register_nt_routes(
         })
 
     @app.route('/api/nt/trade_log', methods=['POST'])
+    @_timed_endpoint
     def nt_trade_log():
         """Accept log entries from NinjaTrader (NT:ORDER, NT:FILL, NT:MODIFY, etc.)."""
         data = request.get_json()
@@ -204,10 +264,10 @@ def register_nt_routes(
                     seq["stage"] = "awaiting_close_fill"
                     data_source.enqueue_command({"command": "close_order", "trade_id": tid, "test": True})
                     trade_logger.log(tid, "CMD_SENT", "close_order -> NinjaTrader (session end test)")
-                    print(f"[E2E Test] {tid}: close_order enqueued (session_end)", flush=True)
+                    logger.info(f"[E2E Test] {tid}: close_order enqueued (session_end)")
                 else:
                     seq["stage"] = "awaiting_exit_fill"
-                    print(f"[E2E Test] {tid}: awaiting exit fill from NT ({seq['scenario']})", flush=True)
+                    logger.info(f"[E2E Test] {tid}: awaiting exit fill from NT ({seq['scenario']})")
 
         return jsonify({'ok': True})
 
@@ -227,7 +287,7 @@ def register_nt_routes(
         # DB has open trade but broker does not → closed offline
         for t in db_open:
             if t.trade_id not in broker_ids:
-                print(f"[PositionSync] Trade {t.trade_id} closed offline (not on broker)")
+                logger.info(f"[PositionSync] Trade {t.trade_id} closed offline (not on broker)")
                 trade_logger.log(t.trade_id, "POSITION_SYNC", "Closed offline (not on broker)")
                 trades_repo.close_trade(
                     trade_id=t.trade_id,
@@ -245,7 +305,7 @@ def register_nt_routes(
         # Broker has position but DB does not → orphan
         for p in positions:
             if p['trade_id'] not in db_open_ids:
-                print(f"[PositionSync] WARNING: Orphan position on broker: {p['trade_id']}")
+                logger.warning(f"[PositionSync] Orphan position on broker: {p['trade_id']}")
                 reconciled.append({'trade_id': p['trade_id'], 'action': 'orphan_warning'})
 
         # Matching → already resumed by TradeManager._load_open_trades_from_db
@@ -253,80 +313,96 @@ def register_nt_routes(
             if p['trade_id'] in db_open_ids:
                 reconciled.append({'trade_id': p['trade_id'], 'action': 'resumed'})
 
-        print(f"[PositionSync] Reconciliation complete: {len(reconciled)} items")
+        logger.info(f"[PositionSync] Reconciliation complete: {len(reconciled)} items")
         return jsonify({'ok': True, 'reconciled': reconciled})
 
     @app.route('/api/nt/entry_fill', methods=['POST'])
+    @_timed_endpoint
     def nt_entry_fill():
         """NinjaTrader reports the actual entry fill price and real SL/TP."""
-        data = request.get_json()
-        trade_id = data.get('trade_id')
-        entry_price = float(data.get('entry_price', 0))
-        broker_sl = float(data['stop_loss']) if data.get('stop_loss') is not None else None
-        broker_tp = float(data['take_profit']) if data.get('take_profit') is not None else None
+        try:
+            data = request.get_json()
+            if not data:
+                abort(400, 'Expected JSON data')
+            trade_id = data.get('trade_id')
+            entry_price = float(data.get('entry_price', 0))
+            broker_sl = float(data['stop_loss']) if data.get('stop_loss') is not None else None
+            broker_tp = float(data['take_profit']) if data.get('take_profit') is not None else None
 
-        if not trade_id:
-            abort(400, 'trade_id is required')
+            if not trade_id:
+                abort(400, 'trade_id is required')
 
-        print(f"[NT EntryFill] trade_id={trade_id} entry={entry_price} "
-              f"SL={broker_sl} TP={broker_tp}", flush=True)
-        trade_manager.handle_broker_entry_fill(trade_id, entry_price, broker_sl, broker_tp)
+            logger.info(f"[NT EntryFill] trade_id={trade_id} entry={entry_price} "
+                  f"SL={broker_sl} TP={broker_tp}")
+            trade_manager.handle_broker_entry_fill(trade_id, entry_price, broker_sl, broker_tp)
 
-        # Also update entry/SL/TP in strategy's open_trades list
-        for t in strategy.open_trades:
-            if t.get('trade_id') == trade_id:
-                t['entry'] = entry_price
-                if broker_sl is not None:
-                    t['stop_loss'] = broker_sl
-                if broker_tp is not None:
-                    t['take_profit'] = broker_tp
-                break
-
-        # E2E test state machine: after entry fill, move SL to breakeven
-        if trade_id in _test_sequences and _test_sequences[trade_id]["stage"] == "awaiting_entry_fill":
-            seq = _test_sequences[trade_id]
-            seq["stage"] = "awaiting_modify_ack"
-            # Update seq with broker's real values
-            seq["entry_price"] = entry_price
-            if broker_tp is not None:
-                seq["tp"] = broker_tp
-            new_sl = entry_price  # breakeven
-            for t in trade_manager.open_trades:
+            # Also update entry/SL/TP in strategy's open_trades list
+            for t in strategy.open_trades:
                 if t.get('trade_id') == trade_id:
-                    t['stop_loss'] = new_sl
+                    t['entry'] = entry_price
+                    if broker_sl is not None:
+                        t['stop_loss'] = broker_sl
+                    if broker_tp is not None:
+                        t['take_profit'] = broker_tp
                     break
-            trades_repo.update_stop_loss(trade_id, new_sl)
-            trade_logger.log(trade_id, "SL_UPDATE", f"SL moved to breakeven {new_sl}")
-            data_source.enqueue_command({
-                "command": "modify_order", "trade_id": trade_id, "stop_loss": new_sl,
-                "test": True, "scenario": seq["scenario"],
-                "entry_price": seq["entry_price"], "tp": seq["tp"],
-            })
-            trade_logger.log(trade_id, "CMD_SENT", "modify_order -> NinjaTrader (breakeven)")
-            print(f"[E2E Test] {trade_id}: modify_order enqueued (breakeven)", flush=True)
 
-        return jsonify({'ok': True})
+            # E2E test state machine: after entry fill, move SL to breakeven
+            if trade_id in _test_sequences and _test_sequences[trade_id]["stage"] == "awaiting_entry_fill":
+                seq = _test_sequences[trade_id]
+                seq["stage"] = "awaiting_modify_ack"
+                # Update seq with broker's real values
+                seq["entry_price"] = entry_price
+                if broker_tp is not None:
+                    seq["tp"] = broker_tp
+                new_sl = entry_price  # breakeven
+                for t in trade_manager.open_trades:
+                    if t.get('trade_id') == trade_id:
+                        t['stop_loss'] = new_sl
+                        break
+                trades_repo.update_stop_loss(trade_id, new_sl)
+                trade_logger.log(trade_id, "SL_UPDATE", f"SL moved to breakeven {new_sl}")
+                data_source.enqueue_command({
+                    "command": "modify_order", "trade_id": trade_id, "stop_loss": new_sl,
+                    "test": True, "scenario": seq["scenario"],
+                    "entry_price": seq["entry_price"], "tp": seq["tp"],
+                })
+                trade_logger.log(trade_id, "CMD_SENT", "modify_order -> NinjaTrader (breakeven)")
+                logger.info(f"[E2E Test] {trade_id}: modify_order enqueued (breakeven)")
+
+            return jsonify({'ok': True})
+        except Exception as e:
+            detail = _format_error_detail('entry_fill', e)
+            notifier.send(f"[NT Routes] ERROR: entry_fill failed: {detail}")
+            return jsonify({'error': detail, 'ok': False}), 500
 
     @app.route('/api/nt/fill', methods=['POST'])
+    @_timed_endpoint
     def nt_fill():
         """NinjaTrader reports a broker fill (SL, TP, or close)."""
-        data = request.get_json()
-        trade_id = data.get('trade_id')
-        exit_price = float(data.get('exit_price', 0))
-        result_type = data.get('result_type')  # "SL", "TP", or None
+        try:
+            data = request.get_json()
+            if not data:
+                abort(400, 'Expected JSON data')
+            trade_id = data.get('trade_id')
+            exit_price = float(data.get('exit_price', 0))
+            result_type = data.get('result_type')  # "SL", "TP", or None
 
-        if not trade_id:
-            abort(400, 'trade_id is required')
+            if not trade_id:
+                abort(400, 'trade_id is required')
 
-        print(f"[NT Fill] trade_id={trade_id} exit_price={exit_price} type={result_type}", flush=True)
-        trade_manager.handle_broker_fill(trade_id, exit_price, result_type)
+            logger.info(f"[NT Fill] trade_id={trade_id} exit_price={exit_price} type={result_type}")
+            trade_manager.handle_broker_fill(trade_id, exit_price, result_type)
 
-        # Also remove from strategy's open_trades list
-        strategy.open_trades = [
-            t for t in strategy.open_trades if t.get('trade_id') != trade_id
-        ]
+            # Also remove from strategy's open_trades list
+            strategy.open_trades = [
+                t for t in strategy.open_trades if t.get('trade_id') != trade_id
+            ]
 
-        # Clean up E2E test state
-        _test_sequences.pop(trade_id, None)
+            # Clean up E2E test state
+            _test_sequences.pop(trade_id, None)
 
-        return jsonify({'ok': True})
+            return jsonify({'ok': True})
+        except Exception as e:
+            detail = _format_error_detail('fill', e)
+            notifier.send(f"[NT Routes] ERROR: fill failed: {detail}")
+            return jsonify({'error': detail, 'ok': False}), 500

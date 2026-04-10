@@ -2,11 +2,13 @@
 
 from flask import Flask, request, abort, render_template
 from src.controllers.admin_controller import AdminController
+from src.utils.app_logger import ILogger
 
 
 def register_admin_routes(
     app: Flask,
     admin_controller: AdminController,
+    logger: ILogger,
 ):
     """Register admin dashboard routes.
     

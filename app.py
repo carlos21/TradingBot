@@ -184,7 +184,24 @@ if __name__ == "__main__":
     mode = os.environ.get("MODE", "backtest")
     if mode == "live":
         wiring = build_live()
+        # Live mode: threaded server, no debug, no reloader for performance
+        # Flask-SocketIO's run() uses threaded=True by default
+        print("[App] Starting LIVE mode server (threaded, debug=False)")
+        wiring.socketio.run(
+            wiring.app, 
+            host='0.0.0.0',
+            port=5001, 
+            debug=False,
+            use_reloader=False
+        )
     else:
         wiring = build_prod()
-    wiring.socketio.run(wiring.app, debug=True, port=5001, use_reloader=(mode != "live"))
+        # Backtest mode: allow debug for development
+        wiring.socketio.run(
+            wiring.app, 
+            host='0.0.0.0',
+            port=5001, 
+            debug=True,
+            use_reloader=True
+        )
     

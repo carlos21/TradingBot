@@ -68,22 +68,22 @@ def setup_database():
             with db.get_engine().connect() as conn:
                 conn.execute(text("ALTER TABLE trades ADD COLUMN logs JSON"))
                 conn.commit()
-            print("[DB] Auto-migrated: added 'logs' column to trades table")
+            # logger removed - pass via constructor if needed
         if 'risk_dollars' not in columns:
             with db.get_engine().connect() as conn:
                 conn.execute(text("ALTER TABLE trades ADD COLUMN risk_dollars FLOAT"))
                 conn.execute(text("ALTER TABLE trades ADD COLUMN risk_pct FLOAT"))
                 conn.execute(text("ALTER TABLE trades ADD COLUMN contracts FLOAT"))
                 conn.commit()
-            print("[DB] Auto-migrated: added 'risk_dollars', 'risk_pct', 'contracts' columns to trades table")
+            # logger removed - pass via constructor if needed
         elif 'contracts' not in columns:
             with db.get_engine().connect() as conn:
                 conn.execute(text("ALTER TABLE trades ADD COLUMN contracts FLOAT"))
                 conn.commit()
-            print("[DB] Auto-migrated: added 'contracts' column to trades table")
+            # logger removed - pass via constructor if needed
         if 'fees' not in columns:
             with db.get_engine().connect() as conn:
                 conn.execute(text("ALTER TABLE trades ADD COLUMN fees FLOAT"))
                 conn.execute(text("ALTER TABLE trades ADD COLUMN pnl_usd FLOAT"))
                 conn.commit()
-            print("[DB] Auto-migrated: added 'fees', 'pnl_usd' columns to trades table")
+            # logger removed - pass via constructor if needed

@@ -8,6 +8,7 @@ from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy, Strate
 from src.strategies.entry_context import EntryContext, EntryTrigger
 from src.strategies.strategy_config import CandleConfig
 from src.strategies.triggers import _calculate_tsi_series, RESCUE_TSI_TIMEFRAME
+from src.utils.app_logger import ILogger
 
 
 class LiquidityStrategyV2(BaseLiquidityStrategy):
@@ -37,6 +38,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         trade_logger=None,
         analytics=None,
         trigger_state_repo=None,
+        logger: ILogger = None,
     ):
         self.timeframes = timeframes or ["5m"]
         
@@ -72,6 +74,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             trade_logger=trade_logger,
             analytics=analytics,
             trigger_state_repo=trigger_state_repo,
+            logger=logger,
         )
 
         self.candle_config = candle_config
@@ -104,7 +107,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     "start": None
                 }
                 self._tf_histories[tf].clear()
-            print("[StrategyV2] 🧹 Internal state fully reset.")
+            self.logger.info("[StrategyV2] Internal state fully reset.")
 
     def _reset_trigger_state(self, line_state: Dict[str, Any]):
         """Reset trigger-specific state only, preserving direction and extreme."""

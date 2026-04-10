@@ -25,7 +25,24 @@ class SQLiteDatabase(DatabaseProtocol):
     
     def __init__(self, db_url="sqlite:///./database.db"):
         self.db_url = db_url
-        self.engine = create_engine(self.db_url, connect_args={"check_same_thread": False})
+        # Enable connection pooling and WAL mode for better concurrent performance
+        self.engine = create_engine(
+            self.db_url, 
+            connect_args={"check_same_thread": False},
+            poolclass=None,  # Use NullPool for SQLite (connections can't be shared across threads)
+            # SQLite optimizations for concurrent access
+            execution_options={"sqlite_pragma": {"journal_mode": "WAL", "synchronous": "NORMAL"}}
+        )
+        # Apply WAL mode pragma on connect
+        from sqlalchemy import event
+        @event.listens_for(self.engine, "connect")
+        def set_sqlite_pragma(dbapi_conn, connection_record):
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA cache_size=10000")
+            cursor.execute("PRAGMA temp_store=MEMORY")
+            cursor.close()
         self.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
 
     def get_engine(self):

@@ -2,11 +2,13 @@
 
 from flask import Flask, jsonify, request, abort
 from src.controllers.lines_controller import LinesController
+from src.utils.app_logger import ILogger
 
 
 def register_lines_routes(
     app: Flask,
     lines_controller: LinesController,
+    logger: ILogger,
 ):
     """Register line management routes.
     

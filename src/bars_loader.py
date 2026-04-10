@@ -5,6 +5,7 @@ import threading
 import time
 
 from src.data_sources.combined_datasource import CombinedDataSource
+from src.utils.app_logger import ILogger
 
 @dataclass
 class LoaderConfig:
@@ -16,12 +17,14 @@ class BarsLoader:
         self,
         data_source: CombinedDataSource,
         socketio: SocketIO,
+        logger: ILogger,
         bar_callback: Callable[[dict], None] = None,
         stream_end_callback: Callable[[float, float], None] = None,
         bars_per_second: float = 10.0
     ):
         self.data_source     = data_source
         self.socketio        = socketio
+        self.logger          = logger
         self.bar_callback    = bar_callback
         self.stream_end_callback = stream_end_callback
         self.bars_per_second = bars_per_second
@@ -146,13 +149,13 @@ class BarsLoader:
     def _handle_message(self, msg: dict):
         if isinstance(msg, dict) and msg.get('_end'):
             self.streaming = False
-            print(f"[BarsLoader] _END message received! last_bar_close={self._last_bar_close}, last_played_ts={self._last_played_ts}")
-            print(f"[BarsLoader] stream_end_callback exists: {self.stream_end_callback is not None}")
+            self.logger.info(f"[BarsLoader] _END message received! last_bar_close={self._last_bar_close}, last_played_ts={self._last_played_ts}")
+            self.logger.info(f"[BarsLoader] stream_end_callback exists: {self.stream_end_callback is not None}")
             if self.stream_end_callback and self._last_played_ts > 0:
-                print(f"[BarsLoader] Calling stream_end_callback NOW!")
+                self.logger.info(f"[BarsLoader] Calling stream_end_callback NOW!")
                 self.stream_end_callback(self._last_bar_close, self._last_played_ts)
             else:
-                print(f"[BarsLoader] NOT calling callback: callback={self.stream_end_callback is not None}, last_ts={self._last_played_ts}")
+                self.logger.info(f"[BarsLoader] NOT calling callback: callback={self.stream_end_callback is not None}, last_ts={self._last_played_ts}")
             self.socketio.emit('stream_status', {'playing': False})
             self.socketio.emit('stream_end', {'ok': True})
             return
@@ -165,7 +168,7 @@ class BarsLoader:
             from datetime import datetime, timezone
             ts = msg.get('time', 0)
             dt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%H:%M:%S')
-            print(f"[BarsLoader] PROCESSING completed bar time={dt} tf={self.current_tf} buf_len={len(self._1m_buffer)} group_start={self._current_group_start}", flush=True)
+            self.logger.info(f"[BarsLoader] PROCESSING completed bar time={dt} tf={self.current_tf} buf_len={len(self._1m_buffer)} group_start={self._current_group_start}")
 
         # Partial bars: emit to frontend for display only, skip strategy
         if is_partial:
@@ -205,14 +208,14 @@ class BarsLoader:
                 self.data_source._stop_event.set()
 
             self.streaming = False
-            print(f"[BarsLoader] STOP_AT reached! msg_time={msg['time']}, stop_at={self._stop_at}")
-            print(f"[BarsLoader] stream_end_callback exists: {self.stream_end_callback is not None}")
+            self.logger.info(f"[BarsLoader] STOP_AT reached! msg_time={msg['time']}, stop_at={self._stop_at}")
+            self.logger.info(f"[BarsLoader] stream_end_callback exists: {self.stream_end_callback is not None}")
             if self.stream_end_callback:
                 close_price = msg.get('close', self._last_bar_close)
-                print(f"[BarsLoader] Calling stream_end_callback with close={close_price}, time={msg['time']}")
+                self.logger.info(f"[BarsLoader] Calling stream_end_callback with close={close_price}, time={msg['time']}")
                 self.stream_end_callback(close_price, msg['time'])
             else:
-                print(f"[BarsLoader] NO callback set, trades will remain open")
+                self.logger.info(f"[BarsLoader] NO callback set, trades will remain open")
             self.socketio.emit('stream_status', {'playing': False})
             self.socketio.emit('stream_end', {'reason': 'day_end', 'stop_at': self._stop_at})
             return
@@ -228,7 +231,7 @@ class BarsLoader:
             if self.live_mode:
                 from datetime import datetime, timezone
                 dt = datetime.fromtimestamp(bar.get('time', 0), tz=timezone.utc).strftime('%H:%M:%S')
-                print(f"[BarsLoader] EMIT 1m bar time={dt} C={bar.get('close')}", flush=True)
+                self.logger.info(f"[BarsLoader] EMIT 1m bar time={dt} C={bar.get('close')}")
             self.socketio.emit('bar', bar)
             time.sleep(self._emit_delay)
             if self._step_mode:

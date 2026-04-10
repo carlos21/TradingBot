@@ -15,6 +15,7 @@ from src.repositories.trades_repository import TradeRepository
 from src.repositories.line_trigger_state_repository import LineTriggerStateRepository, InMemoryLineTriggerStateRepository
 from src.services.trade_manager import TradeManager
 from zoneinfo import ZoneInfo
+from src.utils.app_logger import ILogger
 
 from src.strategies.entry_context import (
     EntryContext,
@@ -88,8 +89,10 @@ class BaseLiquidityStrategy:
         trade_logger=None,
         analytics: AnalyticsReporter = None,
         trigger_state_repo: LineTriggerStateRepository = None,
+        logger: ILogger = None,
     ):
         self.min_stop_loss = float(min_stop_loss)
+        self.logger = logger
         self.max_bounce    = float(max_bounce)
         self.min_cross_depth = float(min_cross_depth)
         self.rr_ratio = float(rr_ratio)
@@ -155,7 +158,7 @@ class BaseLiquidityStrategy:
         direction: 'long' | 'short'
         creation_timestamp: Epoch seconds when this line became valid
         """
-        print(f"[Strategy] ➕ add_strategy_line id={id} level={level} ts={creation_timestamp}")
+        self.logger.info(f"[Strategy] add_strategy_line id={id} level={level} ts={creation_timestamp}")
         with self.lock:
             state = {
                 "level":       float(level),
@@ -186,7 +189,7 @@ class BaseLiquidityStrategy:
         with self.lock:
             if id in self.strategy_lines:
                 self.strategy_lines[id]["level"] = float(level)
-                print(f"[Strategy] ✏️ update_strategy_line id={id} new_level={level}")
+                self.logger.info(f"[Strategy] update_strategy_line id={id} new_level={level}")
         self.socketio.emit("line_updated", {"id": id, "level": level})
 
     def _persist_all_line_states(self):
@@ -260,9 +263,9 @@ class BaseLiquidityStrategy:
                 "extreme_excursion": line_level,
             })
             restored += 1
-            print(f"[ReEntry] Restored re-entry watch: {t.trade_type} @ level={line_level:.2f}")
+            self.logger.info(f"[ReEntry] Restored re-entry watch: {t.trade_type} @ level={line_level:.2f}")
         if restored:
-            print(f"[Strategy] Restored {restored} re-entry opportunity(ies) from DB")
+            self.logger.info(f"[Strategy] Restored {restored} re-entry opportunity(ies) from DB")
 
     def _reset_line_state(self, line_state: Dict[str, Any]):
         """If we keep the line, reset so it can trigger again in the future."""
@@ -389,9 +392,9 @@ class BaseLiquidityStrategy:
                     fees=t_fees,
                     pnl_usd=t_pnl_usd,
                 )
-                print(f"[Strategy] 🕐 SESSION END closed {t['trade_id']} @ {exit_price} (Result: {r_result:.2f}R)")
+                self.logger.info(f"[Strategy] SESSION END closed {t['trade_id']} @ {exit_price} (Result: {r_result:.2f}R)")
             except Exception as e:
-                print(f"[Strategy] ❌ Failed to persist session-end close for {t['trade_id']}: {e}")
+                self.logger.error(f"[Strategy] Failed to persist session-end close for {t['trade_id']}: {e}")
                 self.analytics.capture_exception(e, {"op": "strategy_session_close", "trade_id": t["trade_id"]})
                 if self.trade_logger:
                     self.trade_logger.log(t["trade_id"], "ERROR", str(e))
@@ -431,12 +434,12 @@ class BaseLiquidityStrategy:
                 opp["extreme_excursion"] = min(opp["extreme_excursion"], bar["low"])
                 adverse = level - opp["extreme_excursion"]
                 if adverse > threshold:
-                    print(f"[ReEntry] ❌ Cancelled LONG re-entry: price went {adverse:.1f} pts below line {level:.2f}")
+                    self.logger.info(f"[ReEntry] Cancelled LONG re-entry: price went {adverse:.1f} pts below line {level:.2f}")
                     self.log_decision(bar["time"], "1m", lid, "REENTRY_CANCEL",
                                       f"Cancelled — price went {adverse:.1f}pts below line={level:.2f} (threshold={threshold:.0f}pts)")
                     continue  # drop opportunity
                 if bar["close"] > level:
-                    print(f"[ReEntry] ✅ Triggering LONG re-entry at {bar['close']:.2f} (line={level:.2f})")
+                    self.logger.info(f"[ReEntry] Triggering LONG re-entry at {bar['close']:.2f} (line={level:.2f})")
                     self.log_decision(bar["time"], "1m", lid, "ENTRY",
                                       f"Re-entry LONG @ {bar['close']:.2f} — close above line={level:.2f} (max adverse={adverse:.1f}pts)")
                     ctx = EntryContext(
@@ -453,12 +456,12 @@ class BaseLiquidityStrategy:
                 opp["extreme_excursion"] = max(opp["extreme_excursion"], bar["high"])
                 adverse = opp["extreme_excursion"] - level
                 if adverse > threshold:
-                    print(f"[ReEntry] ❌ Cancelled SHORT re-entry: price went {adverse:.1f} pts above line {level:.2f}")
+                    self.logger.info(f"[ReEntry] Cancelled SHORT re-entry: price went {adverse:.1f} pts above line {level:.2f}")
                     self.log_decision(bar["time"], "1m", lid, "REENTRY_CANCEL",
                                       f"Cancelled — price went {adverse:.1f}pts above line={level:.2f} (threshold={threshold:.0f}pts)")
                     continue  # drop opportunity
                 if bar["close"] < level:
-                    print(f"[ReEntry] ✅ Triggering SHORT re-entry at {bar['close']:.2f} (line={level:.2f})")
+                    self.logger.info(f"[ReEntry] Triggering SHORT re-entry at {bar['close']:.2f} (line={level:.2f})")
                     self.log_decision(bar["time"], "1m", lid, "ENTRY",
                                       f"Re-entry SHORT @ {bar['close']:.2f} — close below line={level:.2f} (max adverse={adverse:.1f}pts)")
                     ctx = EntryContext(
@@ -477,7 +480,7 @@ class BaseLiquidityStrategy:
 
     def _update_trade_sl(self, trade: Dict[str, Any], new_sl: float):
         old_sl = trade['stop_loss']
-        print(f"[Strategy] 🛡️ Moving SL for {trade['trade_id']} to {new_sl}")
+        self.logger.info(f"[Strategy] Moving SL for {trade['trade_id']} to {new_sl}")
 
         # 1. Update In-Memory State
         trade['stop_loss'] = new_sl
@@ -487,7 +490,7 @@ class BaseLiquidityStrategy:
             self.trade_repository.update_stop_loss(trade['trade_id'], new_sl)
             self.trade_manager.update_local_trade_sl(trade['trade_id'], new_sl)
         except Exception as e:
-            print(f"[Strategy] ⚠️ Failed to update SL in DB: {e}")
+            self.logger.error(f"[Strategy] Failed to update SL in DB: {e}")
             self.analytics.capture_exception(e, {"op": "update_sl", "trade_id": trade['trade_id']})
 
         # 2b. Notify executor (live mode: sends modify_order to NinjaTrader)
@@ -653,7 +656,7 @@ class BaseLiquidityStrategy:
                             # track the most adverse price seen since SL hit
                             "extreme_excursion": bar["low"] if direction == Direction.LONG else bar["high"],
                         })
-                        print(f"[ReEntry] 🎯 SL hit on {direction} @ {t['pair']}. Watching level={level} for re-entry.")
+                        self.logger.info(f"[ReEntry] SL hit on {direction} @ {t['pair']}. Watching level={level} for re-entry.")
                         self.log_decision(
                             bar["time"], "1m", f"reentry@{level:.2f}",
                             "REENTRY_WATCH",
@@ -661,7 +664,7 @@ class BaseLiquidityStrategy:
                         )
 
                 if is_phantom:
-                    print(f"[Strategy] 👻 Phantom trade closed (Result: {r_result:.2f}R) — not persisted")
+                    self.logger.info(f"[Strategy] Phantom trade closed (Result: {r_result:.2f}R) — not persisted")
                 else:
                     try:
                         self.trade_repository.close_trade(
@@ -673,9 +676,9 @@ class BaseLiquidityStrategy:
                             fees=t_fees,
                             pnl_usd=t_pnl_usd,
                         )
-                        print(f"[Strategy] 💾 Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R, Type: {result_type})")
+                        self.logger.info(f"[Strategy] Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R, Type: {result_type})")
                     except Exception as e:
-                        print(f"[Strategy] ❌ Failed to persist close for {t['trade_id']}: {e}")
+                        self.logger.error(f"[Strategy] Failed to persist close for {t['trade_id']}: {e}")
                         self.analytics.capture_exception(e, {"op": "strategy_persist_close", "trade_id": t["trade_id"]})
                         if self.trade_logger:
                             self.trade_logger.log(t["trade_id"], "ERROR", str(e))
@@ -714,8 +717,8 @@ class BaseLiquidityStrategy:
                 distance = max(ctx.extreme - entry, self.min_stop_loss)
 
             eff_risk = self._select_sl_level(distance)
-            print(
-                f"[Strategy] 📏 SL Selection | Dir: {ctx.direction} | "
+            self.logger.info(
+                f"[Strategy] SL Selection | Dir: {ctx.direction} | "
                 f"Entry: {entry:.2f} | Extreme: {ctx.extreme:.2f} | "
                 f"Distance: {distance:.2f} pts | Selected SL: {eff_risk:.2f} pts "
                 f"(levels: {self.sl_levels})"
@@ -736,7 +739,7 @@ class BaseLiquidityStrategy:
         # Apply Max Cap (if configured and not using tiered levels)
         if not self.sl_levels and self.max_stop_loss and self.max_stop_loss > 0:
             if eff_risk > self.max_stop_loss:
-                print(f"[Strategy] ⚠️ Risk {eff_risk:.2f} exceeds Max {self.max_stop_loss}. Capping it.")
+                self.logger.warning(f"[Strategy] Risk {eff_risk:.2f} exceeds Max {self.max_stop_loss}. Capping it.")
                 eff_risk = self.max_stop_loss
 
         if ctx.is_long:
@@ -802,7 +805,7 @@ class BaseLiquidityStrategy:
         if trade.get("is_phantom"):
             trade["trade_id"] = f"phantom-{trade['entry_time']}"
             self.open_trades.append(trade)
-            print(f"[Strategy] 👻 Phantom trade opened @ {trade['entry']:.2f} (reentry_only mode)")
+            self.logger.info(f"[Strategy] Phantom trade opened @ {trade['entry']:.2f} (reentry_only mode)")
             return
 
         td = self.trade_repository.insert_trade(
