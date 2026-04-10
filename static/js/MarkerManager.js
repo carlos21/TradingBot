@@ -81,7 +81,12 @@ export class MarkerManager {
     // Only emit markers whose time exists in the current series.
     // LightweightCharts throws "Value is null" when a marker references a
     // time that has no matching bar (e.g. a 5m cross marker after a TF switch).
-    const safe = validTimes ? unique.filter(m => validTimes.has(m.time)) : unique;
+    
+    // Round marker times to integers to match bar times (bar times are integers,
+    // but trade timestamps from the backend may be floats with microsecond precision)
+    const safe = validTimes 
+      ? unique.filter(m => m.time != null && validTimes.has(Math.floor(m.time)))
+      : unique.filter(m => m.time != null);
     this.series.setMarkers(safe);
   }
 }

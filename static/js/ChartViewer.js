@@ -139,14 +139,20 @@ export class ChartViewer {
   }
 
   async initBars() {
+    // Prevent concurrent execution with changeTimeframe
+    if (this._seriesBusy) {
+      console.log('[ChartViewer] initBars: already busy, skipping');
+      return;
+    }
     this._seriesBusy = true;
     try {
       const bars = await this.dataService.fetchBars(this.pair, this.currentTF, this.startTime);
       this.historicalBars = bars;
       this._displayChart(bars);
+      // Load trades before recalculating TSI so marker times are in sync
+      await this._initTrades();
       this.recalculateTSI();
       bars.forEach(bar => this.shadeBar(bar));
-      await this._initTrades();
     } finally {
       this._seriesBusy = false;
     }
@@ -198,13 +204,19 @@ export class ChartViewer {
     if (valid.length !== bars.length) {
       console.warn(`[ChartViewer] dropped ${bars.length - valid.length} bars with null OHLC`);
     }
-    this.series.setMarkers([]);
+    // Set data first, then clear markers to avoid "Value is null" error
+    // This can happen when setMarkers is called on a series with no data
     this.series.setData(valid);
     this.nySeries.setData([]);
     if (valid.length) {
       const last = valid[valid.length - 1];
       this.lastTime = last.time;
       this.lastPrice = last.close;
+    }
+    // Only clear markers after data is set and we have valid bars
+    // This prevents "Value is null" error from lightweight-charts
+    if (valid.length > 0) {
+      this.series.setMarkers([]);
     }
     this.chart.timeScale().fitContent();
   }
@@ -334,14 +346,18 @@ export class ChartViewer {
   }
 
   async changeTimeframe(tf) {
+    // Prevent concurrent execution with initBars or other timeframe changes
+    if (this._seriesBusy) {
+      console.log('[ChartViewer] changeTimeframe: already busy, skipping');
+      return;
+    }
     this._seriesBusy = true;
     try {
       // Cancel any pending initBars from a history_ready event so they
       // don't race with this TF change and call setData on a half-ready series.
       clearTimeout(this._historyReadyTimer);
 
-      // Clear markers NOW while the series still has valid bars from the old TF.
-      this.series.setMarkers([]);
+      // Clear TSI markers (trade markers will be cleared in _displayChart after data is set)
       this.markers.setTSIMarkers([]);
 
       this.currentTF = tf;
@@ -362,12 +378,16 @@ export class ChartViewer {
 
       this.historicalBars = bars;
       this._displayChart(bars);
+      
+      // Refresh trades first (so trade times match the new timeframe bars)
+      // before recalculating TSI which calls markers.update()
+      await this._initTrades();
+      
       this.recalculateTSI();
 
       this.socket.emit('set_timeframe', { timeframe: tf, fromTime: this.lastTime });
       this.chart.timeScale().fitContent();
       bars.forEach(bar => this.shadeBar(bar));
-      await this._initTrades();
     } finally {
       this._seriesBusy = false;
     }
