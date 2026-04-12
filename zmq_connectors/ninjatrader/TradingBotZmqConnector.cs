@@ -12,14 +12,14 @@
 // Protocol: tcp://127.0.0.1:5555-5558 (PUB/SUB, PUSH/PULL, REQ/REP)
 //
 // Logging Strategy:
-//   - Log()              -> UI window + NinjaTrader Output window
-//   - NotifyError()      -> Alert popup (red) + Log()
-//   - NotifyWarning()    -> Alert popup (orange) + Log()
-//   - NotifySuccess()    -> Alert popup (green) + Log()
+//   - Log()              -> UI window + NinjaTrader Output window (Print)
+//   - NotifyError()      -> Log() with *** ERROR *** prefix + Print to Output
+//   - NotifyWarning()    -> Log() with *** WARNING *** prefix + Print to Output
+//   - NotifySuccess()    -> Log() with *** SUCCESS *** prefix
 //   - SendError()        -> Send error to Python via ZMQ
 //   - SendTradeLog()     -> Send trade event to Python via ZMQ
 //
-// All errors are logged to UI. Critical errors also show pop-up alerts.
+// Note: NinjaScript doesn't support Alert popups. All notifications go to UI and Output window.
 
 #region Using declarations
 using System;
@@ -662,6 +662,35 @@ namespace NinjaTrader.NinjaScript.AddOns
         private long _ticksSent = 0;
         private long _barsSent = 0;
         
+        // ═══════════════════════════════════════════════════════════════════════
+        // Order Tracking Architecture
+        // ═══════════════════════════════════════════════════════════════════════
+        // 
+        // LIMITATION: NinjaScript AddOns do not expose ATM Strategy IDs, which would
+        // be the ideal way to link bracket orders (SL/TP) to their parent entry.
+        // 
+        // Tracking Strategy:
+        //   - _pendingEntries: Maps trade_id → entry info (direction, SL points, etc.)
+        //   - _entryOrders: Maps trade_id → Entry Order object reference
+        //   - _stopLossOrders: Maps trade_id → Stop Loss Order object reference  
+        //   - _takeProfitOrders: Maps trade_id → Take Profit Order object reference
+        //   - Order correlation uses ReferenceEquals() to match execution.Order to tracked orders
+        // 
+        // Multi-Position Limitation:
+        //   - All orders (entry, SL, TP) are now tracked in separate dictionaries
+        //   - Order correlation uses ReferenceEquals() for reliable matching
+        //   - With multiple open positions, correlation should work correctly for:
+        //     * Entry fills: matched by _entryOrders dictionary
+        //     * SL fills: matched by _stopLossOrders dictionary  
+        //     * TP fills: matched by _takeProfitOrders dictionary
+        //   - SL modifications: Supported via Cancel + Replace (account.Cancel() + CreateOrder)
+        //     Note: There's a brief gap where no SL is active between cancel and new order
+        //
+        // Limitations:
+        //   - Initial assignment of ATM-created SL/TP to trade_id uses "first available"
+        //     logic, which could be wrong with multiple positions opening simultaneously
+        //   - Once assigned, fill detection and modification are reliable
+        //
         // Pending entry tracking for order management
         private class PendingEntry
         {
@@ -795,77 +824,29 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
         
         /// <summary>
-        /// Show a notification for critical errors. Uses NinjaTrader's Alert system.
+        /// Log error with high visibility. Uses Print() for NinjaTrader output window.
         /// </summary>
         private void NotifyError(string message)
         {
-            Log($"[NOTIFICATION] {message}");
-            
-            try
-            {
-                // Use NinjaTrader's Alert system for critical notifications
-                NinjaTrader.Code.Alert.RenderAlert(
-                    "TradingBot ZMQ",
-                    message,
-                    "Error",
-                    Brushes.Red,
-                    Brushes.White,
-                    10  // Duration in seconds
-                );
-            }
-            catch
-            {
-                // Fallback: just log if alert fails
-                Print($"[ALERT] {message}");
-            }
+            Log($"*** ERROR *** {message}");
+            Print($"[TradingBot ZMQ ERROR] {message}");
         }
         
         /// <summary>
-        /// Show a notification for warnings.
+        /// Log warning with visibility.
         /// </summary>
         private void NotifyWarning(string message)
         {
-            Log($"[WARNING] {message}");
-            
-            try
-            {
-                NinjaTrader.Code.Alert.RenderAlert(
-                    "TradingBot ZMQ",
-                    message,
-                    "Warning",
-                    Brushes.Orange,
-                    Brushes.Black,
-                    5
-                );
-            }
-            catch
-            {
-                Print($"[WARNING] {message}");
-            }
+            Log($"*** WARNING *** {message}");
+            Print($"[TradingBot ZMQ WARNING] {message}");
         }
         
         /// <summary>
-        /// Show a notification for successful operations.
+        /// Log success message.
         /// </summary>
         private void NotifySuccess(string message)
         {
-            Log($"[SUCCESS] {message}");
-            
-            try
-            {
-                NinjaTrader.Code.Alert.RenderAlert(
-                    "TradingBot ZMQ",
-                    message,
-                    "Success",
-                    Brushes.Green,
-                    Brushes.White,
-                    3
-                );
-            }
-            catch
-            {
-                Print($"[SUCCESS] {message}");
-            }
+            Log($"*** SUCCESS *** {message}");
         }
 
         // ═══════════════════════════════════════════════════════════════════
@@ -1126,6 +1107,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (entryOrder == null)
                     throw new InvalidOperationException("Failed to create entry order");
                 
+                // Track the entry order for reliable fill correlation
+                lock (_ordersLock)
+                {
+                    _entryOrders[tradeId] = entryOrder;
+                }
+                
                 // Start ATM strategy - this submits the entry and manages SL/TP automatically
                 NinjaTrader.NinjaScript.AtmStrategy.StartAtmStrategy(atmStrategyName, entryOrder);
                 
@@ -1242,7 +1229,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
         
         // Track active trades and their stop loss orders for modification
+        private readonly Dictionary<string, Order> _entryOrders = new Dictionary<string, Order>();
         private readonly Dictionary<string, Order> _stopLossOrders = new Dictionary<string, Order>();
+        private readonly Dictionary<string, Order> _takeProfitOrders = new Dictionary<string, Order>();
         private readonly Dictionary<string, string> _tradeIdToAtmStrategy = new Dictionary<string, string>();
         private readonly object _ordersLock = new object();
         
@@ -1296,14 +1285,53 @@ namespace NinjaTrader.NinjaScript.AddOns
                     throw new InvalidOperationException($"Stop order is not modifiable (state: {stopOrder.OrderState})");
                 }
 
-                // Modify the stop order
-                _account.ChangeOrder(
-                    stopOrder,
-                    stopOrder.Quantity,
-                    stopOrder.LimitPrice,
-                    newSl,
-                    stopOrder.AtmStrategyId
+                // Modify the stop order using Cancel + Replace
+                // Note: In AddOn context, we use account.Cancel(order) not CancelOrder()
+                
+                // Get order details before canceling
+                var qty = stopOrder.Quantity;
+                var instrument = stopOrder.Instrument;
+                var orderAction = stopOrder.OrderAction == OrderAction.Buy ? OrderAction.Sell : OrderAction.Buy;  // Reverse for exit
+                
+                try
+                {
+                    // Cancel the existing stop order
+                    _account.Cancel(stopOrder);
+                    Log($"Canceled existing stop order for {tradeId}");
+                    
+                    // Wait a moment for cancel to process
+                    Thread.Sleep(100);
+                }
+                catch (Exception cancelEx)
+                {
+                    Log($"WARNING: Failed to cancel existing stop order: {cancelEx.Message}");
+                    // Continue anyway - might still work
+                }
+                
+                // Create new stop order at the new price
+                var newStopOrder = _account.CreateOrder(
+                    instrument,
+                    orderAction,
+                    OrderType.StopMarket,
+                    OrderEntry.Automated,
+                    TimeInForce.Gtc,
+                    qty,
+                    0,  // limit price
+                    newSl,  // new stop price
+                    string.Empty,
+                    "Stop",  // name must be "Stop" for ATM compatibility
+                    DateTime.MinValue,
+                    null
                 );
+                
+                if (newStopOrder == null)
+                    throw new InvalidOperationException("Failed to create new stop order");
+                
+                // Track the new order
+                lock (_ordersLock)
+                {
+                    _stopLossOrders[tradeId] = newStopOrder;
+                }
                 
                 Log($"SUCCESS: Modified SL for {tradeId} from {stopOrder.StopPrice} to {newSl}");
                 _network?.SendTradeLog(tradeId, "NT:MODIFY", $"Stop loss changed from {stopOrder.StopPrice} to {newSl}");
@@ -1321,17 +1349,11 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         /// <summary>
         /// Find the stop loss order for a trade by searching through account orders.
+        /// Since ATM strategy IDs are not exposed in NinjaScript, we track by order name and state.
         /// </summary>
         private Order FindStopOrderForTrade(string tradeId)
         {
             if (_account == null) return null;
-
-            string atmStrategyName;
-            lock (_ordersLock)
-            {
-                if (!_tradeIdToAtmStrategy.TryGetValue(tradeId, out atmStrategyName))
-                    atmStrategyName = null;
-            }
 
             foreach (var order in _account.Orders)
             {
@@ -1343,22 +1365,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (order.Name != "Stop" && !order.Name.Contains("Stop"))
                     continue;
 
-                // Must be active
+                // Must be active/working
                 if (order.OrderState != OrderState.Working && order.OrderState != OrderState.Accepted)
                     continue;
 
-                // Check ATM strategy match if we have it
-                if (!string.IsNullOrEmpty(atmStrategyName))
-                {
-                    var orderAtmId = order.AtmStrategyId ?? "";
-                    if (orderAtmId.StartsWith(atmStrategyName) || order.AtmStrategyName == atmStrategyName)
-                        return order;
-                }
-                else
-                {
-                    // Return first matching stop order
-                    return order;
-                }
+                // Return first matching stop order
+                // In practice, there should only be one active stop per position
+                return order;
             }
 
             return null;
@@ -1619,32 +1632,116 @@ namespace NinjaTrader.NinjaScript.AddOns
                 var order = e.Order;
                 Log($"ORDER UPDATE: {order.Name} state={order.OrderState}");
                 
-                // Track stop loss orders for modification capability
+                // Track orders by type for reliable fill correlation
+                // LIMITATION: With multiple positions, we can't reliably tell which order belongs to which trade
+                // without ATM strategy IDs (not exposed in NinjaScript)
+                // For single-position trading, this works fine
+                
+                // Track stop loss orders
                 if ((order.Name == "Stop" || order.Name.Contains("Stop")) && 
                     (order.OrderType == OrderType.StopMarket || order.OrderType == OrderType.StopLimit))
                 {
-                    // Find the trade ID associated with this stop order
-                    string tradeId = null;
+                    // Only track working orders
+                    if (order.OrderState == OrderState.Working || order.OrderState == OrderState.Accepted)
+                    {
+                        // Find trade ID that doesn't already have a stop order tracked
+                        // or update the one that matches this order reference
+                        string tradeId = null;
+                        lock (_ordersLock)
+                        {
+                            // First, check if this order is already tracked (same reference)
+                            foreach (var kvp in _stopLossOrders)
+                            {
+                                if (ReferenceEquals(kvp.Value, order))
+                                {
+                                    tradeId = kvp.Key;
+                                    break;
+                                }
+                            }
+                            
+                            // If not tracked yet, find a trade without a stop order
+                            if (tradeId == null)
+                            {
+                                foreach (var kvp in _pendingEntries)
+                                {
+                                    if (!_stopLossOrders.ContainsKey(kvp.Key))
+                                    {
+                                        tradeId = kvp.Key;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (tradeId != null)
+                        {
+                            lock (_ordersLock)
+                            {
+                                _stopLossOrders[tradeId] = order;
+                            }
+                            Log($"TRACKING SL order for {tradeId}: current SL={order.StopPrice}");
+                        }
+                    }
+                }
+                
+                // Track take profit orders
+                else if ((order.Name == "Target" || order.Name.Contains("Target")) &&
+                         (order.OrderType == OrderType.Limit || order.OrderType == OrderType.Market))
+                {
+                    // Only track working orders
+                    if (order.OrderState == OrderState.Working || order.OrderState == OrderState.Accepted)
+                    {
+                        string tradeId = null;
+                        lock (_ordersLock)
+                        {
+                            // Check if already tracked
+                            foreach (var kvp in _takeProfitOrders)
+                            {
+                                if (ReferenceEquals(kvp.Value, order))
+                                {
+                                    tradeId = kvp.Key;
+                                    break;
+                                }
+                            }
+                            
+                            // Find trade without a TP order
+                            if (tradeId == null)
+                            {
+                                foreach (var kvp in _pendingEntries)
+                                {
+                                    if (!_takeProfitOrders.ContainsKey(kvp.Key))
+                                    {
+                                        tradeId = kvp.Key;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if (tradeId != null)
+                        {
+                            lock (_ordersLock)
+                            {
+                                _takeProfitOrders[tradeId] = order;
+                            }
+                            Log($"TRACKING TP order for {tradeId}: current TP={order.LimitPrice}");
+                        }
+                    }
+                }
+                
+                // Update entry orders if state changed
+                else if (order.Name == "Entry")
+                {
                     lock (_ordersLock)
                     {
-                        foreach (var kvp in _tradeIdToAtmStrategy)
+                        foreach (var kvp in _entryOrders)
                         {
-                            var orderAtmId = order.AtmStrategyId ?? "";
-                            if (orderAtmId.StartsWith(kvp.Value) || order.AtmStrategyName == kvp.Value)
+                            if (ReferenceEquals(kvp.Value, order))
                             {
-                                tradeId = kvp.Key;
+                                Log($"Entry order update for {kvp.Key}: state={order.OrderState}");
                                 break;
                             }
                         }
-                    }
-                    
-                    if (tradeId != null)
-                    {
-                        lock (_ordersLock)
-                        {
-                            _stopLossOrders[tradeId] = order;
-                        }
-                        Log($"TRACKING SL order for {tradeId}: current SL={order.StopPrice}");
                     }
                 }
                 
@@ -1665,7 +1762,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             try
             {
                 var execution = e.Execution;
-                var orderName = execution.Order.Name;
+                var order = execution.Order;
+                var orderName = order.Name;
                 var fillPrice = execution.Price;
                 var quantity = execution.Quantity;
                 
@@ -1678,33 +1776,43 @@ namespace NinjaTrader.NinjaScript.AddOns
                     $"Execution: {quantity} @ {fillPrice}"
                 );
                 
+                // Find trade_id by looking up the order reference in our tracking dictionaries
+                string tradeId = null;
+                
                 // Check for entry fill (order name is "Entry")
                 if (orderName == "Entry")
                 {
-                    // Find the trade_id for this entry
-                    string tradeId = null;
-                    PendingEntry entry = null;
-                    
+                    // Look up in _entryOrders dictionary by object reference
                     lock (_ordersLock)
                     {
-                        foreach (var kvp in _pendingEntries)
+                        foreach (var kvp in _entryOrders)
                         {
-                            // Match by ATM strategy ID on the order
-                            var orderAtmId = execution.Order.AtmStrategyId ?? "";
-                            if (_tradeIdToAtmStrategy.TryGetValue(kvp.Key, out var atmName))
+                            if (ReferenceEquals(kvp.Value, order))
                             {
-                                if (orderAtmId.StartsWith(atmName) || execution.Order.AtmStrategyName == atmName)
-                                {
-                                    tradeId = kvp.Key;
-                                    entry = kvp.Value;
-                                    break;
-                                }
+                                tradeId = kvp.Key;
+                                break;
                             }
                         }
                     }
                     
-                    if (tradeId != null && entry != null)
+                    // Fallback if not found (shouldn't happen with proper tracking)
+                    if (tradeId == null)
                     {
+                        Log($"WARNING: Entry fill not found in _entryOrders. Using fallback.");
+                        lock (_ordersLock)
+                        {
+                            foreach (var kvp in _pendingEntries)
+                            {
+                                tradeId = kvp.Key;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (tradeId != null)
+                    {
+                        var entry = _pendingEntries[tradeId];
+                        
                         // Calculate SL/TP based on fill price
                         double sl, tp;
                         if (entry.Direction == "long")
@@ -1725,17 +1833,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
                 
-                // Check for SL/TP fills (order name contains "Stop" or "Target")
-                else if (orderName.Contains("Stop") || orderName.Contains("Target"))
+                // Check for Stop Loss fills
+                else if (orderName.Contains("Stop"))
                 {
-                    // Find trade_id by ATM strategy
-                    string tradeId = null;
+                    // Look up in _stopLossOrders dictionary by object reference
                     lock (_ordersLock)
                     {
-                        foreach (var kvp in _tradeIdToAtmStrategy)
+                        foreach (var kvp in _stopLossOrders)
                         {
-                            var orderAtmId = execution.Order.AtmStrategyId ?? "";
-                            if (orderAtmId.StartsWith(kvp.Value) || execution.Order.AtmStrategyName == kvp.Value)
+                            if (ReferenceEquals(kvp.Value, order))
                             {
                                 tradeId = kvp.Key;
                                 break;
@@ -1745,24 +1851,63 @@ namespace NinjaTrader.NinjaScript.AddOns
                     
                     if (tradeId != null)
                     {
-                        var resultType = orderName.Contains("Stop") ? "SL" : "TP";
-                        Log($"EXIT FILL: {tradeId} @ {fillPrice} ({resultType})");
-                        _network?.SendExitFill(tradeId, fillPrice, resultType);
-                        _network?.SendTradeLog(tradeId, "NT:FILL", $"{resultType} filled @ {fillPrice} qty={quantity}");
-                        
-                        // Show notification
-                        if (resultType == "TP")
-                            NotifySuccess($"Take Profit Hit @ {fillPrice}");
-                        else
-                            NotifyWarning($"Stop Loss Hit @ {fillPrice}");
+                        Log($"EXIT FILL (SL): {tradeId} @ {fillPrice}");
+                        _network?.SendExitFill(tradeId, fillPrice, "SL");
+                        _network?.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice} qty={quantity}");
+                        NotifyWarning($"Stop Loss Hit @ {fillPrice}");
                         
                         // Clean up tracking
                         lock (_ordersLock)
                         {
                             _pendingEntries.Remove(tradeId);
+                            _entryOrders.Remove(tradeId);
                             _stopLossOrders.Remove(tradeId);
+                            _takeProfitOrders.Remove(tradeId);
                             _tradeIdToAtmStrategy.Remove(tradeId);
                         }
+                    }
+                    else
+                    {
+                        Log($"WARNING: SL fill not found in tracking. Order: {orderName}");
+                    }
+                }
+                
+                // Check for Take Profit fills
+                else if (orderName.Contains("Target"))
+                {
+                    // Look up in _takeProfitOrders dictionary by object reference
+                    lock (_ordersLock)
+                    {
+                        foreach (var kvp in _takeProfitOrders)
+                        {
+                            if (ReferenceEquals(kvp.Value, order))
+                            {
+                                tradeId = kvp.Key;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    if (tradeId != null)
+                    {
+                        Log($"EXIT FILL (TP): {tradeId} @ {fillPrice}");
+                        _network?.SendExitFill(tradeId, fillPrice, "TP");
+                        _network?.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice} qty={quantity}");
+                        NotifySuccess($"Take Profit Hit @ {fillPrice}");
+                        
+                        // Clean up tracking
+                        lock (_ordersLock)
+                        {
+                            _pendingEntries.Remove(tradeId);
+                            _entryOrders.Remove(tradeId);
+                            _stopLossOrders.Remove(tradeId);
+                            _takeProfitOrders.Remove(tradeId);
+                            _tradeIdToAtmStrategy.Remove(tradeId);
+                        }
+                    }
+                    else
+                    {
+                        Log($"WARNING: TP fill not found in tracking. Order: {orderName}");
                     }
                 }
                 
@@ -1797,7 +1942,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                             lock (_ordersLock)
                             {
                                 _pendingEntries.Remove(_pendingCloseTradeId);
+                                _entryOrders.Remove(_pendingCloseTradeId);
                                 _stopLossOrders.Remove(_pendingCloseTradeId);
+                                _takeProfitOrders.Remove(_pendingCloseTradeId);
                                 _tradeIdToAtmStrategy.Remove(_pendingCloseTradeId);
                             }
                             

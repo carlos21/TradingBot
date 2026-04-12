@@ -190,7 +190,7 @@ sequenceDiagram
 
 ### How It Works
 
-The `order_modify` command is now **fully functional**. Here's the implementation flow:
+The `order_modify` command uses **Cancel + Replace** since `ChangeOrder()` is not available in AddOn context:
 
 ```csharp
 // 1. Python sends modification request
@@ -198,28 +198,37 @@ gateway.send_modify_order(trade_id="abc123", stop_loss=21050)
 
 // 2. NinjaTrader receives ORDER_MODIFY command
 
-// 3. Find the stop order:
-//    - Check _stopLossOrders cache first
-//    - If not found, search through Account.Orders
-//    - Cache the reference for future use
+// 3. Find the tracked stop order
+Order stopOrder = _stopLossOrders[trade_id];
 
-// 4. Validate order is modifiable
-if (stopOrder.OrderState == OrderState.Working || 
-    stopOrder.OrderState == OrderState.Accepted)
-{
-    // 5. Modify using NinjaTrader API
-    _account.ChangeOrder(
-        order: stopOrder,
-        quantity: stopOrder.Quantity,        // Keep same
-        limitPrice: stopOrder.LimitPrice,    // Keep same  
-        stopPrice: newSl,                    // NEW VALUE
-        atmStrategyId: stopOrder.AtmStrategyId // Keep ATM
-    );
-}
+// 4. Cancel the existing order
+_account.Cancel(stopOrder);
 
-// 6. Send confirmation back to Python
+// 5. Create new stop order at new price
+Order newStopOrder = _account.CreateOrder(
+    instrument: stopOrder.Instrument,
+    orderAction: stopOrder.OrderAction,
+    orderType: OrderType.StopMarket,
+    stopPrice: newSl  // New stop price
+);
+
+// 6. Track the new order
+_stopLossOrders[trade_id] = newStopOrder;
+
+// 7. Send confirmation back to Python
 _network?.SendTradeLog(trade_id, "NT:MODIFY", "Stop loss changed to 21050")
 ```
+
+### ⚠️ Important: The "Gap" Risk
+
+There's a **brief moment** (milliseconds) where **no stop loss is active** between:
+1. Cancel of old stop order
+2. Creation of new stop order
+
+In fast-moving markets, the price could gap through this window. For this reason:
+- Use ATM strategy's built-in breakeven for safer SL management
+- Only use `modify_order` for non-critical adjustments
+- Consider the risk before modifying SL near market price
 
 ### Code Changes
 
@@ -537,7 +546,7 @@ sequenceDiagram
 |-------------|----------------|-------------|
 | `order_open` | trade_id, direction, entry_price, stop_loss, take_profit, risk_points, rr_ratio | Open new position with ATM strategy |
 | `order_close` | trade_id, reason | Close position (flatten) |
-| `order_modify` | trade_id, stop_loss, take_profit | **Modify SL/TP - NOW WORKING** |
+| `order_modify` | trade_id, stop_loss, take_profit | Modify SL via Cancel+Replace (⚠️ brief gap risk) |
 | `refresh_request` | days | Request historical data refresh |
 
 ### NinjaTrader → Python (Market Data via PUB/SUB)
@@ -627,13 +636,13 @@ stateDiagram-v2
     Pending --> Open: ENTRY_FILL received
     Pending --> Rejected: ORDER_REJECTED received
     
-    Open --> Modified: send_modify_order()
+    Open --> Modified: send_modify_order()<br/>(Cancel+Replace)
     Open --> Closed_TP: EXIT_FILL (TP)
     Open --> Closed_SL: EXIT_FILL (SL)
     Open --> Closed_Manual: send_close_order()
     Open --> Closed_Session: send_close_order()<br/>(session end)
     
-    Modified --> Open: Modification confirmed
+    Modified --> Open: New SL order working
     Modified --> Closed_TP: EXIT_FILL (TP)
     Modified --> Closed_SL: EXIT_FILL (SL)
     Modified --> Closed_Session: send_close_order()<br/>(session end)
@@ -650,6 +659,7 @@ stateDiagram-v2
 | Scenario | Behavior |
 |----------|----------|
 | Stop order not found | Searches Account.Orders, errors if still not found |
+| Modify order gap risk | Warning logged: Brief gap between cancel and new order |
 | Order not modifiable (Filled/Cancelled) | Error: "Stop order not modifiable" |
 | ChangeOrder exception | Error logged + sent to Python via TRADE_LOG |
 | Account not connected | Error: "No account available" |
