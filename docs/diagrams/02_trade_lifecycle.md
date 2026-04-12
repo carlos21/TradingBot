@@ -1,0 +1,104 @@
+# Trade Lifecycle: Entry → SL Update → TP Hit
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant PY as Python TradingBot
+    participant GW as TradingGateway
+    participant ZMQ as ZeroMQ
+    participant NT as NinjaTrader ZMQ Connector
+    participant ATM as ATM Strategy
+    participant MK as Market
+
+    %% ===== INITIALIZATION =====
+    rect rgb(230, 245, 255)
+        Note over PY,MK: Connection & Market Data Setup
+        NT->>ZMQ: CONNECT (msg_type: connect)
+        ZMQ->>GW: Platform connected notification
+        GW->>PY: on_connect callback
+        NT->>ZMQ: HISTORY_BATCH (historical bars)
+        ZMQ->>GW: Process history
+        GW->>PY: on_history_batch callback
+        NT->>ZMQ: HISTORY_END
+        ZMQ->>GW: History complete
+        
+        loop Live Market Data Stream
+            MK->>NT: Price updates
+            NT->>ZMQ: TICK (price, volume, time)
+            ZMQ->>GW: Market data received
+            GW->>PY: on_tick callback
+        end
+        
+        loop Heartbeat (every 5s)
+            NT->>ZMQ: HEARTBEAT
+            ZMQ->>GW: Update last_heartbeat_time
+        end
+    end
+
+    %% ===== TRADE ENTRY =====
+    rect rgb(255, 245, 230)
+        Note over PY,MK: Phase 1: Trade Entry Signal
+        PY->>PY: Strategy generates entry signal
+        PY->>GW: send_open_order()
+        GW->>GW: Queue ORDER_OPEN command
+        
+        GW->>ZMQ: ORDER_OPEN<br/>{trade_id, direction, entry_price,<br/>stop_loss, take_profit, risk_points}
+        ZMQ->>NT: Receive command
+        
+        NT->>NT: Validate order parameters
+        NT->>ATM: Create market order + Start ATM Strategy
+        ATM->>MK: Submit entry order
+        MK->>ATM: Fill at entry price
+        
+        ATM->>ATM: Auto-create Stop Loss order
+        ATM->>ATM: Auto-create Take Profit order
+        
+        ATM->>NT: Entry filled notification
+        NT->>ZMQ: ENTRY_FILL<br/>{trade_id, entry_price, stop_loss, take_profit}
+        ZMQ->>GW: Entry fill received
+        GW->>PY: on_entry_fill callback
+        
+        PY->>PY: Update trade in database<br/>Status: OPEN<br/>entry_price, sl, tp stored
+    end
+
+    %% ===== STOP LOSS UPDATE =====
+    rect rgb(255, 255, 230)
+        Note over PY,MK: Phase 2: Trailing Stop / Breakeven Update
+        PY->>PY: Price moves in favor
+        PY->>PY: Strategy decides to move SL to breakeven
+        PY->>GW: send_modify_order()<br/>new_stop_loss = entry_price
+        
+        GW->>ZMQ: ORDER_MODIFY<br/>{trade_id, stop_loss}
+        ZMQ->>NT: Receive modify command
+        
+        Note over NT: ATM modification not supported<br/>in AddOn context
+        NT->>NT: Log warning: "Use ChartTrader"
+        NT->>ZMQ: TRADE_LOG<br/>{trade_id, event: NT:ERROR, msg}
+        ZMQ->>PY: on_trade_log callback
+        
+        alt Manual Override via ChartTrader
+            NT->>ATM: User modifies stop via ChartTrader
+            ATM->>MK: Update stop order
+        end
+    end
+
+    %% ===== TAKE PROFIT HIT =====
+    rect rgb(230, 255, 230)
+        Note over PY,MK: Phase 3: Take Profit Hit (Winning Trade)
+        MK->>ATM: Price hits take profit level
+        ATM->>MK: Execute take profit order
+        MK->>ATM: Fill at TP price
+        
+        ATM->>ATM: Auto-cancel Stop Loss order
+        ATM->>ATM: Close ATM strategy
+        
+        ATM->>NT: Target filled notification
+        NT->>ZMQ: EXIT_FILL<br/>{trade_id, exit_price, result_type: TP}
+        ZMQ->>GW: Exit fill received
+        GW->>PY: on_exit_fill callback
+        
+        PY->>PY: Calculate P&L<br/>(TP - Entry) × contracts × point_value
+        PY->>PY: Update trade in database<br/>Status: CLOSED<br/>exit_price, result: TP
+        PY->>PY: Update statistics<br/>win_count++, total_profit += pnl
+    end
+```

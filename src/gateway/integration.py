@@ -38,6 +38,7 @@ from .executor import ZMQTradeExecutor
 
 def create_live_components(
     pair: str,
+    logger: ILogger,
     *,
     risk_usd: Optional[float] = None,
     risk_pct: Optional[float] = None,
@@ -46,7 +47,6 @@ def create_live_components(
     command_port: int = 5556,
     query_port: int = 5557,
     heartbeat_port: int = 5558,
-    logger: Optional[ILogger] = None,
 ) -> Tuple[ZMQDataSource, ZMQTradeExecutor]:
     """
     Create ZeroMQ-based data source and trade executor for live trading.
@@ -55,6 +55,7 @@ def create_live_components(
     
     Args:
         pair: Trading pair symbol (e.g., "NQ", "MNQ")
+        logger: Logger instance (required)
         risk_usd: Fixed dollar risk per trade (optional)
         risk_pct: Percentage of account to risk per trade (optional)
         host: ZeroMQ host address (default: localhost)
@@ -68,11 +69,16 @@ def create_live_components(
         
     Example:
         >>> from src.gateway import create_live_components
+        >>> from src.utils.app_logger import FileAndConsoleLogger
         >>> from app_factory import create_app
+        >>> 
+        >>> # Create logger
+        >>> logger = FileAndConsoleLogger(log_dir="logs")
         >>> 
         >>> # Create ZeroMQ components
         >>> data_source, executor = create_live_components(
         ...     pair="NQ",
+        ...     logger=logger,
         ...     risk_usd=500,
         ... )
         >>> 
@@ -91,8 +97,6 @@ def create_live_components(
         >>> # Run Flask
         >>> wiring.socketio.run(wiring.app, port=5001)
     """
-    # Use provided logger or create default
-    logger = logger or ConsoleLogger()
     
     # Create shared gateway configuration
     config = GatewayConfig(
@@ -103,18 +107,18 @@ def create_live_components(
         platform_connects=True,  # Python binds, platform connects
     )
     
-    # Create gateway with logger
-    gateway = TradingGateway(config=config, pair=pair, logger=logger)
+    # Create gateway with logger (logger is required first param)
+    gateway = TradingGateway(logger, config=config, pair=pair)
     
-    # Create data source that uses the gateway
-    data_source = ZMQDataSource(gateway=gateway, pair=pair, logger=logger)
+    # Create data source that uses the gateway (logger is required first param)
+    data_source = ZMQDataSource(logger, gateway=gateway, pair=pair)
     
-    # Create trade executor that uses the same gateway
+    # Create trade executor that uses the same gateway (logger is required)
     trade_executor = ZMQTradeExecutor(
-        gateway=gateway,
+        gateway,
+        logger,
         risk_usd=risk_usd,
         risk_pct=risk_pct,
-        logger=logger,
     )
     
     logger.info(f"Created ZeroMQ live components for {pair}")
@@ -126,6 +130,7 @@ def create_live_components(
 
 def create_gateway_only(
     pair: str,
+    logger: ILogger,
     host: str = "127.0.0.1",
     market_port: int = 5555,
     command_port: int = 5556,
@@ -140,6 +145,7 @@ def create_gateway_only(
     
     Args:
         pair: Trading pair symbol
+        logger: Logger instance (required)
         host: ZeroMQ host address
         market_port: Port for market data
         command_port: Port for trade commands
@@ -157,7 +163,7 @@ def create_gateway_only(
         platform_connects=True,
     )
     
-    return TradingGateway(config=config, pair=pair)
+    return TradingGateway(logger, config=config, pair=pair)
 
 
 class HybridDataSource(CombinedDataSource):

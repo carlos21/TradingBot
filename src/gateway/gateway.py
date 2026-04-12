@@ -22,6 +22,8 @@ from typing import Dict, Any, Optional, Callable, List, Union
 from collections import deque
 from concurrent.futures import Future
 
+from src.utils.app_logger import ILogger, ConsoleLogger
+
 from .protocol import (
     MessageType,
     MessageEnvelope,
@@ -61,6 +63,9 @@ class GatewayConfig:
     # Platform binds vs connects (default: Python binds, platform connects)
     platform_connects: bool = True
     
+    # Logging verbosity
+    verbose: bool = False  # Set True for debug logging of all messages
+    
     def get_platform_addresses(self) -> Dict[str, str]:
         """Get addresses formatted for the platform (reverse if needed)."""
         if self.platform_connects:
@@ -94,7 +99,7 @@ to be:
         gateway.start()
         
         # Register callbacks
-        gateway.on_tick(lambda tick: print(f"Price: {tick.price}"))
+        gateway.on_tick(lambda tick: logger.info(f"Price: {tick['price']}"))
         
         # Send commands
         gateway.send_open_order(
@@ -112,19 +117,20 @@ to be:
     
     def __init__(
         self,
+        logger: ILogger,
         config: Optional[GatewayConfig] = None,
         pair: str = "NQ",
-        logger: Optional[ILogger] = None,
     ):
+        self.logger = logger
         self.config = config or GatewayConfig()
         self.pair = pair
-        self.logger = logger or ConsoleLogger()
         
         # ZMQ context and sockets
         self._context: Optional[zmq.Context] = None
         self._market_sub: Optional[zmq.Socket] = None  # SUB: Receive market data
         self._command_push: Optional[zmq.Socket] = None  # PUSH: Send commands
-        self._query_req: Optional[zmq.Socket] = None  # REQ: Sync queries
+        self._query_rep: Optional[zmq.Socket] = None  # REP: Handle queries from platform (when binding)
+        self._query_req: Optional[zmq.Socket] = None  # REQ: Send queries to platform (when connecting)
         self._heartbeat_sub: Optional[zmq.Socket] = None  # SUB: Receive heartbeats
         
         # Threading
@@ -151,6 +157,11 @@ to be:
             MessageType.ERROR: [],
             MessageType.HEARTBEAT: [],
             MessageType.CONNECT: [],
+            MessageType.TEST_PING: [],
+            MessageType.TEST_PONG: [],
+            MessageType.TEST_START: [],
+            MessageType.TEST_STATUS: [],
+            MessageType.TEST_RESULT: [],
         }
         
         # Connection state
@@ -160,6 +171,9 @@ to be:
         
         # Pending commands for acknowledgment tracking
         self._pending_commands: Dict[str, Future] = {}
+        
+        # E2E test state tracking
+        self._test_sequences: Dict[str, Dict[str, Any]] = {}
     
     # -------------------------------------------------------------------------
     # Lifecycle
@@ -188,6 +202,7 @@ to be:
             threading.Thread(target=self._market_data_loop, name="ZMQ-MarketData", daemon=True),
             threading.Thread(target=self._command_sender_loop, name="ZMQ-CommandSender", daemon=True),
             threading.Thread(target=self._heartbeat_loop, name="ZMQ-Heartbeat", daemon=True),
+            threading.Thread(target=self._query_handler_loop, name="ZMQ-QueryHandler", daemon=True),
         ]
         
         for t in self._threads:
@@ -207,7 +222,7 @@ to be:
         self._running = False
         
         # Close sockets to unblock threads
-        for socket in [self._market_sub, self._command_push, self._query_req, 
+        for socket in [self._market_sub, self._command_push, self._query_rep, self._query_req, 
                        self._heartbeat_sub]:
             if socket:
                 try:
@@ -243,9 +258,9 @@ to be:
         self._command_push = self._context.socket(zmq.PUSH)
         self._command_push.bind(self.config.command_pull)
         
-        # REQ socket: Sync queries (Python acts as client)
-        self._query_req = self._context.socket(zmq.REQ)
-        self._query_req.bind(self.config.query_rep)
+        # REP socket: Sync queries (Python acts as server - receive query, send response)
+        self._query_rep = self._context.socket(zmq.REP)
+        self._query_rep.bind(self.config.query_rep)
         
         # SUB socket: Receive heartbeats from platform
         self._heartbeat_sub = self._context.socket(zmq.SUB)
@@ -263,7 +278,7 @@ to be:
         self._command_push = self._context.socket(zmq.PUSH)
         self._command_push.connect(self.config.command_pull)
         
-        # REQ socket: Connect to platform's query REP
+        # REQ socket: Connect to platform's query REP (for Python-initiated queries)
         self._query_req = self._context.socket(zmq.REQ)
         self._query_req.connect(self.config.query_rep)
         
@@ -282,6 +297,10 @@ to be:
         poller.register(self._market_sub, zmq.POLLIN)
         poller.register(self._heartbeat_sub, zmq.POLLIN)
         
+        # Stats tracking
+        msg_count = 0
+        last_stats_time = time.time()
+        
         while self._running:
             try:
                 # Poll with timeout to allow checking _running
@@ -292,12 +311,20 @@ to be:
                 # Check market data socket
                 if self._market_sub in dict(ready):
                     msg = self._market_sub.recv_string()
+                    msg_count += 1
                     self._handle_message(msg)
                 
                 # Check heartbeat socket
                 if self._heartbeat_sub in dict(ready):
                     msg = self._heartbeat_sub.recv_string()
                     self._handle_heartbeat(msg)
+                
+                # Log stats every 30 seconds
+                now = time.time()
+                if now - last_stats_time >= 30:
+                    self.logger.info(f"ZMQ stats: {msg_count} msgs in last 30s")
+                    msg_count = 0
+                    last_stats_time = now
                     
             except zmq.ZMQError as e:
                 if e.errno == zmq.ETERM:
@@ -326,16 +353,66 @@ to be:
             except Exception as e:
                 self.logger.error(f"Error sending command: {e}")
     
-    def _heartbeat_loop(self) -> None:
-        """Background thread: Send heartbeats and check platform health."""
+    def _query_handler_loop(self) -> None:
+        """Background thread: Handle synchronous queries from platform."""
+        self.logger.info("Query handler loop started")
+        
         while self._running:
             try:
-                # Send heartbeat
-                hb = HeartbeatMessage(source="python", status="ok")
-                envelope = hb.to_envelope(seq_num=self._next_seq())
+                if self._query_rep is None:
+                    time.sleep(0.1)
+                    continue
                 
-                if self._heartbeat_push:
-                    self._heartbeat_push.send_string(envelope.to_json())
+                # Receive query from platform (blocking with timeout)
+                # REP socket must receive, then send
+                try:
+                    self._query_rep.setsockopt(zmq.RCVTIMEO, 100)  # 100ms timeout
+                    query_json = self._query_rep.recv_string()
+                except zmq.Again:
+                    continue
+                
+                # Parse and handle query
+                envelope = MessageEnvelope.from_json(query_json)
+                self.logger.debug(f"Query received: {envelope.msg_type}")
+                
+                if envelope.msg_type == MessageType.TEST_PING:
+                    # Respond with pong
+                    self.logger.info("🧪 TEST PING query received, sending PONG")
+                    from .protocol import TestPongMessage
+                    pong = TestPongMessage(timestamp=time.time())
+                    resp_envelope = pong.to_envelope(seq_num=self._next_seq())
+                    self._query_rep.send_string(resp_envelope.to_json())
+                elif envelope.msg_type == MessageType.POSITION_QUERY:
+                    # Handle position query - return empty list for now
+                    resp_envelope = MessageEnvelope.create(
+                        msg_type=MessageType.POSITION_RESPONSE,
+                        payload={"positions": []},
+                        seq_num=self._next_seq(),
+                    )
+                    self._query_rep.send_string(resp_envelope.to_json())
+                else:
+                    # Unknown query type
+                    self.logger.warning(f"Unknown query type: {envelope.msg_type}")
+                    # Send empty response to avoid blocking
+                    resp_envelope = MessageEnvelope.create(
+                        msg_type=MessageType.ERROR,
+                        payload={"error": "Unknown query type"},
+                        seq_num=self._next_seq(),
+                    )
+                    self._query_rep.send_string(resp_envelope.to_json())
+                    
+            except Exception as e:
+                self.logger.error(f"Error in query handler loop: {e}")
+                time.sleep(0.1)
+        
+        self.logger.info("Query handler loop stopped")
+    
+    def _heartbeat_loop(self) -> None:
+        """Background thread: Monitor platform health via heartbeats."""
+        while self._running:
+            try:
+                # Note: Heartbeats are received from platform via _heartbeat_sub
+                # This loop monitors platform health based on last received heartbeat
                 
                 # Check platform health
                 if self._last_heartbeat_time:
@@ -359,30 +436,51 @@ to be:
         """Parse and dispatch an incoming message."""
         try:
             envelope = MessageEnvelope.from_json(json_msg)
+            msg_type = envelope.msg_type
             
             # Update sequence tracking
             self._seq_num = max(self._seq_num, envelope.seq_num)
             
+            # Log message receipt (debug for high-frequency, info for important ones)
+            if msg_type == MessageType.TICK:
+                # Ticks are too frequent - log sparingly
+                self.logger.debug(f"RECV: {msg_type.value} seq={envelope.seq_num}")
+            elif msg_type in (MessageType.BAR, MessageType.HISTORY_BATCH, 
+                              MessageType.ENTRY_FILL, MessageType.EXIT_FILL,
+                              MessageType.ORDER_REJECTED, MessageType.CONNECT):
+                # Important messages - always log
+                payload_preview = self._format_payload_preview(envelope.payload)
+                self.logger.info(f"RECV: {msg_type.value} seq={envelope.seq_num} {payload_preview}")
+            else:
+                # Other messages - debug level
+                self.logger.debug(f"RECV: {msg_type.value} seq={envelope.seq_num}")
+            
             # Dispatch to callbacks
-            callbacks = self._callbacks.get(envelope.msg_type, [])
+            callbacks = self._callbacks.get(msg_type, [])
             for callback in callbacks:
                 try:
                     callback(envelope.payload)
                 except Exception as e:
-                    self.logger.error(f"Callback error for {envelope.msg_type}: {e}")
+                    self.logger.error(f"Callback error for {msg_type}: {e}")
             
             # Special handling for certain message types
-            if envelope.msg_type == MessageType.CONNECT:
+            if msg_type == MessageType.CONNECT:
                 self._handle_connect(envelope.payload)
-            elif envelope.msg_type == MessageType.ENTRY_FILL:
+            elif msg_type == MessageType.ENTRY_FILL:
                 self._handle_entry_fill(envelope.payload)
-            elif envelope.msg_type == MessageType.EXIT_FILL:
+            elif msg_type == MessageType.EXIT_FILL:
                 self._handle_exit_fill(envelope.payload)
+            elif msg_type == MessageType.ERROR:
+                self._handle_error(envelope.payload)
+            elif msg_type == MessageType.TEST_PING:
+                self._handle_test_ping(envelope.payload)
+            elif msg_type == MessageType.TEST_START:
+                self._handle_test_start(envelope.payload)
                 
         except json.JSONDecodeError as e:
-            self.logger.error(f"Invalid JSON received: {e}")
+            self.logger.error(f"Invalid JSON received: {e} | Raw: {json_msg[:200]}")
         except Exception as e:
-            self.logger.error(f"Error handling message: {e}")
+            self.logger.error(f"Error handling message: {e} | Raw: {json_msg[:200]}")
     
     def _handle_heartbeat(self, json_msg: str) -> None:
         """Process heartbeat from platform."""
@@ -401,7 +499,11 @@ to be:
         self._platform_info = payload
         self._platform_connected = True
         self._last_heartbeat_time = time.time()
-        self.logger.info(f"Platform connected: {payload.get('platform')} v{payload.get('version')}")
+        platform = payload.get('platform', 'unknown')
+        version = payload.get('version', 'unknown')
+        pair = payload.get('pair', 'unknown')
+        account = payload.get('account', 'N/A')
+        self.logger.info(f"Platform connected: {platform} v{version} | Pair: {pair} | Account: {account}")
     
     def _handle_entry_fill(self, payload: Dict[str, Any]) -> None:
         """Handle entry fill notification."""
@@ -410,6 +512,111 @@ to be:
     def _handle_exit_fill(self, payload: Dict[str, Any]) -> None:
         """Handle exit fill notification."""
         self.logger.info(f"Exit fill: {payload.get('trade_id')} @ {payload.get('exit_price')} ({payload.get('result_type')})")
+    
+    def _handle_error(self, payload: Dict[str, Any]) -> None:
+        """Handle error notification from platform."""
+        source = payload.get('source', 'unknown')
+        error_type = payload.get('error_type', 'unknown')
+        message = payload.get('message', 'No message')
+        details = payload.get('details', '')
+        timestamp = payload.get('timestamp', 0)
+        
+        # Log with high visibility
+        self.logger.error(f"PLATFORM ERROR from {source}: [{error_type}] {message}")
+        if details:
+            # Log details line by line for readability
+            for line in details.split(' | ')[:5]:  # Limit to 5 lines
+                self.logger.error(f"  → {line}")
+    
+    def _handle_test_ping(self, payload: Dict[str, Any]) -> None:
+        """Handle test ping - respond with pong."""
+        timestamp = payload.get('timestamp', time.time())
+        self.logger.info("=" * 60)
+        self.logger.info("🧪 TEST PING RECEIVED FROM NINJATRADER")
+        self.logger.info(f"   Timestamp: {timestamp}")
+        self.logger.info("   Sending PONG response...")
+        self.logger.info("=" * 60)
+        
+        # Send pong response
+        from .protocol import TestPongMessage
+        pong = TestPongMessage(timestamp=time.time())
+        self._send_command(pong.to_envelope(seq_num=self._next_seq()))
+    
+    def _handle_test_start(self, payload: Dict[str, Any]) -> None:
+        """Handle E2E test start - create test trade and enqueue commands."""
+        scenario = payload.get('scenario', 'tp_hit')
+        entry_price = payload.get('entry_price', 21000.0)
+        risk_points = payload.get('risk_points', 80.0)
+        rr_ratio = payload.get('rr_ratio', 1.0)
+        
+        self.logger.info("=" * 60)
+        self.logger.info(f"🧪 E2E TEST START RECEIVED: {scenario}")
+        self.logger.info(f"   Entry Price: {entry_price}")
+        self.logger.info(f"   Risk Points: {risk_points}")
+        self.logger.info(f"   R:R Ratio: {rr_ratio}")
+        self.logger.info("=" * 60)
+        
+        # Generate test trade ID
+        import uuid
+        trade_id = f"test_{scenario}_{uuid.uuid4().hex[:8]}"
+        
+        # Calculate SL/TP
+        sl = entry_price - risk_points
+        tp = entry_price + (risk_points * rr_ratio)
+        
+        self.logger.info(f"   Generated Trade ID: {trade_id}")
+        self.logger.info(f"   Stop Loss: {sl}")
+        self.logger.info(f"   Take Profit: {tp}")
+        
+        # Store test sequence state
+        self._test_sequences[trade_id] = {
+            'stage': 'awaiting_entry_fill',
+            'scenario': scenario,
+            'entry_price': entry_price,
+            'sl': sl,
+            'tp': tp,
+            'start_time': time.time(),
+        }
+        
+        # Send open order command to platform
+        self.send_open_order(
+            trade_id=trade_id,
+            direction='long',
+            entry_price=entry_price,
+            stop_loss=sl,
+            take_profit=tp,
+            risk_points=risk_points,
+            rr_ratio=rr_ratio,
+        )
+        
+        self.logger.info(f"✅ TEST: Queued open order command for {trade_id}")
+    
+    def _format_payload_preview(self, payload: Dict[str, Any]) -> str:
+        """Format payload for logging (short preview)."""
+        if not payload:
+            return "{}"
+        
+        # Key fields to show for different message types
+        key_fields = ['pair', 'price', 'time', 'trade_id', 'direction', 'entry_price', 
+                      'exit_price', 'result_type', 'bars', 'count', 'status']
+        
+        parts = []
+        for key in key_fields:
+            if key in payload:
+                val = payload[key]
+                if key == 'bars' and isinstance(val, list):
+                    parts.append(f"bars={len(val)}")
+                elif key == 'price' or key == 'entry_price' or key == 'exit_price':
+                    parts.append(f"{key}={val:.2f}")
+                else:
+                    parts.append(f"{key}={val}")
+        
+        if not parts:
+            # Fallback: show first key
+            first_key = list(payload.keys())[0]
+            parts.append(f"{first_key}={payload[first_key]}")
+        
+        return " | ".join(parts[:4])  # Limit to 4 parts
     
     # -------------------------------------------------------------------------
     # Public API - Callback Registration
@@ -454,6 +661,48 @@ to be:
         """Register trade log callback."""
         self.on(MessageType.TRADE_LOG, callback)
     
+    def on_error(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Register error callback for platform errors.
+        
+        Error payload contains:
+            - source: Where the error originated (e.g., 'ninjatrader')
+            - error_type: Type of error (e.g., 'order_open_failed')
+            - message: Human-readable error message
+            - details: Full exception details (optional)
+            - timestamp: Unix timestamp
+        """
+        self.on(MessageType.ERROR, callback)
+    
+    def on_test_ping(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Register test ping callback."""
+        self.on(MessageType.TEST_PING, callback)
+    
+    def on_test_pong(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Register test pong callback."""
+        self.on(MessageType.TEST_PONG, callback)
+    
+    def on_test_start(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Register test start callback.
+        
+        Payload contains:
+            - scenario: Test scenario name ("tp_hit", "sl_hit", "session_end")
+            - entry_price: Test entry price
+            - risk_points: Risk in points
+            - rr_ratio: Risk/Reward ratio
+        """
+        self.on(MessageType.TEST_START, callback)
+    
+    def on_test_result(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Register test result callback.
+        
+        Payload contains:
+            - scenario: Test scenario name
+            - passed: True/False
+            - trade_id: Test trade ID (if applicable)
+            - message: Result message
+        """
+        self.on(MessageType.TEST_RESULT, callback)
+    
     # -------------------------------------------------------------------------
     # Public API - Command Sending
     # -------------------------------------------------------------------------
@@ -467,9 +716,10 @@ to be:
     def _send_command(self, envelope: MessageEnvelope) -> None:
         """Queue a command for sending."""
         if not self._running:
-            self.logger.warning("Cannot send command: gateway not running")
+            self.logger.warning(f"Cannot send command: gateway not running (cmd={envelope.msg_type.value})")
             return
         self._command_queue.append(envelope)
+        self.logger.debug(f"Queued: {envelope.msg_type.value} seq={envelope.seq_num}")
     
     def send_open_order(
         self,
@@ -526,6 +776,64 @@ to be:
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
         self.logger.info(f"Queued REFRESH request: {days} days")
+    
+    def send_error(
+        self,
+        source: str,
+        error_type: str,
+        message: str,
+        details: Optional[str] = None,
+    ) -> None:
+        """Send error notification to platform (bidirectional error reporting).
+        
+        This allows Python to report errors back to the platform.
+        """
+        from .protocol import OrderRejectedMessage
+        
+        payload = {
+            "source": source,
+            "error_type": error_type,
+            "message": message,
+            "timestamp": time.time(),
+        }
+        if details:
+            payload["details"] = details
+            
+        envelope = MessageEnvelope.create(
+            msg_type=MessageType.ERROR,
+            payload=payload,
+            seq_num=self._next_seq(),
+        )
+        self._send_command(envelope)
+        self.logger.error(f"Sent error to platform: [{error_type}] {message}")
+    
+    def send_test_pong(self, timestamp: float) -> None:
+        """Send test pong response."""
+        from .protocol import TestPongMessage
+        pong = TestPongMessage(timestamp=timestamp)
+        envelope = pong.to_envelope(seq_num=self._next_seq())
+        self._send_command(envelope)
+        self.logger.debug(f"Sent TEST_PONG")
+    
+    def send_test_result(
+        self,
+        scenario: str,
+        passed: bool,
+        trade_id: Optional[str] = None,
+        message: str = "",
+    ) -> None:
+        """Send E2E test result to platform."""
+        from .protocol import TestResultMessage
+        result = TestResultMessage(
+            scenario=scenario,
+            passed=passed,
+            trade_id=trade_id,
+            message=message,
+        )
+        envelope = result.to_envelope(seq_num=self._next_seq())
+        self._send_command(envelope)
+        status = "PASSED" if passed else "FAILED"
+        self.logger.info(f"Sent TEST_RESULT: {scenario} {status}")
     
     # -------------------------------------------------------------------------
     # Public API - Queries

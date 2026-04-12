@@ -118,7 +118,7 @@ class TestGateway:
             command_pull="tcp://127.0.0.1:5556",
         )
         logger = ConsoleLogger()
-        gateway = TradingGateway(config=config, pair="NQ", logger=logger)
+        gateway = TradingGateway(logger, config=config, pair="NQ")
         
         assert gateway.pair == "NQ"
         assert gateway.config == config
@@ -126,7 +126,7 @@ class TestGateway:
     
     def test_callback_registration(self):
         logger = ConsoleLogger()
-        gateway = TradingGateway(pair="NQ", logger=logger)
+        gateway = TradingGateway(logger, pair="NQ")
         
         received = []
         def callback(payload):
@@ -149,7 +149,7 @@ class TestGateway:
     
     def test_sequence_number_increment(self):
         logger = ConsoleLogger()
-        gateway = TradingGateway(pair="NQ", logger=logger)
+        gateway = TradingGateway(logger, pair="NQ")
         
         seq1 = gateway._next_seq()
         seq2 = gateway._next_seq()
@@ -175,7 +175,7 @@ class TestIntegration:
             heartbeat_pub=f"tcp://127.0.0.1:{base_port + 3}",
         )
         logger = ConsoleLogger()
-        gateway = TradingGateway(config=config, pair="TEST", logger=logger)
+        gateway = TradingGateway(logger, config=config, pair="TEST")
         yield gateway
         gateway.stop()
     
@@ -221,7 +221,7 @@ class TestDataSource:
         from src.utils.app_logger import ConsoleLogger
         
         logger = ConsoleLogger()
-        ds = ZMQDataSource(pair="NQ", logger=logger)
+        ds = ZMQDataSource(logger, pair="NQ")
         
         assert ds.pair == "NQ"
         assert not ds.is_live
@@ -232,7 +232,7 @@ class TestDataSource:
         from src.utils.app_logger import ConsoleLogger
         
         logger = ConsoleLogger()
-        ds = ZMQDataSource(pair="NQ", logger=logger)
+        ds = ZMQDataSource(logger, pair="NQ")
         
         # Add some bars
         bars = [
@@ -259,9 +259,13 @@ class TestExecutor:
     def test_executor_creation(self):
         from src.gateway.executor import ZMQTradeExecutor
         
+        from src.utils.app_logger import ConsoleLogger
+        
         mock_gateway = MagicMock()
+        logger = ConsoleLogger()
         executor = ZMQTradeExecutor(
-            gateway=mock_gateway,
+            mock_gateway,
+            logger,
             risk_usd=500,
         )
         
@@ -270,9 +274,11 @@ class TestExecutor:
     
     def test_on_trade_open(self):
         from src.gateway.executor import ZMQTradeExecutor
+        from src.utils.app_logger import ConsoleLogger
         
         mock_gateway = MagicMock()
-        executor = ZMQTradeExecutor(gateway=mock_gateway, risk_usd=500)
+        logger = ConsoleLogger()
+        executor = ZMQTradeExecutor(mock_gateway, logger, risk_usd=500)
         
         trade = {
             "trade_id": "test_123",
@@ -292,9 +298,11 @@ class TestExecutor:
     
     def test_on_trade_close(self):
         from src.gateway.executor import ZMQTradeExecutor
+        from src.utils.app_logger import ConsoleLogger
         
         mock_gateway = MagicMock()
-        executor = ZMQTradeExecutor(gateway=mock_gateway)
+        logger = ConsoleLogger()
+        executor = ZMQTradeExecutor(mock_gateway, logger)
         
         executor.on_trade_close("test_123", 21050)
         
@@ -305,9 +313,11 @@ class TestExecutor:
     
     def test_on_sl_update(self):
         from src.gateway.executor import ZMQTradeExecutor
+        from src.utils.app_logger import ConsoleLogger
         
         mock_gateway = MagicMock()
-        executor = ZMQTradeExecutor(gateway=mock_gateway)
+        logger = ConsoleLogger()
+        executor = ZMQTradeExecutor(mock_gateway, logger)
         
         executor.on_sl_update("test_123", 21000)
         

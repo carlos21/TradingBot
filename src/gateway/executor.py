@@ -31,23 +31,24 @@ class ZMQTradeExecutor(TradeExecutor):
     def __init__(
         self,
         gateway: TradingGateway,
+        logger: ILogger,
         *,
         risk_usd: Optional[float] = None,
         risk_pct: Optional[float] = None,
-        logger: Optional[ILogger] = None,
     ):
         """
         Initialize the ZMQ trade executor.
         
         Args:
             gateway: The TradingGateway instance
+            logger: Logger instance (required)
             risk_usd: Fixed dollar risk per trade (optional)
             risk_pct: Percentage of account risk per trade (optional)
         """
         self._gateway = gateway
+        self.logger = logger
         self._risk_usd = risk_usd
         self._risk_pct = risk_pct
-        self.logger = logger or ConsoleLogger()
     
     def on_trade_open(self, trade: dict) -> None:
         """

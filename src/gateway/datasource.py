@@ -15,6 +15,7 @@ import bisect
 import logging
 
 from src.data_sources.combined_datasource import CombinedDataSource
+from src.utils.app_logger import ILogger, ConsoleLogger
 from .gateway import TradingGateway, GatewayConfig
 from .protocol import MessageType
 
@@ -53,24 +54,25 @@ class ZMQDataSource(CombinedDataSource):
     
     def __init__(
         self,
+        logger: ILogger,
         gateway: Optional[TradingGateway] = None,
         gateway_config: Optional[GatewayConfig] = None,
         pair: str = "NQ",
-        logger: Optional[ILogger] = None,
     ):
         """
         Initialize the ZMQ data source.
         
         Args:
+            logger: Logger instance (required)
             gateway: Existing TradingGateway instance (or None to create one)
             gateway_config: Configuration for creating a new gateway
             pair: Trading pair symbol
         """
+        self.logger = logger
         self.pair = pair
         self._gateway = gateway
         self._gateway_config = gateway_config or GatewayConfig()
         self._owns_gateway = gateway is None
-        self.logger = logger or ConsoleLogger()
         
         # Data storage
         self._historical_bars: List[Dict] = []
@@ -226,6 +228,10 @@ class ZMQDataSource(CombinedDataSource):
         """Handle incoming tick."""
         self._stats["ticks_received"] += 1
         
+        # Log every 100th tick to avoid spam
+        if self._stats["ticks_received"] % 100 == 0:
+            self.logger.debug(f"Ticks received: {self._stats['ticks_received']} (latest: {payload.get('price')})")
+        
         # Build partial bar from tick
         tick_time = int(payload["time"])
         price = float(payload["price"])
@@ -312,6 +318,7 @@ class ZMQDataSource(CombinedDataSource):
         
         bars = payload.get("bars", [])
         days = payload.get("days", 1)
+        pair = payload.get("pair", self.pair)
         
         new_bars = []
         for raw in bars:
@@ -329,8 +336,7 @@ class ZMQDataSource(CombinedDataSource):
         with self._bars_lock:
             self._historical_bars.extend(new_bars)
         
-        self.logger.info(f"Received history batch: {len(new_bars)} bars ({days} days), "
-                         f"total={len(self._historical_bars)}")
+        self.logger.info(f"RECV: history_batch | pair={pair} | bars={len(new_bars)} | days={days} | total_cached={len(self._historical_bars)}")
     
     def _on_history_end(self, payload: Dict = None) -> None:
         """Handle end of historical data."""
@@ -341,7 +347,7 @@ class ZMQDataSource(CombinedDataSource):
                 self._last_history_time = self._historical_bars[-1]["time"]
             bars_copy = list(self._historical_bars)
         
-        self.logger.info(f"History complete ({len(bars_copy)} bars), switching to live")
+        self.logger.info(f"History complete: {len(bars_copy)} bars cached, switching to LIVE mode")
         
         if self.on_history_complete:
             try:
@@ -371,7 +377,7 @@ class ZMQDataSource(CombinedDataSource):
         self._current_bar = None
         self._refreshing = True
         
-        self.logger.info(f"Refresh start: kept {len(preserved)} bars, removed {removed}")
+        self.logger.info(f"Refresh start: preserved {len(preserved)} historical bars, removed {removed} recent bars")
     
     # -------------------------------------------------------------------------
     # Public API

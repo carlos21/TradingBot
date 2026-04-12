@@ -170,7 +170,7 @@ def _setup_live_mode_callbacks(
             
             # Tell any connected browsers to reload chart data
             try:
-                socketio.emit('history_ready', {'count': len(bars)}, broadcast=True)
+                socketio.emit('history_ready', {'count': len(bars)})
             except Exception as e:
                 logger.error(f"[LiveMode] Failed to emit history_ready: {type(e).__name__}: {e}")
         except Exception as e:

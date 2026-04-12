@@ -22,6 +22,10 @@ from .protocol import (
     MarketDataMessage,
     FillMessage,
     HeartbeatMessage,
+    TestPingMessage,
+    TestPongMessage,
+    TestStartMessage,
+    TestResultMessage,
 )
 from .gateway import TradingGateway, GatewayConfig
 from .executor import ZMQTradeExecutor, create_zmq_executor
@@ -40,6 +44,10 @@ __all__ = [
     "MarketDataMessage",
     "FillMessage",
     "HeartbeatMessage",
+    "TestPingMessage",
+    "TestPongMessage",
+    "TestStartMessage",
+    "TestResultMessage",
     # Gateway
     "TradingGateway",
     "GatewayConfig",

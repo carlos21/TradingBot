@@ -35,33 +35,34 @@ from src.strategies.strategy_config import StrategyNumbers
 
 
 def main():
-    print("=" * 60)
-    print("TradingBot - ZeroMQ Live Trading Example")
-    print("=" * 60)
-    
     # Configuration
     PAIR = "NQ"
     RISK_USD = 500  # $500 risk per trade
+    VERBOSE = False  # Set True for debug logging of all ZMQ messages
     
     # Create logger (file + console for live mode)
-    print("\n[1] Creating logger...")
     logger = FileAndConsoleLogger(log_dir="logs")
     
+    logger.info("=" * 60)
+    logger.info("TradingBot - ZeroMQ Live Trading Example")
+    logger.info("=" * 60)
+    
     # Create ZeroMQ live components
-    print("\n[2] Creating ZeroMQ components...")
+    logger.info("[1] Creating ZeroMQ components...")
+    logger.info(f"    Verbose logging: {'ON' if VERBOSE else 'OFF'} (set VERBOSE=True for debug)")
     data_source, trade_executor = create_live_components(
-        pair=PAIR,
+        PAIR,
+        logger,  # Required logger - all components share this instance
         risk_usd=RISK_USD,
         host="127.0.0.1",
         market_port=5555,
         command_port=5556,
         query_port=5557,
         heartbeat_port=5558,
-        logger=logger,  # Pass custom logger
     )
     
     # Create repositories
-    print("\n[3] Setting up repositories...")
+    logger.info("[2] Setting up repositories...")
     db_path = os.path.join(os.path.dirname(__file__), "..", "database.db")
     trades_repo = TradeRepository(db_path=db_path)
     lines_repo = LineRepository(db_path=db_path)
@@ -85,7 +86,7 @@ def main():
     )
     
     # Create Flask app with ZeroMQ components
-    print("\n[4] Creating Flask app...")
+    logger.info("[3] Creating Flask app...")
     wiring = create_app(
         pair=PAIR,
         data_source=data_source,
@@ -98,21 +99,24 @@ def main():
     )
     
     # Start the ZeroMQ data source
-    print("\n[5] Starting ZeroMQ gateway...")
+    logger.info("[4] Starting ZeroMQ gateway...")
     data_source.start()
     
-    print("\n" + "=" * 60)
-    print("Waiting for NinjaTrader connection...")
-    print("=" * 60)
-    print("\nIn NinjaTrader:")
-    print("  1. Open Control Center")
-    print("  2. Click 'New' > 'TradingBot ZMQ Connector'")
-    print("  3. Click 'Connect'")
-    print("\nThe system will automatically:")
-    print("  - Receive historical bars")
-    print("  - Start live trading")
-    print("\nPress Ctrl+C to stop")
-    print("=" * 60 + "\n")
+    logger.info("=" * 60)
+    logger.info("Waiting for NinjaTrader connection...")
+    logger.info("=" * 60)
+    logger.info("")
+    logger.info("In NinjaTrader:")
+    logger.info("  1. Open Control Center")
+    logger.info("  2. Click 'New' > 'TradingBot ZMQ Connector'")
+    logger.info("  3. Click 'Connect'")
+    logger.info("")
+    logger.info("The system will automatically:")
+    logger.info("  - Receive historical bars")
+    logger.info("  - Start live trading")
+    logger.info("")
+    logger.info("Press Ctrl+C to stop")
+    logger.info("=" * 60)
     
     try:
         # Run Flask-SocketIO
@@ -124,10 +128,11 @@ def main():
             use_reloader=False,
         )
     except KeyboardInterrupt:
-        print("\n\nShutting down...")
+        logger.info("Shutting down...")
     finally:
         data_source.stop()
-        print("ZeroMQ gateway stopped")
+        logger.info("ZeroMQ gateway stopped")
+        logger.close()
 
 
 if __name__ == "__main__":

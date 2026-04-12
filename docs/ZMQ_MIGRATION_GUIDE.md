@@ -218,11 +218,18 @@ gateway.send_open_order(
     rr_ratio=1.0,
 )
 
-# Modify SL
+# Modify SL (Move to breakeven / Trailing stop)
+# ✅ FULLY WORKING - Uses _account.ChangeOrder() behind the scenes
 gateway.send_modify_order(
     trade_id="trade_123",
     stop_loss=21000,  # Move to breakeven
 )
+
+# The connector will:
+# 1. Find the cached stop order (or search Account.Orders)
+# 2. Validate order state (Working/Accepted)
+# 3. Call _account.ChangeOrder() with new stop price
+# 4. Send TRADE_LOG confirmation back to Python
 
 # Close order
 gateway.send_close_order(
@@ -265,8 +272,8 @@ All messages use JSON with this envelope:
 
 **Trade Commands (Python → Platform):**
 - `order_open` - Open new position
-- `order_close` - Close position
-- `order_modify` - Modify SL/TP
+- `order_close` - Close position  
+- `order_modify` - Modify SL/TP ✅ **FULLY WORKING** - Uses `_account.ChangeOrder()` to update stop orders while maintaining ATM strategy attachment
 
 **Events (Platform → Python):**
 - `entry_fill` - Position opened
@@ -366,6 +373,118 @@ The command loop polls with 1ms timeout. If you see high CPU:
 - Uses cAlgo with NetMQ
 - Run as cBot
 - Similar architecture to NinjaTrader
+
+## Stop Loss Modification Implementation
+
+The `order_modify` command is **fully implemented and working**. Here's how it works:
+
+### Overview
+
+When you call `gateway.send_modify_order()`, the connector:
+
+1. **Locates the stop order:**
+   - First checks `_stopLossOrders[trade_id]` cache
+   - If not cached, searches `Account.Orders` for matching stop order
+   - Caches the reference for future use
+
+2. **Validates order state:**
+   - Must be `OrderState.Working` or `OrderState.Accepted`
+   - Must be a stop order (StopMarket or StopLimit)
+
+3. **Modifies via NinjaTrader API:**
+   ```csharp
+   _account.ChangeOrder(
+       order: stopOrder,
+       quantity: stopOrder.Quantity,        // Unchanged
+       limitPrice: stopOrder.LimitPrice,    // Unchanged
+       stopPrice: newSl,                    // NEW VALUE
+       atmStrategyId: stopOrder.AtmStrategyId  // Keeps ATM
+   );
+   ```
+
+4. **Confirms modification:**
+   - Sends `TRADE_LOG` message with `event: NT:MODIFY`
+   - Logs success to NinjaTrader output window
+
+### Code Changes
+
+**Files modified:**
+- `ninjatrader/TradingBotConnector.cs` - HTTP connector
+- `zmq_connectors/ninjatrader/TradingBotZmqConnector.cs` - ZMQ connector
+
+**Key additions:**
+```csharp
+// Dictionary to cache stop orders
+private readonly Dictionary<string, Order> _stopLossOrders = 
+    new Dictionary<string, Order>();
+
+// Track orders as they appear
+private void OnOrderUpdate(object sender, OrderEventArgs e)
+{
+    if ((order.Name == "Stop" || order.Name.Contains("Stop")) && 
+        (order.OrderType == OrderType.StopMarket || order.OrderType == OrderType.StopLimit))
+    {
+        var tradeId = FindTradeIdByAtmOrder(order);
+        if (tradeId != null)
+        {
+            _stopLossOrders[tradeId] = order;
+            _log($"TRACKING SL order for {tradeId}");
+        }
+    }
+}
+
+// Modify the order
+internal void HandleModifyOrder(string body)
+{
+    // ... validation ...
+    
+    _account.ChangeOrder(
+        stopOrder,
+        stopOrder.Quantity,
+        stopOrder.LimitPrice,
+        newSl,
+        stopOrder.AtmStrategyId
+    );
+    
+    _log($"SUCCESS: Modified SL for {tradeId} to {newSl}");
+    LogToPython(trade_id, "NT:MODIFY", $"Stop loss changed to {newSl}");
+}
+```
+
+### Python Example
+
+```python
+from src.gateway import TradingGateway
+
+gateway = TradingGateway(logger, config)
+gateway.start()
+
+# Register callback for modification confirmation
+def on_trade_log(payload):
+    event = payload.get('event')
+    msg = payload.get('message')
+    if event == 'NT:MODIFY':
+        print(f"✅ SL Modified: {msg}")
+    elif event == 'NT:ERROR':
+        print(f"❌ Error: {msg}")
+
+gateway.on_trade_log(on_trade_log)
+
+# After entry fill received...
+gateway.send_modify_order(
+    trade_id="trade_abc123",
+    stop_loss=21050  # Move SL to breakeven
+)
+```
+
+### Error Handling
+
+| Scenario | Response |
+|----------|----------|
+| Order not found | Searches Account.Orders, errors if still not found |
+| Order filled/cancelled | Error: "Stop order not modifiable" |
+| ChangeOrder fails | Exception logged + TRADE_LOG error sent |
+| Account disconnected | Error: "No account available" |
 
 ## Performance Tuning
 

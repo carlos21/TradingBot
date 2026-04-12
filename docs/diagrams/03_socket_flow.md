@@ -1,0 +1,60 @@
+# Socket Flow & Threading
+
+```mermaid
+flowchart TB
+    subgraph "Python Gateway (Binds Sockets)"
+        direction TB
+        PYSUB[(SUB :5555)]
+        PYPUSH[(PUSH :5556)]
+        PYREP[(REP :5557)]
+        PYSUB_H[(SUB :5558)]
+        
+        subgraph "Internal Queues"
+            CMDQ[Command Queue]
+            OBQ[Outbound Queue]
+        end
+        
+        subgraph "Background Threads"
+            MD[Market Data Loop]
+            CS[Command Sender]
+            QH[Query Handler]
+            HB[Heartbeat Monitor]
+        end
+    end
+    
+    subgraph "NinjaTrader (Connects Sockets)"
+        direction TB
+        NTPUB[(PUB :5555)]
+        NTPULL[(PULL :5556)]
+        NTREQ[(REQ :5557)]
+        NTPUB_H[(PUB :5558)]
+        
+        subgraph "Background Threads"
+            CL[Command Loop]
+            HBL[Heartbeat Loop]
+        end
+    end
+    
+    %% Market Data Flow
+    NTPUB -->|Ticks/Bars/Fills| PYSUB
+    PYSUB --> MD
+    MD -->|Dispatch| CB[Callbacks]
+    
+    %% Command Flow
+    API[send_open_order] --> CMDQ
+    CMDQ --> CS
+    CS --> PYPUSH
+    PYPUSH -->|ORDER_OPEN| NTPULL
+    NTPULL --> CL
+    CL --> ATM[ATM Strategy]
+    
+    %% Query Flow
+    NTREQ -->|TEST_PING| PYREP
+    PYREP --> QH
+    QH -->|TEST_PONG| PYREP
+    PYREP --> NTREQ
+    
+    %% Heartbeat Flow
+    NTPUB_H -->|HEARTBEAT| PYSUB_H
+    PYSUB_H --> HB
+```
