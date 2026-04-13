@@ -163,11 +163,13 @@ def build_live():
 
     # Create ZeroMQ components (replaces NinjaTraderDataSource + NinjaTraderExecutor)
     print("[tradingbot] Starting ZeroMQ gateway...")
+    account = os.environ.get("NT_ACCOUNT")
     ds, executor = create_live_components(
         PAIR,
         logger,  # Required logger
         risk_usd=risk_usd,
         risk_pct=risk_pct,
+        account=account,
         host="127.0.0.1",
         market_port=5555,
         command_port=5556,

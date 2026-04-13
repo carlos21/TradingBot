@@ -68,11 +68,15 @@ sequenceDiagram
         PY->>GW: send_open_order()
         GW->>GW: Queue ORDER_OPEN command
         
-        GW->>ZMQ: ORDER_OPEN<br/>{trade_id, direction, entry_price,<br/>stop_loss, take_profit, risk_points}
+        GW->>ZMQ: ORDER_OPEN seq=42<br/>{trade_id, direction, entry_price,<br/>stop_loss, take_profit, risk_points}
         ZMQ->>NT: Receive command
         
         NT->>NT: Validate order parameters
+        NT->>NT: Check duplicate (seq_num tracking)
         NT->>ATM: Create market order + Start ATM Strategy
+        
+        ATM->>NT: Order created
+        NT->>ZMQ: COMMAND_ACK<br/>{command_type: "order_open",<br/>seq_num: 42, success: true}
         ATM->>MK: Submit entry order
         MK->>ATM: Fill at entry price
         
@@ -95,16 +99,17 @@ sequenceDiagram
         PY->>PY: Strategy decides to move SL to breakeven
         PY->>GW: send_modify_order()<br/>new_stop_loss = entry_price
         
-        GW->>ZMQ: ORDER_MODIFY<br/>{trade_id, stop_loss}
+        GW->>ZMQ: ORDER_MODIFY seq=43<br/>{trade_id, stop_loss}
         ZMQ->>NT: Receive modify command
         
-        NT->>NT: Look up cached stop order<br/>_stopLossOrders[trade_id]
+        NT->>NT: Check duplicate (seq_num tracking)
+        NT->>NT: Look up stop order<br/>Find by name: "Stop_{trade_id}"
         
-        alt Order found in cache
-            NT->>NT: Use cached Order reference
-        else Not cached
-            NT->>NT: Search Account.Orders<br/>Find matching stop order
-            NT->>NT: Cache for future use
+        alt Order found
+            NT->>NT: Use found order
+        else Not found
+            NT->>NT: ERROR - Stop order not found
+            NT->>ZMQ: COMMAND_ACK {seq_num: 43, success: false}
         end
         
         NT->>NT: Validate order state<br/>(Working or Accepted)
@@ -538,6 +543,85 @@ sequenceDiagram
 3. **Idempotent**: `_close_commands_sent` set prevents duplicate close commands
 4. **ATM Strategy Tracking**: NinjaTrader maintains `_tradeIdToAtmStrategy` dictionary to map Python's trade_id to the actual ATM strategy
 
+## Account Configuration Flow
+
+NinjaTrader queries the account name from Python during connection initialization. This allows the account to be specified in `start_live.sh` (via `NT_ACCOUNT`) rather than hardcoded in the NinjaTrader code.
+
+### Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant NT as NinjaTrader
+    participant ZMQ as ZeroMQ
+    participant GW as TradingGateway
+    participant PY as Python
+
+    rect rgb(230, 245, 255)
+        Note over NT,PY: Connection Initialization
+        
+        NT->>NT: User clicks Connect
+        NT->>ZMQ: Connect sockets
+        
+        Note over NT: Wait 300ms for slow joiner protection
+        
+        NT->>ZMQ: CONFIG_QUERY {key: "account"}
+        ZMQ->>GW: Query received
+        GW->>GW: Look up _account_name
+        GW->>ZMQ: CONFIG_RESPONSE {account: "FNFTCHCARLOSDUCLOS42006"}
+        ZMQ->>NT: Receive account name
+        
+        NT->>NT: InitializeAccount("FNFTCHCARLOSDUCLOS42006")
+        NT->>NT: Find account by name, or fallback to first available
+        
+        NT->>ZMQ: CONNECT {platform: "ninjatrader", version: "2.0.0", account: "FNFTCHCARLOSDUCLOS42006", pair: "MNQ"}
+        ZMQ->>GW: Connection established
+        GW->>PY: Log: "Platform connected: ninjatrader | Pair: MNQ | Account: FNFTCHCARLOSDUCLOS42006"
+    end
+```
+
+### Python Side
+
+```python
+# In app.py or start_live.sh
+export NT_ACCOUNT="FNFTCHCARLOSDUCLOS42006"
+
+# In create_live_components()
+gateway._account_name = account  # Stored for config queries
+```
+
+### NinjaTrader Side
+
+```csharp
+// In Connect() method
+_network.Start();
+Thread.Sleep(300);  // Slow joiner protection
+
+// Query account from Python
+string configuredAccount = _network.QueryConfig("account");
+if (!string.IsNullOrEmpty(configuredAccount))
+{
+    _logger.Info($"Python specified account: {configuredAccount}");
+}
+
+// Send connect with account info
+_network.SendConnect("ninjatrader", _config.PlatformVersion, 
+    account: configuredAccount, pair: "MNQ");
+
+// Initialize using specified account
+InitializeAccount(configuredAccount);
+```
+
+### Fallback Behavior
+
+If Python doesn't specify an account (or query fails):
+1. NinjaTrader logs: "No account specified by Python, using first available"
+2. Uses `Account.All[0]` (first account in NinjaTrader)
+
+If specified account is not found:
+1. NinjaTrader logs: "Account 'XYZ' not found, using first available"
+2. Falls back to `Account.All[0]`
+
 ## Message Types Reference
 
 ### Python → NinjaTrader (Commands via PUSH/PULL)
@@ -563,6 +647,19 @@ sequenceDiagram
 | `heartbeat` | source, status | Health check (every 5s) |
 | `connect` | platform, version, account, pair | Initial handshake |
 | `error` | source, error_type, message, details | Error notification |
+| `command_ack` | command_type, seq_num, success, trade_id, message | Command acknowledgment |
+| `position_sync` | positions[], count, source, is_source_of_truth | Crash recovery sync |
+
+### Bidirectional Queries (via REQ/REP)
+
+| Message Type | Direction | Payload Fields | Description |
+|-------------|-----------|----------------|-------------|
+| `test_ping` | NT → PY | timestamp | Connection test |
+| `test_pong` | PY → NT | timestamp | Connection test response |
+| `position_query` | NT → PY | - | Query open positions for recovery |
+| `position_response` | PY → NT | positions[], count | Open positions list |
+| `config_query` | NT → PY | key | Query config value (account, etc.) |
+| `config_response` | PY → NT | {key: value} | Config value response |
 
 ## Socket Flow Details
 
@@ -654,17 +751,130 @@ stateDiagram-v2
     Rejected --> [*]: Log error
 ```
 
+## Command Acknowledgment
+
+Every command sent from Python to NinjaTrader receives an acknowledgment (`command_ack`) confirming receipt and processing status.
+
+### Ack Flow
+
+```mermaid
+sequenceDiagram
+    participant PY as Python
+    participant GW as TradingGateway
+    participant ZMQ as ZeroMQ
+    participant NT as NinjaTrader
+
+    PY->>GW: send_open_order(trade_id="abc123", ...)
+    GW->>GW: Assign seq_num=42
+    GW->>GW: Track pending command
+    GW->>ZMQ: ORDER_OPEN seq=42
+    ZMQ->>NT: Receive command
+    
+    NT->>NT: Process command
+    alt Success
+        NT->>ZMQ: COMMAND_ACK {seq_num: 42, success: true}
+    else Failure
+        NT->>ZMQ: COMMAND_ACK {seq_num: 42, success: false, message: "error"}
+    end
+    
+    ZMQ->>GW: Receive ack
+    GW->>GW: Match to pending command
+    GW->>PY: Log: "Command ACK: order_open seq=42 (0.15s)"
+```
+
+### Python Command Tracking
+
+```python
+# Commands are tracked until acknowledged or timeout
+gateway.send_open_order(trade_id="abc123", ...)
+# Logs: "Queued OPEN order: abc123"
+
+# When ack received:
+# "✅ Command ACK: order_open seq=42 trade=abc123 (0.15s)"
+
+# If timeout (60 seconds):
+# "⚠️ Command timed out waiting for ack: order_open seq=42"
+```
+
+## Duplicate Command Detection
+
+NinjaTrader tracks processed sequence numbers to prevent double-execution:
+
+```csharp
+// In CommandLoop()
+if (_processedSeqNums.Contains(envelope.SeqNum))
+{
+    _logger.Warning($"Duplicate command ignored: seq={envelope.SeqNum}");
+    _network?.SendCommandAck(..., message: "duplicate");
+    return;
+}
+```
+
+This prevents issues if Python retries a command due to network delay.
+
+## Crash Recovery Sync
+
+When NinjaTrader reconnects after a crash, it reports actual broker positions to Python for reconciliation.
+
+### Recovery Flow
+
+```mermaid
+sequenceDiagram
+    participant NT as NinjaTrader
+    participant ZMQ as ZeroMQ
+    participant GW as TradingGateway
+    participant PY as Python
+
+    NT->>NT: Crash - restart
+    NT->>ZMQ: CONNECT
+    ZMQ->>GW: Platform connected
+    
+    NT->>NT: Scan Account.Orders
+    NT->>NT: Rebuild tracking from order names<br/>(Entry_trade-123, Stop_trade-123, etc.)
+    
+    NT->>ZMQ: POSITION_SYNC {<br/>positions: [{trade_id, direction, entry_price, ...}],<br/>source: "ninjatrader",<br/>is_source_of_truth: true<br/>}
+    
+    ZMQ->>GW: Receive sync
+    GW->>PY: _handle_position_sync()
+    
+    PY->>PY: Compare Python DB vs Broker positions
+    
+    alt Mismatch: Python has trade not on broker
+        PY->>PY: Close trade in DB (closed offline)
+    else Mismatch: Broker has trade Python doesn't know
+        PY->>PY: Log orphan warning
+    end
+```
+
+### Order Naming Convention
+
+Orders MUST include `trade_id` in their names for recovery:
+
+| Order Type | Name Format | Example |
+|-----------|-------------|---------|
+| Entry | `Entry_{trade_id}` | `Entry_abc123` |
+| Stop Loss | `Stop_{trade_id}` | `Stop_abc123` |
+| Take Profit | `Target_{trade_id}` | `Target_abc123` |
+| Close | `Close_{trade_id}` | `Close_abc123` |
+
+If an order arrives without trade_id in the name:
+```
+CRITICAL: Stop order 'Stop' has no trade_id in name - cannot track!
+```
+
 ## Error Handling
 
 | Scenario | Behavior |
 |----------|----------|
-| Stop order not found | Searches Account.Orders, errors if still not found |
+| Stop order not found | Searches Account.Orders by name `Stop_{trade_id}`, errors if not found |
 | Modify order gap risk | Warning logged: Brief gap between cancel and new order |
 | Order not modifiable (Filled/Cancelled) | Error: "Stop order not modifiable" |
 | ChangeOrder exception | Error logged + sent to Python via TRADE_LOG |
 | Account not connected | Error: "No account available" |
 | Position not found for close | Error: "No ATM strategy found for trade_id" |
 | Close order fails | Error sent via TRADE_LOG, position may remain open |
+| Order without trade_id in name | CRITICAL error logged, tracking failed |
+| Fill received but order not tracked | CRITICAL error logged, cannot process fill |
 
 ## Port Configuration
 

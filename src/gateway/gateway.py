@@ -162,7 +162,12 @@ to be:
             MessageType.TEST_START: [],
             MessageType.TEST_STATUS: [],
             MessageType.TEST_RESULT: [],
+            MessageType.POSITION_SYNC: [],
+            MessageType.COMMAND_ACK: [],
         }
+        
+        # Query handlers - special callbacks that return data for sync queries
+        self._position_query_handler: Optional[Callable[[], List[Dict[str, Any]]]] = None
         
         # Connection state
         self._platform_connected = False
@@ -170,7 +175,8 @@ to be:
         self._platform_info: Optional[Dict[str, Any]] = None
         
         # Pending commands for acknowledgment tracking
-        self._pending_commands: Dict[str, Future] = {}
+        self._pending_commands: Dict[int, Dict[str, Any]] = {}  # seq_num -> command info
+        self._command_ack_timeout_sec: float = 10.0  # Timeout for command acknowledgment
         
         # E2E test state tracking
         self._test_sequences: Dict[str, Dict[str, Any]] = {}
@@ -383,12 +389,35 @@ to be:
                     resp_envelope = pong.to_envelope(seq_num=self._next_seq())
                     self._query_rep.send_string(resp_envelope.to_json())
                 elif envelope.msg_type == MessageType.POSITION_QUERY:
-                    # Handle position query - return empty list for now
-                    resp_envelope = MessageEnvelope.create(
-                        msg_type=MessageType.POSITION_RESPONSE,
-                        payload={"positions": []},
-                        seq_num=self._next_seq(),
-                    )
+                    # Handle position query - return open positions for crash recovery sync
+                    positions = []
+                    if self._position_query_handler:
+                        try:
+                            positions = self._position_query_handler()
+                            self.logger.info(f"📊 POSITION QUERY: returning {len(positions)} open positions")
+                        except Exception as e:
+                            self.logger.error(f"Error in position query handler: {e}")
+                    
+                    from .protocol import PositionResponseMessage
+                    resp = PositionResponseMessage(positions=positions, count=len(positions))
+                    resp_envelope = resp.to_envelope(seq_num=self._next_seq())
+                    self._query_rep.send_string(resp_envelope.to_json())
+                elif envelope.msg_type == MessageType.CONFIG_QUERY:
+                    # Handle config query - return settings like account name
+                    key = envelope.payload.get("key")
+                    self.logger.debug(f"CONFIG QUERY for key: {key}")
+                    
+                    from .protocol import ConfigResponseMessage
+                    config = {}
+                    if key == "account":
+                        config["account"] = getattr(self, '_account_name', None)
+                    elif key == "all":
+                        config["account"] = getattr(self, '_account_name', None)
+                    else:
+                        config[key] = None
+                    
+                    resp = ConfigResponseMessage(config=config)
+                    resp_envelope = resp.to_envelope(seq_num=self._next_seq())
                     self._query_rep.send_string(resp_envelope.to_json())
                 else:
                     # Unknown query type
@@ -419,8 +448,12 @@ to be:
                     elapsed = time.time() - self._last_heartbeat_time
                     if elapsed > self.config.heartbeat_timeout_sec:
                         if self._platform_connected:
-                            self.logger.warning(f"Platform heartbeat timeout ({elapsed:.1f}s)")
+                            self.logger.warning(f"Platform heartbeat timeout ({elapsed:.1f}s) - expected every {self.config.heartbeat_interval_sec}s")
                             self._platform_connected = False
+                else:
+                    # No heartbeat received yet after connection
+                    # This is normal during initial connection phase
+                    pass
                 
                 time.sleep(self.config.heartbeat_interval_sec)
                 
@@ -443,8 +476,8 @@ to be:
             
             # Log message receipt (debug for high-frequency, info for important ones)
             if msg_type == MessageType.TICK:
-                # Ticks are too frequent - log sparingly
-                self.logger.debug(f"RECV: {msg_type.value} seq={envelope.seq_num}")
+                # Ticks are too frequent - don't log individual ticks
+                pass
             elif msg_type in (MessageType.BAR, MessageType.HISTORY_BATCH, 
                               MessageType.ENTRY_FILL, MessageType.EXIT_FILL,
                               MessageType.ORDER_REJECTED, MessageType.CONNECT):
@@ -476,6 +509,10 @@ to be:
                 self._handle_test_ping(envelope.payload)
             elif msg_type == MessageType.TEST_START:
                 self._handle_test_start(envelope.payload)
+            elif msg_type == MessageType.POSITION_SYNC:
+                self._handle_position_sync(envelope.payload)
+            elif msg_type == MessageType.COMMAND_ACK:
+                self._handle_command_ack(envelope.payload)
                 
         except json.JSONDecodeError as e:
             self.logger.error(f"Invalid JSON received: {e} | Raw: {json_msg[:200]}")
@@ -487,10 +524,17 @@ to be:
         try:
             envelope = MessageEnvelope.from_json(json_msg)
             if envelope.msg_type == MessageType.HEARTBEAT:
+                prev_connected = self._platform_connected
                 self._last_heartbeat_time = time.time()
-                if not self._platform_connected:
-                    self.logger.info("Platform connected (heartbeat received)")
+                if not prev_connected:
                     self._platform_connected = True
+                    self.logger.info("Platform connected (heartbeat received)")
+                # Log first few heartbeats and then occasionally
+                if not hasattr(self, '_heartbeat_count'):
+                    self._heartbeat_count = 0
+                self._heartbeat_count += 1
+                if self._heartbeat_count <= 3 or self._heartbeat_count % 60 == 0:
+                    self.logger.debug(f"Heartbeat #{self._heartbeat_count} from {envelope.payload.get('source', 'unknown')}")
         except Exception as e:
             self.logger.debug(f"Error handling heartbeat: {e}")
     
@@ -512,6 +556,55 @@ to be:
     def _handle_exit_fill(self, payload: Dict[str, Any]) -> None:
         """Handle exit fill notification."""
         self.logger.info(f"Exit fill: {payload.get('trade_id')} @ {payload.get('exit_price')} ({payload.get('result_type')})")
+    
+    def _handle_position_sync(self, payload: Dict[str, Any]) -> None:
+        """Handle position sync from broker (broker is source of truth).
+        
+        This is sent by NinjaTrader after reconnect to report actual broker positions.
+        Python should reconcile its state to match.
+        """
+        positions = payload.get('positions', [])
+        count = payload.get('count', 0)
+        source = payload.get('source', 'unknown')
+        untracked = payload.get('untracked_orders', [])
+        
+        self.logger.info(f"📊 POSITION SYNC from {source}: {count} position(s)")
+        
+        for pos in positions:
+            trade_id = pos.get('trade_id')
+            direction = pos.get('direction')
+            entry = pos.get('entry_price')
+            self.logger.info(f"   - {trade_id}: {direction} @ {entry}")
+        
+        if untracked:
+            self.logger.warning(f"   ⚠️ {len(untracked)} untracked order(s) on broker")
+            for order in untracked:
+                self.logger.warning(f"      - {order.get('order_name')}")
+    
+    def _handle_command_ack(self, payload: Dict[str, Any]) -> None:
+        """Handle command acknowledgment from platform."""
+        from .protocol import CommandAckMessage
+        
+        try:
+            ack = CommandAckMessage.from_payload(payload)
+            seq_num = ack.seq_num
+            
+            # Check if this was a pending command
+            if seq_num in self._pending_commands:
+                cmd_info = self._pending_commands.pop(seq_num)
+                elapsed = time.time() - cmd_info.get('sent_time', 0)
+                
+                if ack.success:
+                    self.logger.info(f"✅ Command ACK: {ack.command_type} seq={seq_num} trade={ack.trade_id} ({elapsed:.2f}s)")
+                else:
+                    self.logger.error(f"❌ Command FAILED: {ack.command_type} seq={seq_num} error='{ack.message}' ({elapsed:.2f}s)")
+            else:
+                # Ack for unknown command (possibly duplicate detection or late ack)
+                status = "✅" if ack.success else "❌"
+                self.logger.debug(f"{status} Command ACK (unknown): {ack.command_type} seq={seq_num} trade={ack.trade_id}")
+                
+        except Exception as e:
+            self.logger.error(f"Error handling command ack: {e}")
     
     def _handle_error(self, payload: Dict[str, Any]) -> None:
         """Handle error notification from platform."""
@@ -681,6 +774,34 @@ to be:
         """Register test pong callback."""
         self.on(MessageType.TEST_PONG, callback)
     
+    def on_position_query(self, callback: Callable[[], List[Dict[str, Any]]]) -> None:
+        """Register handler for position query (crash recovery sync).
+        
+        The callback should return a list of open position dicts with keys:
+            - trade_id: str
+            - direction: str ("long" or "short")
+            - entry_price: float
+            - stop_loss: float
+            - take_profit: float
+            - quantity: int (optional)
+        """
+        self._position_query_handler = callback
+    
+    def on_position_sync(self, callback: Callable[[Dict[str, Any]], None]) -> None:
+        """Register callback for position sync from broker.
+        
+        Broker (NinjaTrader) is the source of truth. This is sent after
+        reconnect so Python can reconcile its state to match reality.
+        
+        Payload contains:
+            - positions: List of actual broker positions
+            - count: Number of positions
+            - source: Platform name (e.g., "ninjatrader")
+            - is_source_of_truth: True (broker is authoritative)
+            - untracked_orders: Optional list of orders without tracking
+        """
+        self.on(MessageType.POSITION_SYNC, callback)
+    
     def on_test_start(self, callback: Callable[[Dict[str, Any]], None]) -> None:
         """Register test start callback.
         
@@ -718,8 +839,31 @@ to be:
         if not self._running:
             self.logger.warning(f"Cannot send command: gateway not running (cmd={envelope.msg_type.value})")
             return
+        
+        # Track command for acknowledgment
+        self._pending_commands[envelope.seq_num] = {
+            'type': envelope.msg_type.value,
+            'sent_time': time.time(),
+            'payload': envelope.payload,
+        }
+        
+        # Clean up old pending commands (older than 60 seconds)
+        self._cleanup_pending_commands()
+        
         self._command_queue.append(envelope)
         self.logger.debug(f"Queued: {envelope.msg_type.value} seq={envelope.seq_num}")
+    
+    def _cleanup_pending_commands(self) -> None:
+        """Remove old pending commands that likely won't get acks."""
+        now = time.time()
+        timeout = 60.0  # Clean up commands older than 60 seconds
+        to_remove = [
+            seq for seq, info in self._pending_commands.items()
+            if now - info.get('sent_time', 0) > timeout
+        ]
+        for seq in to_remove:
+            cmd_info = self._pending_commands.pop(seq)
+            self.logger.warning(f"Command timed out waiting for ack: {cmd_info['type']} seq={seq}")
     
     def send_open_order(
         self,

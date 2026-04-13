@@ -1,5 +1,20 @@
 // TradingBotZmqConnector.cs — NinjaScript AddOn (ZeroMQ Edition)
-// High-performance ZeroMQ connector for Python TradingBot.
+// Refactored using SOLID principles, Clean Architecture, and Design Patterns
+//
+// Architecture:
+//   - Domain Layer: Contracts (IMessageSerializer, IOrderTracker, ICommandHandler), Value Objects
+//   - Infrastructure Layer: Implementations (JsonMessageSerializer, OrderStateManager, NinjatraderLogger)
+//   - Application Layer: Services (ZmqNetwork, CommandDispatcher, ZmqE2ETestRunner)
+//   - Presentation Layer: UI (ZmqConnectorWindow)
+//   - Commands Layer: Command handlers (OrderOpenHandler, OrderCloseHandler, etc.)
+//
+// Design Patterns Used:
+//   - Strategy: IMessageSerializer, IOrderTracker, ILogger, ICommandHandler
+//   - Chain of Responsibility: CommandDispatcher
+//   - Factory: MessageEnvelope.Create(), ZmqConfiguration
+//   - Adapter: NinjatraderLogger
+//   - Facade: ZmqNetwork (hides ZMQ complexity)
+//   - Value Object: ZmqConfiguration, MessageEnvelope, PendingEntryInfo, TickEventArgs
 //
 // Installation:
 //   1. Download NetMQ.dll and Newtonsoft.Json.dll
@@ -8,741 +23,100 @@
 //   4. Add references to: NetMQ.dll, Newtonsoft.Json.dll
 //   5. Right-click AddOns > New > AddOn, paste this code, compile (F5)
 //   6. Click New > TradingBot ZMQ Connector in the Control Center
-//
-// Protocol: tcp://127.0.0.1:5555-5558 (PUB/SUB, PUSH/PULL, REQ/REP)
-//
-// Logging Strategy:
-//   - Log()              -> UI window + NinjaTrader Output window (Print)
-//   - NotifyError()      -> Log() with *** ERROR *** prefix + Print to Output
-//   - NotifyWarning()    -> Log() with *** WARNING *** prefix + Print to Output
-//   - NotifySuccess()    -> Log() with *** SUCCESS *** prefix
-//   - SendError()        -> Send error to Python via ZMQ
-//   - SendTradeLog()     -> Send trade event to Python via ZMQ
-//
-// Note: NinjaScript doesn't support Alert popups. All notifications go to UI and Output window.
 
 #region Using declarations
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Media;
-using NetMQ;
-using NetMQ.Sockets;
-using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 using NinjaTrader.Gui;
 using NinjaTrader.NinjaScript;
-using NinjaTrader.Core.FloatingPoint;
 #endregion
 
 namespace NinjaTrader.NinjaScript.AddOns
 {
-    // ═══════════════════════════════════════════════════════════════════════
-    // Protocol Messages
-    // ═══════════════════════════════════════════════════════════════════════
-    
-    public static class MessageType
-    {
-        public const string Tick = "tick";
-        public const string Bar = "bar";
-        public const string PartialBar = "partial";
-        public const string HistoryBatch = "history_batch";
-        public const string HistoryEnd = "history_end";
-        public const string OrderOpen = "order_open";
-        public const string OrderClose = "order_close";
-        public const string OrderModify = "order_modify";
-        public const string EntryFill = "entry_fill";
-        public const string ExitFill = "exit_fill";
-        public const string OrderRejected = "order_rejected";
-        public const string TradeLog = "trade_log";
-        public const string Error = "error";
-        public const string Heartbeat = "heartbeat";
-        public const string Connect = "connect";
-        public const string Disconnect = "disconnect";
-        public const string RefreshRequest = "refresh_request";
-        public const string RefreshStart = "refresh_start";
-        public const string PositionQuery = "position_query";
-        public const string PositionResponse = "position_response";
-        
-        // Testing
-        public const string TestPing = "test_ping";
-        public const string TestPong = "test_pong";
-        public const string TestStart = "test_start";
-        public const string TestStatus = "test_status";
-        public const string TestResult = "test_result";
-    }
-
-    public class MessageEnvelope
-    {
-        [JsonProperty("msg_type")]
-        public string MsgType { get; set; }
-        
-        [JsonProperty("timestamp")]
-        public double Timestamp { get; set; }
-        
-        [JsonProperty("seq_num")]
-        public int SeqNum { get; set; }
-        
-        [JsonProperty("payload")]
-        public JObject Payload { get; set; }
-        
-        public string ToJson()
-        {
-            return JsonConvert.SerializeObject(this);
-        }
-        
-        public static MessageEnvelope Create(string msgType, JObject payload, int seqNum = 0)
-        {
-            return new MessageEnvelope
-            {
-                MsgType = msgType,
-                Timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0,
-                SeqNum = seqNum,
-                Payload = payload
-            };
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // ZeroMQ Network Layer
-    // ═══════════════════════════════════════════════════════════════════════
-
-    internal class ZmqNetwork : IDisposable
-    {
-        private PublisherSocket _marketPub;      // PUB: Send market data
-        private PullSocket _commandPull;         // PULL: Receive commands
-        private RequestSocket _queryReq;         // REQ: Send queries to Python
-        private PublisherSocket _heartbeatPub;   // PUB: Send heartbeats
-        
-        private readonly string _marketDataAddr;
-        private readonly string _commandAddr;
-        private readonly string _queryAddr;
-        private readonly string _heartbeatAddr;
-        
-        private int _seqNum = 0;
-        private readonly object _seqLock = new object();
-        
-        public bool IsConnected => _marketPub != null && _commandPull != null;
-        
-        public ZmqNetwork(
-            string host = "127.0.0.1",
-            int marketPort = 5555,
-            int commandPort = 5556,
-            int queryPort = 5557,
-            int heartbeatPort = 5558)
-        {
-            _marketDataAddr = $"tcp://{host}:{marketPort}";
-            _commandAddr = $"tcp://{host}:{commandPort}";
-            _queryAddr = $"tcp://{host}:{queryPort}";
-            _heartbeatAddr = $"tcp://{host}:{heartbeatPort}";
-        }
-        
-        public void Start()
-        {
-            // PUB socket: Send market data to Python
-            _marketPub = new PublisherSocket();
-            _marketPub.Connect(_marketDataAddr);
-            
-            // PULL socket: Receive commands from Python
-            _commandPull = new PullSocket();
-            _commandPull.Connect(_commandAddr);
-            
-            // REQ socket: Send queries to Python (Python binds REP)
-            _queryReq = new RequestSocket();
-            _queryReq.Connect(_queryAddr);
-            
-            // PUB socket: Send heartbeats
-            _heartbeatPub = new PublisherSocket();
-            _heartbeatPub.Connect(_heartbeatAddr);
-        }
-        
-        public void Stop()
-        {
-            _marketPub?.Dispose();
-            _commandPull?.Dispose();
-            _queryReq?.Dispose();
-            _heartbeatPub?.Dispose();
-            
-            _marketPub = null;
-            _commandPull = null;
-            _queryReq = null;
-            _heartbeatPub = null;
-        }
-        
-        public void Dispose()
-        {
-            Stop();
-        }
-        
-        private int NextSeq()
-        {
-            lock (_seqLock)
-            {
-                return ++_seqNum;
-            }
-        }
-        
-        // Send methods (Platform → Python)
-        public void SendMarketData(JObject payload, string msgType)
-        {
-            if (_marketPub == null) return;
-            
-            var envelope = MessageEnvelope.Create(msgType, payload, NextSeq());
-            _marketPub.SendFrame(envelope.ToJson());
-        }
-        
-        public void SendTick(string pair, double price, long volume, DateTime time, 
-                            double? bid = null, double? ask = null)
-        {
-            var payload = new JObject
-            {
-                ["pair"] = pair,
-                ["price"] = price,
-                ["volume"] = volume,
-                ["time"] = (long)(time.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds
-            };
-            if (bid.HasValue) payload["bid"] = bid.Value;
-            if (ask.HasValue) payload["ask"] = ask.Value;
-            
-            SendMarketData(payload, MessageType.Tick);
-        }
-        
-        public void SendBar(string pair, DateTime time, double open, double high, 
-                           double low, double close, long volume, bool isPartial = false)
-        {
-            var payload = new JObject
-            {
-                ["pair"] = pair,
-                ["time"] = (long)(time.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds,
-                ["open"] = open,
-                ["high"] = high,
-                ["low"] = low,
-                ["close"] = close,
-                ["volume"] = volume
-            };
-            
-            SendMarketData(payload, isPartial ? MessageType.PartialBar : MessageType.Bar);
-        }
-        
-        public void SendHistoryBatch(string pair, List<JObject> bars, int days)
-        {
-            var payload = new JObject
-            {
-                ["pair"] = pair,
-                ["bars"] = new JArray(bars),
-                ["days"] = days
-            };
-            SendMarketData(payload, MessageType.HistoryBatch);
-        }
-        
-        public void SendHistoryEnd()
-        {
-            SendMarketData(new JObject(), MessageType.HistoryEnd);
-        }
-        
-        public void SendEntryFill(string tradeId, double entryPrice, 
-                                  double? stopLoss = null, double? takeProfit = null,
-                                  double? slippage = null)
-        {
-            var payload = new JObject
-            {
-                ["trade_id"] = tradeId,
-                ["entry_price"] = entryPrice
-            };
-            if (stopLoss.HasValue) payload["stop_loss"] = stopLoss.Value;
-            if (takeProfit.HasValue) payload["take_profit"] = takeProfit.Value;
-            if (slippage.HasValue) payload["slippage"] = slippage.Value;
-            
-            SendMarketData(payload, MessageType.EntryFill);
-        }
-        
-        public void SendExitFill(string tradeId, double exitPrice, string resultType)
-        {
-            var payload = new JObject
-            {
-                ["trade_id"] = tradeId,
-                ["exit_price"] = exitPrice,
-                ["result_type"] = resultType,
-                ["exit_time"] = (long)(DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalSeconds
-            };
-            SendMarketData(payload, MessageType.ExitFill);
-        }
-        
-        public void SendTradeLog(string tradeId, string evt, string msg)
-        {
-            var payload = new JObject
-            {
-                ["trade_id"] = tradeId,
-                ["event"] = evt,
-                ["message"] = msg.Replace("\"", "'")
-            };
-            SendMarketData(payload, MessageType.TradeLog);
-        }
-        
-        public void SendError(string source, string errorType, string message, string details = null)
-        {
-            var payload = new JObject
-            {
-                ["source"] = source,
-                ["error_type"] = errorType,
-                ["message"] = message.Replace("\"", "'"),
-                ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0
-            };
-            if (details != null)
-                payload["details"] = details.Replace("\"", "'").Replace("\r\n", " | ").Replace("\n", " | ");
-            
-            SendMarketData(payload, MessageType.Error);
-        }
-        
-        public void SendHeartbeat(string source, string status)
-        {
-            var payload = new JObject
-            {
-                ["source"] = source,
-                ["status"] = status
-            };
-            if (_heartbeatPub != null)
-            {
-                var envelope = MessageEnvelope.Create(MessageType.Heartbeat, payload, NextSeq());
-                _heartbeatPub.SendFrame(envelope.ToJson());
-            }
-        }
-        
-        public void SendTestPing(double timestamp)
-        {
-            var payload = new JObject
-            {
-                ["timestamp"] = timestamp
-            };
-            SendMarketData(payload, MessageType.TestPing);
-        }
-        
-        public void SendTestPong(double timestamp)
-        {
-            var payload = new JObject
-            {
-                ["timestamp"] = timestamp
-            };
-            SendMarketData(payload, MessageType.TestPong);
-        }
-        
-        public void SendTestStart(string scenario, double entryPrice = 21000.0, double riskPoints = 80.0, double rrRatio = 1.0)
-        {
-            var payload = new JObject
-            {
-                ["scenario"] = scenario,
-                ["entry_price"] = entryPrice,
-                ["risk_points"] = riskPoints,
-                ["rr_ratio"] = rrRatio
-            };
-            SendMarketData(payload, MessageType.TestStart);
-        }
-        
-        public void SendTestResult(string scenario, bool passed, string tradeId = null, string message = "")
-        {
-            var payload = new JObject
-            {
-                ["scenario"] = scenario,
-                ["passed"] = passed,
-                ["message"] = message
-            };
-            if (tradeId != null) payload["trade_id"] = tradeId;
-            SendMarketData(payload, MessageType.TestResult);
-        }
-        
-        public void SendConnect(string platform, string version, string account = null, string pair = null)
-        {
-            var payload = new JObject
-            {
-                ["platform"] = platform,
-                ["version"] = version
-            };
-            if (account != null) payload["account"] = account;
-            if (pair != null) payload["pair"] = pair;
-            
-            SendMarketData(payload, MessageType.Connect);
-        }
-        
-        // Receive methods (Python → Platform)
-        public string ReceiveCommand(int timeoutMs = 100)
-        {
-            if (_commandPull == null) return null;
-            
-            if (_commandPull.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out string message))
-            {
-                return message;
-            }
-            return null;
-        }
-        
-        public string ReceiveQuery(int timeoutMs = 100)
-        {
-            if (_queryReq == null) return null;
-            
-            if (_queryReq.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out string message))
-            {
-                return message;
-            }
-            return null;
-        }
-        
-        public void SendQueryResponse(JObject payload)
-        {
-            if (_queryReq == null) return;
-            
-            var envelope = MessageEnvelope.Create(MessageType.PositionResponse, payload, NextSeq());
-            _queryReq.SendFrame(envelope.ToJson());
-        }
-        
-        public bool SendTestPingWithResponse(double timeoutMs = 2000)
-        {
-            if (_queryReq == null) return false;
-            
-            try
-            {
-                // Send TEST_PING as a query (synchronous request-response)
-                var payload = new JObject
-                {
-                    ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0
-                };
-                var envelope = MessageEnvelope.Create(MessageType.TestPing, payload, NextSeq());
-                
-                _queryReq.SendFrame(envelope.ToJson());
-                
-                // Wait for response with timeout
-                if (_queryReq.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out string response))
-                {
-                    // Parse response to verify it's a TEST_PONG
-                    var respEnvelope = JsonConvert.DeserializeObject<MessageEnvelope>(response);
-                    return respEnvelope?.MsgType == MessageType.TestPong;
-                }
-                return false;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // UI Layer
-    // ═══════════════════════════════════════════════════════════════════════
-
-    internal class ZmqConnectorWindow
-    {
-        private readonly Action<string> _log;
-        private Window _window;
-        private TextBox _logBox;
-        private TextBlock _statusLabel;
-        private TextBlock _statsLabel;
-        private Button _connectBtn;
-        private Button _testConnBtn;
-        private Button _e2eTestBtn;
-        
-        private Action _onConnect;
-        private Action _onTestConnection;
-        private Action _onE2ETests;
-        
-        internal ZmqConnectorWindow(Action<string> log)
-        {
-            _log = log;
-        }
-        
-        internal void SetButtonHandlers(Action onConnect, Action onTestConnection = null, Action onE2ETests = null)
-        {
-            _onConnect = onConnect;
-            _onTestConnection = onTestConnection;
-            _onE2ETests = onE2ETests;
-        }
-        
-        internal void Show(bool connected)
-        {
-            if (_window != null)
-            {
-                _window.Activate();
-                return;
-            }
-            
-            _window = new Window
-            {
-                Title = "TradingBot ZMQ Connector",
-                Width = 550,
-                Height = 450,
-                WindowStartupLocation = WindowStartupLocation.CenterScreen,
-                Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
-            };
-            
-            var grid = new Grid();
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });    // Row 0: Status
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });    // Row 1: Stats
-            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });    // Row 2: Buttons
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // Row 3: Log
-            
-            // Status row
-            _statusLabel = new TextBlock
-            {
-                Text = connected ? "CONNECTED" : "DISCONNECTED",
-                Foreground = connected ? Brushes.LimeGreen : Brushes.OrangeRed,
-                FontSize = 16,
-                FontWeight = FontWeights.Bold,
-                Margin = new Thickness(12, 12, 12, 4),
-            };
-            Grid.SetRow(_statusLabel, 0);
-            grid.Children.Add(_statusLabel);
-            
-            // Stats row
-            _statsLabel = new TextBlock
-            {
-                Text = "ZeroMQ Edition - High Performance",
-                Foreground = Brushes.Silver,
-                FontSize = 12,
-                Margin = new Thickness(12, 0, 12, 8),
-            };
-            Grid.SetRow(_statsLabel, 1);
-            grid.Children.Add(_statsLabel);
-            
-            // Button row
-            var btnPanel = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                Margin = new Thickness(12, 4, 12, 8),
-            };
-            _connectBtn = new Button
-            {
-                Content = connected ? "Disconnect" : "Connect",
-                Width = 120,
-                Height = 30,
-                Margin = new Thickness(0, 0, 8, 0),
-            };
-            _connectBtn.Click += (s, e) => { _onConnect?.Invoke(); };
-            btnPanel.Children.Add(_connectBtn);
-            
-            _testConnBtn = new Button
-            {
-                Content = "Test Connection",
-                Width = 120,
-                Height = 30,
-                Margin = new Thickness(0, 0, 8, 0),
-                IsEnabled = connected,
-            };
-            _testConnBtn.Click += (s, e) => { _onTestConnection?.Invoke(); };
-            btnPanel.Children.Add(_testConnBtn);
-            
-            _e2eTestBtn = new Button
-            {
-                Content = "Run E2E Tests",
-                Width = 120,
-                Height = 30,
-                IsEnabled = connected,
-            };
-            _e2eTestBtn.Click += (s, e) => { _onE2ETests?.Invoke(); };
-            btnPanel.Children.Add(_e2eTestBtn);
-            
-            Grid.SetRow(btnPanel, 2);
-            grid.Children.Add(btnPanel);
-            
-            // Log box
-            _logBox = new TextBox
-            {
-                IsReadOnly = true,
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                Background = new SolidColorBrush(Color.FromRgb(20, 20, 20)),
-                Foreground = Brushes.LightGray,
-                FontFamily = new FontFamily("Consolas"),
-                FontSize = 11,
-                Margin = new Thickness(12, 0, 12, 12),
-                TextWrapping = TextWrapping.Wrap,
-                BorderThickness = new Thickness(1),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(60, 60, 60)),
-            };
-            Grid.SetRow(_logBox, 3);
-            grid.Children.Add(_logBox);
-            
-            _window.Content = grid;
-            _window.Closed += (s, ev) =>
-            {
-                _window = null;
-                _logBox = null;
-                _statusLabel = null;
-                _statsLabel = null;
-                _connectBtn = null;
-                _testConnBtn = null;
-                _e2eTestBtn = null;
-            };
-            
-            _window.Show();
-            Log("Window opened. Click Connect to start ZMQ connection.");
-        }
-        
-        internal void UpdateStatus(bool connected, string statsText)
-        {
-            if (_window == null) return;
-            _window.Dispatcher.BeginInvoke(new Action(() =>
-            {
-                if (_statusLabel != null)
-                {
-                    _statusLabel.Text = connected ? "CONNECTED" : "DISCONNECTED";
-                    _statusLabel.Foreground = connected ? Brushes.LimeGreen : Brushes.OrangeRed;
-                }
-                if (_statsLabel != null && !string.IsNullOrEmpty(statsText))
-                    _statsLabel.Text = statsText;
-                if (_connectBtn != null)
-                    _connectBtn.Content = connected ? "Disconnect" : "Connect";
-                if (_testConnBtn != null)
-                    _testConnBtn.IsEnabled = connected;
-                if (_e2eTestBtn != null)
-                    _e2eTestBtn.IsEnabled = connected;
-            }));
-        }
-        
-        internal void SetE2EButtonEnabled(bool enabled)
-        {
-            if (_window == null) return;
-            _window.Dispatcher.Invoke(new Action(() =>
-            {
-                if (_e2eTestBtn != null) _e2eTestBtn.IsEnabled = enabled;
-            }));
-        }
-        
-        internal void Log(string message)
-        {
-            var line = DateTime.Now.ToString("HH:mm:ss") + "  " + message + "\n";
-            _log(message);
-            
-            if (_window == null) return;
-            _window.Dispatcher.BeginInvoke(new Action(() =>
-            {
-                if (_logBox == null) return;
-                _logBox.AppendText(line);
-                _logBox.ScrollToEnd();
-            }));
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // Main AddOn
-    // ═══════════════════════════════════════════════════════════════════════
-
+    /// <summary>
+    /// Main AddOn class - orchestrates all components using dependency injection.
+    /// Thin controller that delegates to specialized services.
+    /// </summary>
     public class TradingBotZmqConnector : AddOnBase
     {
-        // Configuration
-        private string _pythonHost = "127.0.0.1";
-        private int _marketPort = 5555;
-        private int _commandPort = 5556;
-        private int _queryPort = 5557;
-        private int _heartbeatPort = 5558;
-        private string _instrument = "MNQ 06-26";
-        private int _historyDays = 30;
-        private int _batchSize = 500;
-        
-        // State
-        private volatile bool _connected;
+        // Configuration (immutable value object)
+        private readonly ZmqConfiguration _config;
+
+        // Dependencies (injected)
         private ZmqNetwork _network;
         private ZmqConnectorWindow _ui;
+        private ILogger _logger;
+        private CommandDispatcher _dispatcher;
+        private IOrderTracker _orderTracker;
+
+        // Background threads
         private Thread _commandThread;
         private Thread _heartbeatThread;
         private CancellationTokenSource _cts;
+
+        // State
+        private volatile bool _connected;
         private Account _account;
-        
-        // Menu - Use MenuItem instead of deprecated NTMenuItem
-        private MenuItem _menuItem;
-        private MenuItem _existingNewMenu;
-        
+
         // Stats
         private long _commandsReceived = 0;
         private long _ticksSent = 0;
         private long _barsSent = 0;
-        
-        // ═══════════════════════════════════════════════════════════════════════
-        // Order Tracking Architecture
-        // ═══════════════════════════════════════════════════════════════════════
-        // 
-        // LIMITATION: NinjaScript AddOns do not expose ATM Strategy IDs, which would
-        // be the ideal way to link bracket orders (SL/TP) to their parent entry.
-        // 
-        // Tracking Strategy:
-        //   - _pendingEntries: Maps trade_id → entry info (direction, SL points, etc.)
-        //   - _entryOrders: Maps trade_id → Entry Order object reference
-        //   - _stopLossOrders: Maps trade_id → Stop Loss Order object reference  
-        //   - _takeProfitOrders: Maps trade_id → Take Profit Order object reference
-        //   - Order correlation uses ReferenceEquals() to match execution.Order to tracked orders
-        // 
-        // Multi-Position Limitation:
-        //   - All orders (entry, SL, TP) are now tracked in separate dictionaries
-        //   - Order correlation uses ReferenceEquals() for reliable matching
-        //   - With multiple open positions, correlation should work correctly for:
-        //     * Entry fills: matched by _entryOrders dictionary
-        //     * SL fills: matched by _stopLossOrders dictionary  
-        //     * TP fills: matched by _takeProfitOrders dictionary
-        //   - SL modifications: Supported via Cancel + Replace (account.Cancel() + CreateOrder)
-        //     Note: There's a brief gap where no SL is active between cancel and new order
-        //
-        // Limitations:
-        //   - Initial assignment of ATM-created SL/TP to trade_id uses "first available"
-        //     logic, which could be wrong with multiple positions opening simultaneously
-        //   - Once assigned, fill detection and modification are reliable
-        //
-        // Pending entry tracking for order management
-        private class PendingEntry
+
+        // Duplicate command detection (track processed seq_nums)
+        private readonly HashSet<int> _processedSeqNums = new HashSet<int>();
+        private readonly object _seqNumLock = new object();
+        private const int MAX_TRACKED_SEQ_NUMS = 1000;  // Prevent memory growth
+
+        // UI
+        private MenuItem _menuItem;
+        private MenuItem _existingNewMenu;
+
+        public TradingBotZmqConnector()
         {
-            public string Direction;
-            public double SlPoints;
-            public double RrRatio;
-            public string AtmStrategyName;
+            // Dependency injection - could be replaced with DI container
+            _config = new ZmqConfiguration(
+                host: "127.0.0.1",
+                marketPort: 5555,
+                commandPort: 5556,
+                queryPort: 5557,
+                heartbeatPort: 5558,
+                instrument: "MNQ 06-26",
+                historyDays: 30,
+                batchSize: 500,
+                platformVersion: "2.0.0-refactored"
+            );
         }
-        private readonly Dictionary<string, PendingEntry> _pendingEntries = new Dictionary<string, PendingEntry>();
 
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)
             {
-                Description = "Connects to TradingBot Python app via ZeroMQ";
+                Description = "Connects to TradingBot Python app via ZeroMQ (Refactored)";
                 Name = "TradingBotZmqConnector";
             }
         }
-        
+
         protected override void OnWindowCreated(Window window)
         {
             if (!(window is ControlCenter cc)) return;
-            
-            // Find the New menu - cc.MainMenu is ObservableCollection<object>
-            _existingNewMenu = null;
-            if (cc.MainMenu != null)
-            {
-                foreach (var item in cc.MainMenu)
-                {
-                    if (item is MenuItem mi)
-                    {
-                        if (mi.Header?.ToString() == "New")
-                        {
-                            _existingNewMenu = mi;
-                            break;
-                        }
-                        // Check submenus recursively
-                        _existingNewMenu = FindMenuItem(mi, "New");
-                        if (_existingNewMenu != null) break;
-                    }
-                }
-            }
+            _existingNewMenu = FindMenuItem(cc.MainMenu, "New");
             if (_existingNewMenu == null) return;
-            
-            _menuItem = new MenuItem 
-            { 
-                Header = "TradingBot ZMQ Connector"
-            };
+
+            _menuItem = new MenuItem { Header = "TradingBot ZMQ Connector" };
             _menuItem.Click += OnMenuItemClick;
             _existingNewMenu.Items.Add(_menuItem);
         }
-        
+
         protected override void OnWindowDestroyed(Window window)
         {
             if (_menuItem != null && window is ControlCenter)
@@ -753,164 +127,211 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _existingNewMenu = null;
             }
         }
-        
-        private MenuItem FindMenuItem(ItemsControl parent, string header)
-        {
-            if (parent == null) return null;
-            
-            foreach (var item in parent.Items)
-            {
-                if (item is MenuItem mi)
-                {
-                    if (mi.Header?.ToString() == header)
-                        return mi;
-                    
-                    var found = FindMenuItem(mi, header);
-                    if (found != null) return found;
-                }
-            }
-            return null;
-        }
-        
-        private void OnMenuItemClick(object sender, RoutedEventArgs e)
-        {
-            ShowStatusWindow();
-        }
-        
+
+        private void OnMenuItemClick(object sender, RoutedEventArgs e) => ShowStatusWindow();
+
         private void ShowStatusWindow()
         {
             if (_ui == null)
             {
                 _ui = new ZmqConnectorWindow(msg => Print("[ZMQ] " + msg));
+                _logger = new NinjatraderLogger(msg => _ui.Log(msg));
                 _ui.SetButtonHandlers(
-                    onConnect: () =>
-                    {
-                        if (_connected) Disconnect();
-                        else Connect();
-                    },
+                    onConnect: ToggleConnection,
                     onTestConnection: () => _ = TestConnectionAsync(),
                     onE2ETests: () => _ = RunE2ETestsAsync()
                 );
             }
             _ui.Show(_connected);
         }
-        
-        private void Log(string message)
+
+        private void ToggleConnection()
         {
-            _ui?.Log(message);
-            Print("[ZMQ] " + message);
-        }
-        
-        private string FormatExceptionDetails(Exception ex)
-        {
-            var sb = new StringBuilder();
-            sb.AppendLine($"Exception: {ex.GetType().Name}");
-            sb.AppendLine($"Message: {ex.Message}");
-            sb.AppendLine($"StackTrace: {ex.StackTrace}");
-            
-            if (ex.InnerException != null)
-            {
-                sb.AppendLine($"InnerException: {ex.InnerException.GetType().Name}");
-                sb.AppendLine($"InnerMessage: {ex.InnerException.Message}");
-            }
-            
-            return sb.ToString();
-        }
-        
-        private void UpdateStats()
-        {
-            var stats = $"Ticks: {_ticksSent} | Bars: {_barsSent} | Cmds: {_commandsReceived}";
-            _ui?.UpdateStatus(_connected, stats);
-        }
-        
-        /// <summary>
-        /// Log error with high visibility. Uses Print() for NinjaTrader output window.
-        /// </summary>
-        private void NotifyError(string message)
-        {
-            Log($"*** ERROR *** {message}");
-            Print($"[TradingBot ZMQ ERROR] {message}");
-        }
-        
-        /// <summary>
-        /// Log warning with visibility.
-        /// </summary>
-        private void NotifyWarning(string message)
-        {
-            Log($"*** WARNING *** {message}");
-            Print($"[TradingBot ZMQ WARNING] {message}");
-        }
-        
-        /// <summary>
-        /// Log success message.
-        /// </summary>
-        private void NotifySuccess(string message)
-        {
-            Log($"*** SUCCESS *** {message}");
+            if (_connected) Disconnect("user requested");
+            else Connect();
         }
 
         // ═══════════════════════════════════════════════════════════════════
-        // Connection
+        // Connection Management
         // ═══════════════════════════════════════════════════════════════════
 
         private void Connect()
         {
+            // Prevent double-connect
+            if (_connected)
+            {
+                _logger.Warning("Already connected, ignoring connect request");
+                return;
+            }
+
             try
             {
-                Log("Starting ZeroMQ connection...");
-                
-                _network = new ZmqNetwork(
-                    _pythonHost, _marketPort, _commandPort, _queryPort, _heartbeatPort);
+                _logger.Info("Starting ZeroMQ connection...");
+
+                // Initialize components with dependency injection
+                _orderTracker = new OrderStateManager();
+                _network = new ZmqNetwork(_config, new JsonMessageSerializer(), _logger);
+                _dispatcher = CreateCommandDispatcher();
+
                 _network.Start();
-                
                 _cts = new CancellationTokenSource();
                 _connected = true;
-                
-                // Send connect handshake
-                _network.SendConnect("ninjatrader", "1.0.0", pair: _instrument.Split(' ')[0]);
-                Log("Connected to Python TradingBot via ZeroMQ");
-                
+
+                // Wait for ZMQ sockets to fully establish (slow joiner protection)
+                // This ensures Python's SUB sockets are ready before we send messages
+                Thread.Sleep(300);
+
+                // Query config from Python (account name, etc.)
+                string configuredAccount = _network.QueryConfig("account");
+                if (!string.IsNullOrEmpty(configuredAccount))
+                {
+                    _logger.Info($"Python specified account: {configuredAccount}");
+                }
+
+                // Send connect handshake (reporting what account we'll use)
+                _network.SendConnect("ninjatrader", _config.PlatformVersion, account: configuredAccount, pair: _config.Instrument.Split(' ')[0]);
+                _logger.Success("Connected to Python TradingBot via ZeroMQ");
+
                 // Start background threads
                 _commandThread = new Thread(CommandLoop) { IsBackground = true, Name = "ZMQ-Commands" };
                 _commandThread.Start();
-                
+
                 _heartbeatThread = new Thread(HeartbeatLoop) { IsBackground = true, Name = "ZMQ-Heartbeat" };
                 _heartbeatThread.Start();
+
+                // Initialize NinjaTrader integrations (using account from Python if specified)
+                InitializeAccount(configuredAccount);
                 
-                // Initialize order management
-                InitializeAccount();
+                // Restore order tracking from broker after potential crash
+                _orderTracker.RestoreFromBrokerOrders(_account, _logger);
                 
+                // Report actual broker positions to Python (broker is source of truth)
+                ReportPositionsToPython();
+                
+                SubscribeToMarketData();
+
                 // Send historical data
                 _ = SendHistoryAsync();
-                
-                // Subscribe to live data
-                SubscribeToMarketData();
-                
+
                 UpdateStats();
             }
             catch (Exception ex)
             {
-                var errorDetails = FormatExceptionDetails(ex);
-                Log($"Connection error: {ex.Message}");
-                Log($"Error details: {errorDetails}");
-                _network?.SendError("ninjatrader", "connection_failed", ex.Message, errorDetails);
-                NotifyError($"ZMQ Connection Failed: {ex.Message}");
-                Disconnect();
+                _logger.Error("Connection error", ex);
+                _network?.SendError("ninjatrader", "connection_failed", ex.Message, FormatExceptionDetails(ex));
+                Disconnect("connection error");
             }
         }
-        
-        private void Disconnect()
+
+        private void Disconnect(string reason = null)
         {
+            if (reason != null)
+            {
+                _logger?.Info($"Disconnecting: {reason}");
+            }
             _connected = false;
             _cts?.Cancel();
-            
+
             UnsubscribeFromMarketData();
-            
+            UninitializeAccount();
+
             _network?.Dispose();
             _network = null;
-            
-            Log("Disconnected from Python TradingBot");
+
+            _orderTracker?.Clear();
+            _orderTracker = null;
+
+            _logger?.Info("Disconnected from Python TradingBot");
             UpdateStats();
+        }
+
+        /// <summary>
+        /// Report actual broker positions to Python.
+        /// Broker (NinjaTrader) is the source of truth - Python reconciles to match.
+        /// Called after connect to sync state after potential crash.
+        /// </summary>
+        private void ReportPositionsToPython()
+        {
+            try
+            {
+                var positions = new JArray();
+                var trackedTradeIds = new HashSet<string>(_orderTracker.GetActiveTradeIds());
+
+                foreach (var tradeId in trackedTradeIds)
+                {
+                    if (!_orderTracker.TryGetEntry(tradeId, out var entryOrder))
+                        continue;
+
+                    // Get associated stop/target orders if available
+                    _orderTracker.TryGetStopLoss(tradeId, out var stopOrder);
+                    _orderTracker.TryGetTakeProfit(tradeId, out var targetOrder);
+
+                    var position = new JObject
+                    {
+                        ["trade_id"] = tradeId,
+                        ["direction"] = entryOrder.OrderAction == OrderAction.Buy ? "long" : "short",
+                        ["entry_price"] = entryOrder.AverageFillPrice,
+                        ["quantity"] = entryOrder.Quantity,
+                        ["order_state"] = entryOrder.OrderState.ToString(),
+                    };
+
+                    if (stopOrder != null)
+                        position["stop_loss"] = stopOrder.StopPrice;
+                    if (targetOrder != null)
+                        position["take_profit"] = targetOrder.LimitPrice;
+
+                    positions.Add(position);
+                }
+
+                // Also report any untracked working orders (orphan detection)
+                var untrackedOrders = new JArray();
+                foreach (var order in _account?.Orders ?? System.Linq.Enumerable.Empty<Order>())
+                {
+                    if (order.OrderState != OrderState.Working && order.OrderState != OrderState.Accepted)
+                        continue;
+
+                    string tradeIdFromName = ExtractTradeIdFromOrderName(order.Name);
+                    if (!string.IsNullOrEmpty(tradeIdFromName) && !trackedTradeIds.Contains(tradeIdFromName))
+                    {
+                        untrackedOrders.Add(new JObject
+                        {
+                            ["order_name"] = order.Name,
+                            ["trade_id"] = tradeIdFromName,
+                            ["order_type"] = order.OrderType.ToString(),
+                        });
+                    }
+                }
+
+                _logger.Info($"[Sync] Reporting {positions.Count} position(s) to Python (broker is source of truth)");
+                
+                if (positions.Count > 0 || untrackedOrders.Count > 0)
+                {
+                    _network?.SendPositionSync(positions, untrackedOrders);
+                }
+
+                _logger.Success($"[Sync] Complete: {positions.Count} positions reported");
+                
+                if (untrackedOrders.Count > 0)
+                {
+                    _logger.Warning($"[Sync] Found {untrackedOrders.Count} untracked orders on broker");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("[Sync] Error reporting positions to Python", ex);
+            }
+        }
+
+        private CommandDispatcher CreateCommandDispatcher()
+        {
+            var dispatcher = new CommandDispatcher(_logger);
+            // Register command handlers - Chain of Responsibility pattern
+            dispatcher.Register(new OrderOpenHandler(_network, _logger, _account, _config.Instrument, _orderTracker));
+            dispatcher.Register(new OrderCloseHandler(_network, _logger, _account, _config.Instrument, _orderTracker));
+            dispatcher.Register(new OrderModifyHandler(_network, _logger, _account, _orderTracker));
+            dispatcher.Register(new RefreshRequestHandler(_network, _logger, SendHistoryAsync));
+            dispatcher.Register(new TestStartHandler(_network, _logger));
+            return dispatcher;
         }
 
         // ═══════════════════════════════════════════════════════════════════
@@ -919,545 +340,115 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void CommandLoop()
         {
-            Log("Command loop started");
-            
+            _logger.Info("Command loop started");
+
             while (_connected && !_cts.Token.IsCancellationRequested)
             {
                 try
                 {
-                    // Non-blocking receive with timeout
-                    var msg = _network?.ReceiveCommand(timeoutMs: 100);
-                    if (string.IsNullOrEmpty(msg)) continue;
-                    
+                    var envelope = _network?.ReceiveCommand(timeoutMs: 100);
+                    if (envelope == null) continue;
+
+                    // Duplicate detection
+                    if (IsDuplicateCommand(envelope.SeqNum))
+                    {
+                        _logger.Warning($"Duplicate command ignored: {envelope.MsgType} seq={envelope.SeqNum}");
+                        // Still send ack so Python knows we processed it
+                        _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, true, message: "duplicate");
+                        continue;
+                    }
+
                     _commandsReceived++;
-                    var envelope = JsonConvert.DeserializeObject<MessageEnvelope>(msg);
                     
-                    DispatchCommand(envelope);
-                    
-                    if (_commandsReceived % 10 == 0)
-                        UpdateStats();
+                    // Extract trade_id from payload for ack
+                    string tradeId = null;
+                    try { tradeId = envelope.Payload?["trade_id"]?.ToString(); } catch { }
+
+                    try
+                    {
+                        _dispatcher.Dispatch(envelope);
+                        // Send success ack
+                        _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, true, tradeId);
+                    }
+                    catch (Exception dispatchEx)
+                    {
+                        _logger.Error($"Command dispatch failed: {envelope.MsgType}", dispatchEx);
+                        // Send failure ack
+                        _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, false, tradeId, dispatchEx.Message);
+                        _network?.SendError("ninjatrader", "command_dispatch_failed", $"{envelope.MsgType}: {dispatchEx.Message}");
+                    }
+
+                    if (_commandsReceived % 10 == 0) UpdateStats();
                 }
                 catch (Exception ex)
                 {
-                    var errorDetails = FormatExceptionDetails(ex);
-                    Log($"Command loop error: {ex.Message}");
-                    _network?.SendError("ninjatrader", "command_loop_error", ex.Message, errorDetails);
-                    NotifyError($"Command Loop Error: {ex.Message}");
+                    _logger.Error("Command loop error", ex);
+                    _network?.SendError("ninjatrader", "command_loop_error", ex.Message, FormatExceptionDetails(ex));
                 }
             }
-            
-            Log("Command loop stopped");
+
+            _logger.Info("Command loop stopped");
         }
-        
+
+        /// <summary>
+        /// Check if this command sequence number was already processed (duplicate detection).
+        /// </summary>
+        private bool IsDuplicateCommand(int seqNum)
+        {
+            if (seqNum <= 0) return false;  // Invalid seq_num, process anyway
+
+            lock (_seqNumLock)
+            {
+                if (_processedSeqNums.Contains(seqNum))
+                    return true;
+
+                _processedSeqNums.Add(seqNum);
+
+                // Prevent unbounded growth - remove oldest if too many
+                if (_processedSeqNums.Count > MAX_TRACKED_SEQ_NUMS)
+                {
+                    // Simple approach: clear half the set when limit reached
+                    // In production, use a circular buffer or LRU cache
+                    var toRemove = new List<int>();
+                    int count = 0;
+                    foreach (var num in _processedSeqNums)
+                    {
+                        if (count++ < MAX_TRACKED_SEQ_NUMS / 2)
+                            toRemove.Add(num);
+                        else
+                            break;
+                    }
+                    foreach (var num in toRemove)
+                        _processedSeqNums.Remove(num);
+                }
+
+                return false;
+            }
+        }
+
         private void HeartbeatLoop()
         {
+            // Wait for ZMQ subscription to establish (slow joiner protection)
+            // Python's SUB socket needs time to connect and subscribe
+            Thread.Sleep(500);
+            
             while (_connected && !_cts.Token.IsCancellationRequested)
             {
                 try
                 {
                     _network?.SendHeartbeat("ninjatrader", "ok");
-                    Thread.Sleep(5000); // 5 second heartbeat
+                    
+                    // Sleep in smaller increments to respond faster to cancellation
+                    for (int i = 0; i < 50 && _connected && !_cts.Token.IsCancellationRequested; i++)
+                    {
+                        Thread.Sleep(100);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    var errorDetails = FormatExceptionDetails(ex);
-                    Log($"Heartbeat error: {ex.Message}");
-                    _network?.SendError("ninjatrader", "heartbeat_error", ex.Message, errorDetails);
-                    NotifyWarning($"Heartbeat Error: {ex.Message}");
+                    _logger.Warning("Heartbeat error: " + ex.Message);
+                    _network?.SendError("ninjatrader", "heartbeat_error", ex.Message);
                 }
-            }
-        }
-
-        // ═══════════════════════════════════════════════════════════════════
-        // Command Dispatch
-        // ═══════════════════════════════════════════════════════════════════
-
-        private void DispatchCommand(MessageEnvelope envelope)
-        {
-            var payload = envelope.Payload;
-            
-            switch (envelope.MsgType)
-            {
-                case MessageType.OrderOpen:
-                    HandleOpenOrder(payload);
-                    break;
-                    
-                case MessageType.OrderClose:
-                    HandleCloseOrder(payload);
-                    break;
-                    
-                case MessageType.OrderModify:
-                    HandleModifyOrder(payload);
-                    break;
-                    
-                case MessageType.RefreshRequest:
-                    HandleRefreshRequest(payload);
-                    break;
-                    
-                case MessageType.TestStart:
-                    HandleTestStart(payload);
-                    break;
-                    
-                default:
-                    var unknownCmdMsg = $"Unknown command received: {envelope.MsgType}";
-                    Log($"ERROR: {unknownCmdMsg}");
-                    _network?.SendError("ninjatrader", "unknown_command", unknownCmdMsg, $"Payload: {envelope.Payload}");
-                    break;
-            }
-        }
-        
-        /// <summary>
-        /// Get ATM strategy name based on stop loss points.
-        /// </summary>
-        private static string GetAtmStrategyName(double slPoints)
-        {
-            if (slPoints <= 15.0) return "TA_MNQ_15pt";
-            if (slPoints <= 20.0) return "TA_MNQ_20pt";
-            if (slPoints <= 30.0) return "TA_MNQ_30pt";
-            return "TA_MNQ_40pt";
-        }
-
-        private void HandleOpenOrder(JObject payload)
-        {
-            try
-            {
-                var tradeId = payload["trade_id"]?.ToString();
-                var direction = payload["direction"]?.ToString();
-                var entryPrice = payload["entry_price"]?.Value<double>() ?? 0;
-                var stopLoss = payload["stop_loss"]?.Value<double>() ?? 0;
-                var takeProfit = payload["take_profit"]?.Value<double>() ?? 0;
-                var slPoints = payload["risk_points"]?.Value<double>() ?? 0;
-                var rrRatio = payload["rr_ratio"]?.Value<double>() ?? 2.0;
-                
-                // Validate required fields
-                if (string.IsNullOrEmpty(tradeId))
-                {
-                    throw new ArgumentException("trade_id is required");
-                }
-                if (string.IsNullOrEmpty(direction) || (direction != "long" && direction != "short"))
-                {
-                    throw new ArgumentException($"Invalid direction: {direction}");
-                }
-                if (slPoints <= 0)
-                {
-                    throw new ArgumentException($"Invalid sl_points: {slPoints}");
-                }
-                
-                if (_account == null)
-                {
-                    throw new InvalidOperationException("No account available");
-                }
-                
-                // Check for duplicate trade_id
-                lock (_ordersLock)
-                {
-                    if (_pendingEntries.ContainsKey(tradeId))
-                    {
-                        Log($"WARNING: Duplicate place_order for {tradeId}, ignoring");
-                        _network?.SendTradeLog(tradeId, "NT:WARNING", "Duplicate place_order request ignored");
-                        return;
-                    }
-                }
-                
-                var instrument = Instrument.GetInstrument(_instrument);
-                if (instrument == null)
-                {
-                    throw new InvalidOperationException($"Instrument '{_instrument}' not found");
-                }
-                
-                bool isLong = direction == "long";
-                var orderAction = isLong ? OrderAction.Buy : OrderAction.SellShort;
-                
-                // Position sizing - calculate contracts based on risk
-                double riskUsd = payload["risk_usd"]?.Value<double>() ?? 0;
-                double riskPct = payload["risk_pct"]?.Value<double>() ?? 0;
-                double pointValue = instrument.MasterInstrument.PointValue;
-                int qty = 1;
-                
-                if (riskUsd > 0 && slPoints > 0)
-                {
-                    qty = Math.Max(1, (int)Math.Round(riskUsd / (slPoints * pointValue)));
-                }
-                else if (riskPct > 0 && slPoints > 0 && _account != null)
-                {
-                    double balance = _account.Get(AccountItem.CashValue, Currency.UsDollar);
-                    double risk = balance * riskPct / 100.0;
-                    qty = Math.Max(1, (int)Math.Round(risk / (slPoints * pointValue)));
-                }
-                
-                Log($"OPEN ORDER: {tradeId} {direction} {instrument.MasterInstrument.Name} x{qty} SL={stopLoss} TP={takeProfit}");
-                
-                // Get ATM strategy name
-                string atmStrategyName = GetAtmStrategyName(slPoints);
-                
-                // Create entry order - name MUST be "Entry" for ATM to work
-                var entryOrder = _account.CreateOrder(
-                    instrument,
-                    orderAction,
-                    OrderType.Market,
-                    OrderEntry.Automated,
-                    TimeInForce.Gtc,
-                    qty,
-                    0, 0,  // limit price, stop price (not used for market)
-                    string.Empty,
-                    "Entry",  // CRITICAL: Must be exactly "Entry" for ATM
-                    DateTime.MinValue,
-                    null);
-                
-                if (entryOrder == null)
-                    throw new InvalidOperationException("Failed to create entry order");
-                
-                // Track the entry order for reliable fill correlation
-                lock (_ordersLock)
-                {
-                    _entryOrders[tradeId] = entryOrder;
-                }
-                
-                // Start ATM strategy - this submits the entry and manages SL/TP automatically
-                NinjaTrader.NinjaScript.AtmStrategy.StartAtmStrategy(atmStrategyName, entryOrder);
-                
-                // Store trade info for tracking
-                lock (_ordersLock)
-                {
-                    _pendingEntries[tradeId] = new PendingEntry
-                    {
-                        Direction = direction,
-                        SlPoints = slPoints,
-                        RrRatio = rrRatio,
-                        AtmStrategyName = atmStrategyName
-                    };
-                }
-                
-                // Also store in tradeId to ATM strategy mapping for modify/close operations
-                lock (_ordersLock)
-                {
-                    _tradeIdToAtmStrategy[tradeId] = atmStrategyName;
-                }
-                
-                Log($"ATM STRATEGY STARTED: {atmStrategyName} for trade {tradeId}");
-                _network?.SendTradeLog(tradeId, "NT:ORDER", $"Market {direction} x{qty} with ATM '{atmStrategyName}'");
-                NotifySuccess($"Order Submitted: {direction} x{qty}");
-                
-                // Note: ENTRY_FILL will be sent from OnExecutionUpdate when fill is confirmed
-            }
-            catch (Exception ex)
-            {
-                var tradeId = payload["trade_id"]?.ToString() ?? "unknown";
-                var errorDetails = FormatExceptionDetails(ex);
-                Log($"ERROR handling open order {tradeId}: {ex.Message}");
-                _network?.SendError("ninjatrader", "order_open_failed", $"Failed to open order {tradeId}", errorDetails);
-                _network?.SendTradeLog(tradeId, "NT:ERROR", $"Order open failed: {ex.Message}");
-                NotifyError($"Order Open Failed: {ex.Message}");
-                
-                // Clean up on error
-                lock (_ordersLock)
-                {
-                    _pendingEntries.Remove(tradeId);
-                }
-            }
-        }
-        
-        private void HandleCloseOrder(JObject payload)
-        {
-            try
-            {
-                var tradeId = payload["trade_id"]?.ToString();
-                
-                if (string.IsNullOrEmpty(tradeId))
-                {
-                    throw new ArgumentException("trade_id is required");
-                }
-                
-                if (_account == null)
-                {
-                    throw new InvalidOperationException("No account available");
-                }
-                
-                Log($"CLOSE ORDER: {tradeId}");
-                
-                // Get the instrument
-                var instrument = Instrument.GetInstrument(_instrument);
-                if (instrument == null)
-                {
-                    throw new InvalidOperationException($"Instrument '{_instrument}' not found");
-                }
-                
-                // Find the position for this trade to determine exit price
-                Position position = null;
-                foreach (var pos in _account.Positions)
-                {
-                    if (pos.Instrument == instrument)
-                    {
-                        position = pos;
-                        break;
-                    }
-                }
-                
-                // Store pending close info for when execution update comes
-                _pendingCloseTradeId = tradeId;
-                _pendingCloseExitPrice = position?.AveragePrice ?? 0;
-                
-                // Flatten the position - ATM strategy will close automatically
-                _account.Flatten(new[] { instrument });
-                
-                // Clean up tracking dictionaries
-                lock (_ordersLock)
-                {
-                    _stopLossOrders.Remove(tradeId);
-                    _tradeIdToAtmStrategy.Remove(tradeId);
-                }
-                
-                Log($"Flatten command sent for {tradeId}");
-                _network?.SendTradeLog(tradeId, "NT:CLOSE", "Position flatten command sent");
-                NotifySuccess($"Close Command Sent: {tradeId}");
-                
-                // Note: EXIT_FILL will be sent from OnExecutionUpdate when fill is confirmed
-            }
-            catch (Exception ex)
-            {
-                var tradeId = payload["trade_id"]?.ToString() ?? "unknown";
-                var errorDetails = FormatExceptionDetails(ex);
-                Log($"ERROR handling close order {tradeId}: {ex.Message}");
-                _network?.SendError("ninjatrader", "order_close_failed", $"Failed to close order {tradeId}", errorDetails);
-                _network?.SendTradeLog(tradeId, "NT:ERROR", $"Close order failed: {ex.Message}");
-                NotifyError($"Order Close Failed: {ex.Message}");
-                
-                // Clear pending close on error
-                _pendingCloseTradeId = null;
-                _pendingCloseExitPrice = 0;
-            }
-        }
-        
-        // Track active trades and their stop loss orders for modification
-        private readonly Dictionary<string, Order> _entryOrders = new Dictionary<string, Order>();
-        private readonly Dictionary<string, Order> _stopLossOrders = new Dictionary<string, Order>();
-        private readonly Dictionary<string, Order> _takeProfitOrders = new Dictionary<string, Order>();
-        private readonly Dictionary<string, string> _tradeIdToAtmStrategy = new Dictionary<string, string>();
-        private readonly object _ordersLock = new object();
-        
-        // Track pending close operations
-        private string _pendingCloseTradeId = null;
-        private double _pendingCloseExitPrice = 0;
-
-        private void HandleModifyOrder(JObject payload)
-        {
-            try
-            {
-                var tradeId = payload["trade_id"]?.ToString();
-                var newSl = payload["stop_loss"]?.Value<double>() ?? 0;
-                
-                if (string.IsNullOrEmpty(tradeId))
-                {
-                    throw new ArgumentException("trade_id is required");
-                }
-
-                if (newSl <= 0)
-                {
-                    throw new ArgumentException($"Invalid stop_loss: {newSl}");
-                }
-                
-                if (_account == null)
-                {
-                    throw new InvalidOperationException("No account available");
-                }
-                
-                Log($"MODIFY ORDER: {tradeId} new SL={newSl}");
-
-                // Get the tracked stop loss order
-                Order stopOrder;
-                lock (_ordersLock)
-                {
-                    if (!_stopLossOrders.TryGetValue(tradeId, out stopOrder))
-                    {
-                        Log($"WARNING: No tracked stop order found for {tradeId}, attempting to find...");
-                        stopOrder = FindStopOrderForTrade(tradeId);
-                        if (stopOrder == null)
-                        {
-                            throw new InvalidOperationException($"Stop order not found for trade {tradeId}");
-                        }
-                        _stopLossOrders[tradeId] = stopOrder;
-                    }
-                }
-
-                // Validate order state
-                if (stopOrder.OrderState != OrderState.Working && stopOrder.OrderState != OrderState.Accepted)
-                {
-                    throw new InvalidOperationException($"Stop order is not modifiable (state: {stopOrder.OrderState})");
-                }
-
-                // Modify the stop order using Cancel + Replace
-                // Note: In AddOn context, we use account.Cancel(order) not CancelOrder()
-                
-                // Get order details before canceling
-                var qty = stopOrder.Quantity;
-                var instrument = stopOrder.Instrument;
-                var orderAction = stopOrder.OrderAction == OrderAction.Buy ? OrderAction.Sell : OrderAction.Buy;  // Reverse for exit
-                
-                try
-                {
-                    // Cancel the existing stop order
-                    _account.Cancel(stopOrder);
-                    Log($"Canceled existing stop order for {tradeId}");
-                    
-                    // Wait a moment for cancel to process
-                    Thread.Sleep(100);
-                }
-                catch (Exception cancelEx)
-                {
-                    Log($"WARNING: Failed to cancel existing stop order: {cancelEx.Message}");
-                    // Continue anyway - might still work
-                }
-                
-                // Create new stop order at the new price
-                var newStopOrder = _account.CreateOrder(
-                    instrument,
-                    orderAction,
-                    OrderType.StopMarket,
-                    OrderEntry.Automated,
-                    TimeInForce.Gtc,
-                    qty,
-                    0,  // limit price
-                    newSl,  // new stop price
-                    string.Empty,
-                    "Stop",  // name must be "Stop" for ATM compatibility
-                    DateTime.MinValue,
-                    null
-                );
-                
-                if (newStopOrder == null)
-                    throw new InvalidOperationException("Failed to create new stop order");
-                
-                // Track the new order
-                lock (_ordersLock)
-                {
-                    _stopLossOrders[tradeId] = newStopOrder;
-                }
-                
-                Log($"SUCCESS: Modified SL for {tradeId} from {stopOrder.StopPrice} to {newSl}");
-                _network?.SendTradeLog(tradeId, "NT:MODIFY", $"Stop loss changed from {stopOrder.StopPrice} to {newSl}");
-                NotifySuccess($"SL Modified: {stopOrder.StopPrice} → {newSl}");
-            }
-            catch (Exception ex)
-            {
-                var tradeId = payload["trade_id"]?.ToString() ?? "unknown";
-                var errorDetails = FormatExceptionDetails(ex);
-                Log($"ERROR handling modify order {tradeId}: {ex.Message}");
-                _network?.SendError("ninjatrader", "order_modify_failed", $"Failed to modify order {tradeId}: {ex.Message}", errorDetails);
-                NotifyWarning($"SL Modify Failed: {ex.Message}");
-            }
-        }
-
-        /// <summary>
-        /// Find the stop loss order for a trade by searching through account orders.
-        /// Since ATM strategy IDs are not exposed in NinjaScript, we track by order name and state.
-        /// </summary>
-        private Order FindStopOrderForTrade(string tradeId)
-        {
-            if (_account == null) return null;
-
-            foreach (var order in _account.Orders)
-            {
-                // Must be a stop order
-                if (order.OrderType != OrderType.StopMarket && order.OrderType != OrderType.StopLimit)
-                    continue;
-
-                // Name should indicate it's a stop
-                if (order.Name != "Stop" && !order.Name.Contains("Stop"))
-                    continue;
-
-                // Must be active/working
-                if (order.OrderState != OrderState.Working && order.OrderState != OrderState.Accepted)
-                    continue;
-
-                // Return first matching stop order
-                // In practice, there should only be one active stop per position
-                return order;
-            }
-
-            return null;
-        }
-        
-        private void HandleRefreshRequest(JObject payload)
-        {
-            try
-            {
-                var days = payload["days"]?.Value<int>() ?? 1;
-                Log($"REFRESH REQUEST: {days} days");
-                
-                _ = SendHistoryAsync(days);
-            }
-            catch (Exception ex)
-            {
-                var errorDetails = FormatExceptionDetails(ex);
-                Log($"ERROR handling refresh request: {ex.Message}");
-                _network?.SendError("ninjatrader", "refresh_failed", "Failed to handle refresh request", errorDetails);
-            }
-        }
-        
-        private void HandleTestStart(JObject payload)
-        {
-            try
-            {
-                var scenario = payload["scenario"]?.ToString() ?? "tp_hit";
-                var entryPrice = payload["entry_price"]?.Value<double>() ?? 21000.0;
-                var riskPoints = payload["risk_points"]?.Value<double>() ?? 80.0;
-                var rrRatio = payload["rr_ratio"]?.Value<double>() ?? 1.0;
-                
-                // Generate test trade ID
-                var tradeId = $"test_{scenario}_{Guid.NewGuid().ToString("N").Substring(0, 8)}";
-                
-                Log($"TEST START: {scenario} tradeId={tradeId} entry={entryPrice}");
-                
-                // Calculate SL/TP
-                double sl, tp;
-                string direction = "long";  // Tests always use long for simplicity
-                
-                sl = entryPrice - riskPoints;
-                tp = entryPrice + (riskPoints * rrRatio);
-                
-                // Simulate entry fill
-                _network?.SendEntryFill(tradeId, entryPrice, sl, tp);
-                _network?.SendTradeLog(tradeId, "NT:TEST", $"Test entry filled @ {entryPrice}");
-                
-                // Simulate scenario outcome after delay
-                Task.Run(async () =>
-                {
-                    await Task.Delay(1000);
-                    
-                    switch (scenario)
-                    {
-                        case "tp_hit":
-                            Log($"TEST: Simulating TP hit @ {tp}");
-                            _network?.SendExitFill(tradeId, tp, "TP");
-                            _network?.SendTradeLog(tradeId, "NT:TEST", $"TP filled @ {tp}");
-                            _network?.SendTestResult(scenario, true, tradeId, "TP hit as expected");
-                            break;
-                            
-                        case "sl_hit":
-                            Log($"TEST: Simulating SL hit @ {sl}");
-                            _network?.SendExitFill(tradeId, sl, "SL");
-                            _network?.SendTradeLog(tradeId, "NT:TEST", $"SL filled @ {sl}");
-                            _network?.SendTestResult(scenario, true, tradeId, "SL hit as expected");
-                            break;
-                            
-                        case "session_end":
-                            var closePrice = entryPrice + 5.0;  // Small profit
-                            Log($"TEST: Simulating session end close @ {closePrice}");
-                            _network?.SendExitFill(tradeId, closePrice, "CLOSE");
-                            _network?.SendTradeLog(tradeId, "NT:TEST", $"Session end close @ {closePrice}");
-                            _network?.SendTestResult(scenario, true, tradeId, "Session end close as expected");
-                            break;
-                            
-                        default:
-                            _network?.SendTestResult(scenario, false, tradeId, $"Unknown scenario: {scenario}");
-                            break;
-                    }
-                });
-            }
-            catch (Exception ex)
-            {
-                Log($"ERROR in test start: {ex.Message}");
-                _network?.SendError("ninjatrader", "test_failed", $"Test start failed: {ex.Message}");
             }
         }
 
@@ -1465,287 +456,241 @@ namespace NinjaTrader.NinjaScript.AddOns
         // Market Data
         // ═══════════════════════════════════════════════════════════════════
 
-        private async Task SendHistoryAsync(int days = 30)
-        {
-            try
-            {
-                var instrument = Instrument.GetInstrument(_instrument);
-                if (instrument == null)
-                {
-                    Log($"ERROR: Instrument '{_instrument}' not found");
-                    return;
-                }
-                
-                var tcs = new TaskCompletionSource<bool>();
-                var barsRequest = new BarsRequest(
-                    instrument, 
-                    DateTime.UtcNow.AddDays(-days), 
-                    DateTime.UtcNow);
-                barsRequest.BarsPeriod = new BarsPeriod 
-                { 
-                    BarsPeriodType = BarsPeriodType.Minute, 
-                    Value = 1 
-                };
-                
-                var batch = new List<JObject>();
-                int count = 0;
-                
-                barsRequest.Request((bars, errorCode, errorMessage) =>
-                {
-                    // Use fully qualified name to avoid ambiguity
-                    if (errorCode != NinjaTrader.Cbi.ErrorCode.NoError)
-                    {
-                        Log($"ERROR: BarsRequest failed: {errorMessage}");
-                        tcs.SetResult(false);
-                        return;
-                    }
-                    
-                    for (int i = 0; i < bars.Bars.Count; i++)
-                    {
-                        var time = bars.Bars.GetTime(i);
-                        var utcTs = (long)(time.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds;
-                        
-                        batch.Add(new JObject
-                        {
-                            ["time"] = utcTs,
-                            ["open"] = bars.Bars.GetOpen(i),
-                            ["high"] = bars.Bars.GetHigh(i),
-                            ["low"] = bars.Bars.GetLow(i),
-                            ["close"] = bars.Bars.GetClose(i),
-                            ["volume"] = (long)bars.Bars.GetVolume(i),
-                            ["pair"] = _instrument.Split(' ')[0]
-                        });
-                        count++;
-                        
-                        if (batch.Count >= _batchSize)
-                        {
-                            _network?.SendHistoryBatch(_instrument.Split(' ')[0], batch, days);
-                            batch.Clear();
-                        }
-                    }
-                    
-                    if (batch.Count > 0)
-                    {
-                        _network?.SendHistoryBatch(_instrument.Split(' ')[0], batch, days);
-                    }
-                    
-                    _barsSent = count;
-                    Log($"Sent {count} historical bars ({days} days)");
-                    
-                    // Send history end signal
-                    _network?.SendHistoryEnd();
-                    
-                    tcs.SetResult(true);
-                });
-                
-                await tcs.Task;
-            }
-            catch (Exception ex)
-            {
-                var errorDetails = FormatExceptionDetails(ex);
-                Log($"SendHistory error: {ex.Message}");
-                _network?.SendError("ninjatrader", "history_load_failed", $"Failed to load {days} days of history", errorDetails);
-            }
-        }
-        
         private void SubscribeToMarketData()
         {
-            var instrument = Instrument.GetInstrument(_instrument);
+            var instrument = Instrument.GetInstrument(_config.Instrument);
             if (instrument == null)
             {
-                var errorMsg = $"Cannot subscribe, instrument '{_instrument}' not found";
-                Log($"ERROR: {errorMsg}");
-                _network?.SendError("ninjatrader", "instrument_not_found", errorMsg);
+                _logger.Error($"Cannot subscribe, instrument '{_config.Instrument}' not found");
                 return;
             }
             instrument.MarketData.Update += OnMarketDataUpdate;
-            Log($"Subscribed to market data for {_instrument}");
+            _logger.Info($"Subscribed to market data for {_config.Instrument}");
         }
-        
+
         private void UnsubscribeFromMarketData()
         {
-            var instrument = Instrument.GetInstrument(_instrument);
+            var instrument = Instrument.GetInstrument(_config.Instrument);
             if (instrument != null)
             {
                 instrument.MarketData.Update -= OnMarketDataUpdate;
-                Log($"Unsubscribed from market data for {_instrument}");
+                _logger.Info($"Unsubscribed from market data for {_config.Instrument}");
             }
         }
-        
+
         private void OnMarketDataUpdate(object sender, MarketDataEventArgs e)
         {
             try
             {
                 if (!_connected || e.MarketDataType != MarketDataType.Last) return;
-                
-                var utcTs = (long)(e.Time.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds;
-                var pair = e.Instrument.MasterInstrument.Name;
-                
-                _network?.SendTick(pair, e.Price, (long)e.Volume, e.Time);
+
+                _network?.SendTick(
+                    e.Instrument.MasterInstrument.Name,
+                    e.Price,
+                    (long)e.Volume,
+                    e.Time);
+
                 _ticksSent++;
-                
-                if (_ticksSent % 500 == 0)
-                    UpdateStats();
+                if (_ticksSent % 500 == 0) UpdateStats();
             }
             catch (Exception ex)
             {
-                var errorDetails = FormatExceptionDetails(ex);
-                Log($"ERROR in market data update: {ex.Message}");
-                _network?.SendError("ninjatrader", "market_data_error", "Error processing market data", errorDetails);
+                _logger.Error("Market data error", ex);
+                _network?.SendError("ninjatrader", "market_data_error", ex.Message);
+            }
+        }
+
+        private async Task SendHistoryAsync(int days = 30)
+        {
+            try
+            {
+                var instrument = Instrument.GetInstrument(_config.Instrument);
+                if (instrument == null)
+                {
+                    _logger.Error($"Instrument '{_config.Instrument}' not found");
+                    return;
+                }
+
+                var tcs = new TaskCompletionSource<bool>();
+                var barsRequest = new BarsRequest(instrument, DateTime.UtcNow.AddDays(-days), DateTime.UtcNow)
+                {
+                    BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 }
+                };
+
+                var batch = new List<JObject>();
+                int count = 0;
+
+                barsRequest.Request((bars, errorCode, errorMessage) =>
+                {
+                    if (errorCode != ErrorCode.NoError)
+                    {
+                        _logger.Error($"BarsRequest failed: {errorMessage}");
+                        tcs.SetResult(false);
+                        return;
+                    }
+
+                    for (int i = 0; i < bars.Bars.Count; i++)
+                    {
+                        batch.Add(new JObject
+                        {
+                            ["time"] = ToUnixSeconds(bars.Bars.GetTime(i)),
+                            ["open"] = bars.Bars.GetOpen(i),
+                            ["high"] = bars.Bars.GetHigh(i),
+                            ["low"] = bars.Bars.GetLow(i),
+                            ["close"] = bars.Bars.GetClose(i),
+                            ["volume"] = (long)bars.Bars.GetVolume(i),
+                            ["pair"] = _config.Instrument.Split(' ')[0]
+                        });
+                        count++;
+
+                        if (batch.Count >= _config.BatchSize)
+                        {
+                            _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
+                            batch.Clear();
+                        }
+                    }
+
+                    if (batch.Count > 0) _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
+
+                    _barsSent = count;
+                    _logger.Info($"Sent {count} historical bars ({days} days)");
+                    _network?.SendHistoryEnd();
+                    tcs.SetResult(true);
+                });
+
+                await tcs.Task;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("SendHistory error", ex);
+                _network?.SendError("ninjatrader", "history_load_failed", $"Failed to load {days} days of history", FormatExceptionDetails(ex));
             }
         }
 
         // ═══════════════════════════════════════════════════════════════════
-        // Account / Orders
+        // Account / Order Management
         // ═══════════════════════════════════════════════════════════════════
 
-        private void InitializeAccount()
+        private void InitializeAccount(string preferredAccount = null)
         {
             try
             {
                 if (Account.All.Count == 0)
                 {
-                    var warnMsg = "No trading accounts found";
-                    Log($"WARNING: {warnMsg}");
-                    _network?.SendError("ninjatrader", "no_account", warnMsg);
+                    _logger.Warning("No trading accounts found");
+                    _network?.SendError("ninjatrader", "no_account", "No trading accounts found");
                     return;
                 }
+
+                // Use preferred account name if specified (from Python), otherwise use first available
+                if (!string.IsNullOrEmpty(preferredAccount))
+                {
+                    _account = Account.All.FirstOrDefault(a => a.Name == preferredAccount);
+                    if (_account == null)
+                    {
+                        _logger.Warning($"Python-specified account '{preferredAccount}' not found, using first available");
+                        _account = Account.All[0];
+                    }
+                    else
+                    {
+                        _logger.Info($"Using Python-specified account: {_account.Name}");
+                    }
+                }
+                else
+                {
+                    _account = Account.All[0];
+                    _logger.Info($"Using account: {_account.Name}");
+                }
                 
-                _account = Account.All[0];
                 _account.ExecutionUpdate += OnExecutionUpdate;
                 _account.OrderUpdate += OnOrderUpdate;
-                
-                Log($"Using account: {_account.Name}");
             }
             catch (Exception ex)
             {
-                var errorDetails = FormatExceptionDetails(ex);
-                Log($"ERROR initializing account: {ex.Message}");
-                _network?.SendError("ninjatrader", "account_init_failed", "Failed to initialize trading account", errorDetails);
+                _logger.Error("Account initialization failed", ex);
+                _network?.SendError("ninjatrader", "account_init_failed", ex.Message, FormatExceptionDetails(ex));
             }
         }
-        
+
+        private void UninitializeAccount()
+        {
+            if (_account != null)
+            {
+                _account.ExecutionUpdate -= OnExecutionUpdate;
+                _account.OrderUpdate -= OnOrderUpdate;
+                _account = null;
+            }
+        }
+
         private void OnOrderUpdate(object sender, OrderEventArgs e)
         {
             try
             {
                 var order = e.Order;
-                Log($"ORDER UPDATE: {order.Name} state={order.OrderState}");
-                
-                // Track orders by type for reliable fill correlation
-                // LIMITATION: With multiple positions, we can't reliably tell which order belongs to which trade
-                // without ATM strategy IDs (not exposed in NinjaScript)
-                // For single-position trading, this works fine
-                
-                // Track stop loss orders
-                if ((order.Name == "Stop" || order.Name.Contains("Stop")) && 
-                    (order.OrderType == OrderType.StopMarket || order.OrderType == OrderType.StopLimit))
+                _logger.Info($"ORDER UPDATE: {order.Name} state={order.OrderState}");
+
+                // Extract trade_id from order name (e.g., "Stop_trade-123" -> "trade-123")
+                string tradeIdFromName = ExtractTradeIdFromOrderName(order.Name);
+
+                // Track orders by type - MUST have trade_id in name
+                if (IsStopOrder(order))
                 {
-                    // Only track working orders
-                    if (order.OrderState == OrderState.Working || order.OrderState == OrderState.Accepted)
+                    if (!string.IsNullOrEmpty(tradeIdFromName))
                     {
-                        // Find trade ID that doesn't already have a stop order tracked
-                        // or update the one that matches this order reference
-                        string tradeId = null;
-                        lock (_ordersLock)
-                        {
-                            // First, check if this order is already tracked (same reference)
-                            foreach (var kvp in _stopLossOrders)
-                            {
-                                if (ReferenceEquals(kvp.Value, order))
-                                {
-                                    tradeId = kvp.Key;
-                                    break;
-                                }
-                            }
-                            
-                            // If not tracked yet, find a trade without a stop order
-                            if (tradeId == null)
-                            {
-                                foreach (var kvp in _pendingEntries)
-                                {
-                                    if (!_stopLossOrders.ContainsKey(kvp.Key))
-                                    {
-                                        tradeId = kvp.Key;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        
-                        if (tradeId != null)
-                        {
-                            lock (_ordersLock)
-                            {
-                                _stopLossOrders[tradeId] = order;
-                            }
-                            Log($"TRACKING SL order for {tradeId}: current SL={order.StopPrice}");
-                        }
+                        _orderTracker.TrackStopLoss(tradeIdFromName, order);
+                        _logger.Info($"TRACKING stop order for {tradeIdFromName} (from name)");
+                    }
+                    else
+                    {
+                        _logger.Error($"CRITICAL: Stop order '{order.Name}' has no trade_id in name - cannot track!");
+                        _network?.SendError("ninjatrader", "order_tracking_failed", 
+                            $"Stop order '{order.Name}' missing trade_id in name");
                     }
                 }
-                
-                // Track take profit orders
-                else if ((order.Name == "Target" || order.Name.Contains("Target")) &&
-                         (order.OrderType == OrderType.Limit || order.OrderType == OrderType.Market))
+                else if (IsTargetOrder(order))
                 {
-                    // Only track working orders
-                    if (order.OrderState == OrderState.Working || order.OrderState == OrderState.Accepted)
+                    if (!string.IsNullOrEmpty(tradeIdFromName))
                     {
-                        string tradeId = null;
-                        lock (_ordersLock)
-                        {
-                            // Check if already tracked
-                            foreach (var kvp in _takeProfitOrders)
-                            {
-                                if (ReferenceEquals(kvp.Value, order))
-                                {
-                                    tradeId = kvp.Key;
-                                    break;
-                                }
-                            }
-                            
-                            // Find trade without a TP order
-                            if (tradeId == null)
-                            {
-                                foreach (var kvp in _pendingEntries)
-                                {
-                                    if (!_takeProfitOrders.ContainsKey(kvp.Key))
-                                    {
-                                        tradeId = kvp.Key;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        
-                        if (tradeId != null)
-                        {
-                            lock (_ordersLock)
-                            {
-                                _takeProfitOrders[tradeId] = order;
-                            }
-                            Log($"TRACKING TP order for {tradeId}: current TP={order.LimitPrice}");
-                        }
+                        _orderTracker.TrackTakeProfit(tradeIdFromName, order);
+                        _logger.Info($"TRACKING target order for {tradeIdFromName} (from name)");
+                    }
+                    else
+                    {
+                        _logger.Error($"CRITICAL: Target order '{order.Name}' has no trade_id in name - cannot track!");
+                        _network?.SendError("ninjatrader", "order_tracking_failed", 
+                            $"Target order '{order.Name}' missing trade_id in name");
                     }
                 }
-                
-                // Update entry orders if state changed
-                else if (order.Name == "Entry")
+                else if (IsEntryOrder(order))
                 {
-                    lock (_ordersLock)
+                    if (!string.IsNullOrEmpty(tradeIdFromName))
                     {
-                        foreach (var kvp in _entryOrders)
-                        {
-                            if (ReferenceEquals(kvp.Value, order))
-                            {
-                                Log($"Entry order update for {kvp.Key}: state={order.OrderState}");
-                                break;
-                            }
-                        }
+                        _orderTracker.TrackEntry(tradeIdFromName, order);
+                        _logger.Info($"TRACKING entry order for {tradeIdFromName} (from name)");
+                    }
+                    else
+                    {
+                        _logger.Error($"CRITICAL: Entry order '{order.Name}' has no trade_id in name - cannot track!");
+                        _network?.SendError("ninjatrader", "order_tracking_failed", 
+                            $"Entry order '{order.Name}' missing trade_id in name");
                     }
                 }
-                
-                // Send order state to Python for tracking
+                else if (IsCloseOrder(order))
+                {
+                    if (!string.IsNullOrEmpty(tradeIdFromName))
+                    {
+                        _orderTracker.TrackCloseOrder(tradeIdFromName, order);
+                        _logger.Info($"TRACKING close order for {tradeIdFromName} (from name)");
+                    }
+                    else
+                    {
+                        _logger.Error($"CRITICAL: Close order '{order.Name}' has no trade_id in name - cannot track!");
+                        _network?.SendError("ninjatrader", "order_tracking_failed", 
+                            $"Close order '{order.Name}' missing trade_id in name");
+                    }
+                }
+
+                // Notify Python of rejected/cancelled orders
                 if (order.OrderState == OrderState.Rejected || order.OrderState == OrderState.Cancelled)
                 {
                     _network?.SendError("ninjatrader", "order_state", $"Order {order.Name} is {order.OrderState}");
@@ -1753,325 +698,229 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
             catch (Exception ex)
             {
-                Log($"ERROR in order update: {ex.Message}");
+                _logger.Error("Order update error", ex);
             }
         }
-        
+
+        private static string ExtractTradeIdFromOrderName(string orderName)
+        {
+            if (string.IsNullOrEmpty(orderName)) return null;
+            
+            if (orderName.StartsWith("Entry_"))
+                return orderName.Substring(6);
+            if (orderName.StartsWith("Stop_"))
+                return orderName.Substring(5);
+            if (orderName.StartsWith("Target_"))
+                return orderName.Substring(7);
+            
+            return null;
+        }
+
         private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         {
             try
             {
                 var execution = e.Execution;
                 var order = execution.Order;
-                var orderName = order.Name;
                 var fillPrice = execution.Price;
-                var quantity = execution.Quantity;
-                
-                Log($"EXECUTION: {orderName} @ {fillPrice} qty={quantity}");
-                
-                // Send execution to Python
-                _network?.SendTradeLog(
-                    orderName, 
-                    "NT:EXECUTION", 
-                    $"Execution: {quantity} @ {fillPrice}"
-                );
-                
-                // Find trade_id by looking up the order reference in our tracking dictionaries
-                string tradeId = null;
-                
-                // Check for entry fill (order name is "Entry")
-                if (orderName == "Entry")
+
+                _logger.Info($"EXECUTION: {order.Name} @ {fillPrice} qty={execution.Quantity}");
+                _network?.SendTradeLog(order.Name, "NT:EXECUTION", $"Execution: {execution.Quantity} @ {fillPrice}");
+
+                if (IsEntryOrder(order))
                 {
-                    // Look up in _entryOrders dictionary by object reference
-                    lock (_ordersLock)
-                    {
-                        foreach (var kvp in _entryOrders)
-                        {
-                            if (ReferenceEquals(kvp.Value, order))
-                            {
-                                tradeId = kvp.Key;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    // Fallback if not found (shouldn't happen with proper tracking)
-                    if (tradeId == null)
-                    {
-                        Log($"WARNING: Entry fill not found in _entryOrders. Using fallback.");
-                        lock (_ordersLock)
-                        {
-                            foreach (var kvp in _pendingEntries)
-                            {
-                                tradeId = kvp.Key;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (tradeId != null)
-                    {
-                        var entry = _pendingEntries[tradeId];
-                        
-                        // Calculate SL/TP based on fill price
-                        double sl, tp;
-                        if (entry.Direction == "long")
-                        {
-                            sl = fillPrice - entry.SlPoints;
-                            tp = fillPrice + (entry.SlPoints * entry.RrRatio);
-                        }
-                        else
-                        {
-                            sl = fillPrice + entry.SlPoints;
-                            tp = fillPrice - (entry.SlPoints * entry.RrRatio);
-                        }
-                        
-                        Log($"ENTRY FILL: {tradeId} @ {fillPrice} SL={sl} TP={tp}");
-                        _network?.SendEntryFill(tradeId, fillPrice, sl, tp);
-                        _network?.SendTradeLog(tradeId, "NT:FILL", $"Entry filled @ {fillPrice} qty={quantity}");
-                        NotifySuccess($"Entry Filled @ {fillPrice}");
-                    }
+                    HandleEntryFill(order, fillPrice);
                 }
-                
-                // Check for Stop Loss fills
-                else if (orderName.Contains("Stop"))
+                else if (IsStopOrder(order))
                 {
-                    // Look up in _stopLossOrders dictionary by object reference
-                    lock (_ordersLock)
-                    {
-                        foreach (var kvp in _stopLossOrders)
-                        {
-                            if (ReferenceEquals(kvp.Value, order))
-                            {
-                                tradeId = kvp.Key;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (tradeId != null)
-                    {
-                        Log($"EXIT FILL (SL): {tradeId} @ {fillPrice}");
-                        _network?.SendExitFill(tradeId, fillPrice, "SL");
-                        _network?.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice} qty={quantity}");
-                        NotifyWarning($"Stop Loss Hit @ {fillPrice}");
-                        
-                        // Clean up tracking
-                        lock (_ordersLock)
-                        {
-                            _pendingEntries.Remove(tradeId);
-                            _entryOrders.Remove(tradeId);
-                            _stopLossOrders.Remove(tradeId);
-                            _takeProfitOrders.Remove(tradeId);
-                            _tradeIdToAtmStrategy.Remove(tradeId);
-                        }
-                    }
-                    else
-                    {
-                        Log($"WARNING: SL fill not found in tracking. Order: {orderName}");
-                    }
+                    HandleStopLossFill(order, fillPrice);
                 }
-                
-                // Check for Take Profit fills
-                else if (orderName.Contains("Target"))
+                else if (IsTargetOrder(order))
                 {
-                    // Look up in _takeProfitOrders dictionary by object reference
-                    lock (_ordersLock)
-                    {
-                        foreach (var kvp in _takeProfitOrders)
-                        {
-                            if (ReferenceEquals(kvp.Value, order))
-                            {
-                                tradeId = kvp.Key;
-                                break;
-                            }
-                        }
-                    }
-                    
-                    if (tradeId != null)
-                    {
-                        Log($"EXIT FILL (TP): {tradeId} @ {fillPrice}");
-                        _network?.SendExitFill(tradeId, fillPrice, "TP");
-                        _network?.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice} qty={quantity}");
-                        NotifySuccess($"Take Profit Hit @ {fillPrice}");
-                        
-                        // Clean up tracking
-                        lock (_ordersLock)
-                        {
-                            _pendingEntries.Remove(tradeId);
-                            _entryOrders.Remove(tradeId);
-                            _stopLossOrders.Remove(tradeId);
-                            _takeProfitOrders.Remove(tradeId);
-                            _tradeIdToAtmStrategy.Remove(tradeId);
-                        }
-                    }
-                    else
-                    {
-                        Log($"WARNING: TP fill not found in tracking. Order: {orderName}");
-                    }
+                    HandleTakeProfitFill(order, fillPrice);
                 }
-                
-                // Check if this is a close execution from our pending close
-                else if (!string.IsNullOrEmpty(_pendingCloseTradeId))
+                else if (IsCloseOrder(order))
                 {
-                    // Check if position is now flat
-                    var instrument = Instrument.GetInstrument(_instrument);
-                    if (instrument != null)
-                    {
-                        Position position = null;
-                        foreach (var pos in _account.Positions)
-                        {
-                            if (pos.Instrument == instrument)
-                            {
-                                position = pos;
-                                break;
-                            }
-                        }
-                        
-                        // If position is flat (null or quantity = 0), send EXIT_FILL
-                        if (position == null || position.Quantity == 0)
-                        {
-                            var exitPrice = fillPrice;
-                            Log($"CLOSE FILL: {_pendingCloseTradeId} @ {exitPrice}");
-                            
-                            _network?.SendExitFill(_pendingCloseTradeId, exitPrice, "CLOSE");
-                            _network?.SendTradeLog(_pendingCloseTradeId, "NT:CLOSE_FILL", $"Position closed @ {exitPrice}");
-                            NotifySuccess($"Position Closed @ {exitPrice}");
-                            
-                            // Clean up tracking
-                            lock (_ordersLock)
-                            {
-                                _pendingEntries.Remove(_pendingCloseTradeId);
-                                _entryOrders.Remove(_pendingCloseTradeId);
-                                _stopLossOrders.Remove(_pendingCloseTradeId);
-                                _takeProfitOrders.Remove(_pendingCloseTradeId);
-                                _tradeIdToAtmStrategy.Remove(_pendingCloseTradeId);
-                            }
-                            
-                            // Clear pending close
-                            _pendingCloseTradeId = null;
-                            _pendingCloseExitPrice = 0;
-                        }
-                    }
+                    HandleCloseFill(order, fillPrice);
                 }
             }
             catch (Exception ex)
             {
-                Log($"ERROR in execution update: {ex.Message}");
+                _logger.Error("Execution update error", ex);
             }
         }
 
+        private void HandleEntryFill(Order order, double fillPrice)
+        {
+            if (!_orderTracker.TryGetTradeIdForOrder(order, out var tradeId) ||
+                !_orderTracker.TryGetPendingEntry(tradeId, out var entry))
+            {
+                _logger.Error($"CRITICAL: Entry fill for order '{order.Name}' not found in tracking! Cannot process fill.");
+                _network?.SendError("ninjatrader", "fill_tracking_failed", 
+                    $"Entry fill for order '{order.Name}' not found in tracking");
+                return;
+            }
+
+            var (sl, tp) = CalculateSlTp(fillPrice, entry.Direction, entry.SlPoints, entry.RrRatio);
+
+            _logger.Success($"ENTRY FILL: {tradeId} @ {fillPrice} SL={sl} TP={tp}");
+            _network?.SendEntryFill(tradeId, fillPrice, sl, tp);
+            _network?.SendTradeLog(tradeId, "NT:FILL", $"Entry filled @ {fillPrice}");
+        }
+
+        private void HandleStopLossFill(Order order, double fillPrice)
+        {
+            if (!_orderTracker.TryGetTradeIdForOrder(order, out var tradeId))
+            {
+                _logger.Error($"CRITICAL: SL fill for order '{order.Name}' not found in tracking! Cannot process fill.");
+                _network?.SendError("ninjatrader", "fill_tracking_failed", 
+                    $"SL fill for order '{order.Name}' not found in tracking");
+                return;
+            }
+
+            _logger.Warning($"EXIT FILL (SL): {tradeId} @ {fillPrice}");
+            _network?.SendExitFill(tradeId, fillPrice, "SL");
+            _network?.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice}");
+            _orderTracker.RemoveTrade(tradeId);
+        }
+
+        private void HandleTakeProfitFill(Order order, double fillPrice)
+        {
+            if (!_orderTracker.TryGetTradeIdForOrder(order, out var tradeId))
+            {
+                _logger.Error($"CRITICAL: TP fill for order '{order.Name}' not found in tracking! Cannot process fill.");
+                _network?.SendError("ninjatrader", "fill_tracking_failed", 
+                    $"TP fill for order '{order.Name}' not found in tracking");
+                return;
+            }
+
+            _logger.Success($"EXIT FILL (TP): {tradeId} @ {fillPrice}");
+            _network?.SendExitFill(tradeId, fillPrice, "TP");
+            _network?.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice}");
+            _orderTracker.RemoveTrade(tradeId);
+        }
+
+        private void HandleCloseFill(Order order, double fillPrice)
+        {
+            if (!_orderTracker.TryGetTradeIdForOrder(order, out var tradeId))
+            {
+                _logger.Error($"CRITICAL: Close fill for order '{order.Name}' not found in tracking! Cannot process fill.");
+                _network?.SendError("ninjatrader", "fill_tracking_failed", 
+                    $"Close fill for order '{order.Name}' not found in tracking");
+                return;
+            }
+
+            _logger.Success($"POSITION CLOSED: {tradeId} @ {fillPrice}");
+            _network?.SendExitFill(tradeId, fillPrice, "CLOSE");
+            _network?.SendTradeLog(tradeId, "NT:FILL", $"Position closed @ {fillPrice}");
+            _orderTracker.RemoveTrade(tradeId);
+        }
+
+        private (double sl, double tp) CalculateSlTp(double fillPrice, string direction, double slPoints, double rrRatio)
+        {
+            if (direction == "long")
+            {
+                return (fillPrice - slPoints, fillPrice + (slPoints * rrRatio));
+            }
+            else
+            {
+                return (fillPrice + slPoints, fillPrice - (slPoints * rrRatio));
+            }
+        }
+
+        private static bool IsEntryOrder(Order order) => 
+            order.Name == "Entry" || (order.Name != null && order.Name.StartsWith("Entry_"));
+        
+        private static bool IsStopOrder(Order order) =>
+            ((order.Name == "Stop" || order.Name.StartsWith("Stop_")) &&
+            (order.OrderType == OrderType.StopMarket || order.OrderType == OrderType.StopLimit));
+        
+        private static bool IsTargetOrder(Order order) =>
+            ((order.Name == "Target" || order.Name.StartsWith("Target_")) &&
+            (order.OrderType == OrderType.Limit || order.OrderType == OrderType.Market));
+        
+        private static bool IsCloseOrder(Order order) =>
+            order.Name != null && order.Name.StartsWith("Close_");
+
         // ═══════════════════════════════════════════════════════════════════
-        // Test Connection & E2E Tests
+        // Tests
         // ═══════════════════════════════════════════════════════════════════
 
         private async Task TestConnectionAsync()
         {
-            Log("=== TEST CONNECTION ===");
-            Log("Sending TEST_PING via REQ/REP socket...");
-            
+            _logger.Info("=== TEST CONNECTION ===");
             try
             {
-                // Use synchronous query for reliable request-response
                 bool success = await Task.Run(() => _network?.SendTestPingWithResponse(2000) ?? false);
-                
                 if (success)
                 {
-                    Log("✅ Received TEST_PONG response from Python");
-                    Log("=== TEST CONNECTION: PASSED ===");
-                    Log("ZMQ REQ/REP connection is working");
+                    _logger.Success("TEST CONNECTION: PASSED - ZMQ REQ/REP working");
                 }
                 else
                 {
-                    Log("❌ No TEST_PONG response received");
-                    Log("=== TEST CONNECTION: FAILED ===");
-                    Log("Check that Python gateway is running on port 5557");
+                    _logger.Warning("TEST CONNECTION: FAILED - No response from Python");
                 }
             }
             catch (Exception ex)
             {
-                Log($"❌ TEST CONNECTION FAILED: {ex.Message}");
-                Log("=== TEST CONNECTION: FAILED ===");
+                _logger.Error("TEST CONNECTION: FAILED", ex);
             }
         }
 
         private async Task RunE2ETestsAsync()
         {
-            if (_ui != null) _ui.SetE2EButtonEnabled(false);
-            
+            _ui?.SetE2EButtonEnabled(false);
             try
             {
-                var runner = new ZmqE2ETestRunner(_network, Log);
+                var runner = new ZmqE2ETestRunner(_network, _logger);
                 await runner.RunAllScenariosAsync();
             }
             finally
             {
-                if (_ui != null) _ui.SetE2EButtonEnabled(true);
+                _ui?.SetE2EButtonEnabled(true);
             }
         }
-    }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // E2E Test Runner
-    // ═══════════════════════════════════════════════════════════════════════
+        // ═══════════════════════════════════════════════════════════════════
+        // Utilities
+        // ═══════════════════════════════════════════════════════════════════
 
-    internal class ZmqE2ETestRunner
-    {
-        private readonly ZmqNetwork _network;
-        private readonly Action<string> _log;
-
-        internal ZmqE2ETestRunner(ZmqNetwork network, Action<string> log)
+        private void UpdateStats()
         {
-            _network = network;
-            _log = log;
+            var stats = $"Ticks: {_ticksSent} | Bars: {_barsSent} | Cmds: {_commandsReceived}";
+            _ui?.UpdateStatus(_connected, stats);
         }
 
-        internal async Task<int> RunAllScenariosAsync()
+        private static string FormatExceptionDetails(Exception ex)
         {
-            _log("=== E2E TESTS STARTING ===");
-            _log("Sending TEST_START messages to Python for each scenario");
-
-            int passed = 0;
-            int total = 3;
-            string[] scenarios = { "tp_hit", "sl_hit", "session_end" };
-
-            foreach (var scenario in scenarios)
+            var sb = new StringBuilder();
+            sb.AppendLine($"Exception: {ex.GetType().Name}");
+            sb.AppendLine($"Message: {ex.Message}");
+            sb.AppendLine($"StackTrace: {ex.StackTrace}");
+            if (ex.InnerException != null)
             {
-                _log($"");
-                _log($"--- Testing scenario: {scenario} ---");
-                
-                try
-                {
-                    // Send TEST_START to Python - Python will create trade and send open order
-                    _log($"[TEST] Sending TEST_START for {scenario}");
-                    _network?.SendTestStart(scenario, entryPrice: 21000.0, riskPoints: 80.0, rrRatio: 1.0);
-                    
-                    // Wait for Python to process and send open order command
-                    await Task.Delay(1000);
-                    
-                    // The rest of the test flow is handled by Python:
-                    // 1. Python creates trade in DB
-                    // 2. Python enqueues open order command
-                    // 3. C# receives command and sends ENTRY_FILL
-                    // 4. Python processes entry, enqueues modify order
-                    // 5. C# receives modify and sends EXIT_FILL based on scenario
-                    
-                    _log($"[TEST] Scenario {scenario}: Commands sent, check Python logs for results");
-                    passed++;
-                }
-                catch (Exception ex)
-                {
-                    _log($"[TEST] Scenario {scenario}: FAILED - {ex.Message}");
-                }
-                
-                // Delay between scenarios
-                await Task.Delay(1000);
+                sb.AppendLine($"InnerException: {ex.InnerException.GetType().Name}");
+                sb.AppendLine($"InnerMessage: {ex.InnerException.Message}");
             }
+            return sb.ToString();
+        }
 
-            _log($"");
-            _log($"=== E2E TESTS COMPLETE: {passed}/{total} passed ===");
-            _log("Note: Full test results require Python test endpoint implementation");
-            return passed;
+        private static long ToUnixSeconds(DateTime dt) =>
+            (long)(dt.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds;
+
+        private static MenuItem FindMenuItem(System.Collections.IEnumerable items, string header)
+        {
+            if (items == null) return null;
+            foreach (var item in items)
+            {
+                if (item is MenuItem mi)
+                {
+                    if (mi.Header?.ToString() == header) return mi;
+                    var found = FindMenuItem(mi.Items, header);
+                    if (found != null) return found;
+                }
+            }
+            return null;
         }
     }
 }

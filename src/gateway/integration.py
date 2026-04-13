@@ -42,6 +42,7 @@ def create_live_components(
     *,
     risk_usd: Optional[float] = None,
     risk_pct: Optional[float] = None,
+    account: Optional[str] = None,
     host: str = "127.0.0.1",
     market_port: int = 5555,
     command_port: int = 5556,
@@ -58,6 +59,7 @@ def create_live_components(
         logger: Logger instance (required)
         risk_usd: Fixed dollar risk per trade (optional)
         risk_pct: Percentage of account to risk per trade (optional)
+        account: Trading account name to use (optional, uses first available if not specified)
         host: ZeroMQ host address (default: localhost)
         market_port: Port for market data (PUB/SUB)
         command_port: Port for trade commands (PUSH/PULL)
@@ -80,6 +82,7 @@ def create_live_components(
         ...     pair="NQ",
         ...     logger=logger,
         ...     risk_usd=500,
+        ...     account="MyAccount",
         ... )
         >>> 
         >>> # Create Flask app with ZeroMQ components
@@ -110,6 +113,9 @@ def create_live_components(
     # Create gateway with logger (logger is required first param)
     gateway = TradingGateway(logger, config=config, pair=pair)
     
+    # Store account name for config queries from NinjaTrader
+    gateway._account_name = account
+    
     # Create data source that uses the gateway (logger is required first param)
     data_source = ZMQDataSource(logger, gateway=gateway, pair=pair)
     
@@ -124,6 +130,8 @@ def create_live_components(
     logger.info(f"Created ZeroMQ live components for {pair}")
     logger.info(f"  Market data: tcp://{host}:{market_port}")
     logger.info(f"  Commands: tcp://{host}:{command_port}")
+    if account:
+        logger.info(f"  Account: {account}")
     
     return data_source, trade_executor
 

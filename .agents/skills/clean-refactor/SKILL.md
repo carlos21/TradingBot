@@ -1,6 +1,6 @@
 ---
 name: clean-refactor
-description: Refactor existing code using SOLID principles, design patterns, and clean architecture. Use when refactoring legacy code, improving code maintainability, achieving high testability, applying dependency injection, extracting interfaces, or decoupling tightly-coupled components. Triggers: "refactor this code", "make it SOLID", "improve testability", "apply clean architecture", "reduce coupling", "extract interface", "dependency injection".
+description: "Refactor existing code using SOLID principles, design patterns, and clean architecture. Use when refactoring legacy code, improving code maintainability, achieving high testability, applying dependency injection, extracting interfaces, or decoupling tightly-coupled components. Triggers: refactor this code, make it SOLID, improve testability, apply clean architecture, reduce coupling, extract interface, dependency injection."
 ---
 
 # Clean Refactoring Skill

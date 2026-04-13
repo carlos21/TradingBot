@@ -1,0 +1,317 @@
+// ═══════════════════════════════════════════════════════════════════════
+// Application Layer: ZMQ Network Service
+// Network layer: Manages all ZeroMQ socket operations
+// ═══════════════════════════════════════════════════════════════════════
+
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using NetMQ;
+using NetMQ.Sockets;
+using Newtonsoft.Json.Linq;
+
+namespace NinjaTrader.NinjaScript.AddOns
+{
+    /// <summary>
+    /// Network layer: Manages all ZeroMQ socket operations.
+    /// Implements IDisposable for proper resource cleanup.
+    /// Uses sequence numbers for message tracking.
+    /// </summary>
+    internal sealed class ZmqNetwork : IDisposable
+    {
+        private PublisherSocket _marketPub;
+        private PullSocket _commandPull;
+        private RequestSocket _queryReq;
+        private PublisherSocket _heartbeatPub;
+
+        private readonly ZmqConfiguration _config;
+        private readonly IMessageSerializer _serializer;
+        private readonly ILogger _logger;
+
+        private int _seqNum = 0;
+        private readonly object _seqLock = new object();
+
+        public bool IsConnected => _marketPub != null && _commandPull != null;
+
+        public ZmqNetwork(ZmqConfiguration config, IMessageSerializer serializer, ILogger logger)
+        {
+            _config = config ?? throw new ArgumentNullException(nameof(config));
+            _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
+
+        public void Start()
+        {
+            // PUB: Market data to Python
+            _marketPub = new PublisherSocket();
+            _marketPub.Connect(_config.MarketDataAddress);
+
+            // PULL: Commands from Python
+            _commandPull = new PullSocket();
+            _commandPull.Connect(_config.CommandAddress);
+
+            // REQ: Queries to Python
+            _queryReq = new RequestSocket();
+            _queryReq.Connect(_config.QueryAddress);
+
+            // PUB: Heartbeats
+            _heartbeatPub = new PublisherSocket();
+            _heartbeatPub.Connect(_config.HeartbeatAddress);
+
+            _logger?.Info($"Connected to ZMQ endpoints: market={_config.MarketPort}, cmd={_config.CommandPort}");
+        }
+
+        public void Stop()
+        {
+            _marketPub?.Dispose();
+            _commandPull?.Dispose();
+            _queryReq?.Dispose();
+            _heartbeatPub?.Dispose();
+
+            _marketPub = null;
+            _commandPull = null;
+            _queryReq = null;
+            _heartbeatPub = null;
+
+            _logger?.Info("ZMQ network stopped");
+        }
+
+        public void Dispose() => Stop();
+
+        private int NextSeq()
+        {
+            lock (_seqLock) { return ++_seqNum; }
+        }
+
+        // ───────────────────────────────────────────────────────────────────
+        // Send Methods (Platform → Python)
+        // ───────────────────────────────────────────────────────────────────
+
+        private void Send(string msgType, JObject payload)
+        {
+            if (_marketPub == null) return;
+            var envelope = MessageEnvelope.Create(msgType, payload, NextSeq());
+            _marketPub.SendFrame(_serializer.Serialize(envelope));
+        }
+
+        public void SendTick(string pair, double price, long volume, DateTime time, double? bid = null, double? ask = null)
+        {
+            var payload = new JObject
+            {
+                ["pair"] = pair,
+                ["price"] = price,
+                ["volume"] = volume,
+                ["time"] = ToUnixSeconds(time)
+            };
+            if (bid.HasValue) payload["bid"] = bid.Value;
+            if (ask.HasValue) payload["ask"] = ask.Value;
+            Send(MessageType.Tick, payload);
+        }
+
+        public void SendBar(string pair, DateTime time, double open, double high, double low, double close, long volume, bool isPartial = false)
+        {
+            var payload = new JObject
+            {
+                ["pair"] = pair,
+                ["time"] = ToUnixSeconds(time),
+                ["open"] = open,
+                ["high"] = high,
+                ["low"] = low,
+                ["close"] = close,
+                ["volume"] = volume
+            };
+            Send(isPartial ? MessageType.PartialBar : MessageType.Bar, payload);
+        }
+
+        public void SendHistoryBatch(string pair, List<JObject> bars, int days)
+        {
+            Send(MessageType.HistoryBatch, new JObject
+            {
+                ["pair"] = pair,
+                ["bars"] = new JArray(bars),
+                ["days"] = days
+            });
+        }
+
+        public void SendHistoryEnd() => Send(MessageType.HistoryEnd, new JObject());
+
+        public void SendEntryFill(string tradeId, double entryPrice, double? stopLoss = null, double? takeProfit = null, double? slippage = null)
+        {
+            var payload = new JObject { ["trade_id"] = tradeId, ["entry_price"] = entryPrice };
+            if (stopLoss.HasValue) payload["stop_loss"] = stopLoss.Value;
+            if (takeProfit.HasValue) payload["take_profit"] = takeProfit.Value;
+            if (slippage.HasValue) payload["slippage"] = slippage.Value;
+            Send(MessageType.EntryFill, payload);
+        }
+
+        public void SendExitFill(string tradeId, double exitPrice, string resultType)
+        {
+            Send(MessageType.ExitFill, new JObject
+            {
+                ["trade_id"] = tradeId,
+                ["exit_price"] = exitPrice,
+                ["result_type"] = resultType,
+                ["exit_time"] = ToUnixSeconds(DateTime.UtcNow)
+            });
+        }
+
+        public void SendTradeLog(string tradeId, string evt, string msg)
+        {
+            Send(MessageType.TradeLog, new JObject
+            {
+                ["trade_id"] = tradeId,
+                ["event"] = evt,
+                ["message"] = msg?.Replace("\"", "'") ?? ""
+            });
+        }
+
+        public void SendError(string source, string errorType, string message, string details = null)
+        {
+            var payload = new JObject
+            {
+                ["source"] = source,
+                ["error_type"] = errorType,
+                ["message"] = message?.Replace("\"", "'"),
+                ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0
+            };
+            if (details != null)
+                payload["details"] = details.Replace("\"", "'").Replace("\r\n", " | ").Replace("\n", " | ");
+            Send(MessageType.Error, payload);
+        }
+
+        public void SendHeartbeat(string source, string status)
+        {
+            if (_heartbeatPub == null) return;
+            var payload = new JObject { ["source"] = source, ["status"] = status };
+            var envelope = MessageEnvelope.Create(MessageType.Heartbeat, payload, NextSeq());
+            _heartbeatPub.SendFrame(_serializer.Serialize(envelope));
+        }
+
+        public void SendConnect(string platform, string version, string account = null, string pair = null)
+        {
+            var payload = new JObject { ["platform"] = platform, ["version"] = version };
+            if (account != null) payload["account"] = account;
+            if (pair != null) payload["pair"] = pair;
+            Send(MessageType.Connect, payload);
+        }
+
+        public void SendTestStart(string scenario, double entryPrice = 21000.0, double riskPoints = 80.0, double rrRatio = 1.0)
+        {
+            Send(MessageType.TestStart, new JObject
+            {
+                ["scenario"] = scenario,
+                ["entry_price"] = entryPrice,
+                ["risk_points"] = riskPoints,
+                ["rr_ratio"] = rrRatio
+            });
+        }
+
+        public void SendTestResult(string scenario, bool passed, string tradeId = null, string message = "")
+        {
+            var payload = new JObject { ["scenario"] = scenario, ["passed"] = passed, ["message"] = message };
+            if (tradeId != null) payload["trade_id"] = tradeId;
+            Send(MessageType.TestResult, payload);
+        }
+
+        // ───────────────────────────────────────────────────────────────────
+        // Receive Methods (Python → Platform)
+        // ───────────────────────────────────────────────────────────────────
+
+        public MessageEnvelope ReceiveCommand(int timeoutMs = 100)
+        {
+            if (_commandPull == null) return null;
+            if (_commandPull.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out string message))
+                return _serializer.Deserialize(message);
+            return null;
+        }
+
+        public bool SendTestPingWithResponse(double timeoutMs = 2000)
+        {
+            if (_queryReq == null) return false;
+            try
+            {
+                var payload = new JObject { ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0 };
+                var envelope = MessageEnvelope.Create(MessageType.TestPing, payload, NextSeq());
+                _queryReq.SendFrame(_serializer.Serialize(envelope));
+
+                if (_queryReq.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out string response))
+                {
+                    var resp = _serializer.Deserialize(response);
+                    return resp?.MsgType == MessageType.TestPong;
+                }
+                return false;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Query configuration from Python (account name, etc.)
+        /// </summary>
+        public string QueryConfig(string key, double timeoutMs = 2000)
+        {
+            if (_queryReq == null) return null;
+            try
+            {
+                var payload = new JObject { ["key"] = key };
+                var envelope = MessageEnvelope.Create(MessageType.ConfigQuery, payload, NextSeq());
+                _queryReq.SendFrame(_serializer.Serialize(envelope));
+
+                if (_queryReq.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out string response))
+                {
+                    var resp = _serializer.Deserialize(response);
+                    if (resp?.MsgType == MessageType.ConfigResponse)
+                    {
+                        return resp.Payload[key]?.ToString();
+                    }
+                }
+                return null;
+            }
+            catch { return null; }
+        }
+
+        /// <summary>
+        /// Send actual broker positions to Python for reconciliation.
+        /// Broker (NinjaTrader) is the source of truth.
+        /// </summary>
+        public void SendPositionSync(JArray positions, JArray untrackedOrders = null)
+        {
+            var payload = new JObject
+            {
+                ["positions"] = positions,
+                ["count"] = positions.Count,
+                ["source"] = "ninjatrader",
+                ["is_source_of_truth"] = true,
+            };
+            
+            if (untrackedOrders != null && untrackedOrders.Count > 0)
+                payload["untracked_orders"] = untrackedOrders;
+            
+            Send(MessageType.PositionSync, payload);
+        }
+
+        /// <summary>
+        /// Send command acknowledgment back to Python.
+        /// Confirms that a command was received and processed.
+        /// </summary>
+        public void SendCommandAck(string commandType, int seqNum, bool success, string tradeId = null, string message = null)
+        {
+            var payload = new JObject
+            {
+                ["command_type"] = commandType,
+                ["seq_num"] = seqNum,
+                ["success"] = success,
+                ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0,
+            };
+            
+            if (tradeId != null)
+                payload["trade_id"] = tradeId;
+            if (message != null)
+                payload["message"] = message;
+            
+            Send(MessageType.CommandAck, payload);
+        }
+
+        private static long ToUnixSeconds(DateTime dt) =>
+            (long)(dt.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds;
+    }
+}

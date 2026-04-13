@@ -52,6 +52,14 @@ class MessageType(str, Enum):
     POSITION_RESPONSE = "position_response"
     ACCOUNT_QUERY = "account_query"
     ACCOUNT_RESPONSE = "account_response"
+    CONFIG_QUERY = "config_query"
+    CONFIG_RESPONSE = "config_response"
+    
+    # Position Sync (Platform → Python, broker is source of truth)
+    POSITION_SYNC = "position_sync"
+    
+    # Command Acknowledgment (Platform → Python)
+    COMMAND_ACK = "command_ack"
     
     # Testing (Bidirectional)
     TEST_PING = "test_ping"           # Connection test request
@@ -504,9 +512,135 @@ class TestResultMessage:
 
 
 # =============================================================================
+# Query Messages (Bidirectional)
+# =============================================================================
+
+@dataclass
+class PositionQueryMessage:
+    """Query for current open positions (used for crash recovery sync)."""
+    pair: Optional[str] = None  # Filter by pair, or None for all
+    
+    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        payload = {}
+        if self.pair is not None:
+            payload["pair"] = self.pair
+        return MessageEnvelope.create(
+            msg_type=MessageType.POSITION_QUERY,
+            payload=payload,
+            seq_num=seq_num,
+        )
+
+
+@dataclass
+class PositionResponseMessage:
+    """Response to position query with current open trades."""
+    positions: list[Dict[str, Any]]  # List of position dicts with trade_id, entry, sl, tp, etc.
+    count: int
+    
+    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        return MessageEnvelope.create(
+            msg_type=MessageType.POSITION_RESPONSE,
+            payload={
+                "positions": self.positions,
+                "count": self.count,
+            },
+            seq_num=seq_num,
+        )
+
+
+@dataclass
+class PositionSyncMessage:
+    """Position sync from broker (broker is source of truth).
+    
+    Sent by platform after reconnect to report actual broker positions.
+    Python should reconcile its state to match.
+    """
+    positions: list[Dict[str, Any]]  # Actual broker positions
+    count: int
+    source: str  # Platform name (e.g., "ninjatrader")
+    is_source_of_truth: bool = True
+    untracked_orders: Optional[list[Dict[str, Any]]] = None
+    
+    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        payload = {
+            "positions": self.positions,
+            "count": self.count,
+            "source": self.source,
+            "is_source_of_truth": self.is_source_of_truth,
+        }
+        if self.untracked_orders:
+            payload["untracked_orders"] = self.untracked_orders
+            
+        return MessageEnvelope.create(
+            msg_type=MessageType.POSITION_SYNC,
+            payload=payload,
+            seq_num=seq_num,
+        )
+
+
+@dataclass
+class CommandAckMessage:
+    """Command acknowledgment from platform.
+    
+    Sent by platform after processing a command to confirm receipt.
+    """
+    command_type: str  # e.g., "order_open", "order_modify"
+    seq_num: int
+    success: bool
+    trade_id: Optional[str] = None
+    message: Optional[str] = None
+    timestamp: Optional[float] = None
+    
+    def to_envelope(self, seq_num_out: int = 0) -> MessageEnvelope:
+        payload = {
+            "command_type": self.command_type,
+            "seq_num": self.seq_num,
+            "success": self.success,
+        }
+        if self.trade_id is not None:
+            payload["trade_id"] = self.trade_id
+        if self.message is not None:
+            payload["message"] = self.message
+        if self.timestamp is not None:
+            payload["timestamp"] = self.timestamp
+            
+        return MessageEnvelope.create(
+            msg_type=MessageType.COMMAND_ACK,
+            payload=payload,
+            seq_num=seq_num_out,
+        )
+    
+    @classmethod
+    def from_payload(cls, payload: Dict[str, Any]) -> "CommandAckMessage":
+        """Create from received payload."""
+        return cls(
+            command_type=payload.get("command_type", ""),
+            seq_num=payload.get("seq_num", 0),
+            success=payload.get("success", False),
+            trade_id=payload.get("trade_id"),
+            message=payload.get("message"),
+            timestamp=payload.get("timestamp"),
+        )
+
+
+@dataclass
+class ConfigResponseMessage:
+    """Response to config query with settings like account name."""
+    config: Dict[str, Any]
+    
+    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        return MessageEnvelope.create(
+            msg_type=MessageType.CONFIG_RESPONSE,
+            payload=self.config,
+            seq_num=seq_num,
+        )
+
+
+# =============================================================================
 # Convenience type unions
 # =============================================================================
 
 TradeCommand = OpenOrderCommand | CloseOrderCommand | ModifyOrderCommand
 MarketDataMessage = TickMessage | BarMessage | HistoryBatchMessage
 FillMessage = EntryFillMessage | ExitFillMessage | OrderRejectedMessage
+PositionQuery = PositionQueryMessage | PositionResponseMessage

@@ -399,6 +399,11 @@ class ZMQDataSource(CombinedDataSource):
         return self._gateway is not None and self._gateway.is_connected
     
     @property
+    def gateway(self) -> Optional[TradingGateway]:
+        """Access the underlying TradingGateway for advanced configuration."""
+        return self._gateway
+    
+    @property
     def stats(self) -> Dict[str, int]:
         """Get reception statistics."""
         return dict(self._stats)

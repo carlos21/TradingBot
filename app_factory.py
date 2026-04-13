@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, List
+import time
 
 from flask import Flask, jsonify
 from flask_cors import CORS
@@ -269,6 +270,39 @@ def create_app(
         risk_pct_per_trade=numbers.risk_pct_per_trade,
         logger=logger,
     )
+    
+    # Wire up position sync handler for crash recovery (ZeroMQ only)
+    # Broker (NinjaTrader) is the source of truth - it reports actual positions to Python
+    if hasattr(data_source, 'gateway') and data_source.gateway is not None:
+        def _handle_position_sync(payload):
+            """Reconcile Python state with broker reality after reconnect.
+            
+            Broker (NinjaTrader) is the source of truth. If there's a mismatch,
+            we update Python's state to match the broker.
+            """
+            positions = payload.get('positions', [])
+            broker_trade_ids = {p['trade_id'] for p in positions}
+            
+            # Find trades Python thinks are open but broker doesn't have
+            for trade in list(trade_manager.open_trades):
+                if trade['trade_id'] not in broker_trade_ids:
+                    logger.warning(f"[PositionSync] Trade {trade['trade_id']} not found on broker - closing in Python")
+                    trade_manager.close_trade(
+                        trade_id=trade['trade_id'],
+                        exit_price=trade['entry'],  # Assume flat
+                        exit_time=time.time(),
+                    )
+            
+            # Log any broker positions Python doesn't know about
+            python_trade_ids = {t['trade_id'] for t in trade_manager.open_trades}
+            for pos in positions:
+                if pos['trade_id'] not in python_trade_ids:
+                    logger.warning(f"[PositionSync] Broker has position {pos['trade_id']} that Python doesn't know about")
+            
+            logger.info(f"[PositionSync] Reconciliation complete: {len(positions)} broker position(s), {len(trade_manager.open_trades)} Python position(s)")
+        
+        data_source.gateway.on_position_sync(_handle_position_sync)
+        logger.info("[ZMQ] Position sync handler registered for crash recovery")
 
     # Initialize strategy
     tstrategy = LiquidityStrategyV2(

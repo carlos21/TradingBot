@@ -4,6 +4,7 @@ import { SocketHandler } from './SocketHandler.js';
 
 const PRICE_FORMATS = {
   NQ:     { precision: 2, minMove: 0.01 },
+  MNQ:    { precision: 2, minMove: 0.01 },
   EURUSD: { precision: 5, minMove: 0.00001 },
 };
 
@@ -75,7 +76,7 @@ export class ChartViewer {
     this.series = this.chart.addCandlestickSeries({
       upColor: 'white', borderUpColor: 'black', wickUpColor: 'black',
       downColor: 'black', borderDownColor: 'black', wickDownColor: 'black',
-      priceFormat: { type: 'price', precision: 2, minMove: 1 },
+      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
     });
 
     // TSI series
@@ -134,7 +135,7 @@ export class ChartViewer {
 
   async _initPair() {
     this.pair = await this.dataService.getPair();
-    const f = PRICE_FORMATS[this.pair] || { precision: 2, minMove: 1 };
+    const f = PRICE_FORMATS[this.pair] || { precision: 2, minMove: 0.01 };
     this.series.applyOptions({ priceFormat: { type: 'price', precision: f.precision, minMove: f.minMove } });
   }
 
