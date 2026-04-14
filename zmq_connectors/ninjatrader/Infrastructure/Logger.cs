@@ -29,6 +29,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             Log("ERROR", fullMessage, isError: true);
         }
         public void Success(string message) => Log("SUCCESS", message, isSuccess: true);
+        public void Debug(string message) { /* No UI noise for debug messages */ }
 
         private void Log(string level, string message, bool isError = false, bool isWarning = false, bool isSuccess = false)
         {

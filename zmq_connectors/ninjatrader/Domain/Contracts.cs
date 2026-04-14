@@ -83,5 +83,6 @@ namespace NinjaTrader.NinjaScript.AddOns
         void Warning(string message);
         void Error(string message, Exception ex = null);
         void Success(string message);
+        void Debug(string message);
     }
 }

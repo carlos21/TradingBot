@@ -191,6 +191,21 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             lock (_lock)
             {
+                // First pass: identify trades that still have at least one active order
+                var activeTradeIds = new HashSet<string>();
+                foreach (var order in account.Orders)
+                {
+                    string tradeId = ExtractTradeIdFromOrderName(order.Name);
+                    if (string.IsNullOrEmpty(tradeId)) continue;
+
+                    bool isActive = order.OrderState == OrderState.Working
+                                 || order.OrderState == OrderState.Accepted
+                                 || order.OrderState == OrderState.PartFilled
+                                 || order.OrderState == OrderState.Submitted;
+
+                    if (isActive) activeTradeIds.Add(tradeId);
+                }
+
                 int entryCount = 0;
                 int stopCount = 0;
                 int targetCount = 0;
@@ -201,6 +216,27 @@ namespace NinjaTrader.NinjaScript.AddOns
                     // Try to extract trade_id from order name (e.g., "Entry_trade-123" -> "trade-123")
                     string tradeId = ExtractTradeIdFromOrderName(order.Name);
                     if (string.IsNullOrEmpty(tradeId)) continue;
+
+                    // Only restore orders that are still live on the broker.
+                    bool isLive = order.OrderState == OrderState.Working
+                               || order.OrderState == OrderState.Accepted
+                               || order.OrderState == OrderState.Submitted
+                               || order.OrderState == OrderState.PartFilled;
+
+                    if (!isLive)
+                    {
+                        // Filled entries may represent open positions, but only keep them
+                        // if we can see an active child order (stop/target/close) for the same trade.
+                        if (order.OrderState == OrderState.Filled && activeTradeIds.Contains(tradeId))
+                        {
+                            // allow below
+                        }
+                        else
+                        {
+                            logger?.Debug($"[Recovery] Skipping {order.Name} state={order.OrderState}");
+                            continue;
+                        }
+                    }
 
                     // Track based on order type
                     if (IsEntryOrder(order))
