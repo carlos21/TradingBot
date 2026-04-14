@@ -57,6 +57,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private ILogger _logger;
         private CommandDispatcher _dispatcher;
         private IOrderTracker _orderTracker;
+        private TickRateLimiter _tickRateLimiter;
 
         // Background threads
         private Thread _commandThread;
@@ -175,6 +176,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 // Initialize components with dependency injection
                 _orderTracker = new OrderStateManager();
+                _tickRateLimiter = new TickRateLimiter(_config.MaxTicksPerSecond);
                 _network = new ZmqNetwork(_config, new JsonMessageSerializer(_logger), _logger);
 
                 _network.Start();
@@ -497,6 +499,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             try
             {
                 if (!_connected || e.MarketDataType != MarketDataType.Last) return;
+                if (!_tickRateLimiter.TryAllow()) return;
 
                 _network?.SendTick(
                     e.Instrument.MasterInstrument.Name,

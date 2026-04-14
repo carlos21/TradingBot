@@ -23,6 +23,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         public string Instrument { get; }
         public int HistoryDays { get; }
         public int BatchSize { get; }
+        public int MaxTicksPerSecond { get; }
         public string PlatformVersion { get; }
 
         public string MarketDataAddress => $"tcp://{Host}:{MarketPort}";
@@ -39,6 +40,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             string instrument = "MNQ 06-26",
             int historyDays = 30,
             int batchSize = 500,
+            int maxTicksPerSecond = 3,
             string platformVersion = "2.0.0")
         {
             Host = host ?? throw new ArgumentNullException(nameof(host));
@@ -49,12 +51,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             Instrument = instrument ?? throw new ArgumentNullException(nameof(instrument));
             HistoryDays = historyDays;
             BatchSize = batchSize;
+            MaxTicksPerSecond = maxTicksPerSecond;
             PlatformVersion = platformVersion ?? throw new ArgumentNullException(nameof(platformVersion));
         }
 
         public ZmqConfiguration WithInstrument(string instrument) =>
             new ZmqConfiguration(Host, MarketPort, CommandPort, QueryPort, HeartbeatPort, 
-                instrument, HistoryDays, BatchSize, PlatformVersion);
+                instrument, HistoryDays, BatchSize, MaxTicksPerSecond, PlatformVersion);
     }
 
     /// <summary>
