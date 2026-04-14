@@ -25,11 +25,7 @@ def register_core_routes(
 
     @app.route('/api/pair')
     def get_pair():
-        from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource
-        result = {'pair': pair}
-        if isinstance(data_source, NinjaTraderDataSource) and data_source._cfg.account:
-            result['account'] = data_source._cfg.account
-        return jsonify(result)
+        return jsonify({'pair': pair})
 
     @app.route('/api/bars')
     def get_bars():

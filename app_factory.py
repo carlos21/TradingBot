@@ -33,7 +33,6 @@ from src.routes import (
     register_lines_routes,
     register_trades_routes,
     register_admin_routes,
-    register_nt_routes,
     register_debug_routes,
     register_socketio_handlers,
 )
@@ -385,15 +384,6 @@ def create_app(
     )
     register_socketio_handlers(socketio, loader, data_source, live_mode, logger=logger)
     
-    # Register live mode routes only when in live mode
-    if live_mode:
-        from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource
-        if isinstance(data_source, NinjaTraderDataSource):
-            register_nt_routes(
-                app, data_source, trade_manager, repos.trades, trade_logger,
-                tstrategy, pair, notifier, logger=logger
-            )
-
     # Global error handler
     @app.errorhandler(500)
     def handle_500(error):

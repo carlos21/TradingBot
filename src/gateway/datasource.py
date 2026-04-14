@@ -27,7 +27,7 @@ class ZMQDataSource(CombinedDataSource):
     """
     Data source that receives market data from trading platforms via ZeroMQ.
     
-    This replaces the HTTP-based NinjaTraderDataSource with a faster,
+    This provides a fast, reliable ZeroMQ-based data source for live trading.
     more efficient ZeroMQ implementation.
     
     Usage:

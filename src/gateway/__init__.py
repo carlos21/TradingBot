@@ -33,7 +33,6 @@ from .datasource import ZMQDataSource
 from .integration import (
     create_live_components,
     create_gateway_only,
-    HybridDataSource,
     get_platform_addresses,
 )
 
@@ -59,6 +58,5 @@ __all__ = [
     # Integration helpers
     "create_live_components",
     "create_gateway_only",
-    "HybridDataSource",
     "get_platform_addresses",
 ]

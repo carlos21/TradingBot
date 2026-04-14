@@ -10,8 +10,6 @@ from src.repositories.lines_repository import SQLLineRepository
 from src.repositories.trades_repository import SQLTradeRepository
 from src.repositories.line_trigger_state_repository import SQLiteLineTriggerStateRepository
 from src.data_sources.csv_datasource import CSVDataSource
-from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource, NinjaTraderConfig
-from src.services.trade_executor import NinjaTraderExecutor
 from src.database import database
 from src.notifier import Notifier, TelegramNotifier, NoOpNotifier
 from src.analytics import AnalyticsReporter, SentryReporter, NoOpReporter

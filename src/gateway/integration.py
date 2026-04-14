@@ -1,15 +1,9 @@
 """
 Integration module for connecting ZeroMQ gateway to app_factory.
 
-This module provides a drop-in replacement for the HTTP-based
-NinjaTrader integration, making migration seamless.
+This module provides the live trading entry point using ZeroMQ.
 
 Usage:
-    # Instead of:
-    from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource
-    data_source = NinjaTraderDataSource(...)
-    
-    # Use:
     from src.gateway import create_live_components
     data_source, trade_executor = create_live_components(pair="NQ")
     
@@ -172,63 +166,6 @@ def create_gateway_only(
     )
     
     return TradingGateway(logger, config=config, pair=pair)
-
-
-class HybridDataSource(CombinedDataSource):
-    """
-    Hybrid data source that can use both HTTP and ZeroMQ.
-    
-    This is useful for gradual migration - you can switch between
-    protocols without changing the rest of your code.
-    
-    Usage:
-        # ZeroMQ mode
-        zmq_ds, executor = create_live_components(pair="NQ")
-        
-        # HTTP mode (existing)
-        http_ds = NinjaTraderDataSource(...)
-        
-        # Hybrid - uses ZeroMQ if available, falls back to HTTP
-        hybrid = HybridDataSource(primary=zmq_ds, fallback=http_ds)
-    """
-    
-    def __init__(
-        self,
-        primary: CombinedDataSource,
-        fallback: CombinedDataSource,
-    ):
-        self._primary = primary
-        self._fallback = fallback
-        self._use_primary = True
-    
-    @property
-    def active_source(self) -> CombinedDataSource:
-        """Get the currently active data source."""
-        return self._primary if self._use_primary else self._fallback
-    
-    def switch_to_primary(self) -> None:
-        """Switch to primary (ZeroMQ) data source."""
-        self._use_primary = True
-        logger.info("Switched to primary (ZeroMQ) data source")
-    
-    def switch_to_fallback(self) -> None:
-        """Switch to fallback (HTTP) data source."""
-        self._use_primary = False
-        logger.info("Switched to fallback (HTTP) data source")
-    
-    # CombinedDataSource interface implementation
-    def load_historical_bars(self, timeframe: str = "1m", start_time: int = None):
-        return self.active_source.load_historical_bars(timeframe, start_time)
-    
-    def subscribe(self, callback, from_time: int = 0):
-        return self.active_source.subscribe(callback, from_time)
-    
-    def pause(self):
-        return self.active_source.pause()
-    
-    def shutdown(self):
-        self._primary.shutdown()
-        self._fallback.shutdown()
 
 
 def get_platform_addresses(
