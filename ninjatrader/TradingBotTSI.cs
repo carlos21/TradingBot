@@ -179,12 +179,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                 // Bullish cross: TSI crosses ABOVE Signal — green arrow below bar
                 if (prevTsi <= prevSig && currTsi > currSig)
                 {
+                    RemoveDrawObject("bear_" + CurrentBar);
                     Draw.ArrowUp(this, "bull_" + CurrentBar, false, 0,
                         Low[0] - 2 * TickSize, bullBrush);
                 }
                 // Bearish cross: TSI crosses BELOW Signal — red arrow above bar
                 else if (prevTsi >= prevSig && currTsi < currSig)
                 {
+                    RemoveDrawObject("bull_" + CurrentBar);
                     Draw.ArrowDown(this, "bear_" + CurrentBar, false, 0,
                         High[0] + 2 * TickSize, bearBrush);
                 }

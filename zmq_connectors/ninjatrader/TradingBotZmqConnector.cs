@@ -66,6 +66,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         // State
         private volatile bool _connected;
         private Account _account;
+        private Instrument _subscribedInstrument;
 
         // Stats
         private long _commandsReceived = 0;
@@ -119,12 +120,16 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         protected override void OnWindowDestroyed(Window window)
         {
-            if (_menuItem != null && window is ControlCenter)
+            if (window is ControlCenter)
             {
-                _existingNewMenu?.Items.Remove(_menuItem);
-                _menuItem.Click -= OnMenuItemClick;
-                _menuItem = null;
-                _existingNewMenu = null;
+                Disconnect("NinjaTrader shutting down");
+                if (_menuItem != null)
+                {
+                    _existingNewMenu?.Items.Remove(_menuItem);
+                    _menuItem.Click -= OnMenuItemClick;
+                    _menuItem = null;
+                    _existingNewMenu = null;
+                }
             }
         }
 
@@ -170,8 +175,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 // Initialize components with dependency injection
                 _orderTracker = new OrderStateManager();
-                _network = new ZmqNetwork(_config, new JsonMessageSerializer(), _logger);
-                _dispatcher = CreateCommandDispatcher();
+                _network = new ZmqNetwork(_config, new JsonMessageSerializer(_logger), _logger);
 
                 _network.Start();
                 _cts = new CancellationTokenSource();
@@ -188,6 +192,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                     _logger.Info($"Python specified account: {configuredAccount}");
                 }
 
+                // Initialize NinjaTrader integrations BEFORE creating command handlers that capture _account
+                InitializeAccount(configuredAccount);
+
+                // Create dispatcher AFTER account is initialized so handlers get a valid reference
+                _dispatcher = CreateCommandDispatcher();
+
                 // Send connect handshake (reporting what account we'll use)
                 _network.SendConnect("ninjatrader", _config.PlatformVersion, account: configuredAccount, pair: _config.Instrument.Split(' ')[0]);
                 _logger.Success("Connected to Python TradingBot via ZeroMQ");
@@ -198,9 +208,6 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 _heartbeatThread = new Thread(HeartbeatLoop) { IsBackground = true, Name = "ZMQ-Heartbeat" };
                 _heartbeatThread.Start();
-
-                // Initialize NinjaTrader integrations (using account from Python if specified)
-                InitializeAccount(configuredAccount);
                 
                 // Restore order tracking from broker after potential crash
                 _orderTracker.RestoreFromBrokerOrders(_account, _logger);
@@ -211,7 +218,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 SubscribeToMarketData();
 
                 // Send historical data
-                _ = SendHistoryAsync();
+                _ = SendHistoryAsync().ContinueWith(t =>
+                {
+                    if (t.IsFaulted) _logger?.Error("SendHistoryAsync failed", t.Exception?.GetBaseException());
+                }, TaskContinuationOptions.OnlyOnFaulted);
 
                 UpdateStats();
             }
@@ -232,8 +242,24 @@ namespace NinjaTrader.NinjaScript.AddOns
             _connected = false;
             _cts?.Cancel();
 
+            // Stop market-data thread BEFORE tearing down ZMQ sockets
             UnsubscribeFromMarketData();
             UninitializeAccount();
+
+            // Allow in-flight background sends to drain before disposing sockets
+            Thread.Sleep(100);
+
+            // Wait for background threads to exit so we don't dispose sockets while they're in use
+            if (_commandThread != null && _commandThread.IsAlive)
+            {
+                _commandThread.Join(600);
+                _commandThread = null;
+            }
+            if (_heartbeatThread != null && _heartbeatThread.IsAlive)
+            {
+                _heartbeatThread.Join(600);
+                _heartbeatThread = null;
+            }
 
             _network?.Dispose();
             _network = null;
@@ -271,7 +297,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         ["trade_id"] = tradeId,
                         ["direction"] = entryOrder.OrderAction == OrderAction.Buy ? "long" : "short",
                         ["entry_price"] = entryOrder.AverageFillPrice,
-                        ["quantity"] = entryOrder.Quantity,
+                        ["quantity"] = entryOrder.Filled > 0 ? entryOrder.Filled : entryOrder.Quantity,
                         ["order_state"] = entryOrder.OrderState.ToString(),
                     };
 
@@ -347,7 +373,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 try
                 {
                     var envelope = _network?.ReceiveCommand(timeoutMs: 100);
-                    if (envelope == null) continue;
+                    if (envelope == null) { Thread.Sleep(50); continue; }
 
                     // Duplicate detection
                     if (IsDuplicateCommand(envelope.SeqNum))
@@ -404,22 +430,10 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 _processedSeqNums.Add(seqNum);
 
-                // Prevent unbounded growth - remove oldest if too many
+                // Prevent unbounded growth
                 if (_processedSeqNums.Count > MAX_TRACKED_SEQ_NUMS)
                 {
-                    // Simple approach: clear half the set when limit reached
-                    // In production, use a circular buffer or LRU cache
-                    var toRemove = new List<int>();
-                    int count = 0;
-                    foreach (var num in _processedSeqNums)
-                    {
-                        if (count++ < MAX_TRACKED_SEQ_NUMS / 2)
-                            toRemove.Add(num);
-                        else
-                            break;
-                    }
-                    foreach (var num in toRemove)
-                        _processedSeqNums.Remove(num);
+                    _processedSeqNums.Clear();
                 }
 
                 return false;
@@ -458,23 +472,23 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void SubscribeToMarketData()
         {
-            var instrument = Instrument.GetInstrument(_config.Instrument);
-            if (instrument == null)
+            _subscribedInstrument = Instrument.GetInstrument(_config.Instrument);
+            if (_subscribedInstrument == null)
             {
                 _logger.Error($"Cannot subscribe, instrument '{_config.Instrument}' not found");
                 return;
             }
-            instrument.MarketData.Update += OnMarketDataUpdate;
+            _subscribedInstrument.MarketData.Update += OnMarketDataUpdate;
             _logger.Info($"Subscribed to market data for {_config.Instrument}");
         }
 
         private void UnsubscribeFromMarketData()
         {
-            var instrument = Instrument.GetInstrument(_config.Instrument);
-            if (instrument != null)
+            if (_subscribedInstrument != null)
             {
-                instrument.MarketData.Update -= OnMarketDataUpdate;
+                _subscribedInstrument.MarketData.Update -= OnMarketDataUpdate;
                 _logger.Info($"Unsubscribed from market data for {_config.Instrument}");
+                _subscribedInstrument = null;
             }
         }
 
@@ -522,43 +536,64 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 barsRequest.Request((bars, errorCode, errorMessage) =>
                 {
-                    if (errorCode != ErrorCode.NoError)
+                    try
                     {
-                        _logger.Error($"BarsRequest failed: {errorMessage}");
-                        tcs.SetResult(false);
-                        return;
-                    }
-
-                    for (int i = 0; i < bars.Bars.Count; i++)
-                    {
-                        batch.Add(new JObject
+                        if (errorCode != ErrorCode.NoError)
                         {
-                            ["time"] = ToUnixSeconds(bars.Bars.GetTime(i)),
-                            ["open"] = bars.Bars.GetOpen(i),
-                            ["high"] = bars.Bars.GetHigh(i),
-                            ["low"] = bars.Bars.GetLow(i),
-                            ["close"] = bars.Bars.GetClose(i),
-                            ["volume"] = (long)bars.Bars.GetVolume(i),
-                            ["pair"] = _config.Instrument.Split(' ')[0]
-                        });
-                        count++;
-
-                        if (batch.Count >= _config.BatchSize)
-                        {
-                            _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
-                            batch.Clear();
+                            _logger.Error($"BarsRequest failed: {errorMessage}");
+                            tcs.SetResult(false);
+                            return;
                         }
+
+                        if (bars?.Bars == null)
+                        {
+                            _logger.Error("BarsRequest returned null bars");
+                            tcs.SetResult(false);
+                            return;
+                        }
+
+                        for (int i = 0; i < bars.Bars.Count; i++)
+                        {
+                            batch.Add(new JObject
+                            {
+                                ["time"] = ToUnixSeconds(bars.Bars.GetTime(i)),
+                                ["open"] = bars.Bars.GetOpen(i),
+                                ["high"] = bars.Bars.GetHigh(i),
+                                ["low"] = bars.Bars.GetLow(i),
+                                ["close"] = bars.Bars.GetClose(i),
+                                ["volume"] = (long)bars.Bars.GetVolume(i),
+                                ["pair"] = _config.Instrument.Split(' ')[0]
+                            });
+                            count++;
+
+                            if (batch.Count >= _config.BatchSize)
+                            {
+                                _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
+                                batch.Clear();
+                            }
+                        }
+
+                        if (batch.Count > 0) _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
+
+                        _barsSent = count;
+                        _logger.Info($"Sent {count} historical bars ({days} days)");
+                        _network?.SendHistoryEnd();
+                        tcs.SetResult(true);
                     }
-
-                    if (batch.Count > 0) _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
-
-                    _barsSent = count;
-                    _logger.Info($"Sent {count} historical bars ({days} days)");
-                    _network?.SendHistoryEnd();
-                    tcs.SetResult(true);
+                    catch (Exception callbackEx)
+                    {
+                        _logger.Error("BarsRequest callback error", callbackEx);
+                        tcs.SetResult(false);
+                    }
                 });
 
-                await tcs.Task;
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30));
+                var completedTask = await Task.WhenAny(tcs.Task, timeoutTask);
+                if (completedTask == timeoutTask)
+                {
+                    _logger.Error("BarsRequest timed out after 30 seconds");
+                    _network?.SendError("ninjatrader", "history_timeout", "BarsRequest timed out after 30 seconds");
+                }
             }
             catch (Exception ex)
             {
@@ -627,6 +662,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             try
             {
                 var order = e.Order;
+                if (order == null)
+                {
+                    _logger.Warning("Order update with no associated order");
+                    return;
+                }
                 _logger.Info($"ORDER UPDATE: {order.Name} state={order.OrderState}");
 
                 // Extract trade_id from order name (e.g., "Stop_trade-123" -> "trade-123")
@@ -712,6 +752,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return orderName.Substring(5);
             if (orderName.StartsWith("Target_"))
                 return orderName.Substring(7);
+            if (orderName.StartsWith("Close_"))
+                return orderName.Substring(6);
             
             return null;
         }
@@ -722,6 +764,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 var execution = e.Execution;
                 var order = execution.Order;
+                if (order == null)
+                {
+                    _logger.Warning("Execution update with no associated order");
+                    return;
+                }
                 var fillPrice = execution.Price;
 
                 _logger.Info($"EXECUTION: {order.Name} @ {fillPrice} qty={execution.Quantity}");
@@ -829,18 +876,18 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         private static bool IsEntryOrder(Order order) => 
-            order.Name == "Entry" || (order.Name != null && order.Name.StartsWith("Entry_"));
+            order?.Name == "Entry" || (order?.Name?.StartsWith("Entry_") == true);
         
         private static bool IsStopOrder(Order order) =>
-            ((order.Name == "Stop" || order.Name.StartsWith("Stop_")) &&
+            ((order?.Name == "Stop" || order?.Name?.StartsWith("Stop_") == true) &&
             (order.OrderType == OrderType.StopMarket || order.OrderType == OrderType.StopLimit));
         
         private static bool IsTargetOrder(Order order) =>
-            ((order.Name == "Target" || order.Name.StartsWith("Target_")) &&
+            ((order?.Name == "Target" || order?.Name?.StartsWith("Target_") == true) &&
             (order.OrderType == OrderType.Limit || order.OrderType == OrderType.Market));
         
         private static bool IsCloseOrder(Order order) =>
-            order.Name != null && order.Name.StartsWith("Close_");
+            order?.Name?.StartsWith("Close_") == true;
 
         // ═══════════════════════════════════════════════════════════════════
         // Tests
@@ -905,8 +952,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             return sb.ToString();
         }
 
-        private static long ToUnixSeconds(DateTime dt) =>
-            (long)(dt.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds;
+        private static double ToUnixSeconds(DateTime dt) =>
+            (dt.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds;
 
         private static MenuItem FindMenuItem(System.Collections.IEnumerable items, string header)
         {

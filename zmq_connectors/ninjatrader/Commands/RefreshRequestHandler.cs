@@ -33,7 +33,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 var days = payload?["days"]?.Value<int>() ?? 1;
                 _logger.Info($"REFRESH REQUEST: {days} days");
-                _ = _sendHistoryFunc(days);
+                _ = _sendHistoryFunc(days).ContinueWith(t =>
+                {
+                    if (t.IsFaulted) _logger.Error("Refresh history send failed", t.Exception?.GetBaseException());
+                }, TaskContinuationOptions.OnlyOnFaulted);
             }
             catch (Exception ex)
             {

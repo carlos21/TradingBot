@@ -245,6 +245,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return orderName.Substring(5);
             if (orderName.StartsWith("Target_"))
                 return orderName.Substring(7);
+            if (orderName.StartsWith("Close_"))
+                return orderName.Substring(6);
             
             return null;
         }

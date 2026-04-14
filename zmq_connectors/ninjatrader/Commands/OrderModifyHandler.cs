@@ -58,16 +58,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                     _logger.Info($"[Recovery] Re-tracked stop order for {tradeId}");
                 }
 
-                if (stopOrder.OrderState != OrderState.Working && stopOrder.OrderState != OrderState.Accepted)
+                if (stopOrder.OrderState != OrderState.Working && stopOrder.OrderState != OrderState.Accepted && stopOrder.OrderState != OrderState.Submitted)
                     throw new InvalidOperationException($"Stop order is not modifiable (state: {stopOrder.OrderState})");
 
                 // Cancel + Replace pattern
                 _account.Cancel(new[] { stopOrder });
-                Thread.Sleep(100);
+                Thread.Sleep(50);
 
                 var newStopOrder = _account.CreateOrder(
                     stopOrder.Instrument,
-                    stopOrder.OrderAction == OrderAction.Buy ? OrderAction.Sell : OrderAction.Buy,
+                    stopOrder.OrderAction,
                     OrderType.StopMarket,
                     OrderEntry.Automated,
                     TimeInForce.Gtc,
@@ -104,7 +104,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             foreach (var order in _account.Orders)
             {
                 if (order.Name == expectedName &&
-                    (order.OrderState == OrderState.Working || order.OrderState == OrderState.Accepted))
+                    (order.OrderState == OrderState.Working || order.OrderState == OrderState.Accepted || order.OrderState == OrderState.Submitted))
                 {
                     return order;
                 }

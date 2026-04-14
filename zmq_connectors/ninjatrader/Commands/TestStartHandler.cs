@@ -103,26 +103,33 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Send position sync (as if we reconnected)
             Task.Run(async () =>
             {
-                await Task.Delay(500);
-                
-                var positions = new Newtonsoft.Json.Linq.JArray();
-                var position = new Newtonsoft.Json.Linq.JObject
+                try
                 {
-                    ["trade_id"] = tradeId,
-                    ["direction"] = "long",
-                    ["entry_price"] = entryPrice,
-                    ["stop_loss"] = sl,
-                    ["take_profit"] = tp,
-                    ["quantity"] = 1
-                };
-                positions.Add(position);
-                
-                _network?.SendPositionSync(positions, null);
-                _logger.Info($"TEST: Position sync sent for {tradeId}");
-                
-                await Task.Delay(500);
-                _network?.SendTestResult("position_sync", true, tradeId, 
-                    "Position sync sent - verify Python reconciles correctly");
+                    await Task.Delay(500);
+                    
+                    var positions = new Newtonsoft.Json.Linq.JArray();
+                    var position = new Newtonsoft.Json.Linq.JObject
+                    {
+                        ["trade_id"] = tradeId,
+                        ["direction"] = "long",
+                        ["entry_price"] = entryPrice,
+                        ["stop_loss"] = sl,
+                        ["take_profit"] = tp,
+                        ["quantity"] = 1
+                    };
+                    positions.Add(position);
+                    
+                    _network?.SendPositionSync(positions, null);
+                    _logger.Info($"TEST: Position sync sent for {tradeId}");
+                    
+                    await Task.Delay(500);
+                    _network?.SendTestResult("position_sync", true, tradeId, 
+                        "Position sync sent - verify Python reconciles correctly");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("Position sync test failed", ex);
+                }
             });
         }
 
@@ -141,18 +148,25 @@ namespace NinjaTrader.NinjaScript.AddOns
             
             Task.Run(async () =>
             {
-                await Task.Delay(500);
-                
-                // Simulate modify command being processed
-                _logger.Info($"TEST: Simulating SL modify from {sl} to {newSl}");
-                _network?.SendTradeLog(tradeId, "NT:MODIFY", $"Test SL changed from {sl} to {newSl}");
-                
-                await Task.Delay(500);
-                
-                // Simulate TP hit after modify
-                _network?.SendExitFill(tradeId, tp, "TP");
-                _network?.SendTestResult("order_modify", true, tradeId, 
-                    "SL modified and TP hit - verify Python tracked modify correctly");
+                try
+                {
+                    await Task.Delay(500);
+                    
+                    // Simulate modify command being processed
+                    _logger.Info($"TEST: Simulating SL modify from {sl} to {newSl}");
+                    _network?.SendTradeLog(tradeId, "NT:MODIFY", $"Test SL changed from {sl} to {newSl}");
+                    
+                    await Task.Delay(500);
+                    
+                    // Simulate TP hit after modify
+                    _network?.SendExitFill(tradeId, tp, "TP");
+                    _network?.SendTestResult("order_modify", true, tradeId, 
+                        "SL modified and TP hit - verify Python tracked modify correctly");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("Order modify test failed", ex);
+                }
             });
         }
 
@@ -170,8 +184,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             // Simulate outcome
             Task.Run(async () =>
             {
-                await Task.Delay(1000);
-                SimulateTestOutcome(scenario, tradeId, sl, tp, entryPrice);
+                try
+                {
+                    await Task.Delay(1000);
+                    SimulateTestOutcome(scenario, tradeId, sl, tp, entryPrice);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"Test outcome simulation failed for {scenario}", ex);
+                }
             });
         }
 

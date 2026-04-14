@@ -16,14 +16,16 @@ namespace NinjaTrader.NinjaScript.AddOns
     internal sealed class JsonMessageSerializer : IMessageSerializer
     {
         private readonly JsonSerializerSettings _settings;
+        private readonly ILogger _logger;
 
-        public JsonMessageSerializer()
+        public JsonMessageSerializer(ILogger logger = null)
         {
             _settings = new JsonSerializerSettings
             {
                 NullValueHandling = NullValueHandling.Ignore,
                 DefaultValueHandling = DefaultValueHandling.Ignore
             };
+            _logger = logger;
         }
 
         public string Serialize(MessageEnvelope envelope)
@@ -39,8 +41,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 return JsonConvert.DeserializeObject<MessageEnvelope>(json);
             }
-            catch
+            catch (Exception ex)
             {
+                _logger?.Warning($"JSON deserialization failed: {ex.Message}");
                 return null;
             }
         }

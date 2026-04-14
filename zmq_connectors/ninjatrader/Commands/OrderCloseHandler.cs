@@ -81,7 +81,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // Check if we have a filled or partially filled position to close
                 if (entryOrder != null && (entryOrder.OrderState == OrderState.Filled || entryOrder.OrderState == OrderState.PartFilled))
                 {
-                    // Submit closing market order
+                    // Submit closing market order for the FILLED quantity only
+                    var closeQty = entryOrder.Filled;
+                    if (closeQty <= 0) closeQty = entryOrder.Quantity;
                     var closeAction = entryOrder.OrderAction == OrderAction.Buy ? OrderAction.Sell : OrderAction.BuyToCover;
                     var closeOrder = _account.CreateOrder(
                         instrument,
@@ -89,14 +91,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                         OrderType.Market,
                         OrderEntry.Automated,
                         TimeInForce.Gtc,
-                        entryOrder.Quantity,
+                        closeQty,
                         0, 0, string.Empty, $"Close_{tradeId}", DateTime.MinValue, null);
                     
                     if (closeOrder != null)
                     {
                         // Track the close order so we know when it fills
                         _orderTracker.TrackCloseOrder(tradeId, closeOrder);
-                        _logger.Success($"Closing market order submitted for {tradeId} ({closeAction} {entryOrder.Quantity} contracts)");
+                        _logger.Success($"Closing market order submitted for {tradeId} ({closeAction} {closeQty} contracts)");
                     }
                     else
                     {

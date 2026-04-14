@@ -30,6 +30,9 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private int _seqNum = 0;
         private readonly object _seqLock = new object();
+        private readonly object _sendLock = new object();
+        private readonly object _recvLock = new object();
+        private readonly object _queryLock = new object();
 
         public bool IsConnected => _marketPub != null && _commandPull != null;
 
@@ -63,15 +66,20 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         public void Stop()
         {
-            _marketPub?.Dispose();
-            _commandPull?.Dispose();
-            _queryReq?.Dispose();
-            _heartbeatPub?.Dispose();
+            lock (_sendLock)
+            lock (_recvLock)
+            lock (_queryLock)
+            {
+                _marketPub?.Dispose();
+                _commandPull?.Dispose();
+                _queryReq?.Dispose();
+                _heartbeatPub?.Dispose();
 
-            _marketPub = null;
-            _commandPull = null;
-            _queryReq = null;
-            _heartbeatPub = null;
+                _marketPub = null;
+                _commandPull = null;
+                _queryReq = null;
+                _heartbeatPub = null;
+            }
 
             _logger?.Info("ZMQ network stopped");
         }
@@ -91,7 +99,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (_marketPub == null) return;
             var envelope = MessageEnvelope.Create(msgType, payload, NextSeq());
-            _marketPub.SendFrame(_serializer.Serialize(envelope));
+            lock (_sendLock)
+            {
+                _marketPub?.SendFrame(_serializer.Serialize(envelope));
+            }
         }
 
         public void SendTick(string pair, double price, long volume, DateTime time, double? bid = null, double? ask = null)
@@ -184,7 +195,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (_heartbeatPub == null) return;
             var payload = new JObject { ["source"] = source, ["status"] = status };
             var envelope = MessageEnvelope.Create(MessageType.Heartbeat, payload, NextSeq());
-            _heartbeatPub.SendFrame(_serializer.Serialize(envelope));
+            lock (_sendLock)
+            {
+                _heartbeatPub?.SendFrame(_serializer.Serialize(envelope));
+            }
         }
 
         public void SendConnect(string platform, string version, string account = null, string pair = null)
@@ -220,9 +234,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         public MessageEnvelope ReceiveCommand(int timeoutMs = 100)
         {
             if (_commandPull == null) return null;
-            if (_commandPull.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out string message))
-                return _serializer.Deserialize(message);
-            return null;
+            lock (_recvLock)
+            {
+                if (_commandPull == null) return null;
+                if (_commandPull.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out string message))
+                    return _serializer.Deserialize(message);
+                return null;
+            }
         }
 
         public bool SendTestPingWithResponse(double timeoutMs = 2000)
@@ -232,14 +250,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 var payload = new JObject { ["timestamp"] = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / 1000.0 };
                 var envelope = MessageEnvelope.Create(MessageType.TestPing, payload, NextSeq());
-                _queryReq.SendFrame(_serializer.Serialize(envelope));
-
-                if (_queryReq.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out string response))
+                string response;
+                lock (_queryLock)
                 {
-                    var resp = _serializer.Deserialize(response);
-                    return resp?.MsgType == MessageType.TestPong;
+                    _queryReq.SendFrame(_serializer.Serialize(envelope));
+                    if (!_queryReq.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out response))
+                        return false;
                 }
-                return false;
+                var resp = _serializer.Deserialize(response);
+                return resp?.MsgType == MessageType.TestPong;
             }
             catch { return false; }
         }
@@ -254,15 +273,17 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 var payload = new JObject { ["key"] = key };
                 var envelope = MessageEnvelope.Create(MessageType.ConfigQuery, payload, NextSeq());
-                _queryReq.SendFrame(_serializer.Serialize(envelope));
-
-                if (_queryReq.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out string response))
+                string response;
+                lock (_queryLock)
                 {
-                    var resp = _serializer.Deserialize(response);
-                    if (resp?.MsgType == MessageType.ConfigResponse)
-                    {
-                        return resp.Payload[key]?.ToString();
-                    }
+                    _queryReq.SendFrame(_serializer.Serialize(envelope));
+                    if (!_queryReq.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out response))
+                        return null;
+                }
+                var resp = _serializer.Deserialize(response);
+                if (resp?.MsgType == MessageType.ConfigResponse)
+                {
+                    return resp.Payload[key]?.ToString();
                 }
                 return null;
             }
@@ -311,7 +332,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             Send(MessageType.CommandAck, payload);
         }
 
-        private static long ToUnixSeconds(DateTime dt) =>
-            (long)(dt.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds;
+        private static double ToUnixSeconds(DateTime dt) =>
+            (dt.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds;
     }
 }

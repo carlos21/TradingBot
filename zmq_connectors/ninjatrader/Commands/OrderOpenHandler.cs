@@ -73,7 +73,28 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 _orderTracker.TrackEntry(tradeId, entryOrder);
                 _orderTracker.TrackAtmStrategy(tradeId, atmStrategyName);  // Track ATM for recovery
-                NinjaTrader.NinjaScript.AtmStrategy.StartAtmStrategy(atmStrategyName, entryOrder);
+
+                // Guard: market orders can fill instantly; ATM strategy needs a working/submitted order
+                if (entryOrder.OrderState == OrderState.Filled || entryOrder.OrderState == OrderState.PartFilled)
+                {
+                    _logger.Warning($"Entry order for {tradeId} filled instantly before ATM could start. Position is open without ATM-managed SL/TP.");
+                    _network?.SendError("ninjatrader", "instant_fill", $"Entry filled instantly for {tradeId}; no ATM SL/TP");
+                }
+                else
+                {
+                    try
+                    {
+                        NinjaTrader.NinjaScript.AtmStrategy.StartAtmStrategy(atmStrategyName, entryOrder);
+                    }
+                    catch (Exception atmEx)
+                    {
+                        _logger.Error($"ATM strategy '{atmStrategyName}' failed to start for {tradeId}. Ensure the ATM strategy exists in NinjaTrader.", atmEx);
+                        _network?.SendError("ninjatrader", "atm_start_failed", $"ATM '{atmStrategyName}' failed: {atmEx.Message}");
+                        try { _account.Cancel(new[] { entryOrder }); } catch { }
+                        _orderTracker.RemoveTrade(tradeId);
+                        return;
+                    }
+                }
 
                 _orderTracker.TrackPendingEntry(tradeId, new PendingEntryInfo(direction, slPoints, rrRatio, atmStrategyName));
 
@@ -110,14 +131,17 @@ namespace NinjaTrader.NinjaScript.AddOns
             double riskPct = payload?["risk_pct"]?.Value<double>() ?? 0;
             double pointValue = instrument.MasterInstrument.PointValue;
 
-            if (riskUsd > 0 && slPoints > 0)
-                return Math.Max(1, (int)Math.Round(riskUsd / (slPoints * pointValue)));
+            double slRisk = slPoints * pointValue;
+            if (slRisk <= 0) return 1;
 
-            if (riskPct > 0 && slPoints > 0 && _account != null)
+            if (riskUsd > 0)
+                return Math.Max(1, (int)Math.Round(riskUsd / slRisk));
+
+            if (riskPct > 0 && _account != null)
             {
                 double balance = _account.Get(AccountItem.CashValue, Currency.UsDollar);
                 double risk = balance * riskPct / 100.0;
-                return Math.Max(1, (int)Math.Round(risk / (slPoints * pointValue)));
+                return Math.Max(1, (int)Math.Round(risk / slRisk));
             }
 
             return 1;
