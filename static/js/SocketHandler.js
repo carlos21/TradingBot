@@ -74,10 +74,14 @@ export class SocketHandler {
       const idx = c.allTrades.findIndex(t => t.trade_id === update.trade_id);
       if (idx !== -1) {
         c.allTrades[idx].entry = update.entry_price;
+        c.allTrades[idx].stop_loss = update.stop_loss;
+        c.allTrades[idx].take_profit = update.take_profit;
         c.allTrades[idx].risk = update.risk;
       }
       if (c.activeTrade && c.activeTrade.trade_id === update.trade_id) {
         c.activeTrade.entry = update.entry_price;
+        c.activeTrade.stop_loss = update.stop_loss;
+        c.activeTrade.take_profit = update.take_profit;
         c.activeTrade.risk = update.risk;
         c.drawTradeLines(c.activeTrade);
       }

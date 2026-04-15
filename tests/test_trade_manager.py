@@ -128,7 +128,7 @@ class TestResultCalculation:
 
 class TestCFDMode:
 
-    def test_cfd_spread_adjusts_sl_for_buy(self):
+    def test_cfd_spread_adjusts_sl_for_long(self):
         tm = _make_manager(broker_mode="cfd", broker_spread=2.0)
         # spread_adj = 1.0; adjusted_sl = 90 - 1 = 89
         _add_open_trade(tm, trade_type="long", entry=100, sl=90, tp=130, risk=10)
@@ -137,7 +137,7 @@ class TestCFDMode:
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
 
-    def test_cfd_spread_triggers_sl_for_buy(self):
+    def test_cfd_spread_triggers_sl_for_long(self):
         tm = _make_manager(broker_mode="cfd", broker_spread=2.0)
         _add_open_trade(tm, trade_type="long", entry=100, sl=90, tp=130, risk=10)
         # Low = 88 -> hits adjusted SL of 89

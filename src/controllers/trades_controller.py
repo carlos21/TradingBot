@@ -7,10 +7,11 @@ from datetime import datetime, timezone
 
 class TradesController:
 
-    def __init__(self, bars_loader: BarsLoader, trade_manager: TradeManager, logger: ILogger):
+    def __init__(self, bars_loader: BarsLoader, trade_manager: TradeManager, logger: ILogger, rr_ratio: float = 5.0):
         self.bars_loader = bars_loader
         self.trade_manager = trade_manager
         self.logger = logger
+        self.rr_ratio = rr_ratio
 
     def _get_virtual_now(self) -> float:
         """
@@ -73,6 +74,8 @@ class TradesController:
             entry_price = self.bars_loader._1m_buffer[-1]['close']
         elif hasattr(self.bars_loader.data_source, '_played_bars') and self.bars_loader.data_source._played_bars:
             entry_price = self.bars_loader.data_source._played_bars[-1]['close']
+        elif self.bars_loader._last_bar_close > 0:
+            entry_price = self.bars_loader._last_bar_close
         else:
             abort(400, f"No price data available to open trade for {pair}")
 
@@ -81,8 +84,8 @@ class TradesController:
             abort(400, 'Invalid stop loss; must be different from entry')
         
         take_profit = (
-            entry_price + 4 * risk if trade_type == 'buy'
-            else entry_price - 4 * risk
+            entry_price + (self.rr_ratio * risk) if trade_type == 'long'
+            else entry_price - (self.rr_ratio * risk)
         )
         
         # FIX: Use virtual time so the trade appears on the chart
@@ -91,10 +94,48 @@ class TradesController:
         
         trade = self.trade_manager.open_trade(
             pair, trade_type, entry_price,
-            stop_loss, take_profit, risk, entry_time
+            stop_loss, take_profit, risk, entry_time, self.rr_ratio
         )
         return jsonify(trade), 201
     
+    def open_test_trade(self, pair: str, direction: str):
+        # Resolve latest close price
+        entry_price = 0.0
+        if self.bars_loader._1m_buffer:
+            entry_price = self.bars_loader._1m_buffer[-1]['close']
+        elif hasattr(self.bars_loader.data_source, '_played_bars') and self.bars_loader.data_source._played_bars:
+            entry_price = self.bars_loader.data_source._played_bars[-1]['close']
+        elif self.bars_loader._last_bar_close > 0:
+            entry_price = self.bars_loader._last_bar_close
+        else:
+            abort(400, f"No price data available to open test trade for {pair}")
+
+        # Fixed test parameters: 20 points risk, strategy RR reward
+        risk_points = 20.0
+        rr_ratio = self.rr_ratio
+        if direction == 'long':
+            stop_loss = entry_price - risk_points
+            take_profit = entry_price + (risk_points * rr_ratio)
+            trade_type = 'long'
+        else:
+            stop_loss = entry_price + risk_points
+            take_profit = entry_price - (risk_points * rr_ratio)
+            trade_type = 'short'
+
+        risk = abs(entry_price - stop_loss)
+        entry_time = self._get_virtual_now()
+
+        trade = self.trade_manager.open_trade(
+            pair, trade_type, entry_price,
+            stop_loss, take_profit, risk, entry_time, rr_ratio
+        )
+
+        # Send the actual ZMQ command to NinjaTrader
+        self.trade_manager.trade_executor.on_trade_open(trade)
+        self.logger.info(f"[TradesController] Sent test {direction} trade {trade['trade_id']} to executor")
+
+        return jsonify(trade), 201
+
     def close_trade(self, trade_id):
         if not any(t['trade_id'] == trade_id for t in self.trade_manager.open_trades):
             abort(404, f"Trade id={trade_id} not found or already closed")
@@ -108,6 +149,8 @@ class TradesController:
             exit_price = self.bars_loader._1m_buffer[-1]['close']
         elif hasattr(self.bars_loader.data_source, '_played_bars') and self.bars_loader.data_source._played_bars:
             exit_price = self.bars_loader.data_source._played_bars[-1]['close']
+        elif self.bars_loader._last_bar_close > 0:
+            exit_price = self.bars_loader._last_bar_close
         else:
             abort(400, f"No price data available to close trade {pair}")
 

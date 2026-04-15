@@ -4,7 +4,6 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 using System;
-using System.Threading;
 using Newtonsoft.Json.Linq;
 using NinjaTrader.Cbi;
 
@@ -61,31 +60,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (stopOrder.OrderState != OrderState.Working && stopOrder.OrderState != OrderState.Accepted && stopOrder.OrderState != OrderState.Submitted)
                     throw new InvalidOperationException($"Stop order is not modifiable (state: {stopOrder.OrderState})");
 
-                // Cancel + Replace pattern
+                // Cancel + Replace pattern (event-driven)
+                // Register pending modify so OnOrderUpdate can create the replacement
+                // when the old order reports Cancelled state.
+                _orderTracker.TrackPendingModify(tradeId, new PendingModifyInfo(
+                    newSl, stopOrder.Instrument, stopOrder.OrderAction, stopOrder.Quantity));
+
                 _account.Cancel(new[] { stopOrder });
-                Thread.Sleep(50);
 
-                var newStopOrder = _account.CreateOrder(
-                    stopOrder.Instrument,
-                    stopOrder.OrderAction,
-                    OrderType.StopMarket,
-                    OrderEntry.Automated,
-                    TimeInForce.Gtc,
-                    stopOrder.Quantity,
-                    0,
-                    newSl,
-                    string.Empty,
-                    $"Stop_{tradeId}",  // CRITICAL: Must include trade_id for recovery
-                    DateTime.MinValue,
-                    null);
-
-                if (newStopOrder == null)
-                    throw new InvalidOperationException("Failed to create new stop order");
-
-                _orderTracker.TrackStopLoss(tradeId, newStopOrder);
-
-                _logger.Success($"Modified SL for {tradeId} from {stopOrder.StopPrice} to {newSl}");
-                _network?.SendTradeLog(tradeId, "NT:MODIFY", $"Stop loss changed from {stopOrder.StopPrice} to {newSl}");
+                _logger.Info($"MODIFY PENDING: Cancelled stop for {tradeId}, replacement SL={newSl} queued");
+                _network?.SendTradeLog(tradeId, "NT:MODIFY", $"Stop cancel requested, new SL={newSl} pending");
             }
             catch (Exception ex)
             {

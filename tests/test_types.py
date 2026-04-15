@@ -110,11 +110,11 @@ class TestDirectionInConditionals:
         direction = Direction.LONG
         
         if direction.is_long:
-            result = "buy"
+            result = "long"
         else:
-            result = "sell"
+            result = "short"
         
-        assert result == "buy"
+        assert result == "long"
     
     def test_direction_in_dictionary(self):
         # Direction can be used as dict key

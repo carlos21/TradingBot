@@ -19,6 +19,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly Dictionary<string, Order> _takeProfitOrders = new Dictionary<string, Order>();
         private readonly Dictionary<string, Order> _closeOrders = new Dictionary<string, Order>();  // Closing orders
         private readonly Dictionary<string, PendingEntryInfo> _pendingEntries = new Dictionary<string, PendingEntryInfo>();
+        private readonly Dictionary<string, PendingModifyInfo> _pendingModifies = new Dictionary<string, PendingModifyInfo>();
         private readonly Dictionary<string, string> _atmStrategies = new Dictionary<string, string>();  // tradeId -> ATM strategy name
         private readonly object _lock = new object();
         
@@ -50,6 +51,23 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (tradeId == null) throw new System.ArgumentNullException(nameof(tradeId));
             if (entry == null) throw new System.ArgumentNullException(nameof(entry));
             lock (_lock) _pendingEntries[tradeId] = entry;
+        }
+
+        public void TrackPendingModify(string tradeId, PendingModifyInfo info)
+        {
+            if (tradeId == null) throw new System.ArgumentNullException(nameof(tradeId));
+            if (info == null) throw new System.ArgumentNullException(nameof(info));
+            lock (_lock) _pendingModifies[tradeId] = info;
+        }
+
+        public bool TryGetPendingModify(string tradeId, out PendingModifyInfo info)
+        {
+            lock (_lock) return _pendingModifies.TryGetValue(tradeId, out info);
+        }
+
+        public void RemovePendingModify(string tradeId)
+        {
+            lock (_lock) _pendingModifies.Remove(tradeId);
         }
 
         public bool TryGetEntry(string tradeId, out Order order)
@@ -137,6 +155,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _takeProfitOrders.Remove(tradeId);
                 _closeOrders.Remove(tradeId);
                 _pendingEntries.Remove(tradeId);
+                _pendingModifies.Remove(tradeId);
                 _atmStrategies.Remove(tradeId);
             }
         }
@@ -150,6 +169,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _takeProfitOrders.Clear();
                 _closeOrders.Clear();
                 _pendingEntries.Clear();
+                _pendingModifies.Clear();
                 _atmStrategies.Clear();
             }
         }

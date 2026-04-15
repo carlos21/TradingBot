@@ -64,7 +64,7 @@ class TestSLTPExitStrategy:
 
         assert signal is None
 
-    def test_cfd_spread_adjustment_buy(self):
+    def test_cfd_spread_adjustment_long(self):
         strategy = SLTPExitStrategy(broker_mode='cfd', broker_spread=2.0)
         trade = {"direction": Direction.LONG, "stop_loss": 100, "take_profit": 110}
         bar = {"high": 105, "low": 98.5}  # Low is 98.5, adjusted SL is 99 (100 - 1.0)

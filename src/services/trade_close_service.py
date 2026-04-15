@@ -188,8 +188,8 @@ class TradeCloseService:
         stop_loss = trade['stop_loss']
         take_profit = trade['take_profit']
         
-        is_buy = trade_type in ('buy', 'long')
-        is_sell = trade_type in ('sell', 'short')
+        is_long = trade_type == 'long'
+        is_short = trade_type == 'short'
         
         # Adjust for spread in CFD mode
         spread_adj = broker_spread / 2.0 if broker_mode == 'cfd' else 0.0
@@ -197,23 +197,23 @@ class TradeCloseService:
         adjusted_tp = take_profit
         
         if broker_mode == 'cfd':
-            if is_buy:
+            if is_long:
                 adjusted_sl = stop_loss - spread_adj
                 adjusted_tp = take_profit - spread_adj
-            elif is_sell:
+            elif is_short:
                 adjusted_sl = stop_loss + spread_adj
                 adjusted_tp = take_profit + spread_adj
         
         bar_low = bar['low']
         bar_high = bar['high']
         
-        if is_buy:
+        if is_long:
             if bar_low <= adjusted_sl:
                 return stop_loss, CloseReason.STOP_LOSS_HIT
             elif bar_high >= adjusted_tp:
                 return take_profit, CloseReason.TAKE_PROFIT_HIT
                 
-        elif is_sell:
+        elif is_short:
             if bar_high >= adjusted_sl:
                 return stop_loss, CloseReason.STOP_LOSS_HIT
             elif bar_low <= adjusted_tp:

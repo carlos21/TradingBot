@@ -79,6 +79,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly object _seqNumLock = new object();
         private const int MAX_TRACKED_SEQ_NUMS = 1000;  // Prevent memory growth
 
+
+
         // UI
         private MenuItem _menuItem;
         private MenuItem _existingNewMenu;
@@ -213,6 +215,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 
                 // Restore order tracking from broker after potential crash
                 _orderTracker.RestoreFromBrokerOrders(_account, _logger);
+
+                // Start ATM strategies for any restored working orders
+                foreach (var tradeId in _orderTracker.GetActiveTradeIds())
+                {
+                    TryStartAtmForEntryOrder(tradeId);
+                }
                 
                 // Report actual broker positions to Python (broker is source of truth)
                 ReportPositionsToPython();
@@ -268,6 +276,8 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             _orderTracker?.Clear();
             _orderTracker = null;
+
+
 
             _logger?.Info("Disconnected from Python TradingBot");
             UpdateStats();
@@ -375,7 +385,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 try
                 {
                     var envelope = _network?.ReceiveCommand(timeoutMs: 100);
-                    if (envelope == null) { Thread.Sleep(50); continue; }
+                    if (envelope == null) continue;
 
                     // Duplicate detection
                     if (IsDuplicateCommand(envelope.SeqNum))
@@ -710,6 +720,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     {
                         _orderTracker.TrackEntry(tradeIdFromName, order);
                         _logger.Info($"TRACKING entry order for {tradeIdFromName} (from name)");
+                        TryStartAtmForEntryOrder(tradeIdFromName);
                     }
                     else
                     {
@@ -733,9 +744,57 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
 
+                // Process pending modify when a stop order is successfully cancelled
+                if (order.OrderState == OrderState.Cancelled && IsStopOrder(order))
+                {
+                    string tid = ExtractTradeIdFromOrderName(order.Name);
+                    if (!string.IsNullOrEmpty(tid) && _orderTracker.TryGetPendingModify(tid, out var modInfo))
+                    {
+                        _orderTracker.RemovePendingModify(tid);
+                        try
+                        {
+                            var newStopOrder = _account.CreateOrder(
+                                modInfo.Instrument,
+                                modInfo.OrderAction,
+                                OrderType.StopMarket,
+                                OrderEntry.Automated,
+                                TimeInForce.Gtc,
+                                modInfo.Quantity,
+                                0,
+                                modInfo.NewStopLoss,
+                                string.Empty,
+                                $"Stop_{tid}",
+                                DateTime.MinValue,
+                                null);
+
+                            if (newStopOrder != null)
+                            {
+                                _orderTracker.TrackStopLoss(tid, newStopOrder);
+                                _logger.Success($"Modified SL for {tid} to {modInfo.NewStopLoss}");
+                                _network?.SendTradeLog(tid, "NT:MODIFY", $"Stop loss changed to {modInfo.NewStopLoss}");
+                            }
+                            else
+                            {
+                                _logger.Error($"Failed to create replacement stop order for {tid}");
+                                _network?.SendError("ninjatrader", "order_modify_failed", $"Failed to create replacement stop for {tid}");
+                            }
+                        }
+                        catch (Exception modEx)
+                        {
+                            _logger.Error($"Error creating replacement stop order for {tid}", modEx);
+                            _network?.SendError("ninjatrader", "order_modify_failed", $"Replacement stop failed for {tid}: {modEx.Message}");
+                        }
+                    }
+                }
+
                 // Notify Python of rejected/cancelled orders
                 if (order.OrderState == OrderState.Rejected || order.OrderState == OrderState.Cancelled)
                 {
+                    // Bracket orders (SL/TP) are intentionally cancelled during normal close workflows
+                    // (Python close command, NT manual close, or pending modify). Suppress the noise.
+                    if (order.OrderState == OrderState.Cancelled && (IsStopOrder(order) || IsTargetOrder(order)))
+                        return;
+
                     _network?.SendError("ninjatrader", "order_state", $"Order {order.Name} is {order.OrderState}");
                 }
             }
@@ -793,6 +852,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     HandleCloseFill(order, fillPrice);
                 }
+                else
+                {
+                    // Catch manual closes that don't match our Close_{tradeId} naming.
+                    // Look for an opposing execution against a tracked filled entry.
+                    HandlePotentialManualClose(order, fillPrice);
+                }
             }
             catch (Exception ex)
             {
@@ -812,6 +877,43 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
 
             var (sl, tp) = CalculateSlTp(fillPrice, entry.Direction, entry.SlPoints, entry.RrRatio);
+
+            // Create bracket orders manually (ATM strategies don't work reliably from AddOn context)
+            if (_account != null && order.Instrument != null && !_orderTracker.TryGetStopLoss(tradeId, out _))
+            {
+                try
+                {
+                    bool isLong = entry.Direction == "long";
+                    var closeAction = isLong ? OrderAction.Sell : OrderAction.BuyToCover;
+                    int qty = order.Filled > 0 ? order.Filled : order.Quantity;
+
+                    var stopOrder = _account.CreateOrder(
+                        order.Instrument, closeAction, OrderType.StopMarket, OrderEntry.Automated, TimeInForce.Gtc,
+                        qty, 0, sl, string.Empty, $"Stop_{tradeId}", DateTime.MinValue, null);
+
+                    var targetOrder = _account.CreateOrder(
+                        order.Instrument, closeAction, OrderType.Limit, OrderEntry.Automated, TimeInForce.Gtc,
+                        qty, tp, 0, string.Empty, $"Target_{tradeId}", DateTime.MinValue, null);
+
+                    if (stopOrder != null) _account.Submit(new[] { stopOrder });
+                    if (targetOrder != null) _account.Submit(new[] { targetOrder });
+
+                    if (stopOrder != null && targetOrder != null)
+                    {
+                        _logger.Success($"BRACKET CREATED: {tradeId} SL={sl} TP={tp} qty={qty}");
+                        _network?.SendTradeLog(tradeId, "NT:ORDER", $"Bracket created: SL={sl} TP={tp} qty={qty}");
+                    }
+                    else
+                    {
+                        _logger.Warning($"Partial bracket for {tradeId}: stop={(stopOrder != null)} target={(targetOrder != null)}");
+                    }
+                }
+                catch (Exception bracketEx)
+                {
+                    _logger.Error($"Failed to create bracket orders for {tradeId}", bracketEx);
+                    _network?.SendError("ninjatrader", "bracket_creation_failed", $"Failed to create SL/TP for {tradeId}: {bracketEx.Message}");
+                }
+            }
 
             _logger.Success($"ENTRY FILL: {tradeId} @ {fillPrice} SL={sl} TP={tp}");
             _network?.SendEntryFill(tradeId, fillPrice, sl, tp);
@@ -864,6 +966,39 @@ namespace NinjaTrader.NinjaScript.AddOns
             _network?.SendExitFill(tradeId, fillPrice, "CLOSE");
             _network?.SendTradeLog(tradeId, "NT:FILL", $"Position closed @ {fillPrice}");
             _orderTracker.RemoveTrade(tradeId);
+        }
+
+        private void HandlePotentialManualClose(Order closeOrder, double fillPrice)
+        {
+            if (closeOrder?.Instrument == null) return;
+
+            foreach (var tradeId in _orderTracker.GetActiveTradeIds())
+            {
+                if (!_orderTracker.TryGetEntry(tradeId, out var entryOrder)) continue;
+                if (entryOrder.Instrument?.MasterInstrument?.Name != closeOrder.Instrument.MasterInstrument.Name) continue;
+                if (entryOrder.OrderState != OrderState.Filled && entryOrder.OrderState != OrderState.PartFilled) continue;
+
+                bool isOpposing = false;
+                if (entryOrder.OrderAction == OrderAction.Buy && closeOrder.OrderAction == OrderAction.Sell)
+                    isOpposing = true;
+                else if (entryOrder.OrderAction == OrderAction.SellShort && closeOrder.OrderAction == OrderAction.BuyToCover)
+                    isOpposing = true;
+
+                if (isOpposing)
+                {
+                    _logger.Success($"MANUAL CLOSE DETECTED: {tradeId} @ {fillPrice} via {closeOrder.Name}");
+                    _network?.SendExitFill(tradeId, fillPrice, "CLOSE");
+                    _network?.SendTradeLog(tradeId, "NT:FILL", $"Manual position closed @ {fillPrice}");
+                    _orderTracker.RemoveTrade(tradeId);
+                    return;
+                }
+            }
+        }
+
+        private void TryStartAtmForEntryOrder(string tradeId)
+        {
+            // ATM strategies don't work reliably from AddOn context.
+            // Bracket orders (SL/TP) are created manually in HandleEntryFill instead.
         }
 
         private (double sl, double tp) CalculateSlTp(double fillPrice, string direction, double slPoints, double rrRatio)

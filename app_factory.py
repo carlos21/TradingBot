@@ -303,6 +303,28 @@ def create_app(
         data_source.gateway.on_position_sync(_handle_position_sync)
         logger.info("[ZMQ] Position sync handler registered for crash recovery")
 
+        # Wire up broker fill handlers so Python chart reflects actual NinjaTrader state
+        def _handle_entry_fill(payload):
+            trade_id = payload.get('trade_id')
+            entry_price = payload.get('entry_price')
+            stop_loss = payload.get('stop_loss')
+            take_profit = payload.get('take_profit')
+            if trade_id and entry_price is not None:
+                trade_manager.handle_broker_entry_fill(trade_id, entry_price, stop_loss, take_profit)
+                logger.info(f"[BrokerFill] Entry fill handled for {trade_id} @ {entry_price}")
+
+        def _handle_exit_fill(payload):
+            trade_id = payload.get('trade_id')
+            exit_price = payload.get('exit_price')
+            result_type = payload.get('result_type', 'CLOSE')
+            if trade_id and exit_price is not None:
+                trade_manager.handle_broker_fill(trade_id, exit_price, result_type)
+                logger.info(f"[BrokerFill] Exit fill handled for {trade_id} @ {exit_price} ({result_type})")
+
+        data_source.gateway.on_entry_fill(_handle_entry_fill)
+        data_source.gateway.on_exit_fill(_handle_exit_fill)
+        logger.info("[ZMQ] Broker fill handlers registered")
+
     # Initialize strategy
     tstrategy = LiquidityStrategyV2(
         min_stop_loss   = numbers.min_stop_loss,
@@ -358,7 +380,7 @@ def create_app(
 
     # Create controllers
     lines_controller = LinesController(repos.lines, loader, tstrategy, logger=logger)
-    trades_controller = TradesController(loader, trade_manager, logger=logger)
+    trades_controller = TradesController(loader, trade_manager, logger=logger, rr_ratio=numbers.rr_ratio)
     
     # Initialize analytics service and admin controller
     analytics_service = AnalyticsService(repos.trades)
@@ -384,7 +406,21 @@ def create_app(
     )
     register_socketio_handlers(socketio, loader, data_source, live_mode, logger=logger)
     
-    # Global error handler
+    from werkzeug.exceptions import HTTPException
+
+    # Global error handlers for API routes
+    @app.errorhandler(400)
+    def handle_400(error):
+        return jsonify({"error": str(error.description)}), 400
+
+    @app.errorhandler(404)
+    def handle_404(error):
+        return jsonify({"error": str(error.description)}), 404
+
+    @app.errorhandler(HTTPException)
+    def handle_http_exception(error):
+        return jsonify({"error": str(error.description)}), error.code
+
     @app.errorhandler(500)
     def handle_500(error):
         notifier.send(f"[Flask] Unhandled server error: {error}")

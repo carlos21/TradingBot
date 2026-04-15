@@ -72,34 +72,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                     throw new InvalidOperationException("Failed to create entry order");
 
                 _orderTracker.TrackEntry(tradeId, entryOrder);
-                _orderTracker.TrackAtmStrategy(tradeId, atmStrategyName);  // Track ATM for recovery
-
-                // Guard: market orders can fill instantly; ATM strategy needs a working/submitted order
-                if (entryOrder.OrderState == OrderState.Filled || entryOrder.OrderState == OrderState.PartFilled)
-                {
-                    _logger.Warning($"Entry order for {tradeId} filled instantly before ATM could start. Position is open without ATM-managed SL/TP.");
-                    _network?.SendError("ninjatrader", "instant_fill", $"Entry filled instantly for {tradeId}; no ATM SL/TP");
-                }
-                else
-                {
-                    try
-                    {
-                        NinjaTrader.NinjaScript.AtmStrategy.StartAtmStrategy(atmStrategyName, entryOrder);
-                    }
-                    catch (Exception atmEx)
-                    {
-                        _logger.Error($"ATM strategy '{atmStrategyName}' failed to start for {tradeId}. Ensure the ATM strategy exists in NinjaTrader.", atmEx);
-                        _network?.SendError("ninjatrader", "atm_start_failed", $"ATM '{atmStrategyName}' failed: {atmEx.Message}");
-                        try { _account.Cancel(new[] { entryOrder }); } catch { }
-                        _orderTracker.RemoveTrade(tradeId);
-                        return;
-                    }
-                }
-
+                _orderTracker.TrackAtmStrategy(tradeId, atmStrategyName);
                 _orderTracker.TrackPendingEntry(tradeId, new PendingEntryInfo(direction, slPoints, rrRatio, atmStrategyName));
 
-                _logger.Success($"ATM STRATEGY STARTED: {atmStrategyName} for trade {tradeId}");
-                _network?.SendTradeLog(tradeId, "NT:ORDER", $"Market {direction} x{qty} with ATM '{atmStrategyName}'");
+                _account.Submit(new[] { entryOrder });
+
+                _logger.Info($"OPEN ORDER SUBMITTED: {tradeId} {direction} {instrument.MasterInstrument.Name} x{qty} SL={slPoints}pt");
+                _network?.SendTradeLog(tradeId, "NT:ORDER", $"Market {direction} x{qty} submitted, ATM '{atmStrategyName}' pending");
             }
             catch (Exception ex)
             {

@@ -10,9 +10,13 @@ export class ControlsView {
     this.prevBtn = document.getElementById('prevDayBtn');
     this.nextBtn = document.getElementById('nextDayBtn');
     this.tfButtons = Array.from(document.querySelectorAll('[data-timeframe]'));
+    this.testLongBtn = document.getElementById('testLongBtn');
+    this.testShortBtn = document.getElementById('testShortBtn');
+    this.testTradeControls = document.getElementById('testTradeControls');
 
     this._bindReplayEvents();
     this._bindTimeframeEvents();
+    this._bindTestTradeEvents();
 
     this.socket.on('stream_status', ({ playing, live_mode }) => {
       if (!playing) this.toggleBtn.textContent = 'Play';
@@ -52,12 +56,66 @@ export class ControlsView {
     button.classList.add('active');
   }
 
+  _bindTestTradeEvents() {
+    if (!this.testLongBtn || !this.testShortBtn) return;
+
+    this.testLongBtn.addEventListener('click', async () => {
+      try {
+        const resp = await fetch('/api/trades/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pair: 'NQ', direction: 'long' })
+        });
+        const contentType = resp.headers.get('content-type') || '';
+        let data = {};
+        if (contentType.includes('application/json')) {
+          data = await resp.json();
+        } else {
+          data = { error: (await resp.text()).trim() || resp.statusText };
+        }
+        if (resp.ok) {
+          alert('Test Long sent: ' + data.trade_id);
+        } else {
+          alert('Failed: ' + (data.error || resp.statusText));
+        }
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    });
+
+    this.testShortBtn.addEventListener('click', async () => {
+      try {
+        const resp = await fetch('/api/trades/test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pair: 'NQ', direction: 'short' })
+        });
+        const contentType = resp.headers.get('content-type') || '';
+        let data = {};
+        if (contentType.includes('application/json')) {
+          data = await resp.json();
+        } else {
+          data = { error: (await resp.text()).trim() || resp.statusText };
+        }
+        if (resp.ok) {
+          alert('Test Short sent: ' + data.trade_id);
+        } else {
+          alert('Failed: ' + (data.error || resp.statusText));
+        }
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    });
+  }
+
   _applyLiveMode() {
     document.querySelectorAll('.replay-control').forEach(el => el.style.display = 'none');
     if (this.stepBtn) this.stepBtn.style.display = 'none';
 
     const liveIndicator = document.getElementById('liveIndicator');
     if (liveIndicator) liveIndicator.classList.remove('hidden');
+
+    if (this.testTradeControls) this.testTradeControls.classList.remove('hidden');
 
     this.toggleBtn.textContent = 'Start';
   }

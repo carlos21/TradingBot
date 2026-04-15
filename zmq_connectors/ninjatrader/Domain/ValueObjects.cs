@@ -115,6 +115,25 @@ namespace NinjaTrader.NinjaScript.AddOns
     }
 
     /// <summary>
+    /// Value object: Pending modify information for cancel+replace pattern.
+    /// </summary>
+    public sealed class PendingModifyInfo
+    {
+        public double NewStopLoss { get; }
+        public NinjaTrader.Cbi.Instrument Instrument { get; }
+        public NinjaTrader.Cbi.OrderAction OrderAction { get; }
+        public int Quantity { get; }
+
+        public PendingModifyInfo(double newStopLoss, NinjaTrader.Cbi.Instrument instrument, NinjaTrader.Cbi.OrderAction orderAction, int quantity)
+        {
+            NewStopLoss = newStopLoss;
+            Instrument = instrument ?? throw new ArgumentNullException(nameof(instrument));
+            OrderAction = orderAction;
+            Quantity = quantity;
+        }
+    }
+
+    /// <summary>
     /// Event args for tick data (immutable value object).
     /// </summary>
     public sealed class TickEventArgs : EventArgs

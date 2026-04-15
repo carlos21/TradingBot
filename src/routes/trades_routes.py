@@ -38,13 +38,22 @@ def register_trades_routes(
         req_pair       = data.get('pair')
         trade_type = data.get('type', '').lower()
         stop_loss  = data.get('stop_loss')
-        if not isinstance(req_pair, str) or trade_type not in ('buy', 'sell'):
-            abort(400, '"pair" must be a string and "type" must be "buy" or "sell"')
+        if not isinstance(req_pair, str) or trade_type not in ('long', 'short'):
+            abort(400, '"pair" must be a string and "type" must be "long" or "short"')
         try:
             stop_loss = float(stop_loss)
         except Exception:
             abort(400, '"stop_loss" must be a number')
         return trades_controller.open_trade(req_pair, stop_loss, trade_type)
+
+    @app.route('/api/trades/test', methods=['POST'])
+    def open_test_trade():
+        data = request.get_json() or {}
+        req_pair = data.get('pair')
+        direction = data.get('direction', '').lower()
+        if not isinstance(req_pair, str) or direction not in ('long', 'short'):
+            abort(400, '"pair" must be a string and "direction" must be "long" or "short"')
+        return trades_controller.open_test_trade(req_pair, direction)
 
     @app.route('/api/trades/<string:trade_id>/close', methods=['POST'])
     def close_trade(trade_id):

@@ -150,38 +150,38 @@ class TradeManager:
                 self._monitored_trades.add(trade['trade_id'])
 
             ttype = trade['type']
-            is_buy  = ttype in ('buy', 'long')
-            is_sell = ttype in ('sell', 'short')
+            is_long  = ttype == 'long'
+            is_short = ttype == 'short'
 
             spread_adj = self.broker_spread / 2.0 if self.broker_mode == 'cfd' else 0.0
 
             adjusted_sl = trade['stop_loss']
             adjusted_tp = trade['take_profit']
             if self.broker_mode == 'cfd':
-                if is_buy:
+                if is_long:
                     adjusted_sl = trade['stop_loss'] - spread_adj
                     adjusted_tp = trade['take_profit'] - spread_adj
-                elif is_sell:
+                elif is_short:
                     adjusted_sl = trade['stop_loss'] + spread_adj
                     adjusted_tp = trade['take_profit'] + spread_adj
 
             hit_sl = False
             hit_tp = False
 
-            if is_buy:
+            if is_long:
                 if bar['low'] <= adjusted_sl:
                     hit_sl = True
-                    self.logger.info(f"[TradeManager] BUY SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
+                    self.logger.info(f"[TradeManager] LONG SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
                 elif bar['high'] >= adjusted_tp:
                     hit_tp = True
-                    self.logger.info(f"[TradeManager] BUY TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
-            elif is_sell:
+                    self.logger.info(f"[TradeManager] LONG TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
+            elif is_short:
                 if bar['high'] >= adjusted_sl:
                     hit_sl = True
-                    self.logger.info(f"[TradeManager] SELL SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
+                    self.logger.info(f"[TradeManager] SHORT SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
                 elif bar['low'] <= adjusted_tp:
                     hit_tp = True
-                    self.logger.info(f"[TradeManager] SELL TP HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
+                    self.logger.info(f"[TradeManager] SHORT TP HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
 
             if not hit_sl and not hit_tp:
                 continue
@@ -331,7 +331,7 @@ class TradeManager:
 
     def open_trade(self, pair: str, trade_type: str, entry_price: float,
                    stop_loss: float, take_profit: float,
-                   risk: float, entry_time: float):
+                   risk: float, entry_time: float, rr_ratio: float = 5.0):
         """
         Open a new trade with precomputed parameters.
         """
@@ -365,7 +365,8 @@ class TradeManager:
             'risk_dollars': risk_dollars,
             'risk_pct':   risk_pct,
             'contracts':  contracts,
-            'entry_time': entry_time
+            'entry_time': entry_time,
+            'rr_ratio':   rr_ratio,
         }
         # track in-memory
         self.open_trades.append(trade)
@@ -587,8 +588,8 @@ class TradeManager:
             trade['take_profit'] = take_profit
 
         # Recalculate risk based on actual entry and SL
-        is_buy = trade['type'] in ('buy', 'long')
-        if is_buy:
+        is_long = trade['type'] == 'long'
+        if is_long:
             trade['risk'] = abs(entry_price - trade['stop_loss'])
         else:
             trade['risk'] = abs(trade['stop_loss'] - entry_price)

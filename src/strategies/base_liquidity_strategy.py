@@ -334,7 +334,7 @@ class BaseLiquidityStrategy:
                         new_sl = proposed_sl
                         should_update = True
 
-            elif trade['type'] in ('short', 'sell'):
+            elif trade['type'] == 'short':
                 trigger_price = entry - (risk * cfg.trigger_rr)
 
                 if bar['low'] <= trigger_price:

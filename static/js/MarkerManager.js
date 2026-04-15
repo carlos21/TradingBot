@@ -38,7 +38,7 @@ export class MarkerManager {
     for (const t of allTrades) {
       const entryTime = t.entry_time || t.entryTime;
       const exitTime = t.exit_time || t.exitTime;
-      const isLong = t.type === 'long' || t.type === 'buy';
+      const isLong = t.type === 'long';
 
       if (entryTime && entryTime <= lastTime) {
         const regime = t.velocity_regime || '';
