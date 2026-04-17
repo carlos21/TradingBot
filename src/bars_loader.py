@@ -164,12 +164,6 @@ class BarsLoader:
 
         is_partial = msg.get('partial', False)
 
-        if self.live_mode and not is_partial and 'open' in msg:
-            from datetime import datetime, timezone
-            ts = msg.get('time', 0)
-            dt = datetime.fromtimestamp(ts, tz=timezone.utc).strftime('%H:%M:%S')
-            self.logger.info(f"[BarsLoader] PROCESSING completed bar time={dt} tf={self.current_tf} buf_len={len(self._1m_buffer)} group_start={self._current_group_start}")
-
         # Partial bars: emit to frontend for display only, skip strategy
         if is_partial:
             self._last_played_ts = msg['time']
@@ -228,10 +222,6 @@ class BarsLoader:
 
     def _process_bar(self, bar: dict):
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
-            if self.live_mode:
-                from datetime import datetime, timezone
-                dt = datetime.fromtimestamp(bar.get('time', 0), tz=timezone.utc).strftime('%H:%M:%S')
-                self.logger.info(f"[BarsLoader] EMIT 1m bar time={dt} C={bar.get('close')}")
             self.socketio.emit('bar', bar)
             time.sleep(self._emit_delay)
             if self._step_mode:

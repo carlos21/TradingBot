@@ -92,10 +92,6 @@ class ZMQDataSource(CombinedDataSource):
         self._from_time: int = 0
         self._cb_lock = threading.Lock()
         
-        # Live bar building from ticks (for partial bars)
-        self._current_bar: Optional[Dict] = None
-        self._last_emit_time: float = 0.0
-        
         # Stats
         self._stats = {
             "ticks_received": 0,
@@ -227,46 +223,10 @@ class ZMQDataSource(CombinedDataSource):
     def _on_tick(self, payload: Dict) -> None:
         """Handle incoming tick."""
         self._stats["ticks_received"] += 1
-        
+
         # Log every 100th tick to avoid spam
         if self._stats["ticks_received"] % 100 == 0:
             self.logger.debug(f"Ticks received: {self._stats['ticks_received']} (latest: {payload.get('price')})")
-        
-        # Build partial bar from tick
-        tick_time = int(payload["time"])
-        price = float(payload["price"])
-        volume = int(payload.get("volume", 0))
-        
-        bar_time = (tick_time // 60) * 60
-        
-        # Reset on minute boundary
-        if self._current_bar is not None and self._current_bar["time"] != bar_time:
-            self._current_bar = None
-        
-        if self._current_bar is None:
-            self._current_bar = {
-                "time": bar_time,
-                "open": price,
-                "high": price,
-                "low": price,
-                "close": price,
-                "volume": volume,
-                "pair": payload.get("pair", self.pair),
-            }
-        else:
-            self._current_bar["high"] = max(self._current_bar["high"], price)
-            self._current_bar["low"] = min(self._current_bar["low"], price)
-            self._current_bar["close"] = price
-            self._current_bar["volume"] += volume
-        
-        # Emit partial bar at most once per second
-        now = time.monotonic()
-        if now - self._last_emit_time >= 1.0:
-            self._last_emit_time = now
-            partial = dict(self._current_bar)
-            partial["partial"] = True
-            if self.on_live_bar:
-                self.on_live_bar(partial)
     
     def _on_bar(self, payload: Dict) -> None:
         """Handle completed bar from platform."""
@@ -299,18 +259,15 @@ class ZMQDataSource(CombinedDataSource):
                 self._historical_bars.insert(idx, bar)
                 self.logger.warning(f"Bar out of order: inserted at index {idx}")
         
-        # Log every bar
-        dt = datetime.fromtimestamp(bar["time"], tz=timezone.utc).strftime("%H:%M:%S")
-        self.logger.info(f"1m BAR: {dt} O={bar['open']:.2f} H={bar['high']:.2f} "
-                         f"L={bar['low']:.2f} C={bar['close']:.2f}")
-        
         if self.on_live_bar:
             self.on_live_bar(bar)
     
     def _on_partial_bar(self, payload: Dict) -> None:
         """Handle partial bar from platform."""
         if self.on_live_bar:
-            self.on_live_bar(payload)
+            partial = dict(payload)
+            partial["partial"] = True
+            self.on_live_bar(partial)
     
     def _on_history_batch(self, payload: Dict) -> None:
         """Handle batch of historical bars."""
@@ -374,7 +331,6 @@ class ZMQDataSource(CombinedDataSource):
             self._last_history_time = preserved[-1]["time"] if preserved else 0
         
         self._live = False
-        self._current_bar = None
         self._refreshing = True
         
         self.logger.info(f"Refresh start: preserved {len(preserved)} historical bars, removed {removed} recent bars")

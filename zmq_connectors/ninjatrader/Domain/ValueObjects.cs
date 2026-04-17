@@ -40,7 +40,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             string instrument = "MNQ 06-26",
             int historyDays = 30,
             int batchSize = 500,
-            int maxTicksPerSecond = 3,
+            int maxTicksPerSecond = 10,
             string platformVersion = "2.0.0")
         {
             Host = host ?? throw new ArgumentNullException(nameof(host));

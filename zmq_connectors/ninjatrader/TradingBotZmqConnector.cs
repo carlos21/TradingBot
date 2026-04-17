@@ -73,6 +73,14 @@ namespace NinjaTrader.NinjaScript.AddOns
         private long _commandsReceived = 0;
         private long _ticksSent = 0;
         private long _barsSent = 0;
+        private long _partialBarsSent = 0;
+
+        // Live bar streaming
+        private BarsRequest _liveBarsRequest;
+        private DateTime _lastSentBarTime = DateTime.MinValue;
+        private DateTime _lastFormingBarTime = DateTime.MinValue;
+        private readonly object _barSendLock = new object();
+        private TickRateLimiter _partialBarRateLimiter;
 
         // Duplicate command detection (track processed seq_nums)
         private readonly HashSet<int> _processedSeqNums = new HashSet<int>();
@@ -179,6 +187,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // Initialize components with dependency injection
                 _orderTracker = new OrderStateManager();
                 _tickRateLimiter = new TickRateLimiter(_config.MaxTicksPerSecond);
+                _partialBarRateLimiter = new TickRateLimiter(1); // 1 partial bar per second
                 _network = new ZmqNetwork(_config, new JsonMessageSerializer(_logger), _logger);
 
                 _network.Start();
@@ -226,6 +235,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 ReportPositionsToPython();
                 
                 SubscribeToMarketData();
+                SubscribeToLiveBars();
 
                 // Send historical data
                 _ = SendHistoryAsync().ContinueWith(t =>
@@ -253,6 +263,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             _cts?.Cancel();
 
             // Stop market-data thread BEFORE tearing down ZMQ sockets
+            UnsubscribeFromLiveBars();
             UnsubscribeFromMarketData();
             UninitializeAccount();
 
@@ -501,6 +512,142 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _subscribedInstrument.MarketData.Update -= OnMarketDataUpdate;
                 _logger.Info($"Unsubscribed from market data for {_config.Instrument}");
                 _subscribedInstrument = null;
+            }
+        }
+
+        private void SubscribeToLiveBars()
+        {
+            if (_subscribedInstrument == null)
+            {
+                _logger.Error("Cannot subscribe to live bars, instrument is null");
+                return;
+            }
+
+            _liveBarsRequest = new BarsRequest(_subscribedInstrument, DateTime.Now.AddMinutes(-1), DateTime.Now)
+            {
+                BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 }
+            };
+            _liveBarsRequest.Update += OnLiveBarsUpdate;
+            _liveBarsRequest.Request((bars, errorCode, errorMessage) =>
+            {
+                try
+                {
+                    if (errorCode != ErrorCode.NoError)
+                    {
+                        _logger.Error($"Live bars request failed: {errorMessage}");
+                        return;
+                    }
+                    if (bars?.Bars != null && bars.Bars.Count > 0)
+                    {
+                        lock (_barSendLock)
+                        {
+                            // Use second-to-last bar as last sent completed bar,
+                            // because the last bar may still be forming.
+                            int idx = Math.Max(0, bars.Bars.Count - 2);
+                            _lastSentBarTime = bars.Bars.GetTime(idx);
+                            _lastFormingBarTime = bars.Bars.GetTime(bars.Bars.Count - 1);
+                        }
+                        _logger.Info($"Live bars stream ready. Cached {bars.Bars.Count} bars, lastCompleted={_lastSentBarTime:HH:mm:ss}");
+                    }
+                }
+                catch (Exception callbackEx)
+                {
+                    _logger.Error("Live bars request callback error", callbackEx);
+                }
+            });
+            _logger.Info("Subscribed to live 1m bars");
+        }
+
+        private void UnsubscribeFromLiveBars()
+        {
+            if (_liveBarsRequest != null)
+            {
+                _liveBarsRequest.Update -= OnLiveBarsUpdate;
+                _liveBarsRequest.Dispose();
+                _liveBarsRequest = null;
+                _logger.Info("Unsubscribed from live 1m bars");
+            }
+        }
+
+        private void OnLiveBarsUpdate(object sender, BarsUpdateEventArgs e)
+        {
+            try
+            {
+                if (!_connected) return;
+
+                var series = e.BarsSeries;
+                if (series == null || series.Count == 0) return;
+
+                var formingBarTime = series.GetTime(series.Count - 1);
+                var pair = _config.Instrument.Split(' ')[0];
+
+                // When the forming bar time advances, the previous forming bar has closed.
+                if (_lastFormingBarTime != DateTime.MinValue && formingBarTime > _lastFormingBarTime)
+                {
+                    int closedIdx = series.Count - 2;
+                    if (closedIdx >= 0 && series.GetTime(closedIdx) == _lastFormingBarTime)
+                    {
+                        var closedTime = series.GetTime(closedIdx);
+                        lock (_barSendLock)
+                        {
+                            if (closedTime > _lastSentBarTime)
+                            {
+                                var open   = series.GetOpen(closedIdx);
+                                var high   = series.GetHigh(closedIdx);
+                                var low    = series.GetLow(closedIdx);
+                                var close  = series.GetClose(closedIdx);
+                                var volume = (long)series.GetVolume(closedIdx);
+
+                                _network?.SendBar(pair, closedTime, open, high, low, close, volume, isPartial: false);
+                                _barsSent++;
+                                _lastSentBarTime = closedTime;
+                            }
+                        }
+                    }
+                }
+                _lastFormingBarTime = formingBarTime;
+
+                // Process updates in the notified range (typically just the forming bar)
+                for (int i = e.MinIndex; i <= e.MaxIndex; i++)
+                {
+                    bool isFormingBar = (i == series.Count - 1);
+                    if (!isFormingBar)
+                    {
+                        var barTime = series.GetTime(i);
+                        lock (_barSendLock)
+                        {
+                            if (barTime <= _lastSentBarTime) continue;
+                        }
+
+                        var open   = series.GetOpen(i);
+                        var high   = series.GetHigh(i);
+                        var low    = series.GetLow(i);
+                        var close  = series.GetClose(i);
+                        var volume = (long)series.GetVolume(i);
+
+                        _network?.SendBar(pair, barTime, open, high, low, close, volume, isPartial: false);
+                        _barsSent++;
+                        lock (_barSendLock) { _lastSentBarTime = barTime; }
+                    }
+                    else if (_partialBarRateLimiter?.TryAllow() == true)
+                    {
+                        var open   = series.GetOpen(i);
+                        var high   = series.GetHigh(i);
+                        var low    = series.GetLow(i);
+                        var close  = series.GetClose(i);
+                        var volume = (long)series.GetVolume(i);
+
+                        _network?.SendBar(pair, formingBarTime, open, high, low, close, volume, isPartial: true);
+                        _partialBarsSent++;
+                    }
+                }
+
+                if ((_barsSent + _partialBarsSent) % 100 == 0) UpdateStats();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("Live bars update error", ex);
+                _network?.SendError("ninjatrader", "live_bar_error", ex.Message, FormatExceptionDetails(ex));
             }
         }
 
@@ -1072,7 +1219,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void UpdateStats()
         {
-            var stats = $"Ticks: {_ticksSent} | Bars: {_barsSent} | Cmds: {_commandsReceived}";
+            var stats = $"Ticks: {_ticksSent} | Bars: {_barsSent} | Partial: {_partialBarsSent} | Cmds: {_commandsReceived}";
             _ui?.UpdateStatus(_connected, stats);
         }
 

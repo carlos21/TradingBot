@@ -325,10 +325,9 @@ to be:
                     msg = self._heartbeat_sub.recv_string()
                     self._handle_heartbeat(msg)
                 
-                # Log stats every 30 seconds
+                # Stats logging disabled to reduce noise
                 now = time.time()
                 if now - last_stats_time >= 30:
-                    self.logger.info(f"ZMQ stats: {msg_count} msgs in last 30s")
                     msg_count = 0
                     last_stats_time = now
                     
@@ -475,10 +474,10 @@ to be:
             self._seq_num = max(self._seq_num, envelope.seq_num)
             
             # Log message receipt (debug for high-frequency, info for important ones)
-            if msg_type == MessageType.TICK:
-                # Ticks are too frequent - don't log individual ticks
+            if msg_type in (MessageType.TICK, MessageType.BAR, MessageType.PARTIAL_BAR):
+                # Ticks and bars are too frequent - don't log individual messages
                 pass
-            elif msg_type in (MessageType.BAR, MessageType.HISTORY_BATCH, 
+            elif msg_type in (MessageType.HISTORY_BATCH, 
                               MessageType.ENTRY_FILL, MessageType.EXIT_FILL,
                               MessageType.ORDER_REJECTED, MessageType.CONNECT):
                 # Important messages - always log

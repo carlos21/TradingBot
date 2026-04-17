@@ -20,7 +20,7 @@ export class ChartViewer {
     this.lastTime = -Infinity;
     this.lastPrice = null;
     this.pair = null;
-    this.currentTF = opts.timeframe || '5m';
+    this.currentTF = opts.timeframe || '1m';
     this.isPlaying = false;
     this.liveMode = false;
     this.activeTrade = null;
