@@ -185,7 +185,7 @@ class TestIntegration:
         time.sleep(0.1)  # Let threads start
         
         assert gateway._running
-        assert len(gateway._threads) == 3
+        assert len(gateway._threads) == 4
         
         gateway.stop()
         

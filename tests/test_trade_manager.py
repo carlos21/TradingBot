@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from tests.conftest import make_bar
-from tests.fakes import DummySocketIO, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter
+from tests.fakes import DummySocketIO, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter, FakeLogger
 
 
 def _make_manager(**overrides):
@@ -15,6 +15,7 @@ def _make_manager(**overrides):
         analytics=FakeAnalyticsReporter(),
         point_value=2.0,
         account_balance=100000.0,
+        logger=FakeLogger(),
     )
     defaults.update(overrides)
     return TradeManager(**defaults)
