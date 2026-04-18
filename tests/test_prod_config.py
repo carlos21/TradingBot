@@ -12,11 +12,11 @@ from src.strategies.base_liquidity_strategy import StrategyOptions
 class TestGetProdStrategyNumbers:
 
     def test_returns_strategy_numbers(self):
-        sn = get_prod_strategy_numbers()
+        sn = get_prod_strategy_numbers(rr_ratio=5.0)
         assert isinstance(sn, StrategyNumbers)
 
-    def test_default_rr_ratio(self):
-        sn = get_prod_strategy_numbers()
+    def test_rr_ratio_required(self):
+        sn = get_prod_strategy_numbers(rr_ratio=3.3)
         assert sn.rr_ratio == 3.3
 
     def test_custom_rr_ratio(self):
@@ -24,15 +24,15 @@ class TestGetProdStrategyNumbers:
         assert sn.rr_ratio == 5.0
 
     def test_sl_levels_sorted(self):
-        sn = get_prod_strategy_numbers()
+        sn = get_prod_strategy_numbers(rr_ratio=5.0)
         assert sn.sl_levels == sorted(sn.sl_levels)
 
     def test_min_stop_loss_positive(self):
-        sn = get_prod_strategy_numbers()
+        sn = get_prod_strategy_numbers(rr_ratio=5.0)
         assert sn.min_stop_loss > 0
 
     def test_max_bounce_positive(self):
-        sn = get_prod_strategy_numbers()
+        sn = get_prod_strategy_numbers(rr_ratio=5.0)
         assert sn.max_bounce > 0
 
 

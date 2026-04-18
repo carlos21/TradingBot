@@ -11,9 +11,7 @@ from src.strategies.triggers import (
     VelocityTriggerConfig,
     TsiCrossCondition,
 )
-import os
-
-def get_prod_strategy_numbers(rr_ratio: float = 3.3,
+def get_prod_strategy_numbers(rr_ratio: float,
                               risk_per_trade: float = None,
                               risk_pct_per_trade: float = None) -> StrategyNumbers:
     return StrategyNumbers(
@@ -33,12 +31,13 @@ def get_prod_strategy_numbers(rr_ratio: float = 3.3,
 def get_prod_candle_config() -> CandleConfig:
     return CandleConfig()
 
-def get_prod_strategy_options(max_bounce: float, min_cross_depth: float = 0.0, skip_rollover_days: bool = False, reentry_only: bool = False) -> StrategyOptions:
-    removal_mode_env = os.environ.get("LINE_REMOVAL_MODE", "ON_EVALUATE").upper()
-    removal_mode = LineRemovalMode.NEVER if removal_mode_env == "NEVER" else LineRemovalMode.ON_EVALUATE
-
+def get_prod_strategy_options(max_bounce: float,
+                                min_cross_depth: float = 0.0,
+                                skip_rollover_days: bool = False,
+                                reentry_only: bool = False,
+                                line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE) -> StrategyOptions:
     return StrategyOptions(
-        line_removal_mode=removal_mode,
+        line_removal_mode=line_removal_mode,
         entry_filters=[
             open_trades_limit_filter(1),
             min_cross_depth_filter(min_cross_depth),

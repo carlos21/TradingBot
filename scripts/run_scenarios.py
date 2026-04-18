@@ -41,8 +41,9 @@ BE_THRESHOLD = FinancialCalc.DEFAULT_BE_THRESHOLD_R  # Threshold for considering
 from src.prod_config import (
     get_prod_strategy_numbers,
     get_prod_candle_config,
-    get_prod_strategy_options
+    get_prod_strategy_options,
 )
+from src.strategies.base_liquidity_strategy import LineRemovalMode
 from tests.fakes import FakeLineRepository, FakeTradeRepository
 from src.repositories.lines_repository import SQLLineRepository
 from src.repositories.trades_repository import SQLTradeRepository
@@ -122,8 +123,6 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
         import logging
         logging.disable(logging.CRITICAL)
 
-    os.environ["LINE_REMOVAL_MODE"] = "ON_EVALUATE"
-
     # Use real SQL repositories if persist flag is set
     if persist:
         database.setup_database()
@@ -152,7 +151,7 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
     from dataclasses import replace
     numbers = replace(numbers, account_balance=account_balance)
     candle_config = get_prod_candle_config()
-    options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
+    options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth, line_removal_mode=LineRemovalMode.ON_EVALUATE)
 
     if no_breakeven:
         options.breakeven = None
