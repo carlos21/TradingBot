@@ -223,10 +223,6 @@ class ZMQDataSource(CombinedDataSource):
     def _on_tick(self, payload: Dict) -> None:
         """Handle incoming tick."""
         self._stats["ticks_received"] += 1
-
-        # Log every 100th tick to avoid spam
-        if self._stats["ticks_received"] % 100 == 0:
-            self.logger.debug(f"Ticks received: {self._stats['ticks_received']} (latest: {payload.get('price')})")
     
     def _on_bar(self, payload: Dict) -> None:
         """Handle completed bar from platform."""

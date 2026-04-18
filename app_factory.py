@@ -319,6 +319,7 @@ def create_app(
             result_type = payload.get('result_type', 'CLOSE')
             if trade_id and exit_price is not None:
                 trade_manager.handle_broker_fill(trade_id, exit_price, result_type)
+                tstrategy.handle_broker_exit_fill(trade_id, exit_price, result_type)
                 logger.info(f"[BrokerFill] Exit fill handled for {trade_id} @ {exit_price} ({result_type})")
 
         data_source.gateway.on_entry_fill(_handle_entry_fill)

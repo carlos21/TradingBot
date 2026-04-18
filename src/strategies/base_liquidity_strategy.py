@@ -692,6 +692,45 @@ class BaseLiquidityStrategy:
 
         self.open_trades = remaining
 
+    def handle_broker_exit_fill(self, trade_id: str, exit_price: float, result_type: str = None):
+        """Called when NinjaTrader reports an exit fill (SL, TP, or manual close).
+
+        Syncs the strategy's open_trades so that bar-based checks and reentry
+        logic see the trade as closed.  Reentry opportunities are created here
+        for SL hits because LiveLiquidityStrategyV2 bypasses _check_open_trades.
+        """
+        trade = next((t for t in self.open_trades if t["trade_id"] == trade_id), None)
+        if not trade or trade.get("status") != "open":
+            return
+
+        trade["status"] = "closed"
+        trade["exit_price"] = exit_price
+        trade["result_type"] = result_type
+
+        # Remove from strategy's open list so has_open becomes False
+        self.open_trades = [t for t in self.open_trades if t["trade_id"] != trade_id]
+
+        # Create re-entry opportunity on SL hit (mirrors _check_open_trades logic)
+        is_phantom = trade.get("is_phantom", False)
+        if (
+            (self.options.reentry_after_sl or is_phantom)
+            and result_type == "SL"
+            and not trade.get("is_reentry", False)
+        ):
+            level = trade.get("line_level")
+            if level is not None:
+                direction = trade["type"]
+                self._reentry_opportunities.append({
+                    "level": level,
+                    "direction": direction,
+                    "pair": trade["pair"],
+                    "extreme_excursion": exit_price,
+                })
+                self.logger.info(
+                    f"[ReEntry] SL hit on {direction} @ {trade['pair']}. "
+                    f"Watching level={level} for re-entry."
+                )
+
     # ----- Trade creation & persistence -----
 
     def _select_sl_level(self, distance: float) -> float:

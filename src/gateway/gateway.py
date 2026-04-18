@@ -528,12 +528,6 @@ to be:
                 if not prev_connected:
                     self._platform_connected = True
                     self.logger.info("Platform connected (heartbeat received)")
-                # Log first few heartbeats and then occasionally
-                if not hasattr(self, '_heartbeat_count'):
-                    self._heartbeat_count = 0
-                self._heartbeat_count += 1
-                if self._heartbeat_count <= 3 or self._heartbeat_count % 60 == 0:
-                    self.logger.debug(f"Heartbeat #{self._heartbeat_count} from {envelope.payload.get('source', 'unknown')}")
         except Exception as e:
             self.logger.debug(f"Error handling heartbeat: {e}")
     
