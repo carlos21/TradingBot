@@ -27,6 +27,7 @@
 #region Using declarations
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -95,18 +96,9 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         public TradingBotZmqConnector()
         {
-            // Dependency injection - could be replaced with DI container
-            _config = new ZmqConfiguration(
-                host: "127.0.0.1",
-                marketPort: 5555,
-                commandPort: 5556,
-                queryPort: 5557,
-                heartbeatPort: 5558,
-                instrument: "MNQ 06-26",
-                historyDays: 30,
-                batchSize: 500,
-                platformVersion: "2.0.0-refactored"
-            );
+            // Load configuration from JSON file if present; otherwise use defaults.
+            // This lets users toggle auto-connect without recompiling.
+            _config = ConfigLoader.Load();
         }
 
         protected override void OnStateChange()
@@ -127,6 +119,30 @@ namespace NinjaTrader.NinjaScript.AddOns
             _menuItem = new MenuItem { Header = "TradingBot ZMQ Connector" };
             _menuItem.Click += OnMenuItemClick;
             _existingNewMenu.Items.Add(_menuItem);
+
+            // Auto-launch and auto-connect when the Control Center loads.
+            // This is safe at runtime (not triggered during NinjaScript compilation).
+            if (_config.AutoConnectOnStartup)
+            {
+                try
+                {
+                    if (_config.AutoShowWindow)
+                        ShowStatusWindow();
+                    else
+                        InitializeLoggerOnly();
+
+                    // Small delay to let the UI thread settle before connecting
+                    System.Windows.Threading.Dispatcher.CurrentDispatcher.BeginInvoke(new Action(() =>
+                    {
+                        if (!_connected)
+                            Connect();
+                    }), System.Windows.Threading.DispatcherPriority.Background);
+                }
+                catch (Exception ex)
+                {
+                    Print($"[ZMQ] Auto-connect failed: {ex.Message}");
+                }
+            }
         }
 
         protected override void OnWindowDestroyed(Window window)
@@ -159,6 +175,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                 );
             }
             _ui.Show(_connected);
+        }
+
+        /// <summary>
+        /// Initializes the logger without showing the UI window.
+        /// Used when AutoConnectOnStartup is true but AutoShowWindow is false.
+        /// </summary>
+        private void InitializeLoggerOnly()
+        {
+            if (_logger == null)
+                _logger = new NinjatraderLogger(msg => Print("[ZMQ] " + msg));
         }
 
         private void ToggleConnection()

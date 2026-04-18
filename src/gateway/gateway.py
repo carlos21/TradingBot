@@ -227,7 +227,16 @@ to be:
         self.logger.info("Stopping TradingGateway...")
         self._running = False
         
-        # Close sockets to unblock threads
+        # Wait for threads to exit on their own (loops check _running and use
+        # short timeouts so they should finish quickly).
+        for t in self._threads:
+            try:
+                t.join(timeout=2.0)
+            except Exception as e:
+                self.logger.debug(f"Error joining thread: {e}")
+        
+        # Close sockets only after threads have exited to avoid libzmq aborts
+        # when a socket is closed from one thread while another is blocked on it.
         for socket in [self._market_sub, self._command_push, self._query_rep, self._query_req, 
                        self._heartbeat_sub]:
             if socket:
@@ -235,13 +244,6 @@ to be:
                     socket.close(linger=0)
                 except Exception as e:
                     self.logger.debug(f"Error closing socket: {e}")
-        
-        # Wait for threads
-        for t in self._threads:
-            try:
-                t.join(timeout=2.0)
-            except Exception as e:
-                self.logger.debug(f"Error joining thread: {e}")
         
         # Terminate context
         if self._context:
@@ -251,6 +253,7 @@ to be:
                 self.logger.debug(f"Error terminating context: {e}")
         
         self._context = None
+        self._threads = []
         self.logger.info("TradingGateway stopped")
     
     def _setup_python_binds(self) -> None:
@@ -454,7 +457,11 @@ to be:
                     # This is normal during initial connection phase
                     pass
                 
-                time.sleep(self.config.heartbeat_interval_sec)
+                # Sleep in small increments so we can exit promptly when _running becomes False
+                for _ in range(int(self.config.heartbeat_interval_sec * 10)):
+                    if not self._running:
+                        break
+                    time.sleep(0.1)
                 
             except Exception as e:
                 self.logger.error(f"Error in heartbeat loop: {e}")

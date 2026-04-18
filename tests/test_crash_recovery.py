@@ -20,6 +20,7 @@ from tests.fakes import (
     FakeTradeRepository,
     FakeTradeExecutor,
     FakeAnalyticsReporter,
+    FakeLogger,
 )
 from src.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
 from src.services.trade_manager import TradeManager
@@ -83,6 +84,7 @@ def make_recovery_strategy(
         analytics=ana,
         point_value=2.0,
         account_balance=100000.0,
+        logger=FakeLogger(),
     )
 
     if options_override is not None:
@@ -110,6 +112,7 @@ def make_recovery_strategy(
         trigger_state_repo=trigger_state_repo,
         point_value=2.0,
         account_balance=100000.0,
+        logger=FakeLogger(),
     )
 
 

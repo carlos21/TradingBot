@@ -13,12 +13,12 @@ from src.strategies.base_liquidity_strategy import (
 from src.strategies.entry_context import EntryContext
 from src.types import Direction
 from tests.conftest import make_bar, make_strategy
-from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter
+from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter, FakeLogger
 from src.services.trade_manager import TradeManager
 
 
 def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=None,
-               options=None, fixed_stop_loss=20, sl_levels=None, **kwargs):
+               options=None, fixed_stop_loss=20, sl_levels=None, logger=None, **kwargs):
     sio = socketio or DummySocketIO()
     lr = line_repo or FakeLineRepository()
     tr = trade_repo or FakeTradeRepository()
@@ -28,6 +28,7 @@ def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=Non
         analytics=FakeAnalyticsReporter(),
         point_value=2.0,
         account_balance=100000.0,
+        logger=FakeLogger(),
     )
     return BaseLiquidityStrategy(
         min_stop_loss=10.0,
@@ -43,6 +44,7 @@ def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=Non
         rr_ratio=3.3,
         point_value=2.0,
         account_balance=100000.0,
+        logger=logger or FakeLogger(),
         **kwargs,
     )
 
@@ -253,6 +255,7 @@ class TestBreakeven:
             analytics=FakeAnalyticsReporter(),
             point_value=2.0,
             account_balance=100000.0,
+            logger=FakeLogger(),
         )
         strat = _make_base(
             socketio=sio, trade_repo=tr, trade_manager=tm,
@@ -294,6 +297,7 @@ class TestStoreAndEmitOpen:
             analytics=FakeAnalyticsReporter(),
             point_value=2.0,
             account_balance=100000.0,
+            logger=FakeLogger(),
         )
         strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
         trade = {

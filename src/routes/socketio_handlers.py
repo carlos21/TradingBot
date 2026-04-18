@@ -3,6 +3,7 @@
 from flask_socketio import SocketIO, emit
 from src.bars_loader import BarsLoader
 from src.data_sources.combined_datasource import CombinedDataSource
+from src.gateway.datasource import ZMQDataSource
 from src.utils.app_logger import ILogger
 
 
@@ -25,11 +26,10 @@ def register_socketio_handlers(
     @socketio.on('connect')
     def on_connect(auth):
         emit('stream_status', {'playing': loader.streaming, 'live_mode': live_mode})
-        if live_mode and hasattr(data_source, '_historical_bars') and data_source._historical_bars:
+        if live_mode and isinstance(data_source, ZMQDataSource) and data_source._historical_bars:
             emit('history_ready', {'count': len(data_source._historical_bars)})
             # Request fresh bars from NinjaTrader (once per browser connect)
-            if hasattr(data_source, 'request_history_refresh'):
-                data_source.request_history_refresh(days=1)
+            data_source.request_refresh(days=1)
 
     @socketio.on('start_stream')
     def on_start_stream(payload):

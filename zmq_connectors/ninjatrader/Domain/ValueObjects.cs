@@ -25,6 +25,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         public int BatchSize { get; }
         public int MaxTicksPerSecond { get; }
         public string PlatformVersion { get; }
+        public bool AutoConnectOnStartup { get; }
+        public bool AutoShowWindow { get; }
 
         public string MarketDataAddress => $"tcp://{Host}:{MarketPort}";
         public string CommandAddress => $"tcp://{Host}:{CommandPort}";
@@ -41,7 +43,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             int historyDays = 30,
             int batchSize = 500,
             int maxTicksPerSecond = 10,
-            string platformVersion = "2.0.0")
+            string platformVersion = "2.0.0",
+            bool autoConnectOnStartup = false,
+            bool autoShowWindow = true)
         {
             Host = host ?? throw new ArgumentNullException(nameof(host));
             MarketPort = marketPort;
@@ -53,11 +57,13 @@ namespace NinjaTrader.NinjaScript.AddOns
             BatchSize = batchSize;
             MaxTicksPerSecond = maxTicksPerSecond;
             PlatformVersion = platformVersion ?? throw new ArgumentNullException(nameof(platformVersion));
+            AutoConnectOnStartup = autoConnectOnStartup;
+            AutoShowWindow = autoShowWindow;
         }
 
         public ZmqConfiguration WithInstrument(string instrument) =>
             new ZmqConfiguration(Host, MarketPort, CommandPort, QueryPort, HeartbeatPort, 
-                instrument, HistoryDays, BatchSize, MaxTicksPerSecond, PlatformVersion);
+                instrument, HistoryDays, BatchSize, MaxTicksPerSecond, PlatformVersion, AutoConnectOnStartup, AutoShowWindow);
     }
 
     /// <summary>

@@ -5,6 +5,7 @@ from tests.fakes import (
     FakeTradeRepository,
     FakeTradeExecutor,
     FakeAnalyticsReporter,
+    FakeLogger,
 )
 from src.services.trade_manager import TradeManager
 from src.services.trade_logger import TradeLogger
@@ -44,7 +45,12 @@ def analytics():
 
 
 @pytest.fixture
-def trade_manager(trade_repo, socketio, trade_executor, analytics):
+def logger():
+    return FakeLogger()
+
+
+@pytest.fixture
+def trade_manager(trade_repo, socketio, trade_executor, analytics, logger):
     return TradeManager(
         trade_repository=trade_repo,
         socketio=socketio,
@@ -53,6 +59,7 @@ def trade_manager(trade_repo, socketio, trade_executor, analytics):
         analytics=analytics,
         point_value=2.0,
         account_balance=100000.0,
+        logger=logger,
     )
 
 
@@ -91,6 +98,7 @@ def make_strategy(
     sl_level_tolerance=5.0,
     min_cross_depth=5.0,
     trade_logger=None,
+    logger=None,
 ):
     return LiquidityStrategyV2(
         min_stop_loss=min_stop_loss,
@@ -111,6 +119,7 @@ def make_strategy(
         trade_logger=trade_logger,
         point_value=2.0,
         account_balance=100000.0,
+        logger=logger or FakeLogger(),
     )
 
 

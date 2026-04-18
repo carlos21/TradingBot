@@ -143,7 +143,10 @@ class TradeLogger(ABC):
 
 class TradeRepository(TradeReader, TradeWriter, TradeModifier, TradeLogger):
     """Full trade repository interface (combines all operations)."""
-    pass
+    
+    def clear_in_memory(self) -> None:
+        """Clear in-memory state. No-op for persistent repositories."""
+        pass
 
 
 # =============================================================================

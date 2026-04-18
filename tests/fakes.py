@@ -6,6 +6,26 @@ from src.services.trade_executor import TradeExecutor
 from src.notifier import Notifier
 from src.analytics import AnalyticsReporter
 from src.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository as FakeLineTriggerStateRepository
+from src.utils.app_logger import ILogger
+
+
+class FakeLogger(ILogger):
+    """No-op logger for unit tests."""
+
+    def debug(self, message: str) -> None:
+        pass
+
+    def info(self, message: str) -> None:
+        pass
+
+    def warning(self, message: str) -> None:
+        pass
+
+    def error(self, message: str) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
 
 class DummySocketIO:
     def __init__(self):
