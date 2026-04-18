@@ -106,9 +106,6 @@ class BarsLoader:
         self.streaming = True
         self._stop_event.clear()
 
-        if hasattr(self.data_source, "_stop_event"):
-            self.data_source._stop_event.clear()
-
         self.socketio.start_background_task(self._run_subscription, self._from_time)
 
     def pause(self):
@@ -116,7 +113,7 @@ class BarsLoader:
             self._stop_event.set()
         self._stop_at = None
         self._step_mode = False
-        if not self.live_mode and hasattr(self.data_source, 'pause'):
+        if not self.live_mode:
             try: self.data_source.pause()
             except Exception: pass
         self.streaming = False
@@ -140,9 +137,6 @@ class BarsLoader:
 
         self.streaming = True
         self._stop_event.clear()
-
-        if hasattr(self.data_source, "_stop_event"):
-            self.data_source._stop_event.clear()
 
         self.socketio.start_background_task(self._run_subscription, self._from_time)
 
@@ -198,8 +192,8 @@ class BarsLoader:
         if self._stop_at is not None and 'time' in msg and msg['time'] >= self._stop_at:
             self._reached_stop_at = True
             self._stop_event.set()
-            if hasattr(self.data_source, '_stop_event'):
-                self.data_source._stop_event.set()
+            try: self.data_source.pause()
+            except Exception: pass
 
             self.streaming = False
             self.logger.info(f"[BarsLoader] STOP_AT reached! msg_time={msg['time']}, stop_at={self._stop_at}")
@@ -291,14 +285,11 @@ class BarsLoader:
                 self._fast_jump_mode = False
 
     def _get_source_bars(self):
-        for attr in ("_bars", "_played_bars", "_historical_bars"):
-            bars = getattr(self.data_source, attr, None)
-            if bars is not None:
-                return bars
-        return []
+        return self.data_source.load_historical_bars('1m')
 
     def _get_all_bars(self):
-        return self._get_source_bars() or None
+        bars = self._get_source_bars()
+        return bars if bars else None
 
     def _find_next_same_time_next_day(self, current_ts: int, days: int) -> int:
         bars = self._get_all_bars()
@@ -320,8 +311,8 @@ class BarsLoader:
             return self._last_played_ts or self._from_time
 
         base_ts = 0
-        played = getattr(self.data_source, "_played_bars", None)
-        if played: base_ts = played[-1]["time"]
+        bars = self.data_source.load_historical_bars('1m')
+        if bars: base_ts = bars[-1]["time"]
         elif self._last_played_ts: base_ts = self._last_played_ts
         else: base_ts = self._from_time
 

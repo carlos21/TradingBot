@@ -7,6 +7,7 @@ from src.repositories.trades_repository import TradeRepository
 from src.services.trade_manager import TradeManager
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 from src.data_sources.combined_datasource import CombinedDataSource
+from src.data_sources.csv_datasource import CSVDataSource
 from src.notifier import Notifier
 from src.analytics import AnalyticsReporter
 from src.utils.app_logger import ILogger
@@ -65,8 +66,7 @@ def register_debug_routes(
 
             # 4. Clear Trades (Fix for leaking trades between scenarios)
             # Only clear in-memory fakes; SQL trades persist across scenarios
-            if hasattr(trades_repo, 'clear_in_memory'):
-                trades_repo.clear_in_memory()
+            trades_repo.clear_in_memory()
 
             # 5. Clear trade_manager open trades to prevent leaks between scenarios
             trade_manager.open_trades.clear()
@@ -77,14 +77,14 @@ def register_debug_routes(
             start_ts = data.get('start_time')
             end_ts   = data.get('end_time')
 
-            if hasattr(data_source, 'reset'):
+            if isinstance(data_source, CSVDataSource):
                 try:
                     data_source.reset(start_time=start_ts, end_time=end_ts)
                 except TypeError:
                     data_source.reset()
 
             # 7. WARM UP STRATEGY (Without lines)
-            played = getattr(data_source, '_played_bars', None) or getattr(data_source, '_historical_bars', [])
+            played = data_source.load_historical_bars('1m')
             if played:
                 logger.info(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")
                 for bar in played:

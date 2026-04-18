@@ -27,9 +27,8 @@ class LinesController:
     
     def add_line(self, pair: str, price: float, creation_timestamp: float = None):
         ds = self.bars_loader.data_source
-        supported_pair = getattr(ds, 'pair', None)
-        if pair != supported_pair:
-            abort(400, f"Only pair '{supported_pair}' is supported")
+        if pair != ds.pair:
+            abort(400, f"Only pair '{ds.pair}' is supported")
 
         # 1. Resolve the Date
         if creation_timestamp is not None:

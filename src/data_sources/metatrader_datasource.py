@@ -32,6 +32,7 @@ class MetaTraderConfig:
 class MetaTraderDataSource(CombinedDataSource):
     def __init__(self, symbol: str, cfg: MetaTraderConfig):
         self.symbol       = symbol
+        self.pair         = symbol
         self.creds        = dict(login=cfg.login, password=cfg.password, server=cfg.server)
         self._history_days = cfg.history_days
         self._host        = cfg.host
@@ -86,6 +87,10 @@ class MetaTraderDataSource(CombinedDataSource):
             })
 
         return bars
+
+    def pause(self) -> None:
+        """MetaTrader streams over TCP; pausing is handled by the caller."""
+        pass
 
     def subscribe(self,
                   callback: Callable[[Dict], None],

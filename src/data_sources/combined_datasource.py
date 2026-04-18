@@ -18,3 +18,8 @@ class CombinedDataSource(ABC):
           - then each live tick (as tick‐dict: {time, price, volume, pair})
         """
         ...
+
+    @abstractmethod
+    def pause(self) -> None:
+        """Pause the data source. Implementations that block should break out."""
+        ...

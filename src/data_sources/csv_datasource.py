@@ -177,6 +177,8 @@ class CSVDataSource(CombinedDataSource):
         return self._aggregate_whole_history_from_list(source, timeframe)
 
     def subscribe(self, callback, from_time=0):
+        self._stop_event.clear()
+
         # 1. Truncate _played_bars to remove any history AFTER from_time
         #    This prevents duplicates when seeking back or resuming.
         self._played_bars = [b for b in self._played_bars if b['time'] < from_time]

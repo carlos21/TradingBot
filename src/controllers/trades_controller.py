@@ -26,9 +26,9 @@ class TradesController:
         
         # 2. Data Source History End (if we are just viewing a static chart)
         ds = self.bars_loader.data_source
-        played = getattr(ds, '_played_bars', [])
-        if played:
-            return played[-1]['time']
+        bars = ds.load_historical_bars('1m')
+        if bars:
+            return bars[-1]['time']
             
         # 3. System Time (Fallback)
         return datetime.now(timezone.utc).timestamp()
@@ -72,12 +72,14 @@ class TradesController:
         entry_price = 0.0
         if self.bars_loader._1m_buffer:
             entry_price = self.bars_loader._1m_buffer[-1]['close']
-        elif hasattr(self.bars_loader.data_source, '_played_bars') and self.bars_loader.data_source._played_bars:
-            entry_price = self.bars_loader.data_source._played_bars[-1]['close']
-        elif self.bars_loader._last_bar_close > 0:
-            entry_price = self.bars_loader._last_bar_close
         else:
-            abort(400, f"No price data available to open trade for {pair}")
+            bars = self.bars_loader.data_source.load_historical_bars('1m')
+            if bars:
+                entry_price = bars[-1]['close']
+            elif self.bars_loader._last_bar_close > 0:
+                entry_price = self.bars_loader._last_bar_close
+            else:
+                abort(400, f"No price data available to open trade for {pair}")
 
         risk = abs(entry_price - stop_loss)
         if risk <= 0:
@@ -103,12 +105,14 @@ class TradesController:
         entry_price = 0.0
         if self.bars_loader._1m_buffer:
             entry_price = self.bars_loader._1m_buffer[-1]['close']
-        elif hasattr(self.bars_loader.data_source, '_played_bars') and self.bars_loader.data_source._played_bars:
-            entry_price = self.bars_loader.data_source._played_bars[-1]['close']
-        elif self.bars_loader._last_bar_close > 0:
-            entry_price = self.bars_loader._last_bar_close
         else:
-            abort(400, f"No price data available to open test trade for {pair}")
+            bars = self.bars_loader.data_source.load_historical_bars('1m')
+            if bars:
+                entry_price = bars[-1]['close']
+            elif self.bars_loader._last_bar_close > 0:
+                entry_price = self.bars_loader._last_bar_close
+            else:
+                abort(400, f"No price data available to open test trade for {pair}")
 
         # Fixed test parameters: 20 points risk, strategy RR reward
         risk_points = 20.0
@@ -147,12 +151,14 @@ class TradesController:
         exit_price = 0.0
         if self.bars_loader._1m_buffer:
             exit_price = self.bars_loader._1m_buffer[-1]['close']
-        elif hasattr(self.bars_loader.data_source, '_played_bars') and self.bars_loader.data_source._played_bars:
-            exit_price = self.bars_loader.data_source._played_bars[-1]['close']
-        elif self.bars_loader._last_bar_close > 0:
-            exit_price = self.bars_loader._last_bar_close
         else:
-            abort(400, f"No price data available to close trade {pair}")
+            bars = self.bars_loader.data_source.load_historical_bars('1m')
+            if bars:
+                exit_price = bars[-1]['close']
+            elif self.bars_loader._last_bar_close > 0:
+                exit_price = self.bars_loader._last_bar_close
+            else:
+                abort(400, f"No price data available to close trade {pair}")
 
         # FIX: Use virtual time
         exit_time = self._get_virtual_now()

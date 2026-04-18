@@ -13,6 +13,7 @@ from src.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
 from src.controllers.admin_controller import AdminController
 from src.data_sources.combined_datasource import CombinedDataSource
+from src.gateway.datasource import ZMQDataSource
 from src.services.trade_manager import TradeManager
 from src.services.trade_executor import TradeExecutor
 from src.services.trade_logger import TradeLogger
@@ -204,9 +205,10 @@ def _setup_live_mode_callbacks(
             strategy.add_strategy_line(l.line_id, l.price, creation_timestamp=l.creation_date.timestamp())
         logger.info("[LiveMode] Refresh: strategy reset, ready for fresh bars.")
     
-    data_source.on_history_complete = _on_history_complete
-    data_source.on_live_bar = _on_live_bar
-    data_source.on_before_refresh = _on_before_refresh
+    if isinstance(data_source, ZMQDataSource):
+        data_source.on_history_complete = _on_history_complete
+        data_source.on_live_bar = _on_live_bar
+        data_source.on_before_refresh = _on_before_refresh
 
 
 def create_app(
@@ -272,7 +274,7 @@ def create_app(
     
     # Wire up position sync handler for crash recovery (ZeroMQ only)
     # Broker (NinjaTrader) is the source of truth - it reports actual positions to Python
-    if hasattr(data_source, 'gateway') and data_source.gateway is not None:
+    if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
         def _handle_position_sync(payload):
             """Reconcile Python state with broker reality after reconnect.
             
