@@ -114,7 +114,8 @@ def build_prod():
     # 4. Strategy Logic
     risk_usd = float(os.environ["RISK"]) if os.environ.get("RISK") else None
     risk_pct = float(os.environ["RISK_PCT"]) if os.environ.get("RISK_PCT") else None
-    numbers = get_prod_strategy_numbers(risk_per_trade=risk_usd, risk_pct_per_trade=risk_pct)
+    rr_ratio = float(os.environ["RR_RATIO"]) if os.environ.get("RR_RATIO") else 5.0
+    numbers = get_prod_strategy_numbers(rr_ratio=rr_ratio, risk_per_trade=risk_usd, risk_pct_per_trade=risk_pct)
     candle_config = get_prod_candle_config()
     options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
 
@@ -151,6 +152,7 @@ def build_live():
 
     risk_usd = float(os.environ["RISK"]) if os.environ.get("RISK") else None
     risk_pct = float(os.environ["RISK_PCT"]) if os.environ.get("RISK_PCT") else None
+    rr_ratio = float(os.environ["RR_RATIO"]) if os.environ.get("RR_RATIO") else 5.0
     
     if risk_usd is not None:
         print(f"[tradingbot] Risk config: fixed ${risk_usd:.0f} per trade")
@@ -175,7 +177,7 @@ def build_live():
         heartbeat_port=5558,
     )
 
-    numbers = get_prod_strategy_numbers(risk_per_trade=risk_usd, risk_pct_per_trade=risk_pct)
+    numbers = get_prod_strategy_numbers(rr_ratio=rr_ratio, risk_per_trade=risk_usd, risk_pct_per_trade=risk_pct)
     candle_config = get_prod_candle_config()
     options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth)
 
