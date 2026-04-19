@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from collections import deque
 from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy, StrategyOptions
+from src.financial_calc import FinancialCalc
 from src.strategies.entry_context import EntryContext, EntryTrigger
 from src.strategies.strategy_config import CandleConfig
 from src.strategies.triggers import _calculate_tsi_series, RESCUE_TSI_TIMEFRAME
@@ -35,6 +36,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         sl_level_tolerance: float = 5.0,
         min_cross_depth: float = 0.0,
         rr_ratio: float = 5.0,
+        use_fractional_lots: bool = False,
+        fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
+        broker_spread: float = 0.0,
         trade_logger=None,
         analytics=None,
         trigger_state_repo=None,
@@ -71,6 +75,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             account_balance=account_balance,
             risk_per_trade=risk_per_trade,
             risk_pct_per_trade=risk_pct_per_trade,
+            use_fractional_lots=use_fractional_lots,
+            fee_per_rt=fee_per_rt,
+            broker_spread=broker_spread,
             trade_logger=trade_logger,
             analytics=analytics,
             trigger_state_repo=trigger_state_repo,

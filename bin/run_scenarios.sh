@@ -9,6 +9,6 @@ poetry run python scripts/run_scenarios.py \
   "$@"
 # Modes: --mode sim (fixed risk) | --mode real_futures (MNQ) | --mode real_cfd (CFD) | --mode both (all 3)
 # RR ratio: --rr 4.0 (default) | --rr 2.0 (conservative) | --rr 6.0 (aggressive)
-# CFD options: --cfd-spread 0.5 (default) --cfd-commission 5.0 (default)
-# Example: ./bin/run_scenarios.sh --mode both --rr 2.0 --cfd-spread 1.0
+# CFD options: --cfd-spread 1.5 (default) --cfd-commission 5.0 (default)
+# Example: ./bin/run_scenarios.sh --mode real_cfd --rr 2.0 --cfd-spread 2.0
 # To generate an HTML report with monthly view, add: --html-report

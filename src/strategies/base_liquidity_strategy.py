@@ -86,6 +86,9 @@ class BaseLiquidityStrategy:
         sl_level_tolerance: float = 5.0,
         min_cross_depth: float = 0.0,
         rr_ratio: float = 5.0,
+        use_fractional_lots: bool = False,
+        fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
+        broker_spread: float = 0.0,
         trade_logger=None,
         analytics: AnalyticsReporter = None,
         trigger_state_repo: LineTriggerStateRepository = None,
@@ -96,6 +99,9 @@ class BaseLiquidityStrategy:
         self.max_bounce    = float(max_bounce)
         self.min_cross_depth = float(min_cross_depth)
         self.rr_ratio = float(rr_ratio)
+        self.use_fractional_lots = use_fractional_lots
+        self.fee_per_rt = fee_per_rt
+        self.broker_spread = broker_spread
         self.point_value = float(point_value)
         self.account_balance = float(account_balance)
         self.risk_per_trade = risk_per_trade
@@ -635,7 +641,13 @@ class BaseLiquidityStrategy:
                     risk_points=risk_pts,
                     contracts=contracts,
                     point_value=self.point_value,
+                    fee_per_rt=self.fee_per_rt,
                 )
+                # Deduct spread cost separately so result_r stays at theoretical RR
+                if self.broker_spread > 0:
+                    spread_cost = contracts * self.broker_spread * self.point_value
+                    t_pnl_usd -= spread_cost
+                    t_fees += spread_cost
                 t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, result_type=result_type)
                 is_phantom = t.get("is_phantom", False)
 
@@ -792,10 +804,10 @@ class BaseLiquidityStrategy:
         trade["line_level"] = ctx.level
         return trade
 
-    def _calc_contracts(self, risk_per_contract: float) -> int:
-        """Calculate number of contracts, matching NinjaTrader's logic."""
+    def _calc_contracts(self, risk_per_contract: float) -> float:
+        """Calculate number of contracts/lots, matching NinjaTrader's logic."""
         if risk_per_contract <= 0:
-            return 1
+            return 1.0 if not self.use_fractional_lots else 0.01
         # Use trade manager's account balance if available (for percentage-based risk compounding)
         account_balance = self.account_balance
         if self.trade_manager is not None:
@@ -804,7 +816,9 @@ class BaseLiquidityStrategy:
             account_balance, self.risk_per_trade, self.risk_pct_per_trade
         )
         if risk_budget <= 0:
-            return 1
+            return 1.0 if not self.use_fractional_lots else 0.01
+        if self.use_fractional_lots:
+            return FinancialCalc.lots(risk_budget, risk_per_contract)
         return FinancialCalc.contracts(risk_budget, risk_per_contract)
 
     def _make_trade_dict(
@@ -893,8 +907,22 @@ class BaseLiquidityStrategy:
     def _store_and_emit_close(self, trade: Dict[str, Any]):
         contracts = trade.get("contracts") or 1
         risk_pts = trade.get("risk", 0) or 1.0
-        t_fees = FinancialCalc.fees(contracts)
-        t_pnl_usd = FinancialCalc.pnl_usd(contracts, trade["result"], risk_pts, self.point_value, t_fees)
+        _, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
+            direction=Direction.from_string(trade["type"]),
+            entry_price=trade["entry"],
+            exit_price=trade["exit_price"],
+            stop_loss=trade["stop_loss"],
+            take_profit=trade["take_profit"],
+            risk_points=risk_pts,
+            contracts=contracts,
+            point_value=self.point_value,
+            fee_per_rt=self.fee_per_rt,
+        )
+        # Deduct spread cost separately so result_r stays at theoretical RR
+        if self.broker_spread > 0:
+            spread_cost = contracts * self.broker_spread * self.point_value
+            t_pnl_usd -= spread_cost
+            t_fees += spread_cost
         trade["fees"] = t_fees
         trade["pnl_usd"] = t_pnl_usd
         # Determine result_type if not already set (use unified FinancialCalc)

@@ -21,7 +21,7 @@ class PositionSize:
     stop_loss: float
     take_profit: float
     risk_points: float
-    contracts: int
+    contracts: float
     risk_dollars: float
     risk_pct: Optional[float]
     rr_ratio: float
@@ -37,12 +37,14 @@ class PositionSizer(ABC):
         account_balance: float = 100000.0,
         risk_per_trade: Optional[float] = None,
         risk_pct_per_trade: Optional[float] = None,
+        use_fractional_lots: bool = False,
     ):
         self.rr_ratio = rr_ratio
         self.point_value = point_value
         self.account_balance = account_balance
         self.risk_per_trade = risk_per_trade
         self.risk_pct_per_trade = risk_pct_per_trade
+        self.use_fractional_lots = use_fractional_lots
     
     @abstractmethod
     def calculate(
@@ -63,10 +65,10 @@ class PositionSizer(ABC):
         """
         pass
     
-    def _calc_contracts(self, risk_per_contract: float) -> int:
-        """Calculate number of contracts based on risk budget."""
+    def _calc_contracts(self, risk_per_contract: float) -> float:
+        """Calculate number of contracts/lots based on risk budget."""
         if risk_per_contract <= 0:
-            return 1
+            return 1.0 if not self.use_fractional_lots else 0.01
         
         risk_budget = FinancialCalc.risk_budget(
             self.account_balance,
@@ -75,11 +77,13 @@ class PositionSizer(ABC):
         )
         
         if risk_budget <= 0:
-            return 1
+            return 1.0 if not self.use_fractional_lots else 0.01
         
+        if self.use_fractional_lots:
+            return FinancialCalc.lots(risk_budget, risk_per_contract)
         return FinancialCalc.contracts(risk_budget, risk_per_contract)
     
-    def _calc_risk_fields(self, risk_points: float, contracts: int) -> tuple[float, Optional[float]]:
+    def _calc_risk_fields(self, risk_points: float, contracts: float) -> tuple[float, Optional[float]]:
         """Calculate dollar risk and percentage risk."""
         risk_per_contract = risk_points * self.point_value
         risk_dollars = risk_per_contract * contracts

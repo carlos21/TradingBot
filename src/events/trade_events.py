@@ -22,7 +22,7 @@ class TradeOpenedEvent:
     stop_loss: float
     take_profit: float
     risk: float
-    contracts: int
+    contracts: float
     timestamp_unix: float
     
     def to_domain_event(self) -> DomainEvent:

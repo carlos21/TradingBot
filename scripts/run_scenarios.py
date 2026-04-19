@@ -108,16 +108,16 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 # Server Process Logic
 # -------------------------------------------------------------------------
 
-def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0):
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT):
     try:
-        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist, risk_per_trade, risk_pct_per_trade, account_balance)
+        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist, risk_per_trade, risk_pct_per_trade, account_balance, use_fractional_lots, fee_per_rt)
     except Exception as e:
         import traceback
         sys.stderr.write(f"\n❌ Server process crashed: {e}\n")
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
 
-def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0):
+def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT):
     if quiet:
         sys.stdout = open(os.devnull, 'w')
         import logging
@@ -169,6 +169,8 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
         bootstrap_existing_lines=False,
         broker_mode=broker_mode,
         broker_spread=broker_spread,
+        use_fractional_lots=use_fractional_lots,
+        fee_per_rt=fee_per_rt,
     )
 
     ready_event.set()
@@ -482,12 +484,17 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     mode = getattr(args, 'mode', 'real_futures')
     broker_mode = 'cfd' if mode in ('real_cfd', ) else 'futures'
     broker_spread = getattr(args, 'cfd_spread', 0.0) if broker_mode == 'cfd' else 0.0
+    use_fractional_lots = mode in ('real_cfd',)
+    # Commission: generic --commission overrides everything; otherwise real_cfd uses --cfd-commission
+    fee_per_rt = getattr(args, 'commission', None)
+    if fee_per_rt is None:
+        fee_per_rt = getattr(args, 'cfd_commission', FinancialCalc.DEFAULT_FEE_PER_RT) if mode == 'real_cfd' else FinancialCalc.DEFAULT_FEE_PER_RT
 
     # When risk_pct is set, pass None for risk_per_trade so percentage takes precedence
     risk_per_trade = None if getattr(args, 'risk_pct', None) is not None else args.risk
     server_proc = Process(
         target=run_test_server,
-        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr, args.persist, risk_per_trade, getattr(args, 'risk_pct', None), args.account)
+        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr, args.persist, risk_per_trade, getattr(args, 'risk_pct', None), args.account, use_fractional_lots, fee_per_rt)
     )
     server_proc.start()
 
@@ -1170,7 +1177,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         cfd_commission = getattr(args, 'cfd_commission', 5.0)
 
         def _actual_pnl_cfd(r, balance=ACCT):
-            """CFD mode: accounts for spread and commission costs."""
+            """CFD mode: accounts for spread and commission costs.
+            result_r from the backend is the theoretical RR (e.g. 5.0).
+            Spread and commission are deducted separately from gross PnL."""
             trade_pairs = r.get("trade_pairs") or []
             if not trade_pairs:
                 return None, None, None, ""
@@ -1179,7 +1188,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             detail_parts = []
             bal = balance
             for trade, close in trade_pairs:
-                if close is None:
+                if close is None or trade is None:
                     continue
                 entry   = trade.get("entry") or trade.get("entry_price")
                 orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
@@ -1189,17 +1198,17 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 if sl_pts <= 0:
                     continue
                 risk = get_risk(bal)
-                contracts = FinancialCalc.contracts(risk, sl_pts * NQ_PV)
+                lots = FinancialCalc.lots(risk, sl_pts * NQ_PV)
                 # CFD costs: round-trip spread + commission
-                spread_cost = contracts * cfd_spread * NQ_PV
-                commission_cost = contracts * cfd_commission
+                spread_cost = lots * cfd_spread * NQ_PV
+                commission_cost = lots * cfd_commission
                 total_cost = spread_cost + commission_cost
                 actual_r = close.get("result", 0.0)
-                trade_usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, NQ_PV, total_cost)
+                trade_usd = FinancialCalc.pnl_usd(lots, actual_r, sl_pts, NQ_PV, total_cost)
                 total_usd += trade_usd
                 bal += trade_usd
                 has_closed = True
-                detail_parts.append(f"{contracts}c@{sl_pts:.0f}pt")
+                detail_parts.append(f"{lots:.2f}lots@{sl_pts:.0f}pt")
             if not has_closed:
                 return None, None, None, ""
             actual_pct = total_usd / ACCT * 100
@@ -1207,7 +1216,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             return actual_pct, total_usd, actual_pct, extra
 
         def _per_trade_cfd(trade, close, balance=ACCT):
-            """Per-trade CFD P&L calculation."""
+            """Per-trade CFD P&L calculation.
+            result_r from backend is theoretical RR (e.g. 5.0).
+            Spread + commission are deducted as separate costs."""
+            if trade is None:
+                return None, None, 0.0, 0.0
             risk = get_risk(balance)
             entry   = trade.get("entry") or trade.get("entry_price")
             orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
@@ -1216,12 +1229,12 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             sl_pts = round(abs(entry - orig_sl), 4)
             if sl_pts <= 0:
                 return None, None, 0.0, 0.0
-            contracts = FinancialCalc.contracts(risk, sl_pts * NQ_PV)
-            spread_cost = contracts * cfd_spread * NQ_PV
-            commission_cost = contracts * cfd_commission
+            lots = FinancialCalc.lots(risk, sl_pts * NQ_PV)
+            spread_cost = lots * cfd_spread * NQ_PV
+            commission_cost = lots * cfd_commission
             total_cost = spread_cost + commission_cost
             actual_r = close.get("result", 0.0)
-            usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, NQ_PV, total_cost)
+            usd = FinancialCalc.pnl_usd(lots, actual_r, sl_pts, NQ_PV, total_cost)
             return usd, usd / balance * 100, actual_r, total_cost
 
         _print_results(
@@ -1308,10 +1321,12 @@ def main():
                     help="Disable breakeven logic (SL stays at original level, never moves to entry)")
     ap.add_argument("--no-reentry-breakeven", action="store_true", default=False,
                     help="Disable breakeven logic for re-entry trades only")
-    ap.add_argument("--cfd-spread", type=float, default=0.5,
-                    help="CFD spread in points (default: 0.5 for Nasdaq)")
+    ap.add_argument("--cfd-spread", type=float, default=1.5,
+                    help="CFD spread in points (default: 1.5 for Nasdaq)")
     ap.add_argument("--cfd-commission", type=float, default=5.0,
                     help="CFD commission per round-trip lot in USD (default: 5.0)")
+    ap.add_argument("--commission", type=float, default=None,
+                    help="Override round-trip commission per lot/contract for ANY mode (default: None — uses mode defaults: $1.50 for futures, $5.00 for CFD)")
     ap.add_argument("--rr", type=float, default=4.0,
                     help="Risk:Reward ratio for TP calculation (default: 4.0)")
     ap.add_argument("--persist", action="store_true", default=False,

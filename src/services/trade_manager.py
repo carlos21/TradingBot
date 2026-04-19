@@ -23,6 +23,8 @@ class TradeManager:
                  pair: str = 'NQ',
                  session_end_time: str = None, session_tz: str = None,
                  broker_mode: str = 'futures', broker_spread: float = 0.0,
+                 use_fractional_lots: bool = False,
+                 fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
                  trade_executor: TradeExecutor = None,
                  trade_logger=None,
                  notifier: Notifier = None,
@@ -43,6 +45,7 @@ class TradeManager:
         self.pair             = pair
         self.broker_mode      = broker_mode
         self.broker_spread    = broker_spread
+        self.use_fractional_lots = use_fractional_lots
         self.trade_executor   = trade_executor or NoOpExecutor()
         self.trade_logger     = trade_logger
         self.notifier         = notifier or NoOpNotifier()
@@ -52,6 +55,7 @@ class TradeManager:
         self.account_balance  = float(account_balance)
         self.risk_per_trade   = risk_per_trade
         self.risk_pct_per_trade = risk_pct_per_trade
+        self.fee_per_rt       = fee_per_rt
 
         # Session end close config
         self._session_end_time = None
@@ -66,15 +70,17 @@ class TradeManager:
         # RESUME: Load any open trades from the DB so we can manage them
         self._load_open_trades_from_db()
 
-    def _calc_contracts(self, risk_per_contract: float) -> int:
-        """Calculate number of contracts, matching NinjaTrader's logic."""
+    def _calc_contracts(self, risk_per_contract: float) -> float:
+        """Calculate number of contracts/lots, matching NinjaTrader's logic."""
         if risk_per_contract <= 0:
-            return 1
+            return 1.0 if not self.use_fractional_lots else 0.01
         risk_budget = FinancialCalc.risk_budget(
             self.account_balance, self.risk_per_trade, self.risk_pct_per_trade
         )
         if risk_budget <= 0:
-            return 1
+            return 1.0 if not self.use_fractional_lots else 0.01
+        if self.use_fractional_lots:
+            return FinancialCalc.lots(risk_budget, risk_per_contract)
         return FinancialCalc.contracts(risk_budget, risk_per_contract)
 
     def _calc_close_financials(self, trade: dict, result: float) -> tuple[float, float]:
@@ -83,7 +89,7 @@ class TradeManager:
         risk = trade.get('risk', 0)
         if risk <= 0:
             risk = 1.0
-        fees = FinancialCalc.fees(contracts)
+        fees = FinancialCalc.fees(contracts, self.fee_per_rt)
         pnl_usd = FinancialCalc.pnl_usd(contracts, result, risk, self.point_value, fees)
         return fees, pnl_usd
 
@@ -153,35 +159,23 @@ class TradeManager:
             is_long  = ttype == 'long'
             is_short = ttype == 'short'
 
-            spread_adj = self.broker_spread / 2.0 if self.broker_mode == 'cfd' else 0.0
-
-            adjusted_sl = trade['stop_loss']
-            adjusted_tp = trade['take_profit']
-            if self.broker_mode == 'cfd':
-                if is_long:
-                    adjusted_sl = trade['stop_loss'] - spread_adj
-                    adjusted_tp = trade['take_profit'] - spread_adj
-                elif is_short:
-                    adjusted_sl = trade['stop_loss'] + spread_adj
-                    adjusted_tp = trade['take_profit'] + spread_adj
-
             hit_sl = False
             hit_tp = False
 
             if is_long:
-                if bar['low'] <= adjusted_sl:
+                if bar['low'] <= trade['stop_loss']:
                     hit_sl = True
-                    self.logger.info(f"[TradeManager] LONG SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
-                elif bar['high'] >= adjusted_tp:
+                    self.logger.info(f"[TradeManager] LONG SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= SL {trade['stop_loss']:.2f}")
+                elif bar['high'] >= trade['take_profit']:
                     hit_tp = True
-                    self.logger.info(f"[TradeManager] LONG TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
+                    self.logger.info(f"[TradeManager] LONG TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= TP {trade['take_profit']:.2f}")
             elif is_short:
-                if bar['high'] >= adjusted_sl:
+                if bar['high'] >= trade['stop_loss']:
                     hit_sl = True
-                    self.logger.info(f"[TradeManager] SHORT SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= Adj.SL {adjusted_sl:.2f} (spread: {self.broker_spread}pt)")
-                elif bar['low'] <= adjusted_tp:
+                    self.logger.info(f"[TradeManager] SHORT SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= SL {trade['stop_loss']:.2f}")
+                elif bar['low'] <= trade['take_profit']:
                     hit_tp = True
-                    self.logger.info(f"[TradeManager] SHORT TP HIT! Trade {trade['trade_id']} | Low {bar['low']} <= Adj.TP {adjusted_tp:.2f} (spread: {self.broker_spread}pt)")
+                    self.logger.info(f"[TradeManager] SHORT TP HIT! Trade {trade['trade_id']} | Low {bar['low']} <= TP {trade['take_profit']:.2f}")
 
             if not hit_sl and not hit_tp:
                 continue
@@ -204,7 +198,13 @@ class TradeManager:
                 risk_points=risk,
                 contracts=contracts,
                 point_value=self.point_value,
+                fee_per_rt=self.fee_per_rt,
             )
+            # Deduct spread cost separately so result_r stays at theoretical RR
+            if self.broker_spread > 0:
+                spread_cost = contracts * self.broker_spread * self.point_value
+                pnl_usd -= spread_cost
+                fees += spread_cost
 
             # Update account balance with realized P&L for percentage-based risk compounding
             self.account_balance += pnl_usd
@@ -284,7 +284,13 @@ class TradeManager:
                 risk_points=risk,
                 contracts=contracts,
                 point_value=self.point_value,
+                fee_per_rt=self.fee_per_rt,
             )
+            # Deduct spread cost separately so result_r stays at theoretical RR
+            if self.broker_spread > 0:
+                spread_cost = contracts * self.broker_spread * self.point_value
+                pnl_usd -= spread_cost
+                fees += spread_cost
             result_type = FinancialCalc.calculate_session_end_result_type(result)
 
             # Update account balance with realized P&L for percentage-based risk compounding
@@ -441,7 +447,13 @@ class TradeManager:
             risk_points=risk,
             contracts=trade.get('contracts') or 1,
             point_value=self.point_value,
+            fee_per_rt=self.fee_per_rt,
         )
+        # Deduct spread cost separately so result_r stays at theoretical RR
+        if self.broker_spread > 0:
+            spread_cost = trade.get('contracts', 1) * self.broker_spread * self.point_value
+            pnl_usd -= spread_cost
+            fees += spread_cost
 
         # persist close
         self.trade_repository.close_trade(
@@ -505,7 +517,13 @@ class TradeManager:
                 risk_points=risk,
                 contracts=contracts,
                 point_value=self.point_value,
+                fee_per_rt=self.fee_per_rt,
             )
+            # Deduct spread cost separately so result_r stays at theoretical RR
+            if self.broker_spread > 0:
+                spread_cost = contracts * self.broker_spread * self.point_value
+                pnl_usd -= spread_cost
+                fees += spread_cost
             result_type = FinancialCalc.calculate_session_end_result_type(result)
 
             self.logger.info(f"[TradeManager] STREAM END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: {result_type})")
@@ -670,7 +688,13 @@ class TradeManager:
             risk_points=risk,
             contracts=trade.get('contracts') or 1,
             point_value=self.point_value,
+            fee_per_rt=self.fee_per_rt,
         )
+        # Deduct spread cost separately so result_r stays at theoretical RR
+        if self.broker_spread > 0:
+            spread_cost = trade.get('contracts', 1) * self.broker_spread * self.point_value
+            pnl_usd -= spread_cost
+            fees += spread_cost
 
         # Use provided result_type if given, otherwise use detected type
         if not result_type:

@@ -64,15 +64,15 @@ class TestSLTPExitStrategy:
 
         assert signal is None
 
-    def test_cfd_spread_adjustment_long(self):
+    def test_cfd_spread_does_not_adjust_sl_detection(self):
         strategy = SLTPExitStrategy(broker_mode='cfd', broker_spread=2.0)
         trade = {"direction": Direction.LONG, "stop_loss": 100, "take_profit": 110}
-        bar = {"high": 105, "low": 98.5}  # Low is 98.5, adjusted SL is 99 (100 - 1.0)
+        # Low is 100.5 -> above original SL of 100, so NO hit even with spread
+        bar = {"high": 105, "low": 100.5}
 
         signal = strategy.check_exit(trade, bar)
 
-        assert signal is not None
-        assert signal.exit_type == ExitType.STOP_LOSS
+        assert signal is None
 
 
 class TestSessionEndExitStrategy:

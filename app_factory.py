@@ -18,6 +18,7 @@ from src.services.trade_manager import TradeManager
 from src.services.trade_executor import TradeExecutor
 from src.services.trade_logger import TradeLogger
 from src.services.analytics_service import AnalyticsService
+from src.financial_calc import FinancialCalc
 from src.strategies.base_liquidity_strategy import StrategyOptions
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
@@ -219,6 +220,8 @@ def create_app(
     bootstrap_existing_lines: bool = True,
     broker_mode: str = 'futures',
     broker_spread: float = 0.0,
+    use_fractional_lots: bool = False,
+    fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
     live_mode: bool = False,
     trade_executor: TradeExecutor = None,
     notifier: Notifier = None,
@@ -257,6 +260,8 @@ def create_app(
         session_tz="America/New_York",
         broker_mode=broker_mode,
         broker_spread=broker_spread,
+        use_fractional_lots=use_fractional_lots,
+        fee_per_rt=fee_per_rt,
         trade_executor=trade_executor,
         trade_logger=trade_logger,
         notifier=notifier,
@@ -343,6 +348,9 @@ def create_app(
         account_balance = numbers.account_balance,
         risk_per_trade  = numbers.risk_per_trade,
         risk_pct_per_trade = numbers.risk_pct_per_trade,
+        use_fractional_lots = use_fractional_lots,
+        fee_per_rt = fee_per_rt,
+        broker_spread = broker_spread,
         options         = options,
         timeframes      = timeframes,
         candle_config   = candle_config,

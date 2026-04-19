@@ -23,13 +23,20 @@ class FinancialCalc:
         return max(1, round(risk_budget / risk_per_contract))
 
     @staticmethod
-    def fees(contracts: int, fee_per_rt: float = DEFAULT_FEE_PER_RT) -> float:
+    def lots(risk_budget: float, risk_per_lot: float) -> float:
+        """Fractional lots for CFD mode (no rounding to integer)."""
+        if risk_per_lot <= 0:
+            return 0.01
+        return max(0.01, risk_budget / risk_per_lot)
+
+    @staticmethod
+    def fees(contracts: float, fee_per_rt: float = DEFAULT_FEE_PER_RT) -> float:
         """Total round-trip fees for a trade."""
         return contracts * fee_per_rt
 
     @staticmethod
     def pnl_usd(
-        contracts: int,
+        contracts: float,
         actual_r: float,
         sl_pts: float,
         point_value: float,
@@ -211,7 +218,7 @@ class FinancialCalc:
         stop_loss: float,
         take_profit: float,
         risk_points: float,
-        contracts: int,
+        contracts: float,
         point_value: float,
         fee_per_rt: float = DEFAULT_FEE_PER_RT,
         be_threshold_points: float = DEFAULT_BE_THRESHOLD_POINTS,

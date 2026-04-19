@@ -129,22 +129,31 @@ class TestResultCalculation:
 
 class TestCFDMode:
 
-    def test_cfd_spread_adjusts_sl_for_long(self):
+    def test_cfd_spread_does_not_adjust_sl_detection(self):
         tm = _make_manager(broker_mode="cfd", broker_spread=2.0)
-        # spread_adj = 1.0; adjusted_sl = 90 - 1 = 89
         _add_open_trade(tm, trade_type="long", entry=100, sl=90, tp=130, risk=10)
-        # Low = 89.5 -> does NOT hit adjusted SL of 89
-        bar = make_bar(time=1000, low=89.5, high=95, pair="NQ")
+        # Low = 91 -> above original SL of 90, so trade stays open
+        bar = make_bar(time=1000, low=91, high=95, pair="NQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
 
-    def test_cfd_spread_triggers_sl_for_long(self):
+    def test_cfd_spread_baked_into_pnl(self):
         tm = _make_manager(broker_mode="cfd", broker_spread=2.0)
         _add_open_trade(tm, trade_type="long", entry=100, sl=90, tp=130, risk=10)
-        # Low = 88 -> hits adjusted SL of 89
+        # Low = 88 -> hits original SL of 90
         bar = make_bar(time=1000, low=88, high=95, pair="NQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 0
+        closed = tm.trade_repository.closed[0]
+        # result_r stays theoretical: (90 - 100) / 10 = -1.0
+        assert closed["result"] == -1.0
+        # pnl reflects spread cost deducted
+        # contracts = 1, sl_pts = 10, point_value = 2, spread = 2
+        # gross = 1 * -1.0 * 10 * 2 = -20
+        # spread_cost = 1 * 2 * 2 = 4
+        # fees = 1.50 + 4 = 5.50
+        # pnl = -20 - 5.50 = -25.50
+        assert closed["pnl_usd"] == -25.5
 
 
 class TestSessionEndClose:

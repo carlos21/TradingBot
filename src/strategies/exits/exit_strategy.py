@@ -103,48 +103,35 @@ class SLTPExitStrategy(ExitStrategy):
         stop_loss = trade['stop_loss']
         take_profit = trade['take_profit']
         
-        # Adjust for spread in CFD mode
-        spread_adj = self.broker_spread / 2.0 if self.broker_mode == 'cfd' else 0.0
-        adjusted_sl = stop_loss
-        adjusted_tp = take_profit
-        
-        if self.broker_mode == 'cfd':
-            if direction.is_long:
-                adjusted_sl = stop_loss - spread_adj
-                adjusted_tp = take_profit - spread_adj
-            else:  # SHORT
-                adjusted_sl = stop_loss + spread_adj
-                adjusted_tp = take_profit + spread_adj
-        
         bar_low = bar['low']
         bar_high = bar['high']
         
         if direction.is_long:
-            if bar_low <= adjusted_sl:
+            if bar_low <= stop_loss:
                 return ExitSignal(
                     exit_type=ExitType.STOP_LOSS,
                     exit_price=stop_loss,
-                    reason=f"SL hit: low {bar_low} <= adjusted SL {adjusted_sl:.2f}",
+                    reason=f"SL hit: low {bar_low} <= SL {stop_loss:.2f}",
                 )
-            elif bar_high >= adjusted_tp:
+            elif bar_high >= take_profit:
                 return ExitSignal(
                     exit_type=ExitType.TAKE_PROFIT,
                     exit_price=take_profit,
-                    reason=f"TP hit: high {bar_high} >= adjusted TP {adjusted_tp:.2f}",
+                    reason=f"TP hit: high {bar_high} >= TP {take_profit:.2f}",
                 )
                 
         else:  # SHORT
-            if bar_high >= adjusted_sl:
+            if bar_high >= stop_loss:
                 return ExitSignal(
                     exit_type=ExitType.STOP_LOSS,
                     exit_price=stop_loss,
-                    reason=f"SL hit: high {bar_high} >= adjusted SL {adjusted_sl:.2f}",
+                    reason=f"SL hit: high {bar_high} >= SL {stop_loss:.2f}",
                 )
-            elif bar_low <= adjusted_tp:
+            elif bar_low <= take_profit:
                 return ExitSignal(
                     exit_type=ExitType.TAKE_PROFIT,
                     exit_price=take_profit,
-                    reason=f"TP hit: low {bar_low} <= adjusted TP {adjusted_tp:.2f}",
+                    reason=f"TP hit: low {bar_low} <= TP {take_profit:.2f}",
                 )
         
         return None
