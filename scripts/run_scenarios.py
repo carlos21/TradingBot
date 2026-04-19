@@ -49,6 +49,7 @@ from src.repositories.lines_repository import SQLLineRepository
 from src.repositories.trades_repository import SQLTradeRepository
 from src.database import database
 from scripts.html_report import generate_html_report
+from scripts.mode_pnl import per_trade_sim, per_trade_futures, per_trade_cfd
 
 APP_HOST = "127.0.0.1"
 
@@ -777,86 +778,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 max_dd_pct = dd_pct
         return max_dd_usd, max_dd_pct
 
-    def _actual_pnl_sim(r, balance=ACCT):
-        """Risk per trade — fixed USD or percentage of balance. Sums across all trades in the scenario."""
-        trade_pairs = r.get("trade_pairs") or []
-        if not trade_pairs:
-            return None, None, None, ""
-        total_usd = 0.0
-        has_closed = False
-        bal = balance
-        for _trade, close in trade_pairs:
-            if close is None:
-                continue
-            has_closed = True
-            risk = get_risk(bal)
-            actual_r = close.get("result", 0.0)
-            t_usd = risk * actual_r if actual_r > 0 else -risk
-            total_usd += t_usd
-            bal += t_usd
-        if not has_closed:
-            return None, None, None, ""
-        actual_pct = total_usd / ACCT * 100
-        n = len([c for _, c in trade_pairs if c is not None])
-        extra = f"{n} trade(s)" if n > 1 else ""
-        return actual_pct, total_usd, actual_pct, extra
-
-    def _actual_pnl_real(r, balance=ACCT):
-        """Realistic NQ futures: integer contracts ($20/pt), round-trip fees included. Sums all trades."""
-        trade_pairs = r.get("trade_pairs") or []
-        if not trade_pairs:
-            return None, None, None, ""
-        total_usd = 0.0
-        has_closed = False
-        detail_parts = []
-        bal = balance
-        for trade, close in trade_pairs:
-            if close is None:
-                continue
-            # Use stored pnl_usd from strategy if available (single source of truth)
-            stored_pnl = close.get("pnl_usd")
-            if stored_pnl is not None:
-                trade_usd = stored_pnl
-                if trade is not None:
-                    contracts = trade.get("contracts") or 1
-                    entry = trade.get("entry") or trade.get("entry_price")
-                    orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-                    sl_pts_price = round(abs(entry - orig_sl), 4) if entry and orig_sl else 0
-                    # Use stored risk (ticks) for display, fallback to price diff
-                    risk_pts = trade.get("risk")
-                    sl_pts = risk_pts if risk_pts is not None else sl_pts_price
-                else:
-                    contracts = 1
-                    sl_pts = 0
-            else:
-                # Fallback: recalculate (legacy path)
-                if trade is None:
-                    continue
-                entry   = trade.get("entry") or trade.get("entry_price")
-                orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-                if entry is None or orig_sl is None:
-                    continue
-                sl_pts_price = round(abs(entry - orig_sl), 4)
-                if sl_pts_price <= 0:
-                    continue
-                # Use stored risk (ticks) for PnL, price diff for contracts
-                risk_pts = trade.get("risk")
-                sl_pts = risk_pts if risk_pts is not None else sl_pts_price
-                risk = get_risk(bal)
-                contracts = FinancialCalc.contracts(risk, sl_pts_price * NQ_PV)
-                fees = FinancialCalc.fees(contracts, FEE_PER_RT)
-                actual_r = close.get("result", 0.0)
-                trade_usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, NQ_PV, fees)
-            total_usd += trade_usd
-            bal += trade_usd
-            has_closed = True
-            if trade is not None:
-                detail_parts.append(f"{contracts}c@{sl_pts:.0f}pt")
-        if not has_closed:
-            return None, None, None, ""
-        actual_pct = total_usd / ACCT * 100
-        extra = "  ".join(detail_parts)
-        return actual_pct, total_usd, actual_pct, extra
+    # pnl_fn parameter in _print_results is unused; keep a stub for compatibility
+    _unused_pnl_fn = lambda r, balance=None: None
 
     def _print_results(mode_label, pnl_fn, per_trade_fn):
         """
@@ -1130,116 +1053,41 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         print()
 
     def _per_trade_sim(trade, close, balance=ACCT):
-        risk = get_risk(balance)
-        actual_r = close.get("result", 0.0)
-        usd = risk * actual_r if actual_r > 0 else -risk
-        return usd, usd / balance * 100, actual_r, 0.0
+        usd, pct, actual_r, comm, _outcome = per_trade_sim(
+            trade, close, balance, RISK_USD_FIX, RISK_PCT
+        )
+        return usd, pct, actual_r, comm
 
     def _per_trade_real(trade, close, balance=ACCT):
-        # Use stored pnl_usd from strategy if available (single source of truth)
-        stored_pnl = close.get("pnl_usd")
-        stored_fees = close.get("fees") or 0.0
-        actual_r = close.get("result", 0.0)
-        if stored_pnl is not None:
-            return stored_pnl, stored_pnl / balance * 100, actual_r, stored_fees
-        # Fallback: recalculate (legacy close events without pnl_usd)
-        if trade is None:
-            return None, None, 0.0, 0.0
-        risk = get_risk(balance)
-        entry   = trade.get("entry") or trade.get("entry_price")
-        orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-        if entry is None or orig_sl is None:
-            return None, None, 0.0, 0.0
-        # sl_pts_price is used for contracts calculation
-        sl_pts_price = round(abs(entry - orig_sl), 4)
-        if sl_pts_price <= 0:
-            return None, None, 0.0, 0.0
-        # Use stored risk field (ticks) for PnL calculation, fallback to price diff
-        risk_pts = trade.get("risk")
-        sl_pts = risk_pts if risk_pts is not None else sl_pts_price
-        contracts = FinancialCalc.contracts(risk, sl_pts_price * NQ_PV)
-        fees = FinancialCalc.fees(contracts, FEE_PER_RT)
-        usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, NQ_PV, fees)
-        return usd, usd / balance * 100, actual_r, fees
+        usd, pct, actual_r, comm, _outcome = per_trade_futures(
+            trade, close, balance, RISK_USD_FIX, RISK_PCT, nq_pv=NQ_PV, fee_per_rt=FEE_PER_RT
+        )
+        return usd, pct, actual_r, comm
 
     risk_desc = f"{RISK_PCT}% of balance" if RISK_PCT is not None else f"${RISK_USD_FIX:,.0f} fixed"
     mode = getattr(args, 'mode', 'both')
     if mode in ('sim', 'both'):
-        _print_results(f"SIM — ${ACCT:,.0f} account, {risk_desc} risk per trade", _actual_pnl_sim, _per_trade_sim)
+        _print_results(f"SIM — ${ACCT:,.0f} account, {risk_desc} risk per trade", _unused_pnl_fn, _per_trade_sim)
     if mode in ('real_futures', 'both'):
         _print_results(
             f"REAL FUTURES — MNQ micro futures, ${ACCT:,.0f} account, ~{risk_desc} risk, ${FEE_PER_RT:.2f}/contract RT fees (Tradovate)",
-            _actual_pnl_real,
+            _unused_pnl_fn,
             _per_trade_real,
         )
     if mode in ('real_cfd', 'both'):
         cfd_spread = getattr(args, 'cfd_spread', 0.5)
         cfd_commission = getattr(args, 'cfd_commission', 5.0)
 
-        def _actual_pnl_cfd(r, balance=ACCT):
-            """CFD mode: accounts for spread and commission costs.
-            result_r from the backend is the theoretical RR (e.g. 5.0).
-            Spread and commission are deducted separately from gross PnL."""
-            trade_pairs = r.get("trade_pairs") or []
-            if not trade_pairs:
-                return None, None, None, ""
-            total_usd = 0.0
-            has_closed = False
-            detail_parts = []
-            bal = balance
-            for trade, close in trade_pairs:
-                if close is None or trade is None:
-                    continue
-                entry   = trade.get("entry") or trade.get("entry_price")
-                orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-                if entry is None or orig_sl is None:
-                    continue
-                sl_pts = round(abs(entry - orig_sl), 4)
-                if sl_pts <= 0:
-                    continue
-                risk = get_risk(bal)
-                lots = FinancialCalc.lots(risk, sl_pts * NQ_PV)
-                # CFD costs: round-trip spread + commission
-                spread_cost = lots * cfd_spread * NQ_PV
-                commission_cost = lots * cfd_commission
-                total_cost = spread_cost + commission_cost
-                actual_r = close.get("result", 0.0)
-                trade_usd = FinancialCalc.pnl_usd(lots, actual_r, sl_pts, NQ_PV, total_cost)
-                total_usd += trade_usd
-                bal += trade_usd
-                has_closed = True
-                detail_parts.append(f"{lots:.2f}lots@{sl_pts:.0f}pt")
-            if not has_closed:
-                return None, None, None, ""
-            actual_pct = total_usd / ACCT * 100
-            extra = "  ".join(detail_parts)
-            return actual_pct, total_usd, actual_pct, extra
-
         def _per_trade_cfd(trade, close, balance=ACCT):
-            """Per-trade CFD P&L calculation.
-            result_r from backend is theoretical RR (e.g. 5.0).
-            Spread + commission are deducted as separate costs."""
-            if trade is None:
-                return None, None, 0.0, 0.0
-            risk = get_risk(balance)
-            entry   = trade.get("entry") or trade.get("entry_price")
-            orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-            if entry is None or orig_sl is None:
-                return None, None, 0.0, 0.0
-            sl_pts = round(abs(entry - orig_sl), 4)
-            if sl_pts <= 0:
-                return None, None, 0.0, 0.0
-            lots = FinancialCalc.lots(risk, sl_pts * NQ_PV)
-            spread_cost = lots * cfd_spread * NQ_PV
-            commission_cost = lots * cfd_commission
-            total_cost = spread_cost + commission_cost
-            actual_r = close.get("result", 0.0)
-            usd = FinancialCalc.pnl_usd(lots, actual_r, sl_pts, NQ_PV, total_cost)
-            return usd, usd / balance * 100, actual_r, total_cost
+            usd, pct, actual_r, comm, _outcome = per_trade_cfd(
+                trade, close, balance, RISK_USD_FIX, RISK_PCT,
+                nq_pv=NQ_PV, cfd_spread=cfd_spread, cfd_commission=cfd_commission
+            )
+            return usd, pct, actual_r, comm
 
         _print_results(
             f"REAL CFD — Nasdaq CFD, ${ACCT:,.0f} account, ~{risk_desc} risk, {cfd_spread}pt spread, ${cfd_commission:.2f}/lot commission",
-            _actual_pnl_cfd,
+            _unused_pnl_fn,
             _per_trade_cfd,
         )
 
