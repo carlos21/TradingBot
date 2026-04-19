@@ -226,6 +226,7 @@ def create_app(
     trade_executor: TradeExecutor = None,
     notifier: Notifier = None,
     analytics: AnalyticsReporter = None,
+    logger: Optional[ILogger] = None,
 ) -> AppWiring:
     """
     Build the whole application with injected dependencies.
@@ -239,10 +240,11 @@ def create_app(
     _setup_logging(app)
     
     # Create the appropriate logger based on mode
-    if live_mode:
-        logger: ILogger = FileAndConsoleLogger(log_dir="logs")
-    else:
-        logger: ILogger = ConsoleLogger()
+    if logger is None:
+        if live_mode:
+            logger = FileAndConsoleLogger(log_dir="logs")
+        else:
+            logger = ConsoleLogger()
     
     if notifier is None:
         notifier = NoOpNotifier()

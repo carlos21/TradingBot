@@ -55,9 +55,9 @@ def get_db_session():
     finally:
         db_session.close()
 
-def setup_database():
+def setup_database(db_url: str = "sqlite:///./database.db"):
     global db
-    db = get_database()
+    db = get_database(db_url=db_url)
     db.create_tables(Base)
     # Auto-migrate: add 'logs' column if missing (added after initial schema)
     from sqlalchemy import inspect, text

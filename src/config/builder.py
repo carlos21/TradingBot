@@ -71,7 +71,7 @@ class AppBuilder:
     # ------------------------------------------------------------------
     def _build_backtest(self) -> AppWiring:
         cfg = self.config
-        database.setup_database()
+        database.setup_database(db_url=cfg.db_path)
         repos = Repositories(
             lines=SQLLineRepository(),
             trades=SQLTradeRepository(),
@@ -124,7 +124,7 @@ class AppBuilder:
             bootstrap_existing_lines=cfg.bootstrap_existing_lines,
             notifier=_build_notifier(cfg),
             analytics=_build_analytics(cfg),
-        )
+        ), None
 
     # ------------------------------------------------------------------
     # Live
@@ -133,7 +133,7 @@ class AppBuilder:
         from src.gateway import create_live_components
 
         cfg = self.config
-        database.setup_database()
+        database.setup_database(db_url=cfg.db_path)
         repos = Repositories(
             lines=SQLLineRepository(),
             trades=SQLTradeRepository(),
@@ -142,7 +142,7 @@ class AppBuilder:
 
         notifier = _build_notifier(cfg)
         analytics = _build_analytics(cfg)
-        logger = FileAndConsoleLogger(log_dir="logs")
+        logger = FileAndConsoleLogger(log_dir=cfg.log_dir, instance_name=cfg.instance_name)
 
         if cfg.risk_per_trade is not None:
             print(f"[tradingbot] Risk config: fixed ${cfg.risk_per_trade:.0f} per trade")
@@ -195,5 +195,6 @@ class AppBuilder:
             trade_executor=executor,
             notifier=notifier,
             analytics=analytics,
+            logger=logger,
         )
         return wiring, ds

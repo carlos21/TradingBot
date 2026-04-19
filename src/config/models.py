@@ -166,6 +166,24 @@ class AppConfig:
     """ZeroMQ port for heartbeat / connection health checks."""
 
     # ------------------------------------------------------------------
+    # Multi-instance isolation
+    # ------------------------------------------------------------------
+    db_path: str = "sqlite:///./database.db"
+    """SQLite database file path. Use a different path per instance to avoid
+    mixed trades/lines when running multiple platforms simultaneously."""
+
+    log_dir: str = "logs"
+    """Directory for log files. Use a different directory per instance to
+    prevent log mixing when running multiple platforms simultaneously."""
+
+    flask_port: int = 5001
+    """Flask/SocketIO server port. Must be unique per instance."""
+
+    instance_name: str = "tradingbot"
+    """Identifier for this app instance. Included in log output to help
+    distinguish between multiple running instances."""
+
+    # ------------------------------------------------------------------
     # Infra
     # ------------------------------------------------------------------
     broker_mode: str = "futures"

@@ -63,8 +63,9 @@ class ConsoleLogger(ILogger):
 class FileAndConsoleLogger(ILogger):
     """Logger that writes to both file and console (for live mode)."""
 
-    def __init__(self, log_dir: str = "logs"):
+    def __init__(self, log_dir: str = "logs", instance_name: str = ""):
         self.log_dir = Path(log_dir)
+        self.instance_name = instance_name
         self._file_handle: Optional[object] = None
         self._lock = threading.Lock()
         self._setup_file_logging()
@@ -78,7 +79,8 @@ class FileAndConsoleLogger(ILogger):
 
     def _write(self, level: str, message: str) -> None:
         """Write to both console and file."""
-        formatted = f"[{level}] {message}"
+        prefix = f"[{self.instance_name}] " if self.instance_name else ""
+        formatted = f"{prefix}[{level}] {message}"
         print(formatted, flush=True)
 
         with self._lock:

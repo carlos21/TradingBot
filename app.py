@@ -28,29 +28,32 @@ def main():
     builder = AppBuilder(config)
     wiring, ds = builder.build()
 
-    if config.mode == "live":
-        print("[App] Starting ZeroMQ gateway...")
-        ds.start()
-        print("[App] ZeroMQ gateway started")
+    instance = config.instance_name
+    print(f"[{instance}] Starting TradingBot instance — pair={config.pair} mode={config.mode}")
 
-        print("[App] Starting LIVE mode server (threaded, debug=False)")
+    if config.mode == "live":
+        print(f"[{instance}] Starting ZeroMQ gateway...")
+        ds.start()
+        print(f"[{instance}] ZeroMQ gateway started")
+
+        print(f"[{instance}] Starting LIVE mode server on port {config.flask_port} (threaded, debug=False)")
         try:
             wiring.socketio.run(
                 wiring.app,
                 host="0.0.0.0",
-                port=5001,
+                port=config.flask_port,
                 debug=False,
                 use_reloader=False,
             )
         finally:
-            print("[App] Stopping ZeroMQ gateway...")
+            print(f"[{instance}] Stopping ZeroMQ gateway...")
             ds.stop()
-            print("[App] ZeroMQ gateway stopped")
+            print(f"[{instance}] ZeroMQ gateway stopped")
     else:
         wiring.socketio.run(
             wiring.app,
             host="0.0.0.0",
-            port=5001,
+            port=config.flask_port,
             debug=True,
             use_reloader=True,
         )

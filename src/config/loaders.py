@@ -103,6 +103,10 @@ class EnvConfigLoader:
         "ZMQ_COMMAND_PORT": ("zmq_command_port", int),
         "ZMQ_QUERY_PORT": ("zmq_query_port", int),
         "ZMQ_HEARTBEAT_PORT": ("zmq_heartbeat_port", int),
+        "DB_PATH": ("db_path", str),
+        "LOG_DIR": ("log_dir", str),
+        "FLASK_PORT": ("flask_port", int),
+        "INSTANCE_NAME": ("instance_name", str),
         "BROKER_MODE": ("broker_mode", str),
         "BROKER_SPREAD": ("broker_spread", float),
         "BOOTSTRAP_EXISTING_LINES": ("bootstrap_existing_lines", lambda v: _bool_env("BOOTSTRAP_EXISTING_LINES", True)),
@@ -172,6 +176,10 @@ class CliConfigLoader:
         p.add_argument("--zmq-command-port", dest="zmq_command_port", type=int, help="ZMQ command port")
         p.add_argument("--zmq-query-port", dest="zmq_query_port", type=int, help="ZMQ query port")
         p.add_argument("--zmq-heartbeat-port", dest="zmq_heartbeat_port", type=int, help="ZMQ heartbeat port")
+        p.add_argument("--db-path", dest="db_path", help="SQLite database path (e.g. sqlite:///./ninja.db)")
+        p.add_argument("--log-dir", dest="log_dir", help="Log directory (e.g. logs/ninja)")
+        p.add_argument("--flask-port", dest="flask_port", type=int, help="Flask server port")
+        p.add_argument("--instance-name", dest="instance_name", help="Instance identifier for logs")
         p.add_argument("--broker-mode", dest="broker_mode", choices=["futures", "cfd"], help="Broker mode")
         p.add_argument("--broker-spread", dest="broker_spread", type=float, help="Broker spread")
         p.add_argument("--no-bootstrap-lines", dest="bootstrap_existing_lines", action="store_false", help="Skip bootstrapping lines")

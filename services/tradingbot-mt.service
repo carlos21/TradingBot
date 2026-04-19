@@ -1,0 +1,24 @@
+[Unit]
+Description=TradingBot Live Server (MetaTrader Instance)
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/home/%i/TradingBot
+ExecStart=/home/%i/TradingBot/bin/start_mt.sh
+
+# Defaults are in bin/start_mt.sh — override here only if needed
+# Environment="PAIR=EURUSD"
+# Environment="RISK=50"
+# Environment="FLASK_PORT=5002"
+
+Restart=on-failure
+RestartSec=5
+
+# Logging — viewable via: journalctl -u tradingbot-mt -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

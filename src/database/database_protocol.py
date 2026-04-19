@@ -55,5 +55,5 @@ class SQLiteDatabase(DatabaseProtocol):
         Base.metadata.create_all(bind=self.engine)
 
 
-def get_database():
-    return SQLiteDatabase()
+def get_database(db_url: str = "sqlite:///./database.db"):
+    return SQLiteDatabase(db_url=db_url)

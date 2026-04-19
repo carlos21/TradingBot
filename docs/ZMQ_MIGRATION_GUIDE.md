@@ -561,6 +561,9 @@ A: Yes, use different port ranges for each instance:
 - Instance 1: 5555-5558
 - Instance 2: 5565-5568
 
+**Q: Can I run NinjaTrader and MetaTrader at the same time?**
+A: Yes. Run two fully-isolated app instances — one per platform. See `docs/MULTI_PLATFORM_SETUP.md` for the complete guide. Each instance gets its own database, log directory, Flask port, and ZMQ port range to prevent any mixing.
+
 ## Next Steps
 
 1. Run the example: `python examples/zmq_live_trading.py`
