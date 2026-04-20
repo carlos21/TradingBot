@@ -105,6 +105,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     self.trigger_state_repo.delete(str(line_id))
             self.strategy_lines.clear()
             self.open_trades.clear()
+            self._reentry_opportunities.clear()
             self.trade_manager.open_trades.clear()
             self.decision_logs.clear()
             for tf in self._internal_timeframes:

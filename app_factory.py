@@ -154,6 +154,7 @@ def _setup_live_mode_callbacks(
     def _do_warmup(bars):
         """Background task: process historical bars."""
         try:
+            strategy.is_warmup = True
             start = __import__('time').monotonic()
             for i, bar in enumerate(bars):
                 strategy.on_raw_bar(bar)
@@ -161,6 +162,7 @@ def _setup_live_mode_callbacks(
                 if (i + 1) % 5000 == 0:
                     logger.info(f"[LiveMode] Warmup progress: {i+1}/{len(bars)} bars...")
             
+            strategy.is_warmup = False
             strategy.restore_trigger_states(pair)
             strategy.restore_open_trades()
             strategy.restore_reentry_opportunities(pair)
@@ -174,15 +176,20 @@ def _setup_live_mode_callbacks(
             except Exception as e:
                 logger.error(f"[LiveMode] Failed to emit history_ready: {type(e).__name__}: {e}")
         except Exception as e:
+            strategy.is_warmup = False
             logger.error(f"[LiveMode] ERROR during warmup: {type(e).__name__}: {e}")
             import traceback
             logger.error(traceback.format_exc())
     
+    import threading
+    
     def _on_history_complete(bars):
-        """Return immediately, process bars in background task."""
+        """Return immediately, process bars in background thread."""
         logger.info(f"[LiveMode] Received {len(bars)} historical bars, starting background warmup...")
-        # Start background task to process bars - don't block HTTP response
-        socketio.start_background_task(_do_warmup, bars)
+        # Start background thread to process bars - don't block HTTP response
+        thread = threading.Thread(target=_do_warmup, args=(bars,), name="HistoryWarmup")
+        thread.daemon = True
+        thread.start()
     
     def _on_live_bar(bar):
         # Route through BarsLoader so bars get aggregated into
@@ -234,8 +241,8 @@ def create_app(
     """
     app = Flask(__name__)
     CORS(app)
-    # Use eventlet for production-grade async server (replaces Werkzeug dev server)
-    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+    # Use threading async mode for better performance with local NinjaTrader
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
     
     _setup_logging(app)
     
