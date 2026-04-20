@@ -1,0 +1,16 @@
+{
+  "host": "127.0.0.1",
+  "marketPort": 5565,
+  "commandPort": 5566,
+  "queryPort": 5567,
+  "heartbeatPort": 5568,
+  "pair": "EURUSD",
+  "historyDays": 1,
+  "heartbeatSec": 5,
+  "magicNumber": 424242,
+  "maxTicksPerSecond": 10,
+  "batchSize": 500,
+  "autoConnectOnStartup": true,
+  "autoShowPanel": true,
+  "platformVersion": "2.0.0"
+}

@@ -6,8 +6,8 @@ This directory contains ZeroMQ connectors for various trading platforms.
 
 | Platform | File | Status | Notes |
 |----------|------|--------|-------|
-| NinjaTrader 8 | `ninjatrader/TradingBotZmqConnector.cs` | ✅ Ready | NetMQ-based |
-| MetaTrader 5 | `metatrader/` | 🚧 Planned | MQL5 with ZMQ |
+| NinjaTrader 8 | `ninjatrader/TradingBotZmqConnector.cs` | ✅ Ready | NetMQ-based, SOLID architecture |
+| MetaTrader 5 | `metatrader/TradingBotZmqEA.mq5` | ✅ Ready | MQL5 with ZMQ, SOLID architecture |
 | cTrader | - | 🚧 Planned | cAlgo with NetMQ |
 
 ## Quick Start
@@ -32,7 +32,36 @@ This directory contains ZeroMQ connectors for various trading platforms.
 
 ### MetaTrader 5
 
-Coming soon. Will use MQL5 with ZeroMQ library.
+1. **Install ZeroMQ for MQL5:**
+   - Download the MQL5 ZMQ library (commonly `Zmq.mqh`)
+   - Place it in: `MetaTrader 5/MQL5/Include/Zmq/`
+
+2. **Copy the Connector Files:**
+   ```bash
+   cp zmq_connectors/metatrader/*.mq5 \
+      zmq_connectors/metatrader/**/*.mqh \
+      "~/MetaTrader 5/MQL5/Experts/TradingBot/"
+   ```
+
+3. **Create Config File (optional):**
+   ```bash
+   cp zmq_connectors/metatrader/TradingBotZmqConfig.example.json \
+      "~/MetaTrader 5/MQL5/Files/TradingBotZmqConfig.json"
+   ```
+   Edit the JSON to customize ports, pair, risk settings, etc.
+
+4. **Compile in MetaEditor:**
+   - Open MetaEditor
+   - Load `TradingBotZmqEA.mq5`
+   - Press **F7** to compile
+
+5. **Attach to Chart:**
+   - Open a chart for your symbol (e.g., EURUSD)
+   - Drag `TradingBotZmqEA` onto the chart
+   - In the **Inputs** tab, verify ports match your Python instance (default: 5565-5568)
+   - Click **OK**
+
+The EA auto-connects on startup. Check the `Experts` tab for connection logs.
 
 ## Protocol
 
@@ -40,12 +69,16 @@ All connectors use the same protocol defined in `src/gateway/protocol.py`.
 
 ### Default Ports
 
-| Port | Purpose | Socket Type |
-|------|---------|-------------|
-| 5555 | Market data | PUB (Platform) → SUB (Python) |
-| 5556 | Commands | PUSH (Python) → PULL (Platform) |
-| 5557 | Queries | REQ (Python) → REP (Platform) |
-| 5558 | Heartbeats | PUB (Bidirectional) |
+| Port | Purpose | Socket Type | NinjaTrader | MetaTrader 5 |
+|------|---------|-------------|-------------|--------------|
+| 5555 | Market data | PUB (Platform) → SUB (Python) | ✅ | - |
+| 5556 | Commands | PUSH (Python) → PULL (Platform) | ✅ | - |
+| 5557 | Queries | REQ (Python) → REP (Platform) | ✅ | - |
+| 5558 | Heartbeats | PUB (Platform) → SUB (Python) | ✅ | - |
+| 5565 | Market data | PUB (Platform) → SUB (Python) | - | ✅ |
+| 5566 | Commands | PUSH (Python) → PULL (Platform) | - | ✅ |
+| 5567 | Queries | REQ (Python) → REP (Platform) | - | ✅ |
+| 5568 | Heartbeats | PUB (Platform) → SUB (Python) | - | ✅ |
 
 ### Message Format
 
@@ -62,19 +95,51 @@ All connectors use the same protocol defined in `src/gateway/protocol.py`.
 }
 ```
 
+## Architecture
+
+Both connectors follow the same **SOLID** layered architecture:
+
+```
+Presentation (Main controller)
+        ↓
+Application (ZmqNetwork, CommandDispatcher, E2ETestRunner)
+        ↓
+Commands (OrderOpen, OrderClose, OrderModify, Refresh, Test)
+        ↓
+Domain (Contracts, ValueObjects, MessageTypes, RateLimiter)
+        ↑
+Infrastructure (ConfigLoader, Logger, Serializer, OrderTracking)
+```
+
+**Features (both platforms):**
+- 4-socket ZMQ topology (PUB market, PULL commands, REQ queries, PUB heartbeat)
+- JSON envelope protocol with `msg_type`, `timestamp`, `seq_num`, `payload`
+- External JSON config file (no recompile to change settings)
+- Command acknowledgments (`command_ack`)
+- Duplicate `seq_num` detection (bounded, 1000 entries)
+- Tick rate limiting (configurable)
+- Partial bar streaming (1/sec rate limit)
+- Heartbeat timer loop
+- Config query (account name from Python)
+- Position sync on connect (crash recovery)
+- Dynamic lot sizing from `risk_usd` / `risk_points`
+- Trade log messages (`trade_log`)
+- Structured error messages (`error`)
+- E2E test runner
+
 ## Building Custom Connectors
 
 To create a connector for a new platform:
 
 1. **Use ZeroMQ library** for your platform
 2. **Connect to Python's sockets:**
-   - SUB to `tcp://127.0.0.1:5555` for commands
-   - PULL from `tcp://127.0.0.1:5556` for market data
-   - REP to `tcp://127.0.0.1:5557` for queries
+   - PUB to `tcp://127.0.0.1:5555` (or `5565` for MT5) for market data
+   - PULL from `tcp://127.0.0.1:5556` (or `5566` for MT5) for commands
+   - REQ to `tcp://127.0.0.1:5557` (or `5567` for MT5) for queries
 3. **Implement message handlers** for each `msg_type`
 4. **Send heartbeats** every 5 seconds
 
-See `ninjatrader/TradingBotZmqConnector.cs` for a complete example.
+See `ninjatrader/TradingBotZmqConnector.cs` or `metatrader/TradingBotZmqEA.mq5` for a complete example.
 
 ## Testing
 
