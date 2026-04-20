@@ -607,31 +607,39 @@ namespace NinjaTrader.NinjaScript.AddOns
                 var formingBarTime = series.GetTime(series.Count - 1);
                 var pair = _config.Instrument.Split(' ')[0];
 
-                // When the forming bar time advances, the previous forming bar has closed.
-                if (_lastFormingBarTime != DateTime.MinValue && formingBarTime > _lastFormingBarTime)
+                // When the forming bar time advances, send ALL bars that closed since last update.
+                // This handles bursts after UI thread lag, market halts, or data provider reconnects.
+                lock (_barSendLock)
                 {
-                    int closedIdx = series.Count - 2;
-                    if (closedIdx >= 0 && series.GetTime(closedIdx) == _lastFormingBarTime)
+                    if (_lastFormingBarTime != DateTime.MinValue && formingBarTime > _lastFormingBarTime)
                     {
-                        var closedTime = series.GetTime(closedIdx);
-                        lock (_barSendLock)
+                        // Walk backwards from the bar before the forming bar
+                        for (int i = series.Count - 2; i >= 0; i--)
                         {
-                            if (closedTime > _lastSentBarTime)
-                            {
-                                var open   = series.GetOpen(closedIdx);
-                                var high   = series.GetHigh(closedIdx);
-                                var low    = series.GetLow(closedIdx);
-                                var close  = series.GetClose(closedIdx);
-                                var volume = (long)series.GetVolume(closedIdx);
+                            var barTime = series.GetTime(i);
 
-                                _network?.SendBar(pair, closedTime, open, high, low, close, volume, isPartial: false);
-                                _barsSent++;
-                                _lastSentBarTime = closedTime;
-                            }
+                            // Stop once we reach already-sent bars
+                            if (barTime <= _lastSentBarTime)
+                                break;
+
+                            // Stop once we pass the previous forming bar (safety)
+                            if (barTime < _lastFormingBarTime)
+                                break;
+
+                            var open   = series.GetOpen(i);
+                            var high   = series.GetHigh(i);
+                            var low    = series.GetLow(i);
+                            var close  = series.GetClose(i);
+                            var volume = (long)series.GetVolume(i);
+
+                            _network?.SendBar(pair, barTime, open, high, low, close, volume, isPartial: false);
+                            _barsSent++;
+                            _lastSentBarTime = barTime;
                         }
                     }
+
+                    _lastFormingBarTime = formingBarTime;
                 }
-                _lastFormingBarTime = formingBarTime;
 
                 // Process updates in the notified range (typically just the forming bar)
                 for (int i = e.MinIndex; i <= e.MaxIndex; i++)

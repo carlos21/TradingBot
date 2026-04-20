@@ -29,6 +29,7 @@ export class ChartViewer {
     this.allTrades = [];
     this.pinnedLines = [];
     this._seriesBusy = false;
+    this._lastShadedTime = -Infinity;
 
     // Config
     this.keepClosedTradeLines = opts.keepClosedTradeLines || false;
@@ -153,7 +154,7 @@ export class ChartViewer {
       // Load trades before recalculating TSI so marker times are in sync
       await this._initTrades();
       this.recalculateTSI();
-      bars.forEach(bar => this.shadeBar(bar));
+      this.shadeBars(bars);
     } finally {
       this._seriesBusy = false;
     }
@@ -209,6 +210,7 @@ export class ChartViewer {
     // This can happen when setMarkers is called on a series with no data
     this.series.setData(valid);
     this.nySeries.setData([]);
+    this._lastShadedTime = -Infinity;
     if (valid.length) {
       const last = valid[valid.length - 1];
       this.lastTime = last.time;
@@ -224,7 +226,32 @@ export class ChartViewer {
 
   // --- Session Shading ---
 
+  shadeBars(bars) {
+    /* Bulk session shading for historical initialization. Uses setData instead of update. */
+    const sessionBars = [];
+    for (const bar of bars) {
+      if (!bar || typeof bar.time !== 'number') continue;
+      const parts = this.nyTimeFormatter.formatToParts(new Date(bar.time * 1000));
+      let h, m;
+      for (const part of parts) {
+        if (part.type === 'hour') h = parseInt(part.value, 10);
+        if (part.type === 'minute') m = parseInt(part.value, 10);
+      }
+      const s = NY_SESSION;
+      const inSession = (h > s.from.h || (h === s.from.h && m >= s.from.m))
+                     && (h < s.to.h || (h === s.to.h && m <= s.to.m));
+      if (inSession) sessionBars.push({ time: bar.time, value: 1 });
+    }
+    this.nySeries.setData(sessionBars);
+    this._lastShadedTime = sessionBars.length > 0 ? sessionBars[sessionBars.length - 1].time : -Infinity;
+  }
+
   shadeBar(bar) {
+    if (!bar || typeof bar.time !== 'number') return;
+
+    // Prevent duplicate updates which crash lightweight-charts
+    if (bar.time <= this._lastShadedTime) return;
+
     const parts = this.nyTimeFormatter.formatToParts(new Date(bar.time * 1000));
     let h, m;
     for (const part of parts) {
@@ -234,7 +261,14 @@ export class ChartViewer {
     const s = NY_SESSION;
     const inSession = (h > s.from.h || (h === s.from.h && m >= s.from.m))
                    && (h < s.to.h || (h === s.to.h && m <= s.to.m));
-    if (inSession) this.nySeries.update({ time: bar.time, value: 1 });
+    if (inSession) {
+      try {
+        this.nySeries.update({ time: bar.time, value: 1 });
+        this._lastShadedTime = bar.time;
+      } catch (e) {
+        if (!e.message?.includes('Cannot update oldest data')) throw e;
+      }
+    }
   }
 
   // --- Lines ---
@@ -388,7 +422,7 @@ export class ChartViewer {
 
       this.socket.emit('set_timeframe', { timeframe: tf, fromTime: this.lastTime });
       this.chart.timeScale().fitContent();
-      bars.forEach(bar => this.shadeBar(bar));
+      this.shadeBars(bars);
     } finally {
       this._seriesBusy = false;
     }

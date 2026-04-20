@@ -47,6 +47,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             // PUB: Market data to Python
             _marketPub = new PublisherSocket();
+            _marketPub.Options.SendHighWatermark = 10000;
             _marketPub.Connect(_config.MarketDataAddress);
 
             // PULL: Commands from Python
@@ -59,6 +60,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             // PUB: Heartbeats
             _heartbeatPub = new PublisherSocket();
+            _heartbeatPub.Options.SendHighWatermark = 1000;
             _heartbeatPub.Connect(_config.HeartbeatAddress);
 
             _logger?.Info($"Connected to ZMQ endpoints: market={_config.MarketPort}, cmd={_config.CommandPort}");

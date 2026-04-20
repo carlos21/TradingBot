@@ -141,6 +141,7 @@ class BaseLiquidityStrategy:
 
         # Optional dependency for multi-TF checks
         self.htf_fetcher = htf_fetcher
+        self.is_warmup = False
 
     # ----- Decision log (no-op; subclass LiquidityStrategyV2 overrides this) -----
 
@@ -308,6 +309,8 @@ class BaseLiquidityStrategy:
             self._on_strategy_bar(agg)
 
     def _check_breakeven(self, bar: Dict[str, Any]):
+        if self.is_warmup:
+            return
         for trade in self.open_trades:
             if trade['status'] != 'open':
                 continue
@@ -354,6 +357,8 @@ class BaseLiquidityStrategy:
 
     def _check_session_end_close(self, bar: Dict[str, Any]):
         """Close any open trades if the bar is at or past the NY session end (15:00 NY)."""
+        if self.is_warmup:
+            return
         session_end = self.trade_manager._session_end_time
         session_tz = self.trade_manager._session_tz
         if not session_end or not session_tz:
@@ -417,6 +422,8 @@ class BaseLiquidityStrategy:
         opportunities and trigger a new trade if price closes back through the line.
         Bypasses all normal entry filters (including daily trade limit).
         """
+        if self.is_warmup:
+            return
         threshold = self.options.reentry_threshold
         has_open = any(t["status"] == "open" for t in self.open_trades)
 
@@ -589,9 +596,15 @@ class BaseLiquidityStrategy:
     # ----- Exits -----
 
     def _check_open_trades(self, bar: Dict[str, Any]):
+        if self.is_warmup:
+            return
         remaining: List[Dict[str, Any]] = []
         for t in self.open_trades:
             if t["status"] != "open":
+                continue
+            # Skip bars that predate the trade's entry time (e.g. restored trades during history replay)
+            if bar["time"] < t.get("entry_time", 0):
+                remaining.append(t)
                 continue
             low, high = bar["low"], bar["high"]
             
@@ -855,6 +868,8 @@ class BaseLiquidityStrategy:
         }
 
     def _store_and_emit_open(self, trade: Dict[str, Any]):
+        if self.is_warmup:
+            return
         if trade.get("is_phantom"):
             trade["trade_id"] = f"phantom-{trade['entry_time']}"
             self.open_trades.append(trade)

@@ -154,6 +154,7 @@ def _setup_live_mode_callbacks(
     def _do_warmup(bars):
         """Background task: process historical bars."""
         try:
+            strategy.is_warmup = True
             start = __import__('time').monotonic()
             for i, bar in enumerate(bars):
                 strategy.on_raw_bar(bar)
@@ -161,6 +162,7 @@ def _setup_live_mode_callbacks(
                 if (i + 1) % 5000 == 0:
                     logger.info(f"[LiveMode] Warmup progress: {i+1}/{len(bars)} bars...")
             
+            strategy.is_warmup = False
             strategy.restore_trigger_states(pair)
             strategy.restore_open_trades()
             strategy.restore_reentry_opportunities(pair)
@@ -174,6 +176,7 @@ def _setup_live_mode_callbacks(
             except Exception as e:
                 logger.error(f"[LiveMode] Failed to emit history_ready: {type(e).__name__}: {e}")
         except Exception as e:
+            strategy.is_warmup = False
             logger.error(f"[LiveMode] ERROR during warmup: {type(e).__name__}: {e}")
             import traceback
             logger.error(traceback.format_exc())

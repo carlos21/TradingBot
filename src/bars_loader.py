@@ -48,6 +48,9 @@ class BarsLoader:
         self._last_bar_close  = 0
         self._step_mode       = False
         self.live_mode        = False
+        
+        # Gap detection for live chart stream
+        self._last_processed_bar_time: int = 0
 
     def reset(self):
         self._last_played_ts = 0
@@ -59,6 +62,7 @@ class BarsLoader:
         self._stop_event.clear()
         self._reached_stop_at = False
         self._step_mode = False
+        self._last_processed_bar_time = 0
 
     def set_timeframe(self, tf: str):
         if not self.live_mode:
@@ -123,6 +127,7 @@ class BarsLoader:
         self._1m_buffer           = []
         self._current_group_start = None
         self._last_played_ts      = from_time
+        self._last_processed_bar_time = 0
 
     def step(self):
         """Advance exactly one bar (or one aggregated candle) then pause."""
@@ -215,6 +220,18 @@ class BarsLoader:
         self.socketio.emit('stream_status', {'playing': False})
 
     def _process_bar(self, bar: dict):
+        # Gap detection: only in live mode — replay has expected overnight gaps
+        if self.live_mode and self._last_processed_bar_time > 0:
+            gap = bar['time'] - self._last_processed_bar_time
+            if gap > 180:  # 3 min threshold for live stream
+                dt_prev = time.strftime('%H:%M:%S', time.gmtime(self._last_processed_bar_time))
+                dt_curr = time.strftime('%H:%M:%S', time.gmtime(bar['time']))
+                self.logger.warning(
+                    f"🕳️  GAP DETECTED [CHART]: {gap}s missing data between {dt_prev} and {dt_curr} "
+                    f"({gap // 60}m {gap % 60}s)"
+                )
+        self._last_processed_bar_time = bar['time']
+        
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
             self.socketio.emit('bar', bar)
             time.sleep(self._emit_delay)
