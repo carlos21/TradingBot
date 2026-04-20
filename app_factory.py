@@ -178,11 +178,15 @@ def _setup_live_mode_callbacks(
             import traceback
             logger.error(traceback.format_exc())
     
+    import threading
+    
     def _on_history_complete(bars):
-        """Return immediately, process bars in background task."""
+        """Return immediately, process bars in background thread."""
         logger.info(f"[LiveMode] Received {len(bars)} historical bars, starting background warmup...")
-        # Start background task to process bars - don't block HTTP response
-        socketio.start_background_task(_do_warmup, bars)
+        # Start background thread to process bars - don't block HTTP response
+        thread = threading.Thread(target=_do_warmup, args=(bars,), name="HistoryWarmup")
+        thread.daemon = True
+        thread.start()
     
     def _on_live_bar(bar):
         # Route through BarsLoader so bars get aggregated into
@@ -234,8 +238,8 @@ def create_app(
     """
     app = Flask(__name__)
     CORS(app)
-    # Use eventlet for production-grade async server (replaces Werkzeug dev server)
-    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+    # Use threading async mode for better performance with local NinjaTrader
+    socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
     
     _setup_logging(app)
     
