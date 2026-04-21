@@ -99,6 +99,10 @@ class ZMQDataSource(CombinedDataSource):
         self._current_bar: Optional[Dict] = None
         self._last_emit_time: float = 0.0
         
+        # Track native partial bar receipts so tick-derived partials don't
+        # overwrite platform-native partial bars (which are the source of truth).
+        self._last_native_partial_time: float = 0.0
+        
         # Stats
         self._stats = {
             "ticks_received": 0,
@@ -274,10 +278,16 @@ class ZMQDataSource(CombinedDataSource):
             self._current_bar["close"] = price
             self._current_bar["volume"] += volume
         
-        # Emit partial bar at most once per second
+        # Emit partial bar at most once per second, but only if the platform
+        # is not already sending native partial bars (which are the source of truth).
         now = time.monotonic()
         if now - self._last_emit_time >= 1.0:
             self._last_emit_time = now
+            # Skip tick-derived partial if we received a native partial recently.
+            # This prevents the chart from flickering between tick-aggregated values
+            # and the platform's true BarsSeries values.
+            if now - self._last_native_partial_time < 2.0:
+                return
             partial = dict(self._current_bar)
             partial["partial"] = True
             if self.on_live_bar:
@@ -337,6 +347,7 @@ class ZMQDataSource(CombinedDataSource):
     
     def _on_partial_bar(self, payload: Dict) -> None:
         """Handle partial bar from platform."""
+        self._last_native_partial_time = time.monotonic()
         if self.on_live_bar:
             partial = dict(payload)
             partial["partial"] = True
