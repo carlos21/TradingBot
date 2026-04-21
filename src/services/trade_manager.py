@@ -100,8 +100,9 @@ class TradeManager:
         """
         try:
             all_trades = self.trade_repository.list_trades(self.pair)
+            open_count = 0
+            closed_count = 0
             
-            count = 0
             for t in all_trades:
                 if t.exit_time is None:
                     # Map TradeData back to the dict structure TradeManager expects
@@ -120,11 +121,14 @@ class TradeManager:
                         'entry_time':  t.entry_time.timestamp()
                     }
                     self.open_trades.append(trade_dict)
-                    count += 1
+                    open_count += 1
                     self.logger.info(f"[TradeManager] LOADED OPEN TRADE: ID={t.trade_id} Entry={t.entry_price} SL={t.stop_loss} TP={t.take_profit} EntryTime={t.entry_time}")
+                else:
+                    closed_count += 1
             
-            if count > 0:
-                self.logger.info(f"[TradeManager] Resumed {count} open trades from DB.")
+            self.logger.info(f"[TradeManager] DB scan complete: {open_count} open, {closed_count} closed, {len(all_trades)} total trades for {self.pair}")
+            if open_count > 0:
+                self.logger.info(f"[TradeManager] Resumed {open_count} open trade(s) from DB.")
             else:
                 self.logger.info("[TradeManager] No open trades found in DB to resume.")
                 

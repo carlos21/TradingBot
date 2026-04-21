@@ -167,3 +167,38 @@ class TradesController:
         payload = self.trade_manager.close_trade(trade_id, exit_price, exit_time)
 
         return jsonify(payload), 200
+
+    def close_all_trades(self, pair: str):
+        """Close all open trades for a pair, reusing the same path as session-end / manual close."""
+        open_trades = [t for t in self.trade_manager.open_trades if t['pair'] == pair]
+        if not open_trades:
+            return jsonify({'closed': [], 'message': 'No open trades to close'}), 200
+
+        # Resolve exit price once for all trades
+        exit_price = 0.0
+        if self.bars_loader._1m_buffer:
+            exit_price = self.bars_loader._1m_buffer[-1]['close']
+        else:
+            bars = self.bars_loader.data_source.load_historical_bars('1m')
+            if bars:
+                exit_price = bars[-1]['close']
+            elif self.bars_loader._last_bar_close > 0:
+                exit_price = self.bars_loader._last_bar_close
+            else:
+                abort(400, f"No price data available to close trades for {pair}")
+
+        exit_time = self._get_virtual_now()
+        self.logger.info(f"[TradesController] Closing ALL {len(open_trades)} open trade(s) for {pair} at Virtual Time: {exit_time}")
+
+        closed = []
+        failed = []
+        for trade in list(open_trades):
+            trade_id = trade['trade_id']
+            try:
+                payload = self.trade_manager.close_trade(trade_id, exit_price, exit_time)
+                closed.append({'trade_id': trade_id, 'exit_price': exit_price, 'result': payload.get('result')})
+            except Exception as e:
+                self.logger.error(f"[TradesController] Failed to close trade {trade_id}: {e}")
+                failed.append({'trade_id': trade_id, 'error': str(e)})
+
+        return jsonify({'closed': closed, 'failed': failed, 'count': len(closed)}), 200

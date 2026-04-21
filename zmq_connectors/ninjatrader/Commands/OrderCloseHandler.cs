@@ -43,7 +43,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (_account == null)
                     throw new InvalidOperationException("No account available");
 
-                _logger.Info($"CLOSE ORDER: {tradeId}");
+                _logger.Info($">>> CLOSE ORDER START: {tradeId}");
 
                 var instrument = Instrument.GetInstrument(_instrument);
                 if (instrument == null)
@@ -54,37 +54,47 @@ namespace NinjaTrader.NinjaScript.AddOns
                 var stopOrder = FindOrderByName($"Stop_{tradeId}");
                 var targetOrder = FindOrderByName($"Target_{tradeId}");
 
+                _logger.Info($"[Close:{tradeId}] Entry found={entryOrder != null} state={(entryOrder?.OrderState.ToString() ?? "null")} filledQty={entryOrder?.Filled ?? 0} totalQty={entryOrder?.Quantity ?? 0}");
+                _logger.Info($"[Close:{tradeId}] Stop found={stopOrder != null} state={(stopOrder?.OrderState.ToString() ?? "null")}");
+                _logger.Info($"[Close:{tradeId}] Target found={targetOrder != null} state={(targetOrder?.OrderState.ToString() ?? "null")}");
+
                 // Cancel all working orders for this trade
                 int cancelledCount = 0;
                 
                 if (entryOrder != null && IsWorking(entryOrder))
                 {
                     _account.Cancel(new[] { entryOrder });
-                    _logger.Info($"Cancelled entry order for {tradeId}");
+                    _logger.Info($"[Close:{tradeId}] Cancelled entry order");
                     cancelledCount++;
                 }
                 
                 if (stopOrder != null && IsWorking(stopOrder))
                 {
                     _account.Cancel(new[] { stopOrder });
-                    _logger.Info($"Cancelled stop order for {tradeId}");
+                    _logger.Info($"[Close:{tradeId}] Cancelled stop order");
                     cancelledCount++;
                 }
                 
                 if (targetOrder != null && IsWorking(targetOrder))
                 {
                     _account.Cancel(new[] { targetOrder });
-                    _logger.Info($"Cancelled target order for {tradeId}");
+                    _logger.Info($"[Close:{tradeId}] Cancelled target order");
                     cancelledCount++;
                 }
 
                 // Check if we have a filled or partially filled position to close
-                if (entryOrder != null && (entryOrder.OrderState == OrderState.Filled || entryOrder.OrderState == OrderState.PartFilled))
+                bool hasFilledPosition = entryOrder != null && (entryOrder.OrderState == OrderState.Filled || entryOrder.OrderState == OrderState.PartFilled);
+                _logger.Info($"[Close:{tradeId}] hasFilledPosition={hasFilledPosition}");
+
+                if (hasFilledPosition)
                 {
                     // Submit closing market order for the FILLED quantity only
                     var closeQty = entryOrder.Filled;
                     if (closeQty <= 0) closeQty = entryOrder.Quantity;
                     var closeAction = entryOrder.OrderAction == OrderAction.Buy ? OrderAction.Sell : OrderAction.BuyToCover;
+
+                    _logger.Info($"[Close:{tradeId}] Creating close order: action={closeAction} qty={closeQty} instrument={instrument.MasterInstrument.Name}");
+
                     var closeOrder = _account.CreateOrder(
                         instrument,
                         closeAction,
@@ -96,34 +106,47 @@ namespace NinjaTrader.NinjaScript.AddOns
                     
                     if (closeOrder != null)
                     {
+                        _logger.Info($"[Close:{tradeId}] Close order created successfully. Name={closeOrder.Name} State={closeOrder.OrderState}");
+
                         // Track the close order so we know when it fills
                         _orderTracker.TrackCloseOrder(tradeId, closeOrder);
-                        _logger.Success($"Closing market order submitted for {tradeId} ({closeAction} {closeQty} contracts)");
+                        _logger.Info($"[Close:{tradeId}] Tracked close order in OrderTracker");
+
+                        try
+                        {
+                            _account.Submit(new[] { closeOrder });
+                            _logger.Success($"[Close:{tradeId}] SUBMITTED close order to broker ({closeAction} {closeQty} contracts)");
+                        }
+                        catch (Exception submitEx)
+                        {
+                            _logger.Error($"[Close:{tradeId}] FAILED to submit close order: {submitEx.Message}", submitEx);
+                        }
                     }
                     else
                     {
-                        _logger.Error($"Failed to create closing order for {tradeId}");
+                        _logger.Error($"[Close:{tradeId}] CreateOrder returned NULL — close order was not created");
                     }
                 }
                 else if (cancelledCount == 0)
                 {
-                    _logger.Warning($"No working orders or position found for {tradeId}");
+                    _logger.Warning($"[Close:{tradeId}] No working orders or filled position found. Nothing to close.");
                     // Remove from tracking since there's nothing to close
                     _orderTracker.RemoveTrade(tradeId);
                 }
                 else
                 {
                     // Entry was cancelled but stop/target were working - just removed them
-                    _logger.Info($"Cancelled {cancelledCount} working orders for {tradeId}");
+                    _logger.Info($"[Close:{tradeId}] Cancelled {cancelledCount} working orders. No filled position to close.");
                     _orderTracker.RemoveTrade(tradeId);
                 }
                 
+                _logger.Info($">>> CLOSE ORDER END: {tradeId}");
                 _network?.SendTradeLog(tradeId, "NT:CLOSE", $"Close command executed ({cancelledCount} orders cancelled)");
             }
             catch (Exception ex)
             {
                 var tradeId = payload?["trade_id"]?.ToString() ?? "unknown";
-                _logger.Error($"Order close failed for {tradeId}", ex);
+                _logger.Error($">>> CLOSE ORDER FAILED for {tradeId}: {ex.Message}", ex);
                 _network?.SendError("ninjatrader", "order_close_failed", $"Failed to close order {tradeId}: {ex.Message}");
             }
         }
