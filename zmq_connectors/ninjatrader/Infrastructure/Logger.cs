@@ -40,8 +40,15 @@ namespace NinjaTrader.NinjaScript.AddOns
             else prefix = "";
 
             _uiLog(prefix + message);
-            if (isError) Output.Process("[TradingBot ZMQ ERROR] " + message, PrintTo.OutputTab1);
-            else if (isWarning) Output.Process("[TradingBot ZMQ WARNING] " + message, PrintTo.OutputTab1);
+            if (isError || isWarning)
+            {
+                string outputMsg = isError
+                    ? "[TradingBot ZMQ ERROR] " + message
+                    : "[TradingBot ZMQ WARNING] " + message;
+                // Output.Process must run on the UI thread in NinjaTrader
+                NinjaTrader.Core.Globals.RandomDispatcher.BeginInvoke(new Action(() =>
+                    Output.Process(outputMsg, PrintTo.OutputTab1)));
+            }
         }
     }
 }

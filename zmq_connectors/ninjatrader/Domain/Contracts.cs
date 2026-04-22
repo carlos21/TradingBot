@@ -61,6 +61,11 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         IEnumerable<string> GetActiveTradeIds();
         
+        // Expected cancellation tracking (for modify/close workflows)
+        void ExpectCancellation(string orderName);
+        bool IsExpectedCancellation(string orderName);
+        void RemoveExpectedCancellation(string orderName);
+        
         // Recovery methods
         void RestoreFromBrokerOrders(Account account, ILogger logger);
         bool IsRestored { get; }

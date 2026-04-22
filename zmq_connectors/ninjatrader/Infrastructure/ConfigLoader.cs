@@ -7,6 +7,7 @@
 using System;
 using System.IO;
 using Newtonsoft.Json;
+using NinjaTrader.Code;
 
 namespace NinjaTrader.NinjaScript.AddOns
 {
@@ -67,9 +68,11 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
             catch (Exception ex)
             {
-                // Silently fall back to defaults so compilation never breaks.
-                // The error will be visible in NinjaTrader's Output window at runtime.
-                System.Diagnostics.Debug.WriteLine($"[TradingBotZMQ] Config load failed: {ex.Message}");
+                // Log to NT Output window so users can see config errors.
+                // Cannot use ILogger here (static context), so use Output.Process on UI thread.
+                string msg = $"[TradingBotZMQ] Config load failed: {ex.Message}";
+                NinjaTrader.Core.Globals.RandomDispatcher.BeginInvoke(new Action(() =>
+                    Output.Process(msg, PrintTo.OutputTab1)));
                 return defaults;
             }
         }

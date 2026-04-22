@@ -68,22 +68,27 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         public void Stop()
         {
+            _logger?.Info("ZMQ network stopping...");
+
             lock (_sendLock)
             lock (_recvLock)
             lock (_queryLock)
             {
-                _marketPub?.Dispose();
-                _commandPull?.Dispose();
-                _queryReq?.Dispose();
-                _heartbeatPub?.Dispose();
-
-                _marketPub = null;
-                _commandPull = null;
-                _queryReq = null;
-                _heartbeatPub = null;
+                SafeDispose(ref _marketPub);
+                SafeDispose(ref _commandPull);
+                SafeDispose(ref _queryReq);
+                SafeDispose(ref _heartbeatPub);
             }
 
             _logger?.Info("ZMQ network stopped");
+        }
+
+        private static void SafeDispose<T>(ref T socket) where T : class, IDisposable
+        {
+            if (socket == null) return;
+            try { socket.Dispose(); }
+            catch (Exception ex) { /* Best-effort dispose; native socket may already be closed. */ }
+            socket = null;
         }
 
         public void Dispose() => Stop();
@@ -99,10 +104,10 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void Send(string msgType, JObject payload)
         {
-            if (_marketPub == null) return;
             var envelope = MessageEnvelope.Create(msgType, payload, NextSeq());
             lock (_sendLock)
             {
+                if (_marketPub == null) return;
                 _marketPub?.SendFrame(_serializer.Serialize(envelope));
             }
         }
@@ -257,12 +262,21 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     _queryReq.SendFrame(_serializer.Serialize(envelope));
                     if (!_queryReq.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out response))
+                    {
+                        // REQ socket is now in a corrupted state (waiting for reply). Recreate it.
+                        _logger?.Warning("Test ping timeout — recreating REQ socket");
+                        RecreateQueryReq();
                         return false;
+                    }
                 }
                 var resp = _serializer.Deserialize(response);
                 return resp?.MsgType == MessageType.TestPong;
             }
-            catch { return false; }
+            catch (Exception ex)
+            {
+                _logger?.Warning($"Test ping failed: {ex.Message}");
+                return false;
+            }
         }
 
         /// <summary>
@@ -280,7 +294,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     _queryReq.SendFrame(_serializer.Serialize(envelope));
                     if (!_queryReq.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out response))
+                    {
+                        // REQ socket is now in a corrupted state (waiting for reply). Recreate it.
+                        _logger?.Warning("QueryConfig timeout — recreating REQ socket");
+                        RecreateQueryReq();
                         return null;
+                    }
                 }
                 var resp = _serializer.Deserialize(response);
                 if (resp?.MsgType == MessageType.ConfigResponse)
@@ -289,7 +308,22 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
                 return null;
             }
-            catch { return null; }
+            catch (Exception ex)
+            {
+                _logger?.Warning($"QueryConfig failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        private void RecreateQueryReq()
+        {
+            lock (_queryLock)
+            {
+                SafeDispose(ref _queryReq);
+                _queryReq = new RequestSocket();
+                _queryReq.Connect(_config.QueryAddress);
+                _logger?.Info("REQ socket recreated");
+            }
         }
 
         /// <summary>

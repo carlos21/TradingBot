@@ -42,7 +42,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (_account == null)
                     throw new InvalidOperationException("No account available");
 
-                if (_orderTracker.TryGetPendingEntry(tradeId, out _))
+                if (_orderTracker.TryGetPendingEntry(tradeId, out _) || _orderTracker.TryGetEntry(tradeId, out _))
                 {
                     _logger.Warning($"Duplicate place_order for {tradeId}, ignoring");
                     _network?.SendTradeLog(tradeId, "NT:WARNING", "Duplicate place_order request ignored");
@@ -113,17 +113,19 @@ namespace NinjaTrader.NinjaScript.AddOns
             double slRisk = slPoints * pointValue;
             if (slRisk <= 0) return 1;
 
-            if (riskUsd > 0)
-                return Math.Max(1, (int)Math.Round(riskUsd / slRisk));
+            const int MaxQuantity = 100;  // Safety clamp to prevent catastrophic sizing
+            int qty = 1;
 
-            if (riskPct > 0 && _account != null)
+            if (riskUsd > 0)
+                qty = (int)Math.Round(riskUsd / slRisk);
+            else if (riskPct > 0 && _account != null)
             {
                 double balance = _account.Get(AccountItem.CashValue, Currency.UsDollar);
                 double risk = balance * riskPct / 100.0;
-                return Math.Max(1, (int)Math.Round(risk / slRisk));
+                qty = (int)Math.Round(risk / slRisk);
             }
 
-            return 1;
+            return Math.Max(1, Math.Min(qty, MaxQuantity));
         }
 
         private static string GetAtmStrategyName(double slPoints)

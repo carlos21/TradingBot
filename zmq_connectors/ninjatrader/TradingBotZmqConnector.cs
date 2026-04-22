@@ -85,8 +85,12 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         // Duplicate command detection (track processed seq_nums)
         private readonly HashSet<int> _processedSeqNums = new HashSet<int>();
+        private readonly Queue<int> _processedSeqNumQueue = new Queue<int>();  // For bounded eviction
         private readonly object _seqNumLock = new object();
         private const int MAX_TRACKED_SEQ_NUMS = 1000;  // Prevent memory growth
+
+        // Connection lock to prevent double-connect / double-disconnect races
+        private readonly object _connectLock = new object();
 
 
 
@@ -199,16 +203,18 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void Connect()
         {
-            // Prevent double-connect
-            if (_connected)
+            lock (_connectLock)
             {
-                _logger.Warning("Already connected, ignoring connect request");
-                return;
-            }
+                // Prevent double-connect
+                if (_connected)
+                {
+                    _logger.Warning("Already connected, ignoring connect request");
+                    return;
+                }
 
-            try
-            {
-                _logger.Info("Starting ZeroMQ connection...");
+                try
+                {
+                    _logger.Info("Starting ZeroMQ connection...");
 
                 // Initialize components with dependency injection
                 _orderTracker = new OrderStateManager();
@@ -277,47 +283,62 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _network?.SendError("ninjatrader", "connection_failed", ex.Message, FormatExceptionDetails(ex));
                 Disconnect("connection error");
             }
+            }
         }
 
         private void Disconnect(string reason = null)
         {
-            if (reason != null)
+            lock (_connectLock)
             {
-                _logger?.Info($"Disconnecting: {reason}");
+                if (reason != null)
+                {
+                    _logger?.Info($"Disconnecting: {reason}");
+                }
+                _connected = false;
+                _cts?.Cancel();
+
+                // Stop market-data thread BEFORE tearing down ZMQ sockets
+                UnsubscribeFromLiveBars();
+                UnsubscribeFromMarketData();
+                UninitializeAccount();
+
+                // Allow in-flight background sends to drain before disposing sockets
+                Thread.Sleep(100);
+
+                // Wait for background threads to exit so we don't dispose sockets while they're in use
+                if (_commandThread != null && _commandThread.IsAlive)
+                {
+                    _commandThread.Join(600);
+                    _commandThread = null;
+                }
+                if (_heartbeatThread != null && _heartbeatThread.IsAlive)
+                {
+                    _heartbeatThread.Join(600);
+                    _heartbeatThread = null;
+                }
+
+                _network?.Dispose();
+                _network = null;
+
+                _orderTracker?.Clear();
+                _orderTracker = null;
+
+                _cts?.Dispose();
+                _cts = null;
+
+                // Reset bar streaming state so reconnect starts fresh
+                _lastSentBarTime = DateTime.MinValue;
+                _lastFormingBarTime = DateTime.MinValue;
+
+                // Reset stats
+                _commandsReceived = 0;
+                _ticksSent = 0;
+                _barsSent = 0;
+                _partialBarsSent = 0;
+
+                _logger?.Info("Disconnected from Python TradingBot");
+                UpdateStats();
             }
-            _connected = false;
-            _cts?.Cancel();
-
-            // Stop market-data thread BEFORE tearing down ZMQ sockets
-            UnsubscribeFromLiveBars();
-            UnsubscribeFromMarketData();
-            UninitializeAccount();
-
-            // Allow in-flight background sends to drain before disposing sockets
-            Thread.Sleep(100);
-
-            // Wait for background threads to exit so we don't dispose sockets while they're in use
-            if (_commandThread != null && _commandThread.IsAlive)
-            {
-                _commandThread.Join(600);
-                _commandThread = null;
-            }
-            if (_heartbeatThread != null && _heartbeatThread.IsAlive)
-            {
-                _heartbeatThread.Join(600);
-                _heartbeatThread = null;
-            }
-
-            _network?.Dispose();
-            _network = null;
-
-            _orderTracker?.Clear();
-            _orderTracker = null;
-
-
-
-            _logger?.Info("Disconnected from Python TradingBot");
-            UpdateStats();
         }
 
         /// <summary>
@@ -437,7 +458,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                     
                     // Extract trade_id from payload for ack
                     string tradeId = null;
-                    try { tradeId = envelope.Payload?["trade_id"]?.ToString(); } catch { }
+                    try { tradeId = envelope.Payload?["trade_id"]?.ToString(); }
+                    catch (Exception ex) { _logger.Warning($"Failed to extract trade_id from envelope: {ex.Message}"); }
 
                     try
                     {
@@ -479,11 +501,16 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 _processedSeqNums.Add(seqNum);
 
-                // Prevent unbounded growth
+                // Prevent unbounded growth — evict oldest 20% instead of clearing everything
                 if (_processedSeqNums.Count > MAX_TRACKED_SEQ_NUMS)
                 {
-                    _processedSeqNums.Clear();
+                    int evictCount = MAX_TRACKED_SEQ_NUMS / 5;
+                    for (int i = 0; i < evictCount && _processedSeqNumQueue.Count > 0; i++)
+                    {
+                        _processedSeqNums.Remove(_processedSeqNumQueue.Dequeue());
+                    }
                 }
+                _processedSeqNumQueue.Enqueue(seqNum);
 
                 return false;
             }
@@ -725,68 +752,75 @@ namespace NinjaTrader.NinjaScript.AddOns
                     BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 }
                 };
 
-                var batch = new List<JObject>();
-                int count = 0;
-
-                barsRequest.Request((bars, errorCode, errorMessage) =>
+                try
                 {
-                    try
+                    var batch = new List<JObject>();
+                    int count = 0;
+
+                    barsRequest.Request((bars, errorCode, errorMessage) =>
                     {
-                        if (errorCode != ErrorCode.NoError)
+                        try
                         {
-                            _logger.Error($"BarsRequest failed: {errorMessage}");
-                            tcs.SetResult(false);
-                            return;
-                        }
-
-                        if (bars?.Bars == null)
-                        {
-                            _logger.Error("BarsRequest returned null bars");
-                            tcs.SetResult(false);
-                            return;
-                        }
-
-                        for (int i = 0; i < bars.Bars.Count; i++)
-                        {
-                            batch.Add(new JObject
+                            if (errorCode != ErrorCode.NoError)
                             {
-                                ["time"] = ToUnixSeconds(bars.Bars.GetTime(i)),
-                                ["open"] = bars.Bars.GetOpen(i),
-                                ["high"] = bars.Bars.GetHigh(i),
-                                ["low"] = bars.Bars.GetLow(i),
-                                ["close"] = bars.Bars.GetClose(i),
-                                ["volume"] = (long)bars.Bars.GetVolume(i),
-                                ["pair"] = _config.Instrument.Split(' ')[0]
-                            });
-                            count++;
-
-                            if (batch.Count >= _config.BatchSize)
-                            {
-                                _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
-                                batch.Clear();
+                                _logger.Error($"BarsRequest failed: {errorMessage}");
+                                tcs.TrySetResult(false);
+                                return;
                             }
+
+                            if (bars?.Bars == null)
+                            {
+                                _logger.Error("BarsRequest returned null bars");
+                                tcs.TrySetResult(false);
+                                return;
+                            }
+
+                            for (int i = 0; i < bars.Bars.Count; i++)
+                            {
+                                batch.Add(new JObject
+                                {
+                                    ["time"] = ToUnixSeconds(bars.Bars.GetTime(i)),
+                                    ["open"] = bars.Bars.GetOpen(i),
+                                    ["high"] = bars.Bars.GetHigh(i),
+                                    ["low"] = bars.Bars.GetLow(i),
+                                    ["close"] = bars.Bars.GetClose(i),
+                                    ["volume"] = (long)bars.Bars.GetVolume(i),
+                                    ["pair"] = _config.Instrument.Split(' ')[0]
+                                });
+                                count++;
+
+                                if (batch.Count >= _config.BatchSize)
+                                {
+                                    _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
+                                    batch.Clear();
+                                }
+                            }
+
+                            if (batch.Count > 0) _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
+
+                            _barsSent = count;
+                            _logger.Info($"Sent {count} historical bars ({days} days)");
+                            _network?.SendHistoryEnd();
+                            tcs.TrySetResult(true);
                         }
+                        catch (Exception callbackEx)
+                        {
+                            _logger.Error("BarsRequest callback error", callbackEx);
+                            tcs.TrySetResult(false);
+                        }
+                    });
 
-                        if (batch.Count > 0) _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
-
-                        _barsSent = count;
-                        _logger.Info($"Sent {count} historical bars ({days} days)");
-                        _network?.SendHistoryEnd();
-                        tcs.SetResult(true);
-                    }
-                    catch (Exception callbackEx)
+                    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30));
+                    var completedTask = await Task.WhenAny(tcs.Task, timeoutTask);
+                    if (completedTask == timeoutTask)
                     {
-                        _logger.Error("BarsRequest callback error", callbackEx);
-                        tcs.SetResult(false);
+                        _logger.Error("BarsRequest timed out after 30 seconds");
+                        _network?.SendError("ninjatrader", "history_timeout", "BarsRequest timed out after 30 seconds");
                     }
-                });
-
-                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30));
-                var completedTask = await Task.WhenAny(tcs.Task, timeoutTask);
-                if (completedTask == timeoutTask)
+                }
+                finally
                 {
-                    _logger.Error("BarsRequest timed out after 30 seconds");
-                    _network?.SendError("ninjatrader", "history_timeout", "BarsRequest timed out after 30 seconds");
+                    barsRequest?.Dispose();
                 }
             }
             catch (Exception ex)
@@ -929,41 +963,57 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (order.OrderState == OrderState.Cancelled && IsStopOrder(order))
                 {
                     string tid = ExtractTradeIdFromOrderName(order.Name);
+                    bool wasExpected = _orderTracker.IsExpectedCancellation(order.Name);
+                    _orderTracker.RemoveExpectedCancellation(order.Name);
+
                     if (!string.IsNullOrEmpty(tid) && _orderTracker.TryGetPendingModify(tid, out var modInfo))
                     {
-                        _orderTracker.RemovePendingModify(tid);
-                        try
+                        if (!wasExpected)
                         {
-                            var newStopOrder = _account.CreateOrder(
-                                modInfo.Instrument,
-                                modInfo.OrderAction,
-                                OrderType.StopMarket,
-                                OrderEntry.Automated,
-                                TimeInForce.Gtc,
-                                modInfo.Quantity,
-                                0,
-                                modInfo.NewStopLoss,
-                                $"OCO_{tid}",
-                                $"Stop_{tid}",
-                                DateTime.MinValue,
-                                null);
-
-                            if (newStopOrder != null)
-                            {
-                                _orderTracker.TrackStopLoss(tid, newStopOrder);
-                                _logger.Success($"Modified SL for {tid} to {modInfo.NewStopLoss}");
-                                _network?.SendTradeLog(tid, "NT:MODIFY", $"Stop loss changed to {modInfo.NewStopLoss}");
-                            }
-                            else
-                            {
-                                _logger.Error($"Failed to create replacement stop order for {tid}");
-                                _network?.SendError("ninjatrader", "order_modify_failed", $"Failed to create replacement stop for {tid}");
-                            }
+                            _logger.Warning($"Stop order {order.Name} was cancelled unexpectedly (not by modify/close workflow). Discarding pending modify.");
+                            _orderTracker.RemovePendingModify(tid);
                         }
-                        catch (Exception modEx)
+                        else if (!_orderTracker.TryGetEntry(tid, out _))
                         {
-                            _logger.Error($"Error creating replacement stop order for {tid}", modEx);
-                            _network?.SendError("ninjatrader", "order_modify_failed", $"Replacement stop failed for {tid}: {modEx.Message}");
+                            _logger.Warning($"Stop order {order.Name} cancelled but trade {tid} no longer active. Discarding pending modify.");
+                            _orderTracker.RemovePendingModify(tid);
+                        }
+                        else
+                        {
+                            _orderTracker.RemovePendingModify(tid);
+                            try
+                            {
+                                var newStopOrder = _account.CreateOrder(
+                                    modInfo.Instrument,
+                                    modInfo.OrderAction,
+                                    OrderType.StopMarket,
+                                    OrderEntry.Automated,
+                                    TimeInForce.Gtc,
+                                    modInfo.Quantity,
+                                    0,
+                                    modInfo.NewStopLoss,
+                                    $"OCO_{tid}",
+                                    $"Stop_{tid}",
+                                    DateTime.MinValue,
+                                    null);
+
+                                if (newStopOrder != null)
+                                {
+                                    _orderTracker.TrackStopLoss(tid, newStopOrder);
+                                    _logger.Success($"Modified SL for {tid} to {modInfo.NewStopLoss}");
+                                    _network?.SendTradeLog(tid, "NT:MODIFY", $"Stop loss changed to {modInfo.NewStopLoss}");
+                                }
+                                else
+                                {
+                                    _logger.Error($"Failed to create replacement stop order for {tid}");
+                                    _network?.SendError("ninjatrader", "order_modify_failed", $"Failed to create replacement stop for {tid}");
+                                }
+                            }
+                            catch (Exception modEx)
+                            {
+                                _logger.Error($"Error creating replacement stop order for {tid}", modEx);
+                                _network?.SendError("ninjatrader", "order_modify_failed", $"Replacement stop failed for {tid}: {modEx.Message}");
+                            }
                         }
                     }
                 }
@@ -971,10 +1021,26 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // Notify Python of rejected/cancelled orders
                 if (order.OrderState == OrderState.Rejected || order.OrderState == OrderState.Cancelled)
                 {
-                    // Bracket orders (SL/TP) are intentionally cancelled during normal close workflows
-                    // (Python close command, NT manual close, or pending modify). Suppress the noise.
+                    string oid = ExtractTradeIdFromOrderName(order.Name);
+
+                    // Clean up rejected entry orders from tracking so they don't block future opens
+                    if (order.OrderState == OrderState.Rejected && IsEntryOrder(order) && !string.IsNullOrEmpty(oid))
+                    {
+                        _orderTracker.RemoveTrade(oid);
+                    }
+
+                    // Only suppress cancelled notifications for stop/target orders that we EXPECTED to cancel
+                    // (e.g., via Python close command or our own modify workflow). Unexpected cancellations
+                    // (broker risk management, manual user cancel, margin issues) must be reported.
                     if (order.OrderState == OrderState.Cancelled && (IsStopOrder(order) || IsTargetOrder(order)))
-                        return;
+                    {
+                        if (_orderTracker.IsExpectedCancellation(order.Name))
+                        {
+                            _orderTracker.RemoveExpectedCancellation(order.Name);
+                            return;  // Expected — suppress noise
+                        }
+                        // Unexpected cancellation — fall through to report as error below
+                    }
 
                     _network?.SendError("ninjatrader", "order_state", $"Order {order.Name} is {order.OrderState}");
                 }
@@ -1014,8 +1080,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
                 var fillPrice = execution.Price;
 
+                string execTradeId = ExtractTradeIdFromOrderName(order.Name) ?? order.Name;
                 _logger.Info($"EXECUTION: {order.Name} @ {fillPrice} qty={execution.Quantity}");
-                _network?.SendTradeLog(order.Name, "NT:EXECUTION", $"Execution: {execution.Quantity} @ {fillPrice}");
+                _network?.SendTradeLog(execTradeId, "NT:EXECUTION", $"Execution: {execution.Quantity} @ {fillPrice}");
 
                 if (IsEntryOrder(order))
                 {
@@ -1048,11 +1115,22 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private void HandleEntryFill(Order order, double fillPrice)
         {
-            if (!_orderTracker.TryGetTradeIdForOrder(order, out var tradeId) ||
-                !_orderTracker.TryGetPendingEntry(tradeId, out var entry))
+            if (order.OrderState != OrderState.Filled)
+            {
+                _logger.Info($"Entry {order.Name} state={order.OrderState} ({order.Filled}/{order.Quantity}), waiting for full fill before creating bracket.");
+                return;
+            }
+
+            if (!_orderTracker.TryGetTradeIdForOrder(order, out var tradeId))
+            {
+                // Fallback: extract trade_id directly from order name in case OnOrderUpdate hasn't tracked it yet
+                tradeId = ExtractTradeIdFromOrderName(order.Name);
+            }
+
+            if (string.IsNullOrEmpty(tradeId) || !_orderTracker.TryGetPendingEntry(tradeId, out var entry))
             {
                 _logger.Error($"CRITICAL: Entry fill for order '{order.Name}' not found in tracking! Cannot process fill.");
-                _network?.SendError("ninjatrader", "fill_tracking_failed", 
+                _network?.SendError("ninjatrader", "fill_tracking_failed",
                     $"Entry fill for order '{order.Name}' not found in tracking");
                 return;
             }
@@ -1107,8 +1185,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (!_orderTracker.TryGetTradeIdForOrder(order, out var tradeId))
             {
+                tradeId = ExtractTradeIdFromOrderName(order.Name);
+            }
+
+            if (string.IsNullOrEmpty(tradeId) || !_orderTracker.TryGetStopLoss(tradeId, out _))
+            {
                 _logger.Error($"CRITICAL: SL fill for order '{order.Name}' not found in tracking! Cannot process fill.");
-                _network?.SendError("ninjatrader", "fill_tracking_failed", 
+                _network?.SendError("ninjatrader", "fill_tracking_failed",
                     $"SL fill for order '{order.Name}' not found in tracking");
                 return;
             }
@@ -1124,8 +1207,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (!_orderTracker.TryGetTradeIdForOrder(order, out var tradeId))
             {
+                tradeId = ExtractTradeIdFromOrderName(order.Name);
+            }
+
+            if (string.IsNullOrEmpty(tradeId) || !_orderTracker.TryGetTakeProfit(tradeId, out _))
+            {
                 _logger.Error($"CRITICAL: TP fill for order '{order.Name}' not found in tracking! Cannot process fill.");
-                _network?.SendError("ninjatrader", "fill_tracking_failed", 
+                _network?.SendError("ninjatrader", "fill_tracking_failed",
                     $"TP fill for order '{order.Name}' not found in tracking");
                 return;
             }
@@ -1141,8 +1229,13 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (!_orderTracker.TryGetTradeIdForOrder(order, out var tradeId))
             {
+                tradeId = ExtractTradeIdFromOrderName(order.Name);
+            }
+
+            if (string.IsNullOrEmpty(tradeId) || !_orderTracker.TryGetCloseOrder(tradeId, out _))
+            {
                 _logger.Error($"CRITICAL: Close fill for order '{order.Name}' not found in tracking! Cannot process fill.");
-                _network?.SendError("ninjatrader", "fill_tracking_failed", 
+                _network?.SendError("ninjatrader", "fill_tracking_failed",
                     $"Close fill for order '{order.Name}' not found in tracking");
                 return;
             }
@@ -1239,7 +1332,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             return order.OrderState == OrderState.Working ||
                    order.OrderState == OrderState.Accepted ||
-                   order.OrderState == OrderState.Submitted;
+                   order.OrderState == OrderState.Submitted ||
+                   order.OrderState == OrderState.PartFilled;
         }
 
         private static bool IsEntryOrder(Order order) => 
@@ -1251,7 +1345,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         
         private static bool IsTargetOrder(Order order) =>
             ((order?.Name == "Target" || order?.Name?.StartsWith("Target_") == true) &&
-            (order.OrderType == OrderType.Limit || order.OrderType == OrderType.Market));
+            (order.OrderType == OrderType.Limit));
         
         private static bool IsCloseOrder(Order order) =>
             order?.Name?.StartsWith("Close_") == true;

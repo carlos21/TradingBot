@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 using System;
+using System.Linq;
 using Newtonsoft.Json.Linq;
 using NinjaTrader.Cbi;
 
@@ -66,6 +67,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _orderTracker.TrackPendingModify(tradeId, new PendingModifyInfo(
                     newSl, stopOrder.Instrument, stopOrder.OrderAction, stopOrder.Quantity));
 
+                _orderTracker.ExpectCancellation(stopOrder.Name);
                 _account.Cancel(new[] { stopOrder });
 
                 _logger.Info($"MODIFY PENDING: Cancelled stop for {tradeId}, replacement SL={newSl} queued");
@@ -85,7 +87,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             
             // Look for order with trade_id embedded in name (e.g., "Stop_trade-123")
             string expectedName = $"Stop_{tradeId}";
-            foreach (var order in _account.Orders)
+            // Snapshot to avoid collection-modified-during-enumeration
+            var orders = _account.Orders.ToArray();
+            foreach (var order in orders)
             {
                 if (order.Name == expectedName &&
                     (order.OrderState == OrderState.Working || order.OrderState == OrderState.Accepted || order.OrderState == OrderState.Submitted))
