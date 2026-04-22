@@ -943,7 +943,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 modInfo.Quantity,
                                 0,
                                 modInfo.NewStopLoss,
-                                string.Empty,
+                                $"OCO_{tid}",
                                 $"Stop_{tid}",
                                 DateTime.MinValue,
                                 null);
@@ -1068,13 +1068,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                     var closeAction = isLong ? OrderAction.Sell : OrderAction.BuyToCover;
                     int qty = order.Filled > 0 ? order.Filled : order.Quantity;
 
+                    string ocoId = $"OCO_{tradeId}";
+
                     var stopOrder = _account.CreateOrder(
                         order.Instrument, closeAction, OrderType.StopMarket, OrderEntry.Automated, TimeInForce.Gtc,
-                        qty, 0, sl, string.Empty, $"Stop_{tradeId}", DateTime.MinValue, null);
+                        qty, 0, sl, ocoId, $"Stop_{tradeId}", DateTime.MinValue, null);
 
                     var targetOrder = _account.CreateOrder(
                         order.Instrument, closeAction, OrderType.Limit, OrderEntry.Automated, TimeInForce.Gtc,
-                        qty, tp, 0, string.Empty, $"Target_{tradeId}", DateTime.MinValue, null);
+                        qty, tp, 0, ocoId, $"Target_{tradeId}", DateTime.MinValue, null);
 
                     if (stopOrder != null) _account.Submit(new[] { stopOrder });
                     if (targetOrder != null) _account.Submit(new[] { targetOrder });
@@ -1114,6 +1116,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             _logger.Warning($"EXIT FILL (SL): {tradeId} @ {fillPrice}");
             _network?.SendExitFill(tradeId, fillPrice, "SL");
             _network?.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice}");
+            CancelWorkingBracketOrders(tradeId);
             _orderTracker.RemoveTrade(tradeId);
         }
 
@@ -1130,6 +1133,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             _logger.Success($"EXIT FILL (TP): {tradeId} @ {fillPrice}");
             _network?.SendExitFill(tradeId, fillPrice, "TP");
             _network?.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice}");
+            CancelWorkingBracketOrders(tradeId);
             _orderTracker.RemoveTrade(tradeId);
         }
 
@@ -1146,6 +1150,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             _logger.Success($"POSITION CLOSED: {tradeId} @ {fillPrice}");
             _network?.SendExitFill(tradeId, fillPrice, "CLOSE");
             _network?.SendTradeLog(tradeId, "NT:FILL", $"Position closed @ {fillPrice}");
+            CancelWorkingBracketOrders(tradeId);
             _orderTracker.RemoveTrade(tradeId);
         }
 
@@ -1170,6 +1175,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     _logger.Success($"MANUAL CLOSE DETECTED: {tradeId} @ {fillPrice} via {closeOrder.Name}");
                     _network?.SendExitFill(tradeId, fillPrice, "CLOSE");
                     _network?.SendTradeLog(tradeId, "NT:FILL", $"Manual position closed @ {fillPrice}");
+                    CancelWorkingBracketOrders(tradeId);
                     _orderTracker.RemoveTrade(tradeId);
                     return;
                 }
@@ -1192,6 +1198,48 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 return (fillPrice + slPoints, fillPrice - (slPoints * rrRatio));
             }
+        }
+
+        /// <summary>
+        /// Cancels any working stop-loss or take-profit orders for the given trade.
+        /// Called when one side of the bracket fills or the position is closed externally.
+        /// </summary>
+        private void CancelWorkingBracketOrders(string tradeId)
+        {
+            if (_account == null) return;
+
+            if (_orderTracker.TryGetStopLoss(tradeId, out var stopOrder) && IsWorking(stopOrder))
+            {
+                try
+                {
+                    _account.Cancel(new[] { stopOrder });
+                    _logger.Info($"Cancelled working stop order for {tradeId}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning($"Failed to cancel stop order for {tradeId}: {ex.Message}");
+                }
+            }
+
+            if (_orderTracker.TryGetTakeProfit(tradeId, out var targetOrder) && IsWorking(targetOrder))
+            {
+                try
+                {
+                    _account.Cancel(new[] { targetOrder });
+                    _logger.Info($"Cancelled working target order for {tradeId}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning($"Failed to cancel target order for {tradeId}: {ex.Message}");
+                }
+            }
+        }
+
+        private static bool IsWorking(Order order)
+        {
+            return order.OrderState == OrderState.Working ||
+                   order.OrderState == OrderState.Accepted ||
+                   order.OrderState == OrderState.Submitted;
         }
 
         private static bool IsEntryOrder(Order order) => 
