@@ -109,6 +109,7 @@ export class TradeLogs {
   }
 
   getEventClass(event) {
+    if (!event) return '';
     const eventUpper = event.toUpperCase();
     if (eventUpper.includes('ERROR') || eventUpper.includes('FAIL')) return 'error';
     if (eventUpper.includes('FILL') || eventUpper.includes('COMPLETE') || eventUpper.includes('TP')) return 'success';

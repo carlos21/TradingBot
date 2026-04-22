@@ -1,6 +1,6 @@
 from contextlib import contextmanager
 from src.database.database_protocol import Base, get_database
-from sqlalchemy import Column, String, DateTime, JSON, Float, func
+from sqlalchemy import Column, String, DateTime, JSON, Float, Integer, Text, func, Index
 
 
 class Line(Base):
@@ -33,6 +33,7 @@ class Trade(Base):
     pnl_usd      = Column(Float,   nullable=True)
     params       = Column(JSON,    nullable=True)       # any extra metadata (e.g. {"rr": "1:4"})
     logs         = Column(JSON,    nullable=True)       # per-trade lifecycle log entries
+    source       = Column(String(20), nullable=True)    # strategy, manual, test, broker_sync
     created_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
 
@@ -43,6 +44,29 @@ class LineTriggerState(Base):
     pair       = Column(String(10), nullable=False)
     state_json = Column(JSON, nullable=False, default=dict)
     updated_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class DecisionLog(Base):
+    __tablename__ = "decision_logs"
+
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+    bar_time     = Column(Float, nullable=False)
+    pair         = Column(String(10), nullable=False)
+    tf           = Column(String(10), nullable=True)
+    line_id      = Column(String(50), nullable=True)
+    event        = Column(String(20), nullable=False)
+    direction    = Column(String(10), nullable=True)
+    trigger_name = Column(String(50), nullable=True)
+    filter_name  = Column(String(50), nullable=True)
+    reason       = Column(String(255), nullable=True)
+    details      = Column(Text, nullable=True)
+
+    __table_args__ = (
+        Index("ix_decision_logs_bar_time", "bar_time"),
+        Index("ix_decision_logs_event", "event"),
+        Index("ix_decision_logs_line_id", "line_id"),
+    )
 
 
 db = None
@@ -85,5 +109,10 @@ def setup_database(db_url: str = "sqlite:///./database.db"):
             with db.get_engine().connect() as conn:
                 conn.execute(text("ALTER TABLE trades ADD COLUMN fees FLOAT"))
                 conn.execute(text("ALTER TABLE trades ADD COLUMN pnl_usd FLOAT"))
+                conn.commit()
+            # logger removed - pass via constructor if needed
+        if 'source' not in columns:
+            with db.get_engine().connect() as conn:
+                conn.execute(text("ALTER TABLE trades ADD COLUMN source VARCHAR(20) DEFAULT 'strategy'"))
                 conn.commit()
             # logger removed - pass via constructor if needed

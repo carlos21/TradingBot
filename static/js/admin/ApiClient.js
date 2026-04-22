@@ -91,6 +91,17 @@ export class ApiClient {
     return this.get(`/api/lines?pair=${this.pair}`);
   }
 
+  async getDecisionLogs(event = '', lineId = '', limit = 500) {
+    let url = `/api/admin/decisions?pair=${this.pair}&limit=${limit}`;
+    if (event) url += `&event=${encodeURIComponent(event)}`;
+    if (lineId) url += `&line_id=${encodeURIComponent(lineId)}`;
+    return this.get(url);
+  }
+
+  async getDecisionEvents() {
+    return this.get('/api/admin/decisions/events');
+  }
+
   async addLine(price) {
     return this.post('/api/lines', { pair: this.pair, price });
   }

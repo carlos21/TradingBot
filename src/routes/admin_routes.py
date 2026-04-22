@@ -47,3 +47,17 @@ def register_admin_routes(
         if not pair:
             abort(400, "Query param 'pair' is required")
         return admin_controller.get_analytics(pair)
+
+    @app.route('/api/admin/decisions', methods=['GET'])
+    def admin_decisions():
+        pair = request.args.get('pair')
+        if not pair:
+            abort(400, "Query param 'pair' is required")
+        event = request.args.get('event') or None
+        line_id = request.args.get('line_id') or None
+        limit = request.args.get('limit', 500, type=int)
+        return admin_controller.get_decision_logs(pair, event, line_id, limit)
+
+    @app.route('/api/admin/decisions/events', methods=['GET'])
+    def admin_decision_events():
+        return admin_controller.get_decision_events()

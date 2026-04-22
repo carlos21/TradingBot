@@ -96,7 +96,8 @@ class TradesController:
         
         trade = self.trade_manager.open_trade(
             pair, trade_type, entry_price,
-            stop_loss, take_profit, risk, entry_time, self.rr_ratio
+            stop_loss, take_profit, risk, entry_time, self.rr_ratio,
+            source="manual"
         )
         return jsonify(trade), 201
     
@@ -131,7 +132,8 @@ class TradesController:
 
         trade = self.trade_manager.open_trade(
             pair, trade_type, entry_price,
-            stop_loss, take_profit, risk, entry_time, rr_ratio
+            stop_loss, take_profit, risk, entry_time, rr_ratio,
+            source="test"
         )
 
         # Send the actual ZMQ command to NinjaTrader

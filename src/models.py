@@ -47,6 +47,7 @@ class TradeData:
     pnl_usd: Optional[float]
     params: Optional[Dict[str, Any]]
     logs: Optional[List[Dict[str, str]]] = field(default=None)
+    source: Optional[str] = field(default=None)
     created_at: datetime = field(default=None)
 
     def __hash__(self):
@@ -68,6 +69,7 @@ class TradeData:
             self.result_type,
             self.fees,
             self.pnl_usd,
+            self.source,
             self.created_at
         ))
 
@@ -93,5 +95,6 @@ class TradeData:
             self.fees         == other.fees and
             self.pnl_usd     == other.pnl_usd and
             self.params       == other.params and
+            self.source       == other.source and
             self.created_at   == other.created_at
         )

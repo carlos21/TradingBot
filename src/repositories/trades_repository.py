@@ -56,6 +56,7 @@ class SQLTradeRepository(ITradeRepository):
             pnl_usd=t.pnl_usd,
             params=t.params,
             logs=t.logs or [],
+            source=t.source,
             created_at=self._ensure_utc(t.created_at),
         )
 
@@ -72,6 +73,7 @@ class SQLTradeRepository(ITradeRepository):
         risk_dollars: Optional[float] = None,
         risk_pct: Optional[float] = None,
         contracts: Optional[float] = None,
+        source: Optional[str] = None,
     ) -> TradeData:
         with get_db_session() as db:
             t = Trade(
@@ -86,7 +88,8 @@ class SQLTradeRepository(ITradeRepository):
                 risk_pct=risk_pct,
                 contracts=contracts,
                 entry_time=entry_time,
-                params=params or {}
+                params=params or {},
+                source=source,
             )
             db.add(t)
             try:

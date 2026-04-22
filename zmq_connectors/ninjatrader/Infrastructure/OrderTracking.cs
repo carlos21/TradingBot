@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 using System.Collections.Generic;
+using System.Linq;
 using NinjaTrader.Cbi;
 
 namespace NinjaTrader.NinjaScript.AddOns
@@ -21,6 +22,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly Dictionary<string, PendingEntryInfo> _pendingEntries = new Dictionary<string, PendingEntryInfo>();
         private readonly Dictionary<string, PendingModifyInfo> _pendingModifies = new Dictionary<string, PendingModifyInfo>();
         private readonly Dictionary<string, string> _atmStrategies = new Dictionary<string, string>();  // tradeId -> ATM strategy name
+        private readonly HashSet<string> _expectedCancellations = new HashSet<string>();  // order names we expect to be cancelled
         private readonly object _lock = new object();
         
         public bool IsRestored { get; private set; } = false;
@@ -171,6 +173,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _pendingEntries.Clear();
                 _pendingModifies.Clear();
                 _atmStrategies.Clear();
+                _expectedCancellations.Clear();
             }
         }
 
@@ -183,6 +186,24 @@ namespace NinjaTrader.NinjaScript.AddOns
                 foreach (var id in _entryOrders.Keys) ids.Add(id);
                 return ids;
             }
+        }
+
+        public void ExpectCancellation(string orderName)
+        {
+            if (orderName == null) throw new System.ArgumentNullException(nameof(orderName));
+            lock (_lock) _expectedCancellations.Add(orderName);
+        }
+
+        public bool IsExpectedCancellation(string orderName)
+        {
+            if (orderName == null) return false;
+            lock (_lock) return _expectedCancellations.Contains(orderName);
+        }
+
+        public void RemoveExpectedCancellation(string orderName)
+        {
+            if (orderName == null) return;
+            lock (_lock) _expectedCancellations.Remove(orderName);
         }
 
         public void TrackAtmStrategy(string tradeId, string atmStrategyName)
@@ -231,7 +252,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 int targetCount = 0;
                 int closeCount = 0;
 
-                foreach (var order in account.Orders)
+                // Snapshot to avoid collection-modified-during-enumeration
+                var orders = account.Orders.ToArray();
+                foreach (var order in orders)
                 {
                     // Try to extract trade_id from order name (e.g., "Entry_trade-123" -> "trade-123")
                     string tradeId = ExtractTradeIdFromOrderName(order.Name);

@@ -5,6 +5,7 @@ from src.types import (
     Direction,
     ResultType,
     TimeFrame,
+    TradeSource,
 )
 
 
@@ -136,3 +137,25 @@ class TestDirectionInConditionals:
         """Direction can be compared to its string value."""
         assert Direction.LONG.value == "long"
         assert Direction.SHORT.value == "short"
+
+
+class TestTradeSource:
+    def test_enum_values(self):
+        assert TradeSource.STRATEGY.value == "strategy"
+        assert TradeSource.MANUAL.value == "manual"
+        assert TradeSource.TEST.value == "test"
+        assert TradeSource.BROKER_SYNC.value == "broker_sync"
+
+    def test_from_string(self):
+        assert TradeSource.from_string("strategy") == TradeSource.STRATEGY
+        assert TradeSource.from_string("manual") == TradeSource.MANUAL
+        assert TradeSource.from_string("test") == TradeSource.TEST
+        assert TradeSource.from_string("broker_sync") == TradeSource.BROKER_SYNC
+
+    def test_from_string_invalid(self):
+        with pytest.raises(ValueError, match="Invalid trade source"):
+            TradeSource.from_string("unknown")
+
+    def test_str(self):
+        assert str(TradeSource.STRATEGY) == "strategy"
+        assert str(TradeSource.MANUAL) == "manual"

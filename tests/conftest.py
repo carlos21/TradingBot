@@ -99,6 +99,7 @@ def make_strategy(
     min_cross_depth=5.0,
     trade_logger=None,
     logger=None,
+    decision_log_repository=None,
 ):
     return LiquidityStrategyV2(
         min_stop_loss=min_stop_loss,
@@ -120,6 +121,7 @@ def make_strategy(
         point_value=2.0,
         account_balance=100000.0,
         logger=logger or FakeLogger(),
+        decision_log_repository=decision_log_repository,
     )
 
 

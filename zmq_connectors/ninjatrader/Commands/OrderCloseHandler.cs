@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 using System;
+using System.Linq;
 using Newtonsoft.Json.Linq;
 using NinjaTrader.Cbi;
 
@@ -43,6 +44,26 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (_account == null)
                     throw new InvalidOperationException("No account available");
 
+                // Guard: if trade is not tracked, it may already be closed
+                bool hasTrackedEntry = _orderTracker.TryGetEntry(tradeId, out _);
+                bool hasTrackedStop = _orderTracker.TryGetStopLoss(tradeId, out _);
+                bool hasTrackedTarget = _orderTracker.TryGetTakeProfit(tradeId, out _);
+                if (!hasTrackedEntry && !hasTrackedStop && !hasTrackedTarget)
+                {
+                    _logger.Warning($"[Close:{tradeId}] Trade not tracked — already closed or never opened. Ignoring.");
+                    _network?.SendTradeLog(tradeId, "NT:WARNING", "Close ignored: trade not tracked");
+                    return;
+                }
+
+                // Guard: prevent duplicate close orders
+                var existingClose = FindOrderByName($"Close_{tradeId}");
+                if (existingClose != null && IsWorking(existingClose))
+                {
+                    _logger.Warning($"[Close:{tradeId}] Close order already working. Ignoring duplicate.");
+                    _network?.SendTradeLog(tradeId, "NT:WARNING", "Close ignored: already working");
+                    return;
+                }
+
                 _logger.Info($">>> CLOSE ORDER START: {tradeId}");
 
                 var instrument = Instrument.GetInstrument(_instrument);
@@ -70,6 +91,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 
                 if (stopOrder != null && IsWorking(stopOrder))
                 {
+                    _orderTracker.ExpectCancellation(stopOrder.Name);
                     _account.Cancel(new[] { stopOrder });
                     _logger.Info($"[Close:{tradeId}] Cancelled stop order");
                     cancelledCount++;
@@ -77,6 +99,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 
                 if (targetOrder != null && IsWorking(targetOrder))
                 {
+                    _orderTracker.ExpectCancellation(targetOrder.Name);
                     _account.Cancel(new[] { targetOrder });
                     _logger.Info($"[Close:{tradeId}] Cancelled target order");
                     cancelledCount++;
@@ -155,7 +178,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (_account == null || string.IsNullOrEmpty(orderName)) return null;
             
-            foreach (var order in _account.Orders)
+            // Snapshot to avoid collection-modified-during-enumeration
+            var orders = _account.Orders.ToArray();
+            foreach (var order in orders)
             {
                 if (order.Name == orderName)
                     return order;

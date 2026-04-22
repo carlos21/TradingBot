@@ -22,6 +22,7 @@ from src.financial_calc import FinancialCalc
 from src.strategies.base_liquidity_strategy import StrategyOptions
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
+from src.repositories.decision_log_repository import DecisionLogRepository
 from src.repositories.line_trigger_state_repository import LineTriggerStateRepository, InMemoryLineTriggerStateRepository
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
@@ -45,10 +46,13 @@ class Repositories:
     lines: LineRepository
     trades: TradeRepository
     trigger_state: LineTriggerStateRepository = None
+    decision_logs: DecisionLogRepository = None
 
     def __post_init__(self):
         if self.trigger_state is None:
             self.trigger_state = InMemoryLineTriggerStateRepository()
+        if self.decision_logs is None:
+            self.decision_logs = DecisionLogRepository()
 
 
 @dataclass
@@ -354,6 +358,7 @@ def create_app(
                         risk=risk,
                         entry_time=entry_time,
                         rr_ratio=rr_ratio,
+                        source="broker_sync",
                     )
                     # Override contracts to match broker quantity
                     for ot in trade_manager.open_trades:
@@ -429,6 +434,7 @@ def create_app(
         analytics       = analytics,
         trigger_state_repo = repos.trigger_state,
         logger          = logger,
+        decision_log_repository = repos.decision_logs,
     )
 
     # Create bar callbacks based on mode
@@ -462,7 +468,7 @@ def create_app(
     
     # Initialize analytics service and admin controller
     analytics_service = AnalyticsService(repos.trades)
-    admin_controller = AdminController(analytics_service, repos.lines, logger=logger)
+    admin_controller = AdminController(analytics_service, repos.lines, logger=logger, decision_log_repository=repos.decision_logs)
 
     # Optionally load any preexisting lines from repo into the in-memory strategy
     if bootstrap_existing_lines:
