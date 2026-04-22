@@ -493,6 +493,11 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
             result = _check_tsi_condition(strategy, line_id, line, bar, lvl, dir_, cond, config.post_cross1_max_dist)
             if result is not None:
                 return result
+        # None of the conditions fired — log why
+        conds_str = " OR ".join(f"{c.timeframe}×{c.count}" for c in regime_conditions)
+        strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TRIGGER_SKIP",
+            f"VAT {regime_label}: no TSI cross for [{conds_str}]",
+            trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_))
         return None
 
     trigger.__name__ = "velocity_adaptive_tsi_trigger"

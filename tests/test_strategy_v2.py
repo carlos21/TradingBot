@@ -200,8 +200,54 @@ class TestCreationTimestamp:
         strat.add_strategy_line("L1", 100.0, creation_timestamp=500)
         bar = make_bar(time=100, close=97, pair="NQ")
         strat.on_raw_bar(bar)
-        # Direction should still be None since bar time < creation_ts
+
+
+class TestLatchPending:
+
+    def test_latch_pending_when_depth_insufficient(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm, min_cross_depth=5.0)
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
+        # Price goes below but high only touches 101 (1pt above line) — depth < 5
+        bar1 = make_bar(time=60, open_=99, high=101, low=98, close=98, pair="NQ")
+        strat.on_raw_bar(bar1)
+        line = strat.strategy_lines["L1"]
+        assert line["direction"] is None
+        assert line.get("_pending_dir") == "short"
+        # Should have a LATCH_PENDING decision log
+        pending_logs = [d for d in strat.decision_logs if d["event"] == "LATCH_PENDING"]
+        assert len(pending_logs) == 1
+        assert pending_logs[0]["direction"] == "short"
+        assert "depth=" in pending_logs[0]["reason"]
+
+    def test_latch_pending_long_when_depth_insufficient(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm, min_cross_depth=5.0)
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
+        # Price goes above but low only touches 99 (1pt below line) — depth < 5
+        bar1 = make_bar(time=60, open_=101, high=102, low=99, close=101, pair="NQ")
+        strat.on_raw_bar(bar1)
+        line = strat.strategy_lines["L1"]
+        assert line["direction"] is None
+        pending_logs = [d for d in strat.decision_logs if d["event"] == "LATCH_PENDING"]
+        assert len(pending_logs) == 1
+        assert pending_logs[0]["direction"] == "long"
+
+    def test_latch_after_pending_depth_accumulates(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm, min_cross_depth=5.0)
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
+        # First bar: high=101 (depth=1) -> pending
+        bar1 = make_bar(time=60, open_=99, high=101, low=98, close=98, pair="NQ")
+        strat.on_raw_bar(bar1)
         assert strat.strategy_lines["L1"]["direction"] is None
+        # Second bar: high=106 (depth=6) -> latch
+        bar2 = make_bar(time=120, open_=98, high=106, low=97, close=97, pair="NQ")
+        strat.on_raw_bar(bar2)
+        assert strat.strategy_lines["L1"]["direction"] == "short"
+        latch_logs = [d for d in strat.decision_logs if d["event"] == "LATCH"]
+        assert len(latch_logs) == 1
+        assert latch_logs[0]["direction"] == "short"
 
 
 class TestMultiTimeframeAggregation:

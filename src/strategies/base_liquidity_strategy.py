@@ -93,6 +93,7 @@ class BaseLiquidityStrategy:
         analytics: AnalyticsReporter = None,
         trigger_state_repo: LineTriggerStateRepository = None,
         logger: ILogger = None,
+        decision_log_repository=None,
     ):
         self.min_stop_loss = float(min_stop_loss)
         self.logger = logger
@@ -118,6 +119,7 @@ class BaseLiquidityStrategy:
         self.analytics = analytics or NoOpReporter()
         self.sl_level_tolerance = float(sl_level_tolerance)
         self.trigger_state_repo: LineTriggerStateRepository = trigger_state_repo or InMemoryLineTriggerStateRepository()
+        self.decision_log_repository = decision_log_repository
 
         self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
         self.open_trades: List[Dict[str, Any]] = []
@@ -145,7 +147,10 @@ class BaseLiquidityStrategy:
 
     # ----- Decision log (no-op; subclass LiquidityStrategyV2 overrides this) -----
 
-    def log_decision(self, bar_time: int, tf: str, line_id: str, event: str, details: str):
+    def log_decision(self, bar_time: int, tf: str, line_id: str, event: str,
+                     details: str = "", *, direction: str = None,
+                     trigger_name: str = None, filter_name: str = None,
+                     reason: str = None, extra: dict = None):
         pass  # overridden by LiquidityStrategyV2 to write to self.decision_logs
 
     # ----- Public small API for runtime tweaks -----
@@ -888,6 +893,7 @@ class BaseLiquidityStrategy:
                 "line_level": trade.get("line_level"),
                 "is_reentry": trade.get("is_reentry", False),
             },
+            source="strategy",
             risk_dollars=trade.get("risk_dollars"),
             risk_pct=trade.get("risk_pct"),
             contracts=trade.get("contracts"),

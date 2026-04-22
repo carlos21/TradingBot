@@ -113,6 +113,31 @@ class ResultType(Enum):
         raise ValueError(f"Invalid result type: {value!r}")
 
 
+class TradeSource(Enum):
+    """Trade source enumeration.
+    
+    Distinguishes how a trade was originated so filters can treat
+    manual/test trades differently from strategy-generated trades.
+    """
+    STRATEGY = "strategy"
+    MANUAL = "manual"
+    TEST = "test"
+    BROKER_SYNC = "broker_sync"
+    
+    @classmethod
+    def from_string(cls, value: str) -> "TradeSource":
+        """Create TradeSource from string."""
+        normalized = value.lower().strip()
+        for src in cls:
+            if src.value == normalized:
+                return src
+        raise ValueError(f"Invalid trade source: {value!r}")
+    
+    def __str__(self) -> str:
+        """Return string representation."""
+        return self.value
+
+
 class TimeFrame(Enum):
     """Standard timeframe enumeration.
     

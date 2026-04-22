@@ -121,7 +121,7 @@ class FakeTradeRepository:
         """Alias used by __reset_all to clear only in-memory fakes between scenarios."""
         self.clear()
 
-    def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None, risk_dollars=None, risk_pct=None, contracts=None):
+    def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None, risk_dollars=None, risk_pct=None, contracts=None, source=None):
         self._seq += 1
         trade_id = f"T{self._seq}"
 
@@ -137,7 +137,8 @@ class FakeTradeRepository:
             "risk_pct": risk_pct,
             "contracts": contracts,
             "entry_time": entry_time,
-            "params": params
+            "params": params,
+            "source": source,
         })
         return TradeData(
             trade_id=trade_id,
@@ -158,6 +159,7 @@ class FakeTradeRepository:
             fees=None,
             pnl_usd=None,
             params=params,
+            source=source,
         )
 
     def update_stop_loss(self, trade_id, new_stop_loss):
@@ -233,6 +235,7 @@ class FakeTradeRepository:
                     fees=closed_info.get('fees') if closed_info else None,
                     pnl_usd=closed_info.get('pnl_usd') if closed_info else None,
                     params=t.get('params'),
+                    source=t.get('source'),
                     created_at=datetime.utcnow()
                 )
         return None
@@ -272,6 +275,7 @@ class FakeTradeRepository:
                 fees=closed_info.get('fees') if closed_info else None,
                 pnl_usd=closed_info.get('pnl_usd') if closed_info else None,
                 params=t.get('params'),
+                source=t.get('source'),
                 created_at=datetime.utcnow()
             ))
         return results

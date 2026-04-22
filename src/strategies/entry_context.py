@@ -174,8 +174,8 @@ def rollover_filter(enabled: bool = False, timezone_str: Optional[str] = None) -
 
 def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str = "America/New_York") -> EntryFilter:
     """
-    Blocks entries if the number of trades taken TODAY (in the given timezone) >= limit.
-    Counts both open and closed trades.
+    Blocks entries if the number of strategy trades taken TODAY (in the given timezone) >= limit.
+    Counts both open and closed trades. Manual, test, and broker-sync trades are excluded.
     """
     tz = ZoneInfo(timezone_str)
 
@@ -187,9 +187,14 @@ def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str = "Amer
         # 2. Fetch all trades from repository (includes open and closed)
         all_trades = ctx.strategy.trade_repository.list_trades(ctx.bar['pair'])
 
-        # 3. Count trades that occurred on this specific day
+        # 3. Count only strategy-automated trades that occurred on this specific day
         daily_count = 0
         for t in all_trades:
+            # Skip manual, test, and broker-sync trades
+            trade_source = (t.source or "strategy").lower()
+            if trade_source in ("manual", "test", "broker_sync"):
+                continue
+
             # t.entry_time is UTC-aware datetime. Convert to strategy timezone.
             trade_local_dt = t.entry_time.astimezone(tz)
             if trade_local_dt.date() == current_day_date:

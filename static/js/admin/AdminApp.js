@@ -8,6 +8,7 @@ import { TradeHistory } from './TradeHistory.js';
 import { TradeCalendar } from './TradeCalendar.js';
 import { TradeLogs } from './TradeLogs.js';
 import { LineManager } from './LineManager.js';
+import { DecisionLogs } from './DecisionLogs.js';
 
 class AdminApp {
   constructor() {
@@ -17,6 +18,7 @@ class AdminApp {
     this.tradeCalendar = new TradeCalendar(this.api);
     this.tradeLogs = new TradeLogs(this.api);
     this.lineManager = new LineManager(this.api);
+    this.decisionLogs = new DecisionLogs(this.api);
     
     this.currentTab = 'overview';
     this.analyticsData = null;
@@ -57,6 +59,9 @@ class AdminApp {
       
       // Set up view toggle buttons
       this.setupViewToggle();
+      
+      // Set up decision logs filters
+      this.decisionLogs.bindFilters();
       
       // Set up test button
       document.getElementById('test-load-btn')?.addEventListener('click', async () => {
@@ -153,6 +158,9 @@ class AdminApp {
         break;
       case 'analytics':
         this.loadAnalyticsData();
+        break;
+      case 'decisions':
+        this.decisionLogs.load();
         break;
     }
   }

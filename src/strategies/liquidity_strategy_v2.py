@@ -43,6 +43,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         analytics=None,
         trigger_state_repo=None,
         logger: ILogger = None,
+        decision_log_repository=None,
     ):
         self.timeframes = timeframes or ["5m"]
         
@@ -82,6 +83,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             analytics=analytics,
             trigger_state_repo=trigger_state_repo,
             logger=logger,
+            decision_log_repository=decision_log_repository,
         )
 
         self.candle_config = candle_config
@@ -143,14 +145,59 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         hist = self._tf_histories.get(tf, [])
         return list(hist)[-count:] if hist else []
 
-    def log_decision(self, bar_time: int, tf: str, line_id: str, event: str, details: str):
-        self.decision_logs.append({
+    def log_decision(self, bar_time: int, tf: str, line_id: str, event: str,
+                     details: str = "", *, direction: str = None,
+                     trigger_name: str = None, filter_name: str = None,
+                     reason: str = None, extra: dict = None):
+        entry = {
             "time": bar_time,
             "tf": tf,
             "line_id": line_id,
             "event": event,
-            "details": details
-        })
+            "details": details,
+            "direction": direction,
+            "trigger_name": trigger_name,
+            "filter_name": filter_name,
+            "reason": reason,
+        }
+        self.decision_logs.append(entry)
+
+        # Persist to DB if repository available
+        if self.decision_log_repository is not None:
+            try:
+                pair = getattr(self.trade_manager, 'pair', '') or ''
+                self.decision_log_repository.add_log(
+                    bar_time=bar_time,
+                    pair=pair,
+                    tf=tf,
+                    line_id=str(line_id) if line_id is not None else None,
+                    event=event,
+                    direction=direction,
+                    trigger_name=trigger_name,
+                    filter_name=filter_name,
+                    reason=reason,
+                    details=details,
+                )
+            except Exception:
+                # Never let logging failures break trading
+                pass
+
+        # Also write to app log for real-time tailing
+        if self.logger is not None:
+            parts = [f"[DECISION] {event}"]
+            if line_id is not None:
+                parts.append(f"line={line_id}")
+            if direction:
+                parts.append(f"dir={direction}")
+            if trigger_name:
+                parts.append(f"trigger={trigger_name}")
+            if filter_name:
+                parts.append(f"filter={filter_name}")
+            if reason:
+                parts.append(f"reason={reason}")
+            if details:
+                parts.append(details)
+            self.logger.info(" | ".join(parts))
 
     def on_raw_bar(self, bar: Dict[str, Any]):
         with self.lock:
@@ -189,8 +236,15 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             line['extreme'] = line.pop('_pending_extreme')
                             line.pop('_pending_dir', None)
                             depth = pending_ext - lvl if pending_ext > lvl else 0.0
-                            self.log_decision(bar_time, "1m", sid, "LATCH", f"Latched short @ {current_price} (depth={depth:.2f})")
+                            self.log_decision(bar_time, "1m", sid, "LATCH",
+                                f"Latched short @ {current_price} (depth={depth:.2f})",
+                                direction="short", reason=f"depth={depth:.2f}")
                             self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "short", "level": lvl, "depth": depth})
+                        else:
+                            depth = pending_ext - lvl if pending_ext > lvl else 0.0
+                            self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
+                                f"Pending short @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
+                                direction="short", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
                     elif current_price > lvl:
                         # Potential long: close is above the line.
                         # Accumulate the lowest low seen while close stays above the line.
@@ -207,14 +261,22 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             line['extreme'] = line.pop('_pending_extreme')
                             line.pop('_pending_dir', None)
                             depth = lvl - pending_ext if pending_ext < lvl else 0.0
-                            self.log_decision(bar_time, "1m", sid, "LATCH", f"Latched long @ {current_price} (depth={depth:.2f})")
+                            self.log_decision(bar_time, "1m", sid, "LATCH",
+                                f"Latched long @ {current_price} (depth={depth:.2f})",
+                                direction="long", reason=f"depth={depth:.2f}")
                             self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "long", "level": lvl, "depth": depth})
+                        else:
+                            depth = lvl - pending_ext if pending_ext < lvl else 0.0
+                            self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
+                                f"Pending long @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
+                                direction="long", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
                 
                 elif line['direction'] == 'short':
                     line['extreme'] = max(line['extreme'], bar['high'])
                     if current_price > (line['level'] + self.max_bounce):
                         msg = f"Price {current_price} > {line['level'] + self.max_bounce} (Max Bounce)"
-                        self.log_decision(bar_time, "1m", sid, "REMOVE", msg)
+                        self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
+                            direction="short", reason="max_bounce")
                         self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
                         lines_to_remove.add(sid)
 
@@ -222,7 +284,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     line['extreme'] = min(line['extreme'], bar['low'])
                     if current_price < (line['level'] - self.max_bounce):
                         msg = f"Price {current_price} < {line['level'] - self.max_bounce} (Max Bounce)"
-                        self.log_decision(bar_time, "1m", sid, "REMOVE", msg)
+                        self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
+                            direction="long", reason="max_bounce")
                         self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
                         lines_to_remove.add(sid)
 
@@ -323,13 +386,23 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         break
                 
                 if proposed_ctx is None:
+                    # Log that triggers were evaluated but none fired
+                    self.log_decision(bar['time'], bar.get('tf'), sid, "TRIGGER_SKIP",
+                        f"No trigger fired for {line.get('direction')} line",
+                        direction=line.get('direction'))
                     continue
 
                 allow, reason, hold = self._filters_allow_entry(proposed_ctx)
 
+                # Extract filter name from reason string (format: "filter_name: details")
+                filter_name = None
+                if not allow and ": " in reason:
+                    filter_name = reason.split(": ")[0]
+
                 if allow:
                     self.log_decision(bar['time'], bar.get('tf'), sid, "ENTRY",
-                        f"Trigger: {trigger_name} | Dir: {proposed_ctx.direction} | Price: {proposed_ctx.close}")
+                        f"Trigger: {trigger_name} | Dir: {proposed_ctx.direction} | Price: {proposed_ctx.close}",
+                        trigger_name=trigger_name, direction=str(proposed_ctx.direction))
 
                     trade = self._build_trade_from_context(proposed_ctx)
                     trade['tf'] = bar.get('tf', '1m')
@@ -349,7 +422,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     opened = True
                 else:
                     self.log_decision(bar['time'], bar.get('tf'), sid, "FILTER_BLOCK",
-                        f"Trigger: {trigger_name} | Reason: {reason}")
+                        f"Trigger: {trigger_name} | Reason: {reason}",
+                        trigger_name=trigger_name, filter_name=filter_name, reason=reason)
                     self.analytics.capture_signal_event("FILTER_BLOCK", {
                         "line_id": sid, "trigger": trigger_name, "reason": reason,
                     })

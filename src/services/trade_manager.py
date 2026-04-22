@@ -1,6 +1,7 @@
 # src/trade_manager.py
 
 from datetime import datetime, timezone
+from typing import Optional
 from zoneinfo import ZoneInfo
 from src.repositories.trades_repository import TradeRepository
 from src.services.trade_executor import TradeExecutor, NoOpExecutor
@@ -341,7 +342,8 @@ class TradeManager:
 
     def open_trade(self, pair: str, trade_type: str, entry_price: float,
                    stop_loss: float, take_profit: float,
-                   risk: float, entry_time: float, rr_ratio: float = 5.0):
+                   risk: float, entry_time: float, rr_ratio: float = 5.0,
+                   source: Optional[str] = None):
         """
         Open a new trade with precomputed parameters.
         """
@@ -363,6 +365,7 @@ class TradeManager:
             risk_dollars=risk_dollars,
             risk_pct=risk_pct,
             contracts=contracts,
+            source=source,
         )
         trade = {
             'trade_id':   td.trade_id,

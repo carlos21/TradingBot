@@ -199,6 +199,43 @@ class TestDailyTradesLimitFilter:
         ok, _ = f(ctx)
         assert ok is True
 
+    def test_ignores_manual_and_test_trades(self):
+        f = daily_trades_limit_filter(1, "America/New_York")
+        bar_time = int(datetime(2025, 6, 15, 14, 0, tzinfo=timezone.utc).timestamp())
+        strategy = MagicMock()
+        strategy.open_trades = []
+        strategy.trade_repository = MagicMock()
+        strategy.trade_repository.list_trades.return_value = [
+            TradeData(
+                trade_id="T1", pair="NQ", trade_type="long",
+                entry_price=100, stop_loss=90, take_profit=130, risk=10,
+                risk_dollars=None, risk_pct=None, contracts=None,
+                entry_time=datetime(2025, 6, 15, 13, 0, tzinfo=timezone.utc),
+                exit_price=None, exit_time=None, result=None, result_type=None,
+                fees=None, pnl_usd=None, params=None, source="test",
+            ),
+            TradeData(
+                trade_id="T2", pair="NQ", trade_type="long",
+                entry_price=100, stop_loss=90, take_profit=130, risk=10,
+                risk_dollars=None, risk_pct=None, contracts=None,
+                entry_time=datetime(2025, 6, 15, 13, 0, tzinfo=timezone.utc),
+                exit_price=None, exit_time=None, result=None, result_type=None,
+                fees=None, pnl_usd=None, params=None, source="manual",
+            ),
+            TradeData(
+                trade_id="T3", pair="NQ", trade_type="long",
+                entry_price=100, stop_loss=90, take_profit=130, risk=10,
+                risk_dollars=None, risk_pct=None, contracts=None,
+                entry_time=datetime(2025, 6, 15, 13, 0, tzinfo=timezone.utc),
+                exit_price=None, exit_time=None, result=None, result_type=None,
+                fees=None, pnl_usd=None, params=None, source="broker_sync",
+            ),
+        ]
+        ctx = _make_ctx(strategy=strategy, bar_time=bar_time)
+        ok, reason = f(ctx)
+        assert ok is True, f"Expected allow but got: {reason}"
+        assert "daily_count 0" in reason
+
 
 class TestRolloverFilter:
 
