@@ -14,20 +14,30 @@ class SQLiteLineTriggerStateRepository(ILineTriggerStateRepository):
     """SQL-based trigger state repository."""
 
     def save(self, line_id: str, pair: str, state: Dict[str, Any]) -> None:
-        from src.database.database import get_db_session, LineTriggerState as _ORM
+        import json
+        from sqlalchemy import text
+        from src.database.database import get_db_session
         now = datetime.now(timezone.utc)
         with get_db_session() as db:
-            existing = db.query(_ORM).filter_by(line_id=line_id).first()
-            if existing:
-                existing.state_json = dict(state)
-                existing.updated_at = now
-            else:
-                db.add(_ORM(
-                    line_id=line_id,
-                    pair=pair,
-                    state_json=dict(state),
-                    updated_at=now,
-                ))
+            # Use INSERT OR REPLACE to avoid SELECT-then-UPDATE race conditions
+            db.execute(
+                text(
+                    """
+                    INSERT INTO line_trigger_state (line_id, pair, state_json, updated_at)
+                    VALUES (:line_id, :pair, :state_json, :updated_at)
+                    ON CONFLICT(line_id) DO UPDATE SET
+                        pair = excluded.pair,
+                        state_json = excluded.state_json,
+                        updated_at = excluded.updated_at
+                    """
+                ),
+                {
+                    "line_id": line_id,
+                    "pair": pair,
+                    "state_json": json.dumps(state),
+                    "updated_at": now.isoformat(),
+                },
+            )
             try:
                 db.commit()
             except Exception as e:

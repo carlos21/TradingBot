@@ -189,7 +189,10 @@ class BaseLiquidityStrategy:
     def remove_strategy_line(self, id: Any):
         with self.lock:
             self.strategy_lines.pop(id, None)
-        self.trigger_state_repo.delete(str(id))
+            try:
+                self.trigger_state_repo.delete(str(id))
+            except Exception as e:
+                self.logger.warning(f"[RemoveLine] Failed to delete trigger state for {id}: {e}")
         try:
             self.line_repository.delete_line(id)
         except DBNotFoundException:
@@ -210,7 +213,12 @@ class BaseLiquidityStrategy:
         with self.lock:
             items = list(self.strategy_lines.items())
         for line_id, state in items:
-            self.trigger_state_repo.save(str(line_id), pair, state)
+            try:
+                self.trigger_state_repo.save(str(line_id), pair, state)
+            except Exception as e:
+                self.logger.warning(
+                    f"[PersistState] Failed to save trigger state for {line_id}: {type(e).__name__}: {e}"
+                )
 
     def restore_trigger_states(self, pair: str):
         """Overlay persisted trigger states onto bootstrapped lines."""
