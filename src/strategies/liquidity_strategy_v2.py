@@ -386,10 +386,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         break
                 
                 if proposed_ctx is None:
-                    # Log that triggers were evaluated but none fired
-                    self.log_decision(bar['time'], bar.get('tf'), sid, "TRIGGER_SKIP",
-                        f"No trigger fired for {line.get('direction')} line",
-                        direction=line.get('direction'))
                     continue
 
                 allow, reason, hold = self._filters_allow_entry(proposed_ctx)
