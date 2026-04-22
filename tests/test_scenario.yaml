@@ -1,11 +1,11 @@
 scenarios:
-  - name: "NQ - 2026-04-20"
+  - name: "NQ - 2026-04-21"
     pair: "NQ"
     tf: "5m"
-    start: "2026-04-20 06:00:00Z"
-    end:   "2026-04-20 16:00:00Z"
+    start: "2026-04-21 06:00:00Z"
+    end:   "2026-04-21 16:00:00Z"
     lines:
-      - { price: 26754.75, at: "2026-04-20 06:00:00Z" }
+      - { price: 26883.25, at: "2026-04-21 01:00:00Z" }
     expect:
       none: true
     show_tsi: false
