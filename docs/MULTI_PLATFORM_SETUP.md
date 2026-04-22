@@ -96,7 +96,7 @@ export LOG_DIR="logs/gbp_meta"
 export FLASK_PORT=5004
 export ZMQ_MARKET_PORT=5575
 export ZMQ_COMMAND_PORT=5576
-export ZMQ_QUERY_PORT=5577
+export ZMQ_QUERY_PORT=5567
 export ZMQ_HEARTBEAT_PORT=5578
 ./bin/start_mt.sh
 ```
@@ -122,36 +122,52 @@ MetaTrader 5/MQL5/Include/Zmq/
 
 ### 2. Install the EA
 
-Copy the EA to your MetaTrader 5:
+Copy all connector files to your MetaTrader 5:
 
 ```bash
+# Create directory
+mkdir -p "~/MetaTrader 5/MQL5/Experts/TradingBot"
+
+# Copy main EA and all include files
 cp zmq_connectors/metatrader/TradingBotZmqEA.mq5 \
+   zmq_connectors/metatrader/**/*.mqh \
    "~/MetaTrader 5/MQL5/Experts/TradingBot/"
 ```
 
-### 3. Compile the EA
+### 3. Create Config File (optional)
+
+Copy the example config and customize it:
+
+```bash
+cp zmq_connectors/metatrader/TradingBotZmqConfig.example.json \
+   "~/MetaTrader 5/MQL5/Files/TradingBotZmqConfig.json"
+```
+
+Edit `TradingBotZmqConfig.json` to set ports, pair, history days, etc. If the config file is missing, the EA uses its input parameters as fallback.
+
+### 4. Compile the EA
 
 Open MetaEditor, load `TradingBotZmqEA.mq5`, and press **F7** to compile.
 
-### 4. Attach to Chart
+### 5. Attach to Chart
 
 1. Open a chart for your desired symbol (e.g., EURUSD)
 2. Drag `TradingBotZmqEA` onto the chart
 3. In the inputs tab, set the ZMQ ports to match your Python instance:
    - `InpMarketPort` = `5565`
    - `InpCommandPort` = `5566`
-   - `InpQueryPort` = `5577`
-   - `InpHeartbeatPort` = `5578`
+   - `InpQueryPort` = `5567`
+   - `InpHeartbeatPort` = `5568`
 4. Click **OK**
 
-The EA will connect to the Python instance automatically.
+The EA auto-connects on startup. Check the `Experts` tab for connection logs.
 
 ### 5. Verify Connection
 
 Check the Python logs (`logs/meta/app_YYYY-MM-DD.log`) for:
 
 ```
-[meta] [INFO] Platform connected: metatrader5 v1.0 | Pair: EURUSD | Account: ...
+[meta] [INFO] Platform connected: metatrader5 v2.0 | Pair: EURUSD | Account: ...
 [meta] [INFO] History complete: N bars cached, switching to LIVE mode
 ```
 

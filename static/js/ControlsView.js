@@ -12,6 +12,7 @@ export class ControlsView {
     this.tfButtons = Array.from(document.querySelectorAll('[data-timeframe]'));
     this.testLongBtn = document.getElementById('testLongBtn');
     this.testShortBtn = document.getElementById('testShortBtn');
+    this.closeAllBtn = document.getElementById('closeAllBtn');
     this.testTradeControls = document.getElementById('testTradeControls');
 
     this._bindReplayEvents();
@@ -64,7 +65,7 @@ export class ControlsView {
         const resp = await fetch('/api/trades/test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pair: 'NQ', direction: 'long' })
+          body: JSON.stringify({ pair: this.chartViewer.pair, direction: 'long' })
         });
         const contentType = resp.headers.get('content-type') || '';
         let data = {};
@@ -88,7 +89,7 @@ export class ControlsView {
         const resp = await fetch('/api/trades/test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pair: 'NQ', direction: 'short' })
+          body: JSON.stringify({ pair: this.chartViewer.pair, direction: 'short' })
         });
         const contentType = resp.headers.get('content-type') || '';
         let data = {};
@@ -106,6 +107,38 @@ export class ControlsView {
         alert('Error: ' + err.message);
       }
     });
+
+    if (this.closeAllBtn) {
+      this.closeAllBtn.addEventListener('click', async () => {
+        try {
+          const resp = await fetch('/api/trades/close-all', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pair: this.chartViewer.pair })
+          });
+          const contentType = resp.headers.get('content-type') || '';
+          let data = {};
+          if (contentType.includes('application/json')) {
+            data = await resp.json();
+          } else {
+            data = { error: (await resp.text()).trim() || resp.statusText };
+          }
+          if (resp.ok) {
+            const count = data.count || 0;
+            const failed = data.failed || [];
+            let msg = `Close All sent. ${count} trade(s) closed.`;
+            if (failed.length > 0) {
+              msg += `\nFailed: ${failed.map(f => f.trade_id).join(', ')}`;
+            }
+            alert(msg);
+          } else {
+            alert('Failed: ' + (data.error || resp.statusText));
+          }
+        } catch (err) {
+          alert('Error: ' + err.message);
+        }
+      });
+    }
   }
 
   _applyLiveMode() {

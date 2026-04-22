@@ -59,6 +59,14 @@ def register_trades_routes(
     def close_trade(trade_id):
         return trades_controller.close_trade(trade_id)
 
+    @app.route('/api/trades/close-all', methods=['POST'])
+    def close_all_trades():
+        data = request.get_json() or {}
+        req_pair = data.get('pair')
+        if not isinstance(req_pair, str):
+            abort(400, '"pair" must be a string')
+        return trades_controller.close_all_trades(req_pair)
+
     @app.route('/api/trades/<string:trade_id>/logs', methods=['GET'])
     def get_trade_logs(trade_id):
         fmt = request.args.get('format', 'json')

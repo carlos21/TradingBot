@@ -291,24 +291,86 @@ def create_app(
             Broker (NinjaTrader) is the source of truth. If there's a mismatch,
             we update Python's state to match the broker.
             """
+            from datetime import datetime, timezone
             positions = payload.get('positions', [])
             broker_trade_ids = {p['trade_id'] for p in positions}
             
-            # Find trades Python thinks are open but broker doesn't have
-            for trade in list(trade_manager.open_trades):
-                if trade['trade_id'] not in broker_trade_ids:
-                    logger.warning(f"[PositionSync] Trade {trade['trade_id']} not found on broker - closing in Python")
-                    trade_manager.close_trade(
-                        trade_id=trade['trade_id'],
-                        exit_price=trade['entry'],  # Assume flat
-                        exit_time=time.time(),
-                    )
-            
-            # Log any broker positions Python doesn't know about
+            # ------------------------------------------------------------------
+            # 1. Broker has positions Python doesn't know about → CREATE them
+            # ------------------------------------------------------------------
             python_trade_ids = {t['trade_id'] for t in trade_manager.open_trades}
             for pos in positions:
-                if pos['trade_id'] not in python_trade_ids:
-                    logger.warning(f"[PositionSync] Broker has position {pos['trade_id']} that Python doesn't know about")
+                trade_id = pos['trade_id']
+                if trade_id in python_trade_ids:
+                    continue
+
+                # Check DB — trade might exist but wasn't loaded (shouldn't happen)
+                db_trade = repos.trades.get_trade(trade_id)
+                if db_trade and db_trade.exit_time is None:
+                    logger.error(f"[PositionSync] CRITICAL: Trade {trade_id} is open in DB but missing from open_trades — adding back")
+                    trade_manager.open_trades.append({
+                        'trade_id': db_trade.trade_id,
+                        'pair': db_trade.pair,
+                        'type': db_trade.trade_type,
+                        'entry': db_trade.entry_price,
+                        'stop_loss': db_trade.stop_loss,
+                        'take_profit': db_trade.take_profit,
+                        'risk': db_trade.risk,
+                        'risk_dollars': db_trade.risk_dollars,
+                        'risk_pct': db_trade.risk_pct,
+                        'contracts': db_trade.contracts,
+                        'status': 'open',
+                        'entry_time': db_trade.entry_time.timestamp(),
+                    })
+                    continue
+
+                if db_trade and db_trade.exit_time is not None:
+                    logger.error(f"[PositionSync] DISCREPANCY: Broker has open position {trade_id} but DB shows it closed at {db_trade.exit_time}. Re-opening from broker data.")
+
+                # Create trade from broker data so session-end close can manage it
+                direction = pos.get('direction', 'long')
+                entry_price = float(pos.get('entry_price', 0))
+                stop_loss = pos.get('stop_loss')
+                take_profit = pos.get('take_profit')
+                quantity = float(pos.get('quantity', 1))
+
+                # Use broker SL/TP if available, otherwise sensible defaults
+                if stop_loss is None:
+                    stop_loss = entry_price - 20.0 if direction == 'long' else entry_price + 20.0
+                if take_profit is None:
+                    take_profit = entry_price + 100.0 if direction == 'long' else entry_price - 100.0
+
+                risk = abs(entry_price - stop_loss)
+                entry_time = time.time()
+                rr_ratio = numbers.rr_ratio if 'numbers' in dir() else 5.0
+
+                try:
+                    trade = trade_manager.open_trade(
+                        pair=pair,
+                        trade_type=direction,
+                        entry_price=entry_price,
+                        stop_loss=stop_loss,
+                        take_profit=take_profit,
+                        risk=risk,
+                        entry_time=entry_time,
+                        rr_ratio=rr_ratio,
+                    )
+                    # Override contracts to match broker quantity
+                    for ot in trade_manager.open_trades:
+                        if ot['trade_id'] == trade['trade_id']:
+                            ot['contracts'] = quantity
+                    logger.info(f"[PositionSync] Created trade {trade['trade_id']} from broker position {trade_id} ({direction} @ {entry_price}, qty={quantity})")
+                except Exception as e:
+                    logger.error(f"[PositionSync] Failed to create trade from broker position {trade_id}: {e}")
+
+            # ------------------------------------------------------------------
+            # 2. Python has trades broker doesn't report → log, but DON'T auto-close
+            #    on the first sync.  Broker tracking may still be restoring.
+            # ------------------------------------------------------------------
+            python_trade_ids = {t['trade_id'] for t in trade_manager.open_trades}
+            for trade in list(trade_manager.open_trades):
+                if trade['trade_id'] not in broker_trade_ids:
+                    logger.warning(f"[PositionSync] Trade {trade['trade_id']} not reported by broker. Keeping open in Python — will retry at session end.")
             
             logger.info(f"[PositionSync] Reconciliation complete: {len(positions)} broker position(s), {len(trade_manager.open_trades)} Python position(s)")
         

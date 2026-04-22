@@ -1,76 +1,166 @@
 //+------------------------------------------------------------------+
 //|                                      TradingBotZmqEA.mq5         |
 //|  ZeroMQ connector for MetaTrader 5 → Python TradingBot           |
-//|  Uses the same JSON protocol as the NinjaTrader connector        |
+//|  SOLID architecture, clean dependency injection, feature parity  |
+//|  with NinjaTrader connector.                                     |
 //+------------------------------------------------------------------+
 #property copyright "TradingBot"
 #property link      ""
-#property version   "1.00"
+#property version   "2.00"
 #property strict
 
 #include <Zmq/Zmq.mqh>
+#include <JSON/JSON.mqh>
 
-//--- Input Parameters
+#include "Domain/Contracts.mqh"
+#include "Domain/MessageTypes.mqh"
+#include "Domain/ValueObjects.mqh"
+#include "Domain/TickRateLimiter.mqh"
+#include "Infrastructure/ConfigLoader.mqh"
+#include "Infrastructure/Logger.mqh"
+#include "Infrastructure/Serializers.mqh"
+#include "Infrastructure/OrderTracking.mqh"
+#include "Application/ZmqNetwork.mqh"
+#include "Application/CommandDispatcher.mqh"
+#include "Application/E2ETestRunner.mqh"
+#include "Application/HistoryProvider.mqh"
+#include "Commands/OrderOpenHandler.mqh"
+#include "Commands/OrderCloseHandler.mqh"
+#include "Commands/OrderModifyHandler.mqh"
+#include "Commands/RefreshRequestHandler.mqh"
+#include "Commands/TestStartHandler.mqh"
+
+//--- Input Parameters (fallback if config file missing)
 input string   InpHost            = "127.0.0.1";
-input int      InpMarketPort      = 5565;    // PUB: market data → Python
-input int      InpCommandPort     = 5566;    // PULL: commands ← Python
-input int      InpQueryPort       = 5567;    // REP: queries ← Python
-input int      InpHeartbeatPort   = 5568;    // PUB: heartbeats → Python
+input int      InpMarketPort      = 5565;
+input int      InpCommandPort     = 5566;
+input int      InpQueryPort       = 5567;
+input int      InpHeartbeatPort   = 5568;
 input string   InpPair            = "EURUSD";
 input int      InpHistoryDays     = 1;
 input int      InpHeartbeatSec    = 5;
 input ulong    InpMagicNumber     = 424242;
 
-//--- ZMQ Objects
-Context   zmqContext;
-Socket    *marketSocket;     // PUB
-Socket    *commandSocket;    // PULL
-Socket    *querySocket;      // REP
-Socket    *heartbeatSocket;  // PUB
+//--- Dependencies (injected)
+ZmqConfiguration   *_config;
+MetaTraderLogger   *_logger;  // Concrete type for panel access; upcasts to ILogger*
+IMessageSerializer *_serializer;
+IOrderTracker      *_orderTracker;
+IZmqNetwork        *_network;
+ICommandDispatcher *_dispatcher;
+IRateLimiter       *_tickRateLimiter;
+IRateLimiter       *_partialBarRateLimiter;
+IHistoryProvider   *_historyProvider;
+
+//--- Command handlers (tracked for cleanup)
+OrderOpenHandler     *_handlerOpen;
+OrderCloseHandler    *_handlerClose;
+OrderModifyHandler   *_handlerModify;
+RefreshRequestHandler *_handlerRefresh;
+TestStartHandler     *_handlerTest;
 
 //--- State
-long      _seqNum = 0;
-datetime  _lastHeartbeat = 0;
-bool      _connected = false;
+bool               _connected = false;
+long               _seqNum = 0;
+datetime           _lastBarTime = 0;
+int                _heartbeatCounter = 0;
 
-//--- Trade tracking: trade_id → ticket
-struct TradeMapping { string trade_id; ulong ticket; };
-TradeMapping _tradeMap[];
+//--- Stats
+long               _ticksSent = 0;
+long               _barsSent = 0;
+long               _partialBarsSent = 0;
+long               _commandsReceived = 0;
+
+//--- Duplicate detection
+long               _processedSeqNums[];
+const int          MAX_TRACKED_SEQ_NUMS = 1000;
+
+//--- Deal tracking (for OnTrade fill detection)
+ulong              _processedDeals[];
+const int          MAX_TRACKED_DEALS = 1000;
+
+//--- Pending refresh flag
+bool               _pendingHistoryRefresh = false;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
 {
-   zmqContext = new Context();
-   
-   // Python binds, MT connects
-   string marketAddr     = StringFormat("tcp://%s:%d", InpHost, InpMarketPort);
-   string commandAddr    = StringFormat("tcp://%s:%d", InpHost, InpCommandPort);
-   string queryAddr      = StringFormat("tcp://%s:%d", InpHost, InpQueryPort);
-   string heartbeatAddr  = StringFormat("tcp://%s:%d", InpHost, InpHeartbeatPort);
-   
-   marketSocket    = new Socket(zmqContext, ZMQ_PUB);
-   commandSocket   = new Socket(zmqContext, ZMQ_PULL);
-   querySocket     = new Socket(zmqContext, ZMQ_REP);
-   heartbeatSocket = new Socket(zmqContext, ZMQ_PUB);
-   
-   marketSocket.connect(marketAddr);
-   commandSocket.connect(commandAddr);
-   querySocket.connect(queryAddr);
-   heartbeatSocket.connect(heartbeatAddr);
-   
-   // Send initial connect message
-   SendConnect();
-   
-   // Send historical bars
-   SendHistory();
-   
-   Print("[ZMQ] MetaTrader EA connected to ", InpHost);
-   Print("[ZMQ] Market: ", marketAddr, " | Commands: ", commandAddr);
-   
+   // 1. Load configuration (file overrides inputs)
+   _config = new ZmqConfiguration();
+   ZmqConfiguration fileCfg = ConfigLoader::Load();
+
+   // Use inputs as fallback; file values take precedence
+   _config.host = (StringLen(fileCfg.host) > 0) ? fileCfg.host : InpHost;
+   _config.marketPort = (fileCfg.marketPort > 0) ? fileCfg.marketPort : InpMarketPort;
+   _config.commandPort = (fileCfg.commandPort > 0) ? fileCfg.commandPort : InpCommandPort;
+   _config.queryPort = (fileCfg.queryPort > 0) ? fileCfg.queryPort : InpQueryPort;
+   _config.heartbeatPort = (fileCfg.heartbeatPort > 0) ? fileCfg.heartbeatPort : InpHeartbeatPort;
+   _config.pair = (StringLen(fileCfg.pair) > 0) ? fileCfg.pair : InpPair;
+   _config.historyDays = (fileCfg.historyDays > 0) ? fileCfg.historyDays : InpHistoryDays;
+   _config.heartbeatSec = (fileCfg.heartbeatSec > 0) ? fileCfg.heartbeatSec : InpHeartbeatSec;
+   _config.magicNumber = (fileCfg.magicNumber > 0) ? fileCfg.magicNumber : InpMagicNumber;
+
+   // 2. Create dependencies (Dependency Injection)
+   _logger = new MetaTraderLogger("[ZMQ]");
+   _serializer = new JsonMessageSerializer(_logger);
+   _orderTracker = new OrderStateManager();
+   _network = new ZmqNetwork(_config, _serializer, _logger);
+   _tickRateLimiter = new TickRateLimiter(_config.maxTicksPerSecond);
+   _partialBarRateLimiter = new TickRateLimiter(1); // 1 partial bar/sec
+   _historyProvider = new HistoryProvider(_network, _logger, _config, _Symbol);
+
+   // 3. Connect ZMQ
+   if(!_network.Start())
+   {
+      _logger.Error("Failed to start ZMQ network");
+      Cleanup();
+      return INIT_FAILED;
+   }
    _connected = true;
-   return(INIT_SUCCEEDED);
+
+   // 4. Query config from Python (account name, etc.)
+   string configuredAccount = _network.QueryConfig("account", 2000);
+   if(StringLen(configuredAccount) > 0)
+      _logger.Info("Python specified account: " + configuredAccount);
+   else
+      configuredAccount = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+
+   // 5. Send connect handshake
+   _network.SendConnect("metatrader5", _config.platformVersion, configuredAccount, _Symbol);
+   _logger.Success("Connected to Python TradingBot via ZeroMQ");
+
+   // 6. Restore order tracking from broker (crash recovery)
+   RestoreFromBroker();
+
+   // 7. Report positions to Python (source of truth sync)
+   ReportPositionsToPython();
+
+   // 8. Send historical data
+   _historyProvider.SendHistory();
+
+   // 9. Setup command dispatcher
+   _dispatcher = new CommandDispatcher(_logger);
+
+   _handlerOpen = new OrderOpenHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
+   _handlerClose = new OrderCloseHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
+   _handlerModify = new OrderModifyHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
+   _handlerRefresh = new RefreshRequestHandler(_network, _logger, _historyProvider);
+   _handlerTest = new TestStartHandler(_network, _logger);
+
+   _dispatcher.Register(_handlerOpen);
+   _dispatcher.Register(_handlerClose);
+   _dispatcher.Register(_handlerModify);
+   _dispatcher.Register(_handlerRefresh);
+   _dispatcher.Register(_handlerTest);
+
+   // 10. Start heartbeat timer (1-second granularity)
+   EventSetTimer(1);
+
+   _logger.Info("Command dispatcher ready. Handlers: open, close, modify, refresh, test");
+   UpdatePanel();
+   return INIT_SUCCEEDED;
 }
 
 //+------------------------------------------------------------------+
@@ -79,14 +169,10 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    _connected = false;
-   
-   delete marketSocket;
-   delete commandSocket;
-   delete querySocket;
-   delete heartbeatSocket;
-   delete zmqContext;
-   
-   Print("[ZMQ] MetaTrader EA disconnected");
+   EventKillTimer();
+   Sleep(100); // Let in-flight sends drain
+   Cleanup();
+   Comment(""); // Clear chart comment
 }
 
 //+------------------------------------------------------------------+
@@ -94,476 +180,360 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTick()
 {
-   MqlTick tick;
-   if(!SymbolInfoTick(_Symbol, tick)) return;
-   
-   // Send tick
-   string json = StringFormat(
-      "{\"msg_type\":\"tick\",\"timestamp\":%.3f,\"seq_num\":%I64d,\"payload\":{\"pair\":\"%s\",\"price\":%.5f,\"volume\":%I64d,\"time\":%I64d}}",
-      TimeCurrent(), ++_seqNum, InpPair, tick.last, tick.volume, tick.time
-   );
-   ZmqMsg msg(json);
-   marketSocket.send(msg);
-   
-   // Send bar on new minute
-   static datetime lastBarTime = 0;
-   datetime barTime = iTime(_Symbol, PERIOD_M1, 0);
-   if(barTime != lastBarTime && lastBarTime != 0)
-   {
-      SendBar(lastBarTime);
-   }
-   lastBarTime = barTime;
-   
-   // Heartbeat
-   if(TimeCurrent() - _lastHeartbeat >= InpHeartbeatSec)
-   {
-      SendHeartbeat();
-      _lastHeartbeat = TimeCurrent();
-   }
-   
-   // Poll for commands (non-blocking)
+   if(!_connected) return;
+
+   // 1. Send tick (rate-limited)
+   SendTickIfAllowed();
+
+   // 2. Send bar on new minute + partial bar
+   SendBarIfNew();
+
+   // 3. Poll for commands (non-blocking)
    PollCommands();
-   PollQueries();
-}
 
-//+------------------------------------------------------------------+
-//| Send initial connect message                                     |
-//+------------------------------------------------------------------+
-void SendConnect()
-{
-   string json = StringFormat(
-      "{\"msg_type\":\"connect\",\"timestamp\":%.3f,\"seq_num\":%I64d,\"payload\":{\"platform\":\"metatrader5\",\"version\":\"1.0\",\"pair\":\"%s\",\"account\":\"%I64d\"}}",
-      TimeCurrent(), ++_seqNum, InpPair, AccountInfoInteger(ACCOUNT_LOGIN)
-   );
-   ZmqMsg msg(json);
-   marketSocket.send(msg);
-}
-
-//+------------------------------------------------------------------+
-//| Send heartbeat                                                   |
-//+------------------------------------------------------------------+
-void SendHeartbeat()
-{
-   string json = StringFormat(
-      "{\"msg_type\":\"heartbeat\",\"timestamp\":%.3f,\"seq_num\":%I64d,\"payload\":{\"platform\":\"metatrader5\",\"time\":%I64d}}",
-      TimeCurrent(), ++_seqNum, TimeCurrent()
-   );
-   ZmqMsg msg(json);
-   heartbeatSocket.send(msg);
-}
-
-//+------------------------------------------------------------------+
-//| Send historical bars                                             |
-//+------------------------------------------------------------------+
-void SendHistory()
-{
-   datetime end = TimeCurrent();
-   datetime start = end - InpHistoryDays * 86400;
-   
-   int total = CopyRates(_Symbol, PERIOD_M1, start, end, _rates);
-   if(total <= 0) return;
-   
-   // Send in batches of 500
-   const int batchSize = 500;
-   for(int i = 0; i < total; i += batchSize)
+   // 4. Handle pending history refresh
+   if(_pendingHistoryRefresh)
    {
-      int endIdx = MathMin(i + batchSize, total);
-      string barsJson = "";
-      for(int j = i; j < endIdx; j++)
-      {
-         if(j > i) barsJson += ",";
-         barsJson += StringFormat(
-            "{\"time\":%I64d,\"open\":%.5f,\"high\":%.5f,\"low\":%.5f,\"close\":%.5f,\"volume\":%I64d,\"pair\":\"%s\"}",
-            _rates[j].time, _rates[j].open, _rates[j].high, _rates[j].low, _rates[j].close, _rates[j].tick_volume, InpPair
-         );
-      }
-      
-      string json = StringFormat(
-         "{\"msg_type\":\"history_batch\",\"timestamp\":%.3f,\"seq_num\":%I64d,\"payload\":{\"pair\":\"%s\",\"days\":%d,\"bars\":[%s]}}",
-         TimeCurrent(), ++_seqNum, InpPair, InpHistoryDays, barsJson
-      );
-      ZmqMsg msg(json);
-      marketSocket.send(msg);
+      _pendingHistoryRefresh = false;
+      if(_historyProvider != NULL)
+         _historyProvider.SendHistory();
    }
-   
-   // Send history_end
-   string json = StringFormat(
-      "{\"msg_type\":\"history_end\",\"timestamp\":%.3f,\"seq_num\":%I64d,\"payload\":{\"pair\":\"%s\"}}",
-      TimeCurrent(), ++_seqNum, InpPair
-   );
-   ZmqMsg msg(json);
-   marketSocket.send(msg);
+
+   // 5. Update panel periodically
+   static datetime lastPanelUpdate = 0;
+   if(TimeCurrent() - lastPanelUpdate >= 1)
+   {
+      lastPanelUpdate = TimeCurrent();
+      UpdatePanel();
+   }
 }
 
-MqlRates _rates[];
-
 //+------------------------------------------------------------------+
-//| Send completed bar                                               |
+//| Timer function (heartbeat)                                       |
 //+------------------------------------------------------------------+
-void SendBar(datetime barTime)
+void OnTimer()
 {
-   int idx = iBarShift(_Symbol, PERIOD_M1, barTime);
-   if(idx < 0) return;
-   
-   MqlRates rate[1];
-   if(CopyRates(_Symbol, PERIOD_M1, idx, 1, rate) < 1) return;
-   
-   string json = StringFormat(
-      "{\"msg_type\":\"bar\",\"timestamp\":%.3f,\"seq_num\":%I64d,\"payload\":{\"time\":%I64d,\"open\":%.5f,\"high\":%.5f,\"low\":%.5f,\"close\":%.5f,\"volume\":%I64d,\"pair\":\"%s\"}}",
-      TimeCurrent(), ++_seqNum, rate[0].time, rate[0].open, rate[0].high, rate[0].low, rate[0].close, rate[0].tick_volume, InpPair
-   );
-   ZmqMsg msg(json);
-   marketSocket.send(msg);
+   if(!_connected) return;
+
+   _heartbeatCounter++;
+   if(_heartbeatCounter >= _config.heartbeatSec)
+   {
+      _heartbeatCounter = 0;
+      _network.SendHeartbeat("metatrader5", "ok");
+   }
 }
 
 //+------------------------------------------------------------------+
-//| Poll for commands (PULL socket)                                  |
+//| Trade event function (detect fills)                              |
 //+------------------------------------------------------------------+
+void OnTrade()
+{
+   if(!_connected) return;
+   ProcessNewDeals();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Market Data
+// ═══════════════════════════════════════════════════════════════════
+
+void SendTickIfAllowed()
+{
+   if(_tickRateLimiter == NULL || !_tickRateLimiter.TryAllow())
+      return;
+
+   MqlTick tick;
+   if(!SymbolInfoTick(_Symbol, tick))
+      return;
+
+   _network.SendTick(_Symbol, tick.last, tick.volume, tick.time);
+   _ticksSent++;
+}
+
+void SendBarIfNew()
+{
+   datetime currentBarTime = iTime(_Symbol, PERIOD_M1, 0);
+   if(currentBarTime == 0) return;
+
+   // New bar started — send the completed previous bar
+   if(currentBarTime > _lastBarTime && _lastBarTime != 0)
+   {
+      MqlRates rates[1];
+      if(CopyRates(_Symbol, PERIOD_M1, 1, 1, rates) == 1)
+      {
+         _network.SendBar(_Symbol, rates[0].time, rates[0].open, rates[0].high,
+                          rates[0].low, rates[0].close, rates[0].tick_volume, false);
+         _barsSent++;
+      }
+   }
+
+   // Send partial (forming) bar at 1/sec rate limit
+   if(_lastBarTime != 0 && currentBarTime == _lastBarTime)
+   {
+      if(_partialBarRateLimiter != NULL && _partialBarRateLimiter.TryAllow())
+      {
+         MqlRates rates[1];
+         if(CopyRates(_Symbol, PERIOD_M1, 0, 1, rates) == 1)
+         {
+            _network.SendBar(_Symbol, rates[0].time, rates[0].open, rates[0].high,
+                             rates[0].low, rates[0].close, rates[0].tick_volume, true);
+            _partialBarsSent++;
+         }
+      }
+   }
+
+   _lastBarTime = currentBarTime;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Command Loop
+// ═══════════════════════════════════════════════════════════════════
+
 void PollCommands()
 {
-   ZmqMsg msg;
-   while(commandSocket.recv(msg, ZMQ_DONTWAIT))
+   if(_network == NULL || _dispatcher == NULL) return;
+
+   // Process all available commands (non-blocking)
+   while(true)
    {
-      string json = msg.getData();
-      HandleCommand(json);
+      MessageEnvelope *env = _network.ReceiveCommand(0);
+      if(env == NULL) break;
+
+      // Duplicate detection
+      long seqNum = env.SeqNum();
+      if(seqNum > 0 && IsDuplicateCommand(seqNum))
+      {
+         _logger.Warning("Duplicate command ignored: " + env.MsgType() + " seq=" + IntegerToString(seqNum));
+         _network.SendCommandAck(env.MsgType(), seqNum, true, "", "duplicate");
+         delete env;
+         continue;
+      }
+
+      _commandsReceived++;
+
+      // Extract trade_id for ack
+      string tradeId = env.PayloadString("trade_id");
+
+      // Dispatch command
+      bool success = _dispatcher.Dispatch(env);
+
+      // Send command ack
+      _network.SendCommandAck(env.MsgType(), seqNum, success, tradeId, success ? "" : "dispatch_failed");
+
+      delete env;
    }
 }
 
-//+------------------------------------------------------------------+
-//| Poll for queries (REP socket)                                    |
-//+------------------------------------------------------------------+
-void PollQueries()
+bool IsDuplicateCommand(long seqNum)
 {
-   ZmqMsg msg;
-   while(querySocket.recv(msg, ZMQ_DONTWAIT))
-   {
-      string json = msg.getData();
-      HandleQuery(json);
-   }
+   int size = ArraySize(_processedSeqNums);
+   for(int i = 0; i < size; i++)
+      if(_processedSeqNums[i] == seqNum)
+         return true;
+
+   // Add to tracking
+   ArrayResize(_processedSeqNums, size + 1);
+   _processedSeqNums[size] = seqNum;
+
+   // Prevent unbounded growth
+   if(size >= MAX_TRACKED_SEQ_NUMS)
+      ArrayResize(_processedSeqNums, 0);
+
+   return false;
 }
 
-//+------------------------------------------------------------------+
-//| Handle incoming command                                          |
-//+------------------------------------------------------------------+
-void HandleCommand(string json)
-{
-   string msgType = ExtractString(json, "msg_type");
-   
-   if(msgType == "order_open")
-   {
-      HandleOrderOpen(json);
-   }
-   else if(msgType == "order_close")
-   {
-      HandleOrderClose(json);
-   }
-   else if(msgType == "order_modify")
-   {
-      HandleOrderModify(json);
-   }
-   else if(msgType == "refresh_request")
-   {
-      SendHistory();
-   }
-}
+// ═══════════════════════════════════════════════════════════════════
+// Crash Recovery & Position Sync
+// ═══════════════════════════════════════════════════════════════════
 
-//+------------------------------------------------------------------+
-//| Handle order_open command                                        |
-//+------------------------------------------------------------------+
-void HandleOrderOpen(string json)
+void RestoreFromBroker()
 {
-   string tradeId = ExtractString(json, "trade_id");
-   string direction = ExtractString(json, "direction");
-   double entryPrice = ExtractDouble(json, "entry_price");
-   double sl = ExtractDouble(json, "stop_loss");
-   double tp = ExtractDouble(json, "take_profit");
-   
-   ENUM_ORDER_TYPE orderType = (direction == "long") ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
-   
-   MqlTradeRequest request = {};
-   MqlTradeResult result = {};
-   request.action       = TRADE_ACTION_DEAL;
-   request.symbol       = _Symbol;
-   request.volume       = 0.01;  // TODO: make configurable
-   request.type         = orderType;
-   request.price        = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
-   request.sl           = sl;
-   request.tp           = tp;
-   request.deviation    = 10;
-   request.magic        = InpMagicNumber;
-   request.comment      = tradeId;
-   
-   if(!OrderSend(request, result))
-   {
-      Print("[ZMQ] OrderSend failed: ", GetLastError());
-      SendError("order_open_failed", "OrderSend returned false");
-      return;
-   }
-   
-   if(result.retcode == TRADE_RETCODE_DONE || result.retcode == TRADE_RETCODE_PLACED)
-   {
-      AddTradeMapping(tradeId, result.order);
-      SendEntryFill(tradeId, result.price, sl, tp);
-      Print("[ZMQ] Opened ", direction, " ", tradeId, " @ ", result.price);
-   }
-   else
-   {
-      Print("[ZMQ] Order failed: ", result.retcode);
-      SendError("order_open_failed", StringFormat("Retcode: %d", result.retcode));
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Handle order_close command                                       |
-//+------------------------------------------------------------------+
-void HandleOrderClose(string json)
-{
-   string tradeId = ExtractString(json, "trade_id");
-   ulong ticket = FindTicketByTradeId(tradeId);
-   if(ticket == 0)
-   {
-      Print("[ZMQ] Close failed: trade_id not found: ", tradeId);
-      return;
-   }
-   
-   if(!PositionSelectByTicket(ticket))
-   {
-      Print("[ZMQ] Close failed: position not open: ", tradeId);
-      return;
-   }
-   
-   MqlTradeRequest request = {};
-   MqlTradeResult result = {};
-   request.action   = TRADE_ACTION_DEAL;
-   request.position = ticket;
-   request.symbol   = _Symbol;
-   request.volume   = PositionGetDouble(POSITION_VOLUME);
-   request.type     = (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
-   request.price    = (request.type == ORDER_TYPE_SELL) ? SymbolInfoDouble(_Symbol, SYMBOL_BID) : SymbolInfoDouble(_Symbol, SYMBOL_ASK);
-   request.deviation = 10;
-   request.magic    = InpMagicNumber;
-   
-   if(!OrderSend(request, result))
-   {
-      Print("[ZMQ] Close OrderSend failed: ", GetLastError());
-      return;
-   }
-   
-   if(result.retcode == TRADE_RETCODE_DONE)
-   {
-      SendExitFill(tradeId, result.price, "CLOSE");
-      RemoveTradeMapping(tradeId);
-      Print("[ZMQ] Closed ", tradeId, " @ ", result.price);
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Handle order_modify command                                      |
-//+------------------------------------------------------------------+
-void HandleOrderModify(string json)
-{
-   string tradeId = ExtractString(json, "trade_id");
-   ulong ticket = FindTicketByTradeId(tradeId);
-   if(ticket == 0) return;
-   
-   if(!PositionSelectByTicket(ticket)) return;
-   
-   double newSl = ExtractDouble(json, "stop_loss");
-   double newTp = ExtractDouble(json, "take_profit");
-   
-   // Use current SL/TP if not provided
-   if(newSl == 0) newSl = PositionGetDouble(POSITION_SL);
-   if(newTp == 0) newTp = PositionGetDouble(POSITION_TP);
-   
-   MqlTradeRequest request = {};
-   MqlTradeResult result = {};
-   request.action    = TRADE_ACTION_SLTP;
-   request.position  = ticket;
-   request.symbol    = _Symbol;
-   request.sl        = newSl;
-   request.tp        = newTp;
-   
-   if(!OrderSend(request, result))
-   {
-      Print("[ZMQ] Modify failed: ", GetLastError());
-      return;
-   }
-   
-   if(result.retcode == TRADE_RETCODE_DONE)
-   {
-      Print("[ZMQ] Modified ", tradeId, " SL=", newSl, " TP=", newTp);
-   }
-}
-
-//+------------------------------------------------------------------+
-//| Handle query (REQ/REP)                                           |
-//+------------------------------------------------------------------+
-void HandleQuery(string json)
-{
-   string msgType = ExtractString(json, "msg_type");
-   string response = "{}";
-   
-   if(msgType == "position_query")
-   {
-      response = BuildPositionsJson();
-   }
-   else if(msgType == "test_ping")
-   {
-      response = StringFormat(
-         "{\"msg_type\":\"test_pong\",\"timestamp\":%.3f,\"seq_num\":%I64d,\"payload\":{\"timestamp\":%.3f}}",
-         TimeCurrent(), ++_seqNum, TimeCurrent()
-      );
-   }
-   
-   ZmqMsg respMsg(response);
-   querySocket.send(respMsg);
-}
-
-//+------------------------------------------------------------------+
-//| Build positions JSON for position_query                          |
-//+------------------------------------------------------------------+
-string BuildPositionsJson()
-{
-   string positions = "";
    int total = PositionsTotal();
+   int restored = 0;
+
    for(int i = 0; i < total; i++)
    {
       ulong ticket = PositionGetTicket(i);
       if(ticket == 0) continue;
-      if(PositionGetInteger(POSITION_MAGIC) != InpMagicNumber) continue;
-      
-      string tradeId = FindTradeIdByTicket(ticket);
-      if(tradeId == "") tradeId = StringFormat("mt5_%I64d", ticket);
-      
-      if(positions != "") positions += ",";
-      positions += StringFormat(
-         "{\"trade_id\":\"%s\",\"direction\":\"%s\",\"entry_price\":%.5f,\"stop_loss\":%.5f,\"take_profit\":%.5f,\"quantity\":%.2f}",
-         tradeId,
-         (PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? "long" : "short",
-         PositionGetDouble(POSITION_PRICE_OPEN),
-         PositionGetDouble(POSITION_SL),
-         PositionGetDouble(POSITION_TP),
-         PositionGetDouble(POSITION_VOLUME)
-      );
+      if(PositionGetInteger(POSITION_MAGIC) != (long)_config.magicNumber) continue;
+
+      string tradeId = PositionGetString(POSITION_COMMENT);
+      if(StringLen(tradeId) == 0) tradeId = "mt5_" + IntegerToString(ticket);
+
+      double slPoints = 0;
+      double rrRatio = 1.0;
+      _orderTracker.TrackEntry(tradeId, ticket, slPoints, rrRatio);
+      restored++;
    }
-   
-   return StringFormat(
-      "{\"msg_type\":\"position_response\",\"timestamp\":%.3f,\"seq_num\":%I64d,\"payload\":{\"positions\":[%s],\"count\":%d}}",
-      TimeCurrent(), ++_seqNum, positions, total
-   );
+
+   if(restored > 0)
+      _logger.Info("[Sync] Restored " + IntegerToString(restored) + " position(s) from broker");
 }
 
-//+------------------------------------------------------------------+
-//| Send entry_fill event                                            |
-//+------------------------------------------------------------------+
-void SendEntryFill(string tradeId, double price, double sl, double tp)
+void ReportPositionsToPython()
 {
-   string json = StringFormat(
-      "{\"msg_type\":\"entry_fill\",\"timestamp\":%.3f,\"seq_num\":%I64d,\"payload\":{\"trade_id\":\"%s\",\"entry_price\":%.5f,\"stop_loss\":%.5f,\"take_profit\":%.5f}}",
-      TimeCurrent(), ++_seqNum, tradeId, price, sl, tp
-   );
-   ZmqMsg msg(json);
-   marketSocket.send(msg);
-}
+   int total = PositionsTotal();
+   JSONValue *positions = new JSONValue(JSON_ARRAY);
+   JSONValue *untracked = new JSONValue(JSON_ARRAY);
+   int count = 0;
 
-//+------------------------------------------------------------------+
-//| Send exit_fill event                                             |
-//+------------------------------------------------------------------+
-void SendExitFill(string tradeId, double price, string resultType)
-{
-   string json = StringFormat(
-      "{\"msg_type\":\"exit_fill\",\"timestamp\":%.3f,\"seq_num\":%I64d,\"payload\":{\"trade_id\":\"%s\",\"exit_price\":%.5f,\"result_type\":\"%s\"}}",
-      TimeCurrent(), ++_seqNum, tradeId, price, resultType
-   );
-   ZmqMsg msg(json);
-   marketSocket.send(msg);
-}
-
-//+------------------------------------------------------------------+
-//| Send error message                                               |
-//+------------------------------------------------------------------+
-void SendError(string errorType, string message)
-{
-   string json = StringFormat(
-      "{\"msg_type\":\"error\",\"timestamp\":%.3f,\"seq_num\":%I64d,\"payload\":{\"source\":\"metatrader5\",\"error_type\":\"%s\",\"message\":\"%s\"}}",
-      TimeCurrent(), ++_seqNum, errorType, message
-   );
-   ZmqMsg msg(json);
-   marketSocket.send(msg);
-}
-
-//+------------------------------------------------------------------+
-//| Trade ID ↔ Ticket mapping helpers                                |
-//+------------------------------------------------------------------+
-void AddTradeMapping(string tradeId, ulong ticket)
-{
-   int size = ArraySize(_tradeMap);
-   ArrayResize(_tradeMap, size + 1);
-   _tradeMap[size].trade_id = tradeId;
-   _tradeMap[size].ticket = ticket;
-}
-
-void RemoveTradeMapping(string tradeId)
-{
-   int size = ArraySize(_tradeMap);
-   for(int i = 0; i < size; i++)
+   for(int i = 0; i < total; i++)
    {
-      if(_tradeMap[i].trade_id == tradeId)
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0) continue;
+      if(PositionGetInteger(POSITION_MAGIC) != (long)_config.magicNumber) continue;
+
+      string tradeId = PositionGetString(POSITION_COMMENT);
+      if(StringLen(tradeId) == 0) tradeId = "mt5_" + IntegerToString(ticket);
+
+      JSONValue *pos = new JSONValue(JSON_OBJECT);
+      pos["trade_id"]   = new JSONValue(tradeId);
+      pos["direction"]  = new JSONValue((PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? "long" : "short");
+      pos["entry_price"]= new JSONValue(PositionGetDouble(POSITION_PRICE_OPEN));
+      pos["stop_loss"]  = new JSONValue(PositionGetDouble(POSITION_SL));
+      pos["take_profit"]= new JSONValue(PositionGetDouble(POSITION_TP));
+      pos["quantity"]   = new JSONValue(PositionGetDouble(POSITION_VOLUME));
+
+      positions.Add(pos);
+      // NOTE: Add() takes ownership — do NOT delete pos
+      count++;
+   }
+
+   _network.SendPositionSync(positions, untracked);
+   // NOTE: SendPositionSync puts arrays into a payload tree which is then deleted.
+   // Do NOT delete positions or untracked here.
+
+   if(count > 0)
+      _logger.Info("[Sync] Reported " + IntegerToString(count) + " position(s) to Python");
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Fill Detection (OnTrade)
+// ═══════════════════════════════════════════════════════════════════
+
+void ProcessNewDeals()
+{
+   // Load recent history (last hour)
+   datetime from = TimeCurrent() - 3600;
+   if(from < 0) from = 0;
+   HistorySelect(from, TimeCurrent());
+
+   int total = HistoryDealsTotal();
+   for(int i = total - 1; i >= 0; i--)
+   {
+      ulong ticket = HistoryDealGetTicket(i);
+      if(ticket == 0) continue;
+      if(IsDealProcessed(ticket)) continue;
+
+      // Check magic number
+      ulong magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
+      if(magic != _config.magicNumber) continue;
+
+      // Process this deal
+      ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY);
+      ENUM_DEAL_REASON reason = (ENUM_DEAL_REASON)HistoryDealGetInteger(ticket, DEAL_REASON);
+      double price = HistoryDealGetDouble(ticket, DEAL_PRICE);
+      string comment = HistoryDealGetString(ticket, DEAL_COMMENT);
+      ulong orderTicket = HistoryDealGetInteger(ticket, DEAL_ORDER);
+
+      if(entry == DEAL_ENTRY_IN)
       {
-         for(int j = i; j < size - 1; j++)
-            _tradeMap[j] = _tradeMap[j + 1];
-         ArrayResize(_tradeMap, size - 1);
-         return;
+         // Entry fill
+         double sl = 0, tp = 0;
+         // Try to get SL/TP from the associated order
+         if(HistoryOrderSelect(orderTicket))
+         {
+            sl = HistoryOrderGetDouble(orderTicket, ORDER_SL);
+            tp = HistoryOrderGetDouble(orderTicket, ORDER_TP);
+         }
+         _network.SendEntryFill(comment, price, sl, tp);
+         _network.SendTradeLog(comment, "MT5:FILL", "Entry filled @ " + DoubleToString(price, 5));
+         _logger.Success("ENTRY FILL: " + comment + " @ " + DoubleToString(price, 5));
       }
+      else if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY)
+      {
+         // Exit fill
+         string resultType = "CLOSE";
+         if(reason == DEAL_REASON_SL) resultType = "SL";
+         else if(reason == DEAL_REASON_TP) resultType = "TP";
+
+         _network.SendExitFill(comment, price, resultType);
+         _network.SendTradeLog(comment, "MT5:FILL", resultType + " filled @ " + DoubleToString(price, 5));
+         _logger.Info("EXIT FILL (" + resultType + "): " + comment + " @ " + DoubleToString(price, 5));
+
+         // Clean up tracking
+         if(_orderTracker != NULL)
+            _orderTracker.RemoveTrade(comment);
+      }
+
+      MarkDealProcessed(ticket);
    }
 }
 
-ulong FindTicketByTradeId(string tradeId)
+bool IsDealProcessed(ulong ticket)
 {
-   int size = ArraySize(_tradeMap);
+   int size = ArraySize(_processedDeals);
    for(int i = 0; i < size; i++)
+      if(_processedDeals[i] == ticket)
+         return true;
+   return false;
+}
+
+void MarkDealProcessed(ulong ticket)
+{
+   int size = ArraySize(_processedDeals);
+   if(size >= MAX_TRACKED_DEALS)
    {
-      if(_tradeMap[i].trade_id == tradeId)
-         return _tradeMap[i].ticket;
+      // Shift array left (FIFO)
+      for(int i = 1; i < size; i++)
+         _processedDeals[i - 1] = _processedDeals[i];
+      _processedDeals[size - 1] = ticket;
    }
-   return 0;
-}
-
-string FindTradeIdByTicket(ulong ticket)
-{
-   int size = ArraySize(_tradeMap);
-   for(int i = 0; i < size; i++)
+   else
    {
-      if(_tradeMap[i].ticket == ticket)
-         return _tradeMap[i].trade_id;
+      ArrayResize(_processedDeals, size + 1);
+      _processedDeals[size] = ticket;
    }
-   return "";
 }
 
-//+------------------------------------------------------------------+
-//| Simple JSON field extractors (best-effort)                       |
-//+------------------------------------------------------------------+
-string ExtractString(string json, string key)
+// ═══════════════════════════════════════════════════════════════════
+// UI / Status Panel
+// ═══════════════════════════════════════════════════════════════════
+
+void UpdatePanel()
 {
-   string pattern = "\"" + key + "\":\"";
-   int pos = StringFind(json, pattern);
-   if(pos < 0) return "";
-   pos += StringLen(pattern);
-   int end = StringFind(json, "\"", pos);
-   if(end < 0) return "";
-   return StringSubstr(json, pos, end - pos);
+   if(_logger == NULL) return;
+
+   string status = "Status: " + (_connected ? "CONNECTED" : "DISCONNECTED") + "\n" +
+                   "Symbol: " + _Symbol + "\n" +
+                   "Ticks: " + IntegerToString(_ticksSent) +
+                   " | Bars: " + IntegerToString(_barsSent) +
+                   " | Partial: " + IntegerToString(_partialBarsSent) + "\n" +
+                   "Cmds: " + IntegerToString(_commandsReceived) +
+                   " | Trades: " + IntegerToString(_orderTracker != NULL ? _orderTracker.GetActiveCount() : 0);
+
+   _logger.UpdatePanel(status);
 }
 
-double ExtractDouble(string json, string key)
+// ═══════════════════════════════════════════════════════════════════
+// Cleanup
+// ═══════════════════════════════════════════════════════════════════
+
+void Cleanup()
 {
-   string pattern = "\"" + key + "\":";
-   int pos = StringFind(json, pattern);
-   if(pos < 0) return 0.0;
-   pos += StringLen(pattern);
-   int end = StringFind(json, ",", pos);
-   int end2 = StringFind(json, "}", pos);
-   if(end2 >= 0 && (end2 < end || end < 0)) end = end2;
-   string val = StringSubstr(json, pos, end - pos);
-   StringReplace(val, " ", "");
-   return StringToDouble(val);
+   // Handlers (must be deleted before dispatcher)
+   if(_handlerOpen != NULL)     { delete _handlerOpen; _handlerOpen = NULL; }
+   if(_handlerClose != NULL)    { delete _handlerClose; _handlerClose = NULL; }
+   if(_handlerModify != NULL)   { delete _handlerModify; _handlerModify = NULL; }
+   if(_handlerRefresh != NULL)  { delete _handlerRefresh; _handlerRefresh = NULL; }
+   if(_handlerTest != NULL)     { delete _handlerTest; _handlerTest = NULL; }
+
+   if(_dispatcher != NULL)      { delete _dispatcher; _dispatcher = NULL; }
+   if(_historyProvider != NULL) { delete _historyProvider; _historyProvider = NULL; }
+   if(_network != NULL)         { _network.Dispose(); delete _network; _network = NULL; }
+   if(_orderTracker != NULL)    { delete _orderTracker; _orderTracker = NULL; }
+   if(_serializer != NULL)      { delete _serializer; _serializer = NULL; }
+   if(_logger != NULL)          { delete _logger; _logger = NULL; }
+   if(_config != NULL)          { delete _config; _config = NULL; }
+   if(_tickRateLimiter != NULL) { delete _tickRateLimiter; _tickRateLimiter = NULL; }
+   if(_partialBarRateLimiter != NULL) { delete _partialBarRateLimiter; _partialBarRateLimiter = NULL; }
 }
