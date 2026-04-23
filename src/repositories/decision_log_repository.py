@@ -64,7 +64,7 @@ class DecisionLogRepository:
     ) -> List[dict]:
         """Query recent decision logs with optional filters."""
         with get_db_session() as db:
-            query = db.query(DecisionLog).order_by(DecisionLog.id.desc())
+            query = db.query(DecisionLog).order_by(DecisionLog.bar_time.desc())
             if pair:
                 query = query.filter(DecisionLog.pair == pair)
             if event:
