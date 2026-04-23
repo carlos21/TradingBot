@@ -10,7 +10,7 @@ class TestTradeLogger:
 
     def test_log_appends_to_repository(self):
         repo = FakeTradeRepository()
-        repo.insert_trade("NQ", "long", 100, 90, 130, 10,
+        repo.insert_trade("MNQ", "long", 100, 90, 130, 10,
                           datetime(2025, 1, 1, tzinfo=timezone.utc))
         logger = TradeLogger(repo)
         logger.log("T1", "OPEN", "Opened at 100")
@@ -20,7 +20,7 @@ class TestTradeLogger:
 
     def test_multiple_logs(self):
         repo = FakeTradeRepository()
-        repo.insert_trade("NQ", "long", 100, 90, 130, 10,
+        repo.insert_trade("MNQ", "long", 100, 90, 130, 10,
                           datetime(2025, 1, 1, tzinfo=timezone.utc))
         logger = TradeLogger(repo)
         logger.log("T1", "OPEN", "msg1")
@@ -31,7 +31,7 @@ class TestTradeLogger:
     def test_format_logs_with_entries(self):
         td = TradeData(
             trade_id="abc12345-def",
-            pair="NQ",
+            pair="MNQ",
             trade_type="long",
             entry_price=100.0,
             stop_loss=90.0,
@@ -61,7 +61,7 @@ class TestTradeLogger:
     def test_format_logs_no_entries(self):
         td = TradeData(
             trade_id="abc12345",
-            pair="NQ",
+            pair="MNQ",
             trade_type="short",
             entry_price=100.0,
             stop_loss=110.0,

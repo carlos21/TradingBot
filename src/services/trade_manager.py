@@ -21,7 +21,7 @@ class TradeManager:
                  point_value: float, account_balance: float,
                  logger: ILogger,
                  risk_per_trade: float = None, risk_pct_per_trade: float = None,
-                 pair: str = 'NQ',
+                 pair: str = 'MNQ',
                  session_end_time: str = None, session_tz: str = None,
                  broker_mode: str = 'futures', broker_spread: float = 0.0,
                  use_fractional_lots: bool = False,
@@ -33,7 +33,7 @@ class TradeManager:
         """
         :param trade_repository: SQLTradeRepository instance (must have close_trade)
         :param socketio:         flask_socketio.SocketIO instance
-        :param pair:             Instrument pair name (e.g. "NQ", "MNQ")
+        :param pair:             Instrument pair name (e.g. "MNQ", "MNQ")
         :param session_end_time: "HH:MM" — close open trades at this time (e.g. "15:00")
         :param session_tz:       Timezone for session_end_time (e.g. "America/New_York")
         :param broker_mode:      'futures' or 'cfd' - affects TP/SL hit logic

@@ -10,7 +10,7 @@ def _make_manager(**overrides):
     defaults = dict(
         trade_repository=FakeTradeRepository(),
         socketio=DummySocketIO(),
-        pair="NQ",
+        pair="MNQ",
         trade_executor=FakeTradeExecutor(),
         analytics=FakeAnalyticsReporter(),
         point_value=2.0,
@@ -21,7 +21,7 @@ def _make_manager(**overrides):
     return TradeManager(**defaults)
 
 
-def _add_open_trade(tm, trade_id="T1", pair="NQ", trade_type="long",
+def _add_open_trade(tm, trade_id="T1", pair="MNQ", trade_type="long",
                     entry=100.0, sl=90.0, tp=130.0, risk=10.0, entry_time=500.0):
     trade = {
         "trade_id": trade_id, "pair": pair, "type": trade_type,
@@ -38,7 +38,7 @@ class TestSLTPDetection:
     def test_long_sl_hit(self):
         tm = _make_manager()
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
-        bar = make_bar(time=1000, low=89, high=95, close=90, pair="NQ")
+        bar = make_bar(time=1000, low=89, high=95, close=90, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 0
         assert len(tm.trade_repository.closed) == 1
@@ -47,7 +47,7 @@ class TestSLTPDetection:
     def test_long_tp_hit(self):
         tm = _make_manager()
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
-        bar = make_bar(time=1000, low=100, high=135, close=132, pair="NQ")
+        bar = make_bar(time=1000, low=100, high=135, close=132, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 0
         assert tm.trade_repository.closed[0]["result_type"] == "TP"
@@ -55,7 +55,7 @@ class TestSLTPDetection:
     def test_short_sl_hit(self):
         tm = _make_manager()
         _add_open_trade(tm, trade_type="short", entry=100, sl=110, tp=70, risk=10)
-        bar = make_bar(time=1000, low=99, high=115, close=112, pair="NQ")
+        bar = make_bar(time=1000, low=99, high=115, close=112, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 0
         assert tm.trade_repository.closed[0]["result_type"] == "SL"
@@ -63,7 +63,7 @@ class TestSLTPDetection:
     def test_short_tp_hit(self):
         tm = _make_manager()
         _add_open_trade(tm, trade_type="short", entry=100, sl=110, tp=70, risk=10)
-        bar = make_bar(time=1000, low=65, high=80, close=68, pair="NQ")
+        bar = make_bar(time=1000, low=65, high=80, close=68, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 0
         assert tm.trade_repository.closed[0]["result_type"] == "TP"
@@ -71,7 +71,7 @@ class TestSLTPDetection:
     def test_no_hit_trade_stays_open(self):
         tm = _make_manager()
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
-        bar = make_bar(time=1000, low=95, high=110, close=105, pair="NQ")
+        bar = make_bar(time=1000, low=95, high=110, close=105, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
         assert len(tm.trade_repository.closed) == 0
@@ -79,13 +79,13 @@ class TestSLTPDetection:
     def test_skips_bars_before_entry_time(self):
         tm = _make_manager()
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=2000)
-        bar = make_bar(time=1000, low=80, high=140, close=100, pair="NQ")
+        bar = make_bar(time=1000, low=80, high=140, close=100, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
 
     def test_skips_different_pair(self):
         tm = _make_manager()
-        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, pair="NQ")
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, pair="MNQ")
         bar = make_bar(time=1000, low=80, high=140, close=100, pair="ES")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
@@ -96,7 +96,7 @@ class TestResultCalculation:
     def test_long_sl_result_is_negative(self):
         tm = _make_manager()
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
-        bar = make_bar(time=1000, low=85, high=95, pair="NQ")
+        bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         result = tm.trade_repository.closed[0]["result"]
         assert result < 0
@@ -104,7 +104,7 @@ class TestResultCalculation:
     def test_long_tp_result_is_positive(self):
         tm = _make_manager()
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
-        bar = make_bar(time=1000, low=100, high=135, pair="NQ")
+        bar = make_bar(time=1000, low=100, high=135, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         result = tm.trade_repository.closed[0]["result"]
         assert result > 0
@@ -112,7 +112,7 @@ class TestResultCalculation:
     def test_r_multiple_calculation(self):
         tm = _make_manager()
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
-        bar = make_bar(time=1000, low=100, high=135, pair="NQ")
+        bar = make_bar(time=1000, low=100, high=135, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         # TP hit: exit=130, pnl=30, risk=10 -> 3R
         result = tm.trade_repository.closed[0]["result"]
@@ -121,7 +121,7 @@ class TestResultCalculation:
     def test_zero_risk_defaults_to_one(self):
         tm = _make_manager()
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=0)
-        bar = make_bar(time=1000, low=85, high=95, pair="NQ")
+        bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         # Should not crash; risk treated as 1.0
         assert tm.trade_repository.closed[0]["result"] is not None
@@ -133,7 +133,7 @@ class TestCFDMode:
         tm = _make_manager(broker_mode="cfd", broker_spread=2.0)
         _add_open_trade(tm, trade_type="long", entry=100, sl=90, tp=130, risk=10)
         # Low = 91 -> above original SL of 90, so trade stays open
-        bar = make_bar(time=1000, low=91, high=95, pair="NQ")
+        bar = make_bar(time=1000, low=91, high=95, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
 
@@ -141,7 +141,7 @@ class TestCFDMode:
         tm = _make_manager(broker_mode="cfd", broker_spread=2.0)
         _add_open_trade(tm, trade_type="long", entry=100, sl=90, tp=130, risk=10)
         # Low = 88 -> hits original SL of 90
-        bar = make_bar(time=1000, low=88, high=95, pair="NQ")
+        bar = make_bar(time=1000, low=88, high=95, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 0
         closed = tm.trade_repository.closed[0]
@@ -165,7 +165,7 @@ class TestSessionEndClose:
         from zoneinfo import ZoneInfo
         ny = ZoneInfo("America/New_York")
         bar_dt = datetime(2025, 6, 15, 15, 1, tzinfo=ny)
-        bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="NQ")
+        bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 0
 
@@ -175,7 +175,7 @@ class TestSessionEndClose:
         from zoneinfo import ZoneInfo
         ny = ZoneInfo("America/New_York")
         bar_dt = datetime(2025, 6, 15, 14, 59, tzinfo=ny)
-        bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="NQ")
+        bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
 
@@ -186,7 +186,7 @@ class TestSocketIOEmissions:
         sio = DummySocketIO()
         tm = _make_manager(socketio=sio)
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
-        bar = make_bar(time=1000, low=85, high=95, pair="NQ")
+        bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         close_events = [e for e in sio.events if e[0] == "trade_close"]
         assert len(close_events) == 1
@@ -195,7 +195,7 @@ class TestSocketIOEmissions:
     def test_emits_trade_open_on_open(self):
         sio = DummySocketIO()
         tm = _make_manager(socketio=sio)
-        tm.open_trade("NQ", "long", 100, 90, 130, 10, 1000.0)
+        tm.open_trade("MNQ", "long", 100, 90, 130, 10, 1000.0)
         open_events = [e for e in sio.events if e[0] == "trade_open"]
         assert len(open_events) == 1
 
@@ -206,7 +206,7 @@ class TestTradeExecutorCallbacks:
         executor = FakeTradeExecutor()
         tm = _make_manager(trade_executor=executor)
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
-        bar = make_bar(time=1000, low=85, high=95, pair="NQ")
+        bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(executor.closes) == 1
 
@@ -222,14 +222,14 @@ class TestOpenTrade:
 
     def test_open_trade_persists_and_tracks(self):
         tm = _make_manager()
-        trade = tm.open_trade("NQ", "long", 100, 90, 130, 10, 1000.0)
+        trade = tm.open_trade("MNQ", "long", 100, 90, 130, 10, 1000.0)
         assert len(tm.open_trades) == 1
         assert trade["trade_id"] is not None
         assert len(tm.trade_repository.inserted) == 1
 
     def test_open_trade_marks_as_monitored(self):
         tm = _make_manager()
-        trade = tm.open_trade("NQ", "long", 100, 90, 130, 10, 1000.0)
+        trade = tm.open_trade("MNQ", "long", 100, 90, 130, 10, 1000.0)
         assert trade["trade_id"] in tm._monitored_trades
 
 

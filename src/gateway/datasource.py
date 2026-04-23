@@ -57,7 +57,7 @@ class ZMQDataSource(CombinedDataSource):
         logger: ILogger,
         gateway: Optional[TradingGateway] = None,
         gateway_config: Optional[GatewayConfig] = None,
-        pair: str = "NQ",
+        pair: str = "MNQ",
     ):
         """
         Initialize the ZMQ data source.

@@ -289,7 +289,7 @@ internal void HandleModifyOrder(string body)
 ```python
 from src.gateway import TradingGateway
 
-gateway = TradingGateway(logger, config, pair="NQ")
+gateway = TradingGateway(logger, config, pair="MNQ")
 gateway.start()
 
 # Register callback for modification confirmation

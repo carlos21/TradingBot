@@ -164,7 +164,7 @@ class TestTradeEvents:
     def test_trade_opened_event(self):
         event = TradeOpenedEvent(
             trade_id='T123',
-            pair='NQ',
+            pair='MNQ',
             trade_type='long',
             entry_price=5000.0,
             stop_loss=4950.0,
@@ -182,7 +182,7 @@ class TestTradeEvents:
     def test_trade_closed_event(self):
         event = TradeClosedEvent(
             trade_id='T123',
-            pair='NQ',
+            pair='MNQ',
             trade_type='long',
             exit_price=5250.0,
             exit_time=1234567900.0,

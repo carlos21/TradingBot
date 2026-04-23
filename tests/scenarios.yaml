@@ -1,6 +1,6 @@
 scenarios:
-  - name: "NQ - 2025-05-01"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-01"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-01 06:00:00Z"
     end:   "2025-05-01 16:00:00Z"
@@ -15,8 +15,8 @@ scenarios:
         entry: 20038.00
         sl:    20053.00
         tp:    19963.00
-  - name: "NQ - 2025-05-02"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-02"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-02 06:00:00Z"
     end:   "2025-05-02 16:00:00Z"
@@ -31,8 +31,8 @@ scenarios:
         entry: 20118.50
         sl:    20133.50
         tp:    20043.50
-  - name: "NQ - 2025-05-05"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-05"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-05 06:00:00Z"
     end:   "2025-05-05 16:00:00Z"
@@ -47,8 +47,8 @@ scenarios:
         entry: 20151.50
         sl:    20166.50
         tp:    20076.50
-  - name: "NQ - 2025-05-06"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-06"
+    pair: "MNQ"
     tf: "3m"
     start: "2025-05-06 06:00:00Z"
     end:   "2025-05-06 16:00:00Z"
@@ -60,8 +60,8 @@ scenarios:
       entry: 19800.25
       sl:    19760.25
       tp:    20000.25
-  - name: "NQ - 2025-05-07"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-07"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-07 06:00:00Z"
     end:   "2025-05-07 16:00:00Z"
@@ -75,8 +75,8 @@ scenarios:
         entry: 19760.00
         sl:    19740.00
         tp:    19860.00
-  - name: "NQ - 2025-05-08"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-08"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-08 06:00:00Z"
     end:   "2025-05-08 16:00:00Z"
@@ -91,8 +91,8 @@ scenarios:
         entry: 20129.25
         sl:    20114.25
         tp:    20204.25
-  - name: "NQ - 2025-05-09"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-09"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-09 06:00:00Z"
     end:   "2025-05-09 16:00:00Z"
@@ -102,8 +102,8 @@ scenarios:
       entry: 20078.50
       sl:    20058.50
       tp:    20178.50
-  - name: "NQ - 2025-05-13"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-13"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-13 06:00:00Z"
     end:   "2025-05-13 16:00:00Z"
@@ -114,8 +114,8 @@ scenarios:
       entry: 21023.00
       sl:    21063.00
       tp:    20823.00
-  - name: "NQ - 2025-05-15"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-15"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-15 06:00:00Z"
     end:   "2025-05-15 16:00:00Z"
@@ -126,8 +126,8 @@ scenarios:
       entry: 21515.50
       sl:    21530.50
       tp:    21440.50
-  - name: "NQ - 2025-05-16"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-16"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-16 06:00:00Z"
     end:   "2025-05-16 16:00:00Z"
@@ -141,8 +141,8 @@ scenarios:
         entry: 21425.50
         sl:    21410.50
         tp:    21500.50
-  - name: "NQ - 2025-05-19"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-19"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-19 06:00:00Z"
     end:   "2025-05-19 16:00:00Z"
@@ -158,8 +158,8 @@ scenarios:
         entry: 21404.75
         sl:    21419.75
         tp:    21329.75
-  - name: "NQ - 2025-05-20"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-20"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-20 06:00:00Z"
     end:   "2025-05-20 16:00:00Z"
@@ -174,8 +174,8 @@ scenarios:
         entry: 21397.75
         sl:    21382.75
         tp:    21472.75
-  - name: "NQ - 2025-05-21"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-21"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-21 06:00:00Z"
     end:   "2025-05-21 16:00:00Z"
@@ -190,8 +190,8 @@ scenarios:
         entry: 21471.25
         sl:    21486.25
         tp:    21396.25
-  - name: "NQ - 2025-05-22"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-22"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-22 06:00:00Z"
     end:   "2025-05-22 16:00:00Z"
@@ -205,8 +205,8 @@ scenarios:
         entry: 21082.00
         sl:    21067.00
         tp:    21157.00
-  - name: "NQ - 2025-05-23"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-23"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-23 06:00:00Z"
     end:   "2025-05-23 16:00:00Z"
@@ -218,8 +218,8 @@ scenarios:
       entry: 20825.75
       sl:    20785.75
       tp:    21025.75
-  - name: "NQ - 2025-05-26"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-26"
+    pair: "MNQ"
     tf: "5m"
     start: "2025-05-26 06:00:00Z"
     end:   "2025-05-26 16:00:00Z"
@@ -229,8 +229,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-05-27"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-27"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-27 06:00:00Z"
     end:   "2025-05-27 16:00:00Z"
@@ -244,8 +244,8 @@ scenarios:
         entry: 21356.00
         sl:    21371.00
         tp:    21281.00
-  - name: "NQ - 2025-05-28"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-28"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-28 06:00:00Z"
     end:   "2025-05-28 16:00:00Z"
@@ -255,8 +255,8 @@ scenarios:
       entry: 21541.75
       sl:    21571.75
       tp:    21391.75
-  - name: "NQ - 2025-05-29"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-29"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-29 06:00:00Z"
     end:   "2025-05-29 16:00:00Z"
@@ -267,8 +267,8 @@ scenarios:
       entry: 21577.25
       sl:    21537.25
       tp:    21777.25
-  - name: "NQ - 2025-05-30"
-    pair: "NQ"
+  - name: "MNQ - 2025-05-30"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-05-30 06:00:00Z"
     end:   "2025-05-30 16:00:00Z"
@@ -279,8 +279,8 @@ scenarios:
       entry: 21088.00
       sl:    21073.00
       tp:    21163.00
-  - name: "NQ - 2025-06-04"
-    pair: "NQ"
+  - name: "MNQ - 2025-06-04"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-06-04 06:00:00Z"
     end:   "2025-06-04 16:00:00Z"
@@ -294,8 +294,8 @@ scenarios:
         entry: 21782.00
         sl:    21797.00
         tp:    21707.00
-  - name: "NQ - 2025-06-05"
-    pair: "NQ"
+  - name: "MNQ - 2025-06-05"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-06-05 06:00:00Z"
     end:   "2025-06-05 16:00:00Z"
@@ -309,8 +309,8 @@ scenarios:
         entry: 21855.50
         sl:    21870.50
         tp:    21780.50
-  - name: "NQ - 2025-06-09"
-    pair: "NQ"
+  - name: "MNQ - 2025-06-09"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-06-09 06:00:00Z"
     end:   "2025-06-09 16:00:00Z"
@@ -320,8 +320,8 @@ scenarios:
       entry: 21877.50
       sl:    21892.50
       tp:    21802.50
-  - name: "NQ - 2025-06-10"
-    pair: "NQ"
+  - name: "MNQ - 2025-06-10"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-06-10 06:00:00Z"
     end:   "2025-06-10 16:00:00Z"
@@ -331,8 +331,8 @@ scenarios:
       entry: 21977.00
       sl:    21992.00
       tp:    21902.00
-  - name: "NQ - 2025-06-11"
-    pair: "NQ"
+  - name: "MNQ - 2025-06-11"
+    pair: "MNQ"
     tf: "5m"
     start: "2025-06-11 06:00:00Z"
     end:   "2025-06-11 16:00:00Z"
@@ -341,8 +341,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-06-12"
-    pair: "NQ"
+  - name: "MNQ - 2025-06-12"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-06-12 06:00:00Z"
     end:   "2025-06-12 16:00:00Z"
@@ -352,8 +352,8 @@ scenarios:
       entry: 21955.75
       sl:    21975.75
       tp:    21855.75
-  - name: "NQ - 2025-06-13"
-    pair: "NQ"
+  - name: "MNQ - 2025-06-13"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-06-13 06:00:00Z"
     end:   "2025-06-13 16:00:00Z"
@@ -367,8 +367,8 @@ scenarios:
         entry: 21689.25
         sl:    21719.25
         tp:    21539.25
-  - name: "NQ - 2025-06-16"
-    pair: "NQ"
+  - name: "MNQ - 2025-06-16"
+    pair: "MNQ"
     tf: "5m"
     start: "2025-06-16 06:00:00Z"
     end:   "2025-06-16 16:00:00Z"
@@ -377,8 +377,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-06-17"
-    pair: "NQ"
+  - name: "MNQ - 2025-06-17"
+    pair: "MNQ"
     tf: "5m"
     start: "2025-06-17 06:00:00Z"
     end:   "2025-06-17 16:00:00Z"
@@ -387,8 +387,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-06-17 - 2"
-    pair: "NQ"
+  - name: "MNQ - 2025-06-17 - 2"
+    pair: "MNQ"
     tf: "5m"
     start: "2025-06-17 06:00:00Z"
     end:   "2025-06-17 16:00:00Z"
@@ -398,8 +398,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-06-18"
-    pair: "NQ"
+  - name: "MNQ - 2025-06-18"
+    pair: "MNQ"
     tf: "5m"
     start: "2025-06-18 06:00:00Z"
     end:   "2025-06-18 16:00:00Z"
@@ -408,8 +408,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-07-01"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-01"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-01 06:00:00Z"
     end:   "2025-07-01 16:00:00Z"
@@ -419,8 +419,8 @@ scenarios:
       entry: 22765.25
       sl:    22750.25
       tp:    22840.25
-  - name: "NQ - 2025-07-02"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-02"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-02 06:00:00Z"
     end:   "2025-07-02 16:00:00Z"
@@ -430,8 +430,8 @@ scenarios:
       entry: 22610.50
       sl:    22580.50
       tp:    22760.50
-  - name: "NQ - 2025-07-03"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-03"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-03 06:00:00Z"
     end:   "2025-07-03 16:00:00Z"
@@ -441,8 +441,8 @@ scenarios:
       entry: 22964.00
       sl:    22984.00
       tp:    22864.00
-  - name: "NQ - 2025-07-04"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-04"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-04 06:00:00Z"
     end:   "2025-07-04 16:00:00Z"
@@ -451,8 +451,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-07-07"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-07"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-07 06:00:00Z"
     end:   "2025-07-07 16:00:00Z"
@@ -462,8 +462,8 @@ scenarios:
       entry: 22875.00
       sl:    22835.00
       tp:    23075.00
-  - name: "NQ - 2025-07-08"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-08"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-08 06:00:00Z"
     end:   "2025-07-08 16:00:00Z"
@@ -477,8 +477,8 @@ scenarios:
         entry: 22896.50
         sl:    22881.50
         tp:    22971.50
-  - name: "NQ - 2025-07-09"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-09"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-09 06:00:00Z"
     end:   "2025-07-09 16:00:00Z"
@@ -493,8 +493,8 @@ scenarios:
         entry: 23026.25
         sl:    23041.25
         tp:    22951.25
-  - name: "NQ - 2025-07-10"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-10"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-10 06:00:00Z"
     end:   "2025-07-10 16:00:00Z"
@@ -505,8 +505,8 @@ scenarios:
       entry: 22917.25
       sl:    22902.25
       tp:    22992.25
-  - name: "NQ - 2025-07-11"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-11"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-11 06:00:00Z"
     end:   "2025-07-11 16:00:00Z"
@@ -520,8 +520,8 @@ scenarios:
         entry: 22984.00
         sl:    22999.00
         tp:    22909.00
-  - name: "NQ - 2025-07-14"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-14"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-14 06:00:00Z"
     end:   "2025-07-14 16:00:00Z"
@@ -537,8 +537,8 @@ scenarios:
         entry: 23017.50
         sl:    23032.50
         tp:    22942.50
-  - name: "NQ - 2025-07-16"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-16"
+    pair: "MNQ"
     tf: "3m"
     start: "2025-07-16 06:00:00Z"
     end:   "2025-07-16 16:00:00Z"
@@ -548,8 +548,8 @@ scenarios:
       entry: 23041.25
       sl:    23081.25
       tp:    22841.25
-  - name: "NQ - 2025-07-17"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-17"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-17 06:00:00Z"
     end:   "2025-07-17 16:00:00Z"
@@ -560,8 +560,8 @@ scenarios:
       entry: 23084.75
       sl:    23064.75
       tp:    23184.75
-  - name: "NQ - 2025-07-18"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-18"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-18 06:00:00Z"
     end:   "2025-07-18 16:00:00Z"
@@ -572,8 +572,8 @@ scenarios:
       entry: 23276.00
       sl:    23316.00
       tp:    23076.00
-  - name: "NQ - 2025-07-21"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-21"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-21 06:00:00Z"
     end:   "2025-07-21 16:00:00Z"
@@ -583,8 +583,8 @@ scenarios:
       entry: 23339.00
       sl:    23354.00
       tp:    23264.00
-  - name: "NQ - 2025-07-22"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-22"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-22 06:00:00Z"
     end:   "2025-07-22 16:00:00Z"
@@ -599,8 +599,8 @@ scenarios:
         entry: 23176.75
         sl:    23161.75
         tp:    23251.75
-  - name: "NQ - 2025-07-23"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-23"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-23 06:00:00Z"
     end:   "2025-07-23 16:00:00Z"
@@ -615,8 +615,8 @@ scenarios:
         entry: 23207.00
         sl:    23192.00
         tp:    23282.00
-  - name: "NQ - 2025-07-24"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-24"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-24 06:00:00Z"
     end:   "2025-07-24 16:00:00Z"
@@ -625,8 +625,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-07-25"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-25"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-25 06:00:00Z"
     end:   "2025-07-25 16:00:00Z"
@@ -640,8 +640,8 @@ scenarios:
         entry: 23414.00
         sl:    23429.00
         tp:    23339.00
-  - name: "NQ - 2025-07-29"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-29"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-29 06:00:00Z"
     end:   "2025-07-29 16:00:00Z"
@@ -650,8 +650,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-07-30"
-    pair: "NQ"
+  - name: "MNQ - 2025-07-30"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-07-30 06:00:00Z"
     end:   "2025-07-30 16:00:00Z"
@@ -665,8 +665,8 @@ scenarios:
         entry: 23414.00
         sl:    23399.00
         tp:    23489.00
-  - name: "NQ - 2025-08-01"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-01"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-01 06:00:00Z"
     end:   "2025-08-01 16:00:00Z"
@@ -675,8 +675,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-08-04"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-04"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-04 06:00:00Z"
     end:   "2025-08-04 16:00:00Z"
@@ -687,8 +687,8 @@ scenarios:
       entry: 23153.75
       sl:    23173.75
       tp:    23053.75
-  - name: "NQ - 2025-08-05"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-05"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-05 06:00:00Z"
     end:   "2025-08-05 16:00:00Z"
@@ -703,8 +703,8 @@ scenarios:
         entry: 23175.75
         sl:    23160.75
         tp:    23250.75
-  - name: "NQ - 2025-08-06"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-06"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-06 06:00:00Z"
     end:   "2025-08-06 16:00:00Z"
@@ -715,8 +715,8 @@ scenarios:
       entry: 23314.75
       sl:    23329.75
       tp:    23239.75
-  - name: "NQ - 2025-08-07"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-07"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-07 06:00:00Z"
     end:   "2025-08-07 16:00:00Z"
@@ -727,8 +727,8 @@ scenarios:
       entry: 23398.50
       sl:    23383.50
       tp:    23473.50
-  - name: "NQ - 2025-08-08"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-08"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-08 06:00:00Z"
     end:   "2025-08-08 16:00:00Z"
@@ -738,8 +738,8 @@ scenarios:
       entry: 23753.00
       sl:    23768.00
       tp:    23678.00
-  - name: "NQ - 2025-08-12"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-12"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-12 06:00:00Z"
     end:   "2025-08-12 16:00:00Z"
@@ -747,8 +747,8 @@ scenarios:
       - { price: 23846.75, at: "2025-08-12 07:00:00Z" }
     expect:
       none: true
-  - name: "NQ - 2025-08-14"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-14"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-14 06:00:00Z"
     end:   "2025-08-14 16:00:00Z"
@@ -759,8 +759,8 @@ scenarios:
       entry: 23819.75
       sl:    23789.75
       tp:    23969.75
-  - name: "NQ - 2025-08-15"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-15"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-15 06:00:00Z"
     end:   "2025-08-15 16:00:00Z"
@@ -774,8 +774,8 @@ scenarios:
         entry: 23798.25
         sl:    23783.25
         tp:    23873.25
-  - name: "NQ - 2025-08-18"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-18"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-18 06:00:00Z"
     end:   "2025-08-18 16:00:00Z"
@@ -785,8 +785,8 @@ scenarios:
       entry: 23749.00
       sl:    23719.00
       tp:    23899.00
-  - name: "NQ - 2025-08-19"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-19"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-19 06:00:00Z"
     end:   "2025-08-19 16:00:00Z"
@@ -800,8 +800,8 @@ scenarios:
         entry: 23721.75
         sl:    23706.75
         tp:    23796.75
-  - name: "NQ - 2025-08-20"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-20"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-20 06:00:00Z"
     end:   "2025-08-20 16:00:00Z"
@@ -817,8 +817,8 @@ scenarios:
         entry: 23115.00
         sl:    23100.00
         tp:    23190.00
-  - name: "NQ - 2025-08-21"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-21"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-21 06:00:00Z"
     end:   "2025-08-21 16:00:00Z"
@@ -828,8 +828,8 @@ scenarios:
       entry: 23128.50
       sl:    23113.50
       tp:    23203.50
-  - name: "NQ - 2025-08-22"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-22"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-22 06:00:00Z"
     end:   "2025-08-22 16:00:00Z"
@@ -845,8 +845,8 @@ scenarios:
         entry: 23581.75
         sl:    23596.75
         tp:    23506.75
-  - name: "NQ - 2025-08-25"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-25"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-25 06:00:00Z"
     end:   "2025-08-25 16:00:00Z"
@@ -861,8 +861,8 @@ scenarios:
         entry: 23469.00
         sl:    23454.00
         tp:    23544.00
-  - name: "NQ - 2025-08-27"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-27"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-27 06:00:00Z"
     end:   "2025-08-27 16:00:00Z"
@@ -872,8 +872,8 @@ scenarios:
       entry: 23650.00
       sl:    23665.00
       tp:    23575.00
-  - name: "NQ - 2025-08-28"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-28"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-28 06:00:00Z"
     end:   "2025-08-28 16:00:00Z"
@@ -888,8 +888,8 @@ scenarios:
         entry: 23706.00
         sl:    23721.00
         tp:    23631.00
-  - name: "NQ - 2025-08-29"
-    pair: "NQ"
+  - name: "MNQ - 2025-08-29"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-08-29 06:00:00Z"
     end:   "2025-08-29 16:00:00Z"
@@ -904,8 +904,8 @@ scenarios:
         entry: 23544.00
         sl:    23529.00
         tp:    23619.00
-  - name: "NQ - 2025-09-02"
-    pair: "NQ"
+  - name: "MNQ - 2025-09-02"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-09-02 06:00:00Z"
     end:   "2025-09-02 16:00:00Z"
@@ -919,8 +919,8 @@ scenarios:
         entry: 23052.50
         sl:    23037.50
         tp:    23127.50
-  - name: "NQ - 2025-09-04"
-    pair: "NQ"
+  - name: "MNQ - 2025-09-04"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-09-04 06:00:00Z"
     end:   "2025-09-04 16:00:00Z"
@@ -934,8 +934,8 @@ scenarios:
         entry: 23554.50
         sl:    23569.50
         tp:    23479.50
-  - name: "NQ - 2025-09-05"
-    pair: "NQ"
+  - name: "MNQ - 2025-09-05"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-09-05 06:00:00Z"
     end:   "2025-09-05 16:00:00Z"
@@ -945,8 +945,8 @@ scenarios:
       entry: 23890.75
       sl:    23905.75
       tp:    23815.75
-  - name: "NQ - 2025-09-08"
-    pair: "NQ"
+  - name: "MNQ - 2025-09-08"
+    pair: "MNQ"
     tf: "3m"
     start: "2025-09-08 06:00:00Z"
     end:   "2025-09-08 16:00:00Z"
@@ -960,8 +960,8 @@ scenarios:
         entry: 23819.75
         sl:    23834.75
         tp:    23744.75
-  - name: "NQ - 2025-09-09"
-    pair: "NQ"
+  - name: "MNQ - 2025-09-09"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-09-09 06:00:00Z"
     end:   "2025-09-09 16:00:00Z"
@@ -975,8 +975,8 @@ scenarios:
         entry: 23895.50
         sl:    23910.50
         tp:    23820.50
-  - name: "NQ - 2025-09-12"
-    pair: "NQ"
+  - name: "MNQ - 2025-09-12"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-09-12 06:00:00Z"
     end:   "2025-09-12 16:00:00Z"
@@ -986,8 +986,8 @@ scenarios:
       entry: 24068.25
       sl:    24083.25
       tp:    23993.25
-  - name: "NQ - 2025-09-24"
-    pair: "NQ"
+  - name: "MNQ - 2025-09-24"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-09-24 06:00:00Z"
     end:   "2025-09-24 16:00:00Z"
@@ -1001,8 +1001,8 @@ scenarios:
         entry: 24710.75
         sl:    24695.75
         tp:    24785.75
-  - name: "NQ - 2025-09-25"
-    pair: "NQ"
+  - name: "MNQ - 2025-09-25"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-09-25 06:00:00Z"
     end:   "2025-09-25 16:00:00Z"
@@ -1011,8 +1011,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-09-26"
-    pair: "NQ"
+  - name: "MNQ - 2025-09-26"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-09-26 06:00:00Z"
     end:   "2025-09-26 16:00:00Z"
@@ -1022,8 +1022,8 @@ scenarios:
       entry: 24569.00
       sl:    24529.00
       tp:    24769.00
-  - name: "NQ - 2025-09-29"
-    pair: "NQ"
+  - name: "MNQ - 2025-09-29"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-09-29 06:00:00Z"
     end:   "2025-09-29 16:00:00Z"
@@ -1038,8 +1038,8 @@ scenarios:
         entry: 24905.75
         sl:    24920.75
         tp:    24830.75
-  - name: "NQ - 2025-10-01"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-01"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-01 06:00:00Z"
     end:   "2025-10-01 16:00:00Z"
@@ -1053,8 +1053,8 @@ scenarios:
         entry: 24974.25
         sl:    24989.25
         tp:    24899.25
-  - name: "NQ - 2025-10-02"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-02"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-02 06:00:00Z"
     end:   "2025-10-02 16:00:00Z"
@@ -1068,8 +1068,8 @@ scenarios:
         entry: 25028.25
         sl:    25013.25
         tp:    25103.25
-  - name: "NQ - 2025-10-03"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-03"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-03 06:00:00Z"
     end:   "2025-10-03 16:00:00Z"
@@ -1079,8 +1079,8 @@ scenarios:
       entry: 24963.25
       sl:    24923.25
       tp:    25163.25
-  - name: "NQ - 2025-10-06"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-06"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-06 06:00:00Z"
     end:   "2025-10-06 16:00:00Z"
@@ -1090,8 +1090,8 @@ scenarios:
       entry: 25229.50
       sl:    25244.50
       tp:    25154.50
-  - name: "NQ - 2025-10-07"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-07"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-07 06:00:00Z"
     end:   "2025-10-07 16:00:00Z"
@@ -1101,8 +1101,8 @@ scenarios:
       entry: 25262.00
       sl:    25277.00
       tp:    25187.00
-  - name: "NQ - 2025-10-08"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-08"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-08 06:00:00Z"
     end:   "2025-10-08 16:00:00Z"
@@ -1117,8 +1117,8 @@ scenarios:
         entry: 25122.75
         sl:    25137.75
         tp:    25047.75
-  - name: "NQ - 2025-10-09"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-09"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-09 06:00:00Z"
     end:   "2025-10-09 16:00:00Z"
@@ -1132,8 +1132,8 @@ scenarios:
         entry: 25294.25
         sl:    25274.25
         tp:    25394.25
-  - name: "NQ - 2025-10-10"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-10"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-10 06:00:00Z"
     end:   "2025-10-10 16:00:00Z"
@@ -1149,8 +1149,8 @@ scenarios:
       entry: 24838.25
       sl:    24798.25
       tp:    25038.25
-  - name: "NQ - 2025-10-15"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-15"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-15 06:00:00Z"
     end:   "2025-10-15 16:00:00Z"
@@ -1160,8 +1160,8 @@ scenarios:
       entry: 25086.25
       sl:    25116.25
       tp:    24936.25
-  - name: "NQ - 2025-10-16"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-16"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-16 06:00:00Z"
     end:   "2025-10-16 16:00:00Z"
@@ -1171,8 +1171,8 @@ scenarios:
       entry: 25148.75
       sl:    25178.75
       tp:    24998.75
-  - name: "NQ - 2025-10-17"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-17"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-17 06:00:00Z"
     end:   "2025-10-17 16:00:00Z"
@@ -1186,8 +1186,8 @@ scenarios:
         entry: 25008.25
         sl:    25023.25
         tp:    24933.25
-  - name: "NQ - 2025-10-20"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-20"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-20 06:00:00Z"
     end:   "2025-10-20 16:00:00Z"
@@ -1198,8 +1198,8 @@ scenarios:
       entry: 25208.75
       sl:    25223.75
       tp:    25133.75
-  - name: "NQ - 2025-10-22"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-22"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-22 06:00:00Z"
     end:   "2025-10-22 16:00:00Z"
@@ -1209,8 +1209,8 @@ scenarios:
       entry: 25191.50
       sl:    25171.50
       tp:    25291.50
-  - name: "NQ - 2025-10-23"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-23"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-23 06:00:00Z"
     end:   "2025-10-23 16:00:00Z"
@@ -1224,8 +1224,8 @@ scenarios:
         entry: 25207.00
         sl:    25222.00
         tp:    25132.00
-  - name: "NQ - 2025-10-24"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-24"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-24 06:00:00Z"
     end:   "2025-10-24 16:00:00Z"
@@ -1234,8 +1234,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-10-30"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-30"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-30 06:00:00Z"
     end:   "2025-10-30 16:00:00Z"
@@ -1244,8 +1244,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2025-10-31"
-    pair: "NQ"
+  - name: "MNQ - 2025-10-31"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-10-31 06:00:00Z"
     end:   "2025-10-31 16:00:00Z"
@@ -1260,8 +1260,8 @@ scenarios:
         entry: 25995.25
         sl:    25980.25
         tp:    26070.25
-  - name: "NQ - 2025-11-03"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-03"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-03 06:00:00Z"
     end:   "2025-11-03 16:00:00Z"
@@ -1271,8 +1271,8 @@ scenarios:
       none: true
 
 
-  - name: "NQ - 2025-11-04"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-04"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-04 06:00:00Z"
     end:   "2025-11-04 16:00:00Z"
@@ -1282,8 +1282,8 @@ scenarios:
       entry: 25866.25
       sl:    25896.25
       tp:    25716.25
-  - name: "NQ - 2025-11-06"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-06"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-06 06:00:00Z"
     end:   "2025-11-06 16:00:00Z"
@@ -1295,8 +1295,8 @@ scenarios:
       entry: 25355.50
       sl:    25315.50
       tp:    25555.50
-  - name: "NQ - 2025-11-07"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-07"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-07 06:00:00Z"
     end:   "2025-11-07 16:00:00Z"
@@ -1307,8 +1307,8 @@ scenarios:
       entry: 24790.25
       sl:    24770.25
       tp:    24890.25
-  - name: "NQ - 2025-11-10"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-10"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-10 06:00:00Z"
     end:   "2025-11-10 16:00:00Z"
@@ -1322,8 +1322,8 @@ scenarios:
         entry: 25626.00
         sl:    25641.00
         tp:    25551.00
-  - name: "NQ - 2025-11-13"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-13"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-13 06:00:00Z"
     end:   "2025-11-13 16:00:00Z"
@@ -1333,8 +1333,8 @@ scenarios:
       entry: 25470.00
       sl:    25430.00
       tp:    25670.00
-  - name: "NQ - 2025-11-14"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-14"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-14 06:00:00Z"
     end:   "2025-11-14 16:00:00Z"
@@ -1342,8 +1342,8 @@ scenarios:
       - { price: 24708.50, at: "2025-11-14 07:00:00Z" }
     expect:
       none: true
-  - name: "NQ - 2025-11-17"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-17"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-17 06:00:00Z"
     end:   "2025-11-17 16:00:00Z"
@@ -1357,8 +1357,8 @@ scenarios:
         entry: 25068.50
         sl:    25028.50
         tp:    25268.50
-  - name: "NQ - 2025-11-18"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-18"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-18 06:00:00Z"
     end:   "2025-11-18 16:00:00Z"
@@ -1368,8 +1368,8 @@ scenarios:
       entry: 24427.75
       sl:    24387.75
       tp:    24627.75
-  - name: "NQ - 2025-11-19"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-19"
+    pair: "MNQ"
     tf: "3m"
     start: "2025-11-19 06:00:00Z"
     end:   "2025-11-19 16:00:00Z"
@@ -1379,8 +1379,8 @@ scenarios:
       entry: 24572.75
       sl:    24532.75
       tp:    24772.75
-  - name: "NQ - 2025-11-20"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-20"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-20 06:00:00Z"
     end:   "2025-11-20 16:00:00Z"
@@ -1390,8 +1390,8 @@ scenarios:
       entry: 25250.25
       sl:    25265.25
       tp:    25175.25
-  - name: "NQ - 2025-11-21"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-21"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-21 06:00:00Z"
     end:   "2025-11-21 16:00:00Z"
@@ -1405,8 +1405,8 @@ scenarios:
         entry: 24364.50
         sl:    24379.50
         tp:    24289.50
-  - name: "NQ - 2025-11-25"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-25"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-25 06:00:00Z"
     end:   "2025-11-25 16:00:00Z"
@@ -1416,8 +1416,8 @@ scenarios:
       entry: 25048.50
       sl:    25063.50
       tp:    24973.50
-  - name: "NQ - 2025-11-26"
-    pair: "NQ"
+  - name: "MNQ - 2025-11-26"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-11-26 06:00:00Z"
     end:   "2025-11-26 16:00:00Z"
@@ -1427,8 +1427,8 @@ scenarios:
       entry: 25364.00
       sl:    25379.00
       tp:    25289.00
-  - name: "NQ - 2025-12-02"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-02"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-02 08:00:00Z"
     end:   "2025-12-02 12:00:00Z"
@@ -1438,8 +1438,8 @@ scenarios:
       entry: 25587.50
       sl:    25617.50
       tp:    25437.50
-  - name: "NQ - 2025-12-03"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-03"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-03 08:00:00Z"
     end:   "2025-12-03 13:00:00Z"
@@ -1449,8 +1449,8 @@ scenarios:
       entry: 25611.00
       sl:    25626.00
       tp:    25536.00
-  - name: "NQ - 2025-12-04"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-04"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-04 07:00:00Z"
     end:   "2025-12-04 11:00:00Z"
@@ -1460,8 +1460,8 @@ scenarios:
       entry: 25720.75
       sl:    25735.75
       tp:    25645.75
-  - name: "NQ - 2025-12-05"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-05"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-05 05:00:00Z"
     end:   "2025-12-05 14:00:00Z"
@@ -1471,8 +1471,8 @@ scenarios:
       entry: 25594.25
       sl:    25579.25
       tp:    25669.25
-  - name: "NQ - 2025-12-08"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-08"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-08 08:00:00Z"
     end:   "2025-12-08 17:00:00Z"
@@ -1482,8 +1482,8 @@ scenarios:
       entry: 25586.75
       sl:    25566.75
       tp:    25686.75
-  - name: "NQ - 2025-12-10"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-10"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-10 07:00:00Z"
     end:   "2025-12-10 15:00:00Z"
@@ -1493,8 +1493,8 @@ scenarios:
       entry: 25550.75
       sl:    25530.75
       tp:    25650.75
-  - name: "NQ - 2025-12-12"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-12"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-12 07:00:00Z"
     end:   "2025-12-12 14:00:00Z"
@@ -1504,8 +1504,8 @@ scenarios:
       entry: 25342.75
       sl:    25302.75
       tp:    25542.75
-  - name: "NQ - 2025-12-15"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-15"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-15 07:00:00Z"
     end:   "2025-12-15 12:00:00Z"
@@ -1519,8 +1519,8 @@ scenarios:
         entry: 25380.00
         sl:    25395.00
         tp:    25305.00
-  - name: "NQ - 2025-12-17"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-17"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-17 06:00:00Z"
     end:   "2025-12-17 15:00:00Z"
@@ -1532,8 +1532,8 @@ scenarios:
       entry: 25103.00
       sl:    25063.00
       tp:    25303.00
-  - name: "NQ - 2025-12-18"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-18"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-18 08:00:00Z"
     end:   "2025-12-18 11:00:00Z"
@@ -1543,8 +1543,8 @@ scenarios:
       none: true
 
 
-  - name: "NQ - 2025-12-23"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-23"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-23 06:00:00Z"
     end:   "2025-12-23 14:00:00Z"
@@ -1554,8 +1554,8 @@ scenarios:
       entry: 25627.00
       sl:    25607.00
       tp:    25727.00
-  - name: "NQ - 2025-12-24"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-24"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-24 07:00:00Z"
     end:   "2025-12-24 11:0Z"
@@ -1569,8 +1569,8 @@ scenarios:
         entry: 25817.75
         sl:    25832.75
         tp:    25742.75
-  - name: "NQ - 2025-12-26"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-26"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-26 07:00:00Z"
     end:   "2025-12-26 11:00:00Z"
@@ -1584,8 +1584,8 @@ scenarios:
         entry: 25915.25
         sl:    25930.25
         tp:    25840.25
-  - name: "NQ - 2025-12-29"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-29"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-29 07:00:00Z"
     end:   "2025-12-29 11:00:00Z"
@@ -1599,8 +1599,8 @@ scenarios:
         entry: 25698.25
         sl:    25683.25
         tp:    25773.25
-  - name: "NQ - 2025-12-31"
-    pair: "NQ"
+  - name: "MNQ - 2025-12-31"
+    pair: "MNQ"
     tf: "1m"
     start: "2025-12-31 07:00:00Z"
     end:   "2025-12-31 12:00:00Z"
@@ -1614,8 +1614,8 @@ scenarios:
         entry: 25696.25
         sl:    25711.25
         tp:    25621.25
-  - name: "NQ - 2026-01-02"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-02"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-02 06:00:00Z"
     end:   "2026-01-02 13:00:00Z"
@@ -1629,8 +1629,8 @@ scenarios:
         entry: 25355.00
         sl:    25340.00
         tp:    25430.00
-  - name: "NQ - 2026-01-05"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-05"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-05 06:00:00Z"
     end:   "2026-01-05 15:00:00Z"
@@ -1644,8 +1644,8 @@ scenarios:
         entry: 25630.50
         sl:    25645.50
         tp:    25555.50
-  - name: "NQ - 2026-01-06"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-06"
+    pair: "MNQ"
     tf: "3m"
     start: "2026-01-06 07:00:00Z"
     end:   "2026-01-06 17:00:00Z"
@@ -1659,8 +1659,8 @@ scenarios:
         entry: 25801.75
         sl:    25816.75
         tp:    25726.75
-  - name: "NQ - 2026-01-07"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-07"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-07 08:00:00Z"
     end:   "2026-01-07 15:00:00Z"
@@ -1674,8 +1674,8 @@ scenarios:
         entry: 25932.00
         sl:    25947.00
         tp:    25857.00
-  - name: "NQ - 2026-01-09"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-09"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-09 07:30:00Z"
     end:   "2026-01-09 12:00:00Z"
@@ -1689,8 +1689,8 @@ scenarios:
         entry: 25724.25
         sl:    25704.25
         tp:    25824.25
-  - name: "NQ - 2026-01-12"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-12"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-12 07:00:00Z"
     end:   "2026-01-12 13:00:00Z"
@@ -1700,8 +1700,8 @@ scenarios:
       entry: 25914.50
       sl:    25934.50
       tp:    25814.50
-  - name: "NQ - 2026-01-13"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-13"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-13 07:00:00Z"
     end:   "2026-01-13 11:00:00Z"
@@ -1711,8 +1711,8 @@ scenarios:
       entry: 26017.00
       sl:    26047.00
       tp:    25867.00
-  - name: "NQ - 2026-01-14"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-14"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-14 07:00:00Z"
     end:   "2026-01-14 15:00:00Z"
@@ -1722,8 +1722,8 @@ scenarios:
       entry: 25490.00
       sl:    25470.00
       tp:    25590.00
-  - name: "NQ - 2026-01-15"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-15"
+    pair: "MNQ"
     tf: "3m"
     start: "2026-01-15 07:30:00Z"
     end:   "2026-01-15 14:00:00Z"
@@ -1733,8 +1733,8 @@ scenarios:
       entry: 25924.50
       sl:    25954.50
       tp:    25774.50
-  - name: "NQ - 2026-01-16"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-16"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-16 07:00:00Z"
     end:   "2026-01-16 11:00:00Z"
@@ -1744,8 +1744,8 @@ scenarios:
       entry: 25864.25
       sl:    25894.25
       tp:    25714.25
-  - name: "NQ - 2026-01-19"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-19"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-19 07:00:00Z"
     end:   "2026-01-19 12:00:00Z"
@@ -1759,8 +1759,8 @@ scenarios:
         entry: 25262.00
         sl:    25247.00
         tp:    25337.00
-  - name: "NQ - 2026-01-20"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-20"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-20 08:00:00Z"
     end:   "2026-01-20 12:00:00Z"
@@ -1774,8 +1774,8 @@ scenarios:
         entry: 25300.50
         sl:    25330.50
         tp:    25150.50
-  - name: "NQ - 2026-01-21"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-21"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-21 07:00:00Z"
     end:   "2026-01-21 13:00:00Z"
@@ -1789,8 +1789,8 @@ scenarios:
         entry: 25432.75
         sl:    25447.75
         tp:    25357.75
-  - name: "NQ - 2026-01-23"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-23"
+    pair: "MNQ"
     tf: "3m"
     start: "2026-01-23 07:00:00Z"
     end:   "2026-01-23 16:00:00Z"
@@ -1800,8 +1800,8 @@ scenarios:
       entry: 25824.75
       sl:    25844.75
       tp:    25724.75
-  - name: "NQ - 2026-01-26"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-26"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-26 07:30:00Z"
     end:   "2026-01-26 11:30:00Z"
@@ -1811,8 +1811,8 @@ scenarios:
       entry: 25794.75
       sl:    25824.75
       tp:    25644.75
-  - name: "NQ - 2026-01-27"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-27"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-27 08:00:00Z"
     end:   "2026-01-27 11:30:00Z"
@@ -1826,8 +1826,8 @@ scenarios:
         entry: 25974.00
         sl:    25959.00
         tp:    26049.00
-  - name: "NQ - 2026-01-29"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-29"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-29 07:00:00Z"
     end:   "2026-01-29 15:00:00Z"
@@ -1842,8 +1842,8 @@ scenarios:
         entry: 25935.25
         sl:    25920.25
         tp:    26010.25
-  - name: "NQ - 2026-01-30"
-    pair: "NQ"
+  - name: "MNQ - 2026-01-30"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-01-30 07:00:00Z"
     end:   "2026-01-30 15:00:00Z"
@@ -1853,8 +1853,8 @@ scenarios:
       entry: 25598.25
       sl:    25568.25
       tp:    25748.25
-  - name: "NQ - 2026-02-02"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-02"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-02 03:00:00Z"
     end:   "2026-02-02 15:00:00Z"
@@ -1864,8 +1864,8 @@ scenarios:
       none: true
 
 
-  - name: "NQ - 2026-02-03"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-03"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-03 04:00:00Z"
     end:   "2026-02-03 17:00:00Z"
@@ -1880,8 +1880,8 @@ scenarios:
         entry: 25549.25
         sl:    25534.25
         tp:    25624.25
-  - name: "NQ - 2026-02-04"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-04"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-04 05:00:00Z"
     end:   "2026-02-04 12:00:00Z"
@@ -1896,8 +1896,8 @@ scenarios:
         entry: 25226.50
         sl:    25186.50
         tp:    25426.50
-  - name: "NQ - 2026-02-05"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-05"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-05 07:00:00Z"
     end:   "2026-02-05 11:00:00Z"
@@ -1911,8 +1911,8 @@ scenarios:
         entry: 24913.50
         sl:    24928.50
         tp:    24838.50
-  - name: "NQ - 2026-02-06"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-06"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-06 07:30:00Z"
     end:   "2026-02-06 13:00:00Z"
@@ -1927,8 +1927,8 @@ scenarios:
         entry: 24981.75
         sl:    24996.75
         tp:    24906.75
-  - name: "NQ - 2026-02-09"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-09"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-09 06:00:00Z"
     end:   "2026-02-09 16:00:00Z"
@@ -1942,8 +1942,8 @@ scenarios:
         entry: 25353.75
         sl:    25368.75
         tp:    25278.75
-  - name: "NQ - 2026-02-10"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-10"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-10 05:00:00Z"
     end:   "2026-02-10 16:00:00Z"
@@ -1953,8 +1953,8 @@ scenarios:
       entry: 25435.25
       sl:    25450.25
       tp:    25360.25
-  - name: "NQ - 2026-02-11"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-11"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-11 06:00:00Z"
     end:   "2026-02-11 15:00:00Z"
@@ -1964,8 +1964,8 @@ scenarios:
       entry: 25101.50
       sl:    25061.50
       tp:    25301.50
-  - name: "NQ - 2026-02-12"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-12"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-12 05:00:00Z"
     end:   "2026-02-12 11:00:00Z"
@@ -1975,8 +1975,8 @@ scenarios:
       entry: 25411.75
       sl:    25426.75
       tp:    25336.75
-  - name: "NQ - 2026-02-13"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-13"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-13 06:00:00Z"
     end:   "2026-02-13 12:00:00Z"
@@ -1986,8 +1986,8 @@ scenarios:
       entry: 24688.25
       sl:    24648.25
       tp:    24888.25
-  - name: "NQ - 2026-02-17"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-17"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-17 06:00:00Z"
     end:   "2026-02-17 12:00:00Z"
@@ -1997,8 +1997,8 @@ scenarios:
       entry: 24776.50
       sl:    24816.50
       tp:    24576.50
-  - name: "NQ - 2026-02-18"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-18"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-18 06:00:00Z"
     end:   "2026-02-18 13:00:00Z"
@@ -2012,8 +2012,8 @@ scenarios:
         entry: 24782.75
         sl:    24767.75
         tp:    24857.75
-  - name: "NQ - 2026-02-19"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-19"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-19 07:00:00Z"
     end:   "2026-02-19 13:00:00Z"
@@ -2027,8 +2027,8 @@ scenarios:
         entry: 24926.50
         sl:    24941.50
         tp:    24851.50
-  - name: "NQ - 2026-02-20"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-20"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-20 06:00:00Z"
     end:   "2026-02-20 12:00:00Z"
@@ -2042,8 +2042,8 @@ scenarios:
         entry: 24780.50
         sl:    24750.50
         tp:    24930.50
-  - name: "NQ - 2026-02-23"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-23"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-23 05:00:00Z"
     end:   "2026-02-23 13:00:00Z"
@@ -2057,8 +2057,8 @@ scenarios:
         entry: 25011.75
         sl:    25026.75
         tp:    24936.75
-  - name: "NQ - 2026-02-24"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-24"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-24 07:00:00Z"
     end:   "2026-02-24 13:00:00Z"
@@ -2072,8 +2072,8 @@ scenarios:
         entry: 24720.50
         sl:    24705.50
         tp:    24795.50
-  - name: "NQ - 2026-02-25"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-25"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-25 07:00:00Z"
     end:   "2026-02-25 13:00:00Z"
@@ -2087,8 +2087,8 @@ scenarios:
         entry: 25321.00
         sl:    25336.00
         tp:    25246.00
-  - name: "NQ - 2026-02-26"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-26"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-26 09:00:00Z"
     end:   "2026-02-26 14:00:00Z"
@@ -2102,8 +2102,8 @@ scenarios:
         entry: 24932.25
         sl:    24917.25
         tp:    25007.25
-  - name: "NQ - 2026-02-27"
-    pair: "NQ"
+  - name: "MNQ - 2026-02-27"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-02-27 03:00:00Z"
     end:   "2026-02-27 14:00:00Z"
@@ -2117,8 +2117,8 @@ scenarios:
         entry: 24866.00
         sl:    24851.00
         tp:    24941.00
-  - name: "NQ - 2026-03-02"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-02"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-02 07:00:00Z"
     end:   "2026-03-02 13:00:00Z"
@@ -2132,8 +2132,8 @@ scenarios:
         entry: 24920.50
         sl:    24940.50
         tp:    24820.50
-  - name: "NQ - 2026-03-03"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-03"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-03 05:00:00Z"
     end:   "2026-03-03 12:00:00Z"
@@ -2143,8 +2143,8 @@ scenarios:
       entry: 24376.00
       sl:    24346.00
       tp:    24526.00
-  - name: "NQ - 2026-03-04"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-04"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-04 06:00:00Z"
     end:   "2026-03-04 13:00:00Z"
@@ -2158,8 +2158,8 @@ scenarios:
         entry: 25091.50
         sl:    25106.50
         tp:    25016.50
-  - name: "NQ - 2026-03-05"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-05"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-05 03:00:00Z"
     end:   "2026-03-05 12:00:00Z"
@@ -2169,8 +2169,8 @@ scenarios:
       entry: 24976.25
       sl:    24961.25
       tp:    25051.25
-  - name: "NQ - 2026-03-06"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-06"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-06 05:00:00Z"
     end:   "2026-03-06 12:00:00Z"
@@ -2185,8 +2185,8 @@ scenarios:
         entry: 24786.50
         sl:    24771.50
         tp:    24861.50
-  - name: "NQ - 2026-03-09"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-09"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-09 07:30:00Z"
     end:   "2026-03-09 10:00:00Z"
@@ -2200,8 +2200,8 @@ scenarios:
         entry: 24483.50
         sl:    24498.50
         tp:    24408.50
-  - name: "NQ - 2026-03-10"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-10"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-10 06:00:00Z"
     end:   "2026-03-10 10:00:00Z"
@@ -2215,8 +2215,8 @@ scenarios:
         entry: 24998.25
         sl:    25038.25
         tp:    24798.25
-  - name: "NQ - 2026-03-11"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-11"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-11 08:00:00Z"
     end:   "2026-03-11 11:00:00Z"
@@ -2226,8 +2226,8 @@ scenarios:
       entry: 25115.25
       sl:    25155.25
       tp:    24915.25
-  - name: "NQ - 2026-03-13"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-13"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-13 07:00:00Z"
     end:   "2026-03-13 12:00:00Z"
@@ -2237,8 +2237,8 @@ scenarios:
       entry: 24770.75
       sl:    24810.75
       tp:    24570.75
-  - name: "NQ - 2026-03-16"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-16"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-16 06:00:00Z"
     end:   "2026-03-16 16:00:00Z"
@@ -2247,8 +2247,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2026-03-18"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-18"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-18 06:00:00Z"
     end:   "2026-03-18 16:00:00Z"
@@ -2262,8 +2262,8 @@ scenarios:
         entry: 24859.00
         sl:    24844.00
         tp:    24934.00
-  - name: "NQ - 2026-03-19"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-19"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-19 06:00:00Z"
     end:   "2026-03-19 16:00:00Z"
@@ -2273,8 +2273,8 @@ scenarios:
       entry: 24372.00
       sl:    24332.00
       tp:    24572.00
-  - name: "NQ - 2026-03-20"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-20"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-20 06:00:00Z"
     end:   "2026-03-20 16:00:00Z"
@@ -2288,8 +2288,8 @@ scenarios:
         entry: 24271.25
         sl:    24256.25
         tp:    24346.25
-  - name: "NQ - 2026-03-23"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-23"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-23 06:00:00Z"
     end:   "2026-03-23 16:00:00Z"
@@ -2299,8 +2299,8 @@ scenarios:
       entry: 24349.25
       sl:    24309.25
       tp:    24549.25
-  - name: "NQ - 2026-03-24"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-24"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-24 06:00:00Z"
     end:   "2026-03-24 16:00:00Z"
@@ -2314,8 +2314,8 @@ scenarios:
         entry: 24207.00
         sl:    24192.00
         tp:    24282.00
-  - name: "NQ - 2026-03-25"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-25"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-25 06:00:00Z"
     end:   "2026-03-25 16:00:00Z"
@@ -2325,8 +2325,8 @@ scenarios:
       entry: 24317.25
       sl:    24287.25
       tp:    24467.25
-  - name: "NQ - 2026-03-26"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-26"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-26 06:00:00Z"
     end:   "2026-03-26 16:00:00Z"
@@ -2338,8 +2338,8 @@ scenarios:
       entry: 23787.75
       sl:    23757.75
       tp:    23937.75
-  - name: "NQ - 2026-03-27"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-27"
+    pair: "MNQ"
     tf: "5m"
     start: "2026-03-27 06:00:00Z"
     end:   "2026-03-27 16:00:00Z"
@@ -2349,8 +2349,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2026-03-31"
-    pair: "NQ"
+  - name: "MNQ - 2026-03-31"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-03-31 06:00:00Z"
     end:   "2026-03-31 16:00:00Z"
@@ -2365,8 +2365,8 @@ scenarios:
         entry: 23416.75
         sl:    23436.75
         tp:    23316.75
-  - name: "NQ - 2026-04-01"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-01"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-04-01 06:00:00Z"
     end:   "2026-04-01 16:00:00Z"
@@ -2381,8 +2381,8 @@ scenarios:
         sl:    24183.75
         tp:    23943.75
 
-  - name: "NQ - 2026-04-02"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-02"
+    pair: "MNQ"
     tf: "5m"
     start: "2026-04-02 06:00:00Z"
     end:   "2026-04-02 16:00:00Z"
@@ -2391,8 +2391,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2026-04-06"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-06"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-04-06 06:00:00Z"
     end:   "2026-04-06 16:00:00Z"
@@ -2404,8 +2404,8 @@ scenarios:
       entry: 24324.25
       sl:    24364.25
       tp:    24124.25
-  - name: "NQ - 2026-04-07"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-07"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-04-07 06:00:00Z"
     end:   "2026-04-07 16:00:00Z"
@@ -2416,8 +2416,8 @@ scenarios:
       entry: 23961.50
       sl:    23941.50
       tp:    24061.50
-  - name: "NQ - 2026-04-08"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-08"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-04-08 06:00:00Z"
     end:   "2026-04-08 16:00:00Z"
@@ -2428,8 +2428,8 @@ scenarios:
       sl:    25254.25
       tp:    25164.25
 
-  - name: "NQ - 2026-04-09"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-09"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-04-09 06:00:00Z"
     end:   "2026-04-09 16:00:00Z"
@@ -2441,8 +2441,8 @@ scenarios:
       sl:    25183.00
       tp:    25003.00
 
-  - name: "NQ - 2026-04-10"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-10"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-04-10 06:00:00Z"
     end:   "2026-04-10 16:00:00Z"
@@ -2453,8 +2453,8 @@ scenarios:
       sl:    25354.25
       tp:    25114.25
 
-  - name: "NQ - 2026-04-13"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-13"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-04-13 06:00:00Z"
     end:   "2026-04-13 16:00:00Z"
@@ -2466,8 +2466,8 @@ scenarios:
       sl:    25413.00
       tp:    25173.00
 
-  - name: "NQ - 2026-04-15"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-15"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-04-15 06:00:00Z"
     end:   "2026-04-15 16:00:00Z"
@@ -2478,8 +2478,8 @@ scenarios:
       sl:    26361.25
       tp:    26271.25
 
-  - name: "NQ - 2026-04-20"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-20"
+    pair: "MNQ"
     tf: "5m"
     start: "2026-04-20 06:00:00Z"
     end:   "2026-04-20 16:00:00Z"
@@ -2488,8 +2488,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2026-04-21"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-21"
+    pair: "MNQ"
     tf: "5m"
     start: "2026-04-21 06:00:00Z"
     end:   "2026-04-21 16:00:00Z"
@@ -2498,8 +2498,8 @@ scenarios:
     expect:
       none: true
 
-  - name: "NQ - 2026-04-22"
-    pair: "NQ"
+  - name: "MNQ - 2026-04-22"
+    pair: "MNQ"
     tf: "1m"
     start: "2026-04-22 06:00:00Z"
     end:   "2026-04-22 16:00:00Z"

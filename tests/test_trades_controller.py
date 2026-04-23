@@ -16,7 +16,7 @@ class FakeBarsLoader:
         self._1m_buffer = [{"close": close_price, "time": 1000}]
         self._last_bar_close = close_price
         self._last_played_ts = 0
-        self.current_1m_index = {"NQ": 0}
+        self.current_1m_index = {"MNQ": 0}
         self.data_source = self  # self-serve for load_historical_bars
 
     def load_historical_bars(self, tf):
@@ -41,7 +41,7 @@ def _make_controller(close_price=100.0, **tm_overrides):
     tm = TradeManager(
         trade_repository=repo,
         socketio=socketio,
-        pair="NQ",
+        pair="MNQ",
         trade_executor=executor,
         point_value=2.0,
         account_balance=100000.0,
@@ -58,13 +58,13 @@ class TestCloseAllTrades:
         controller, tm, executor, repo = _make_controller(close_price=105.0)
 
         # Seed two open trades
-        tm.open_trade("NQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
-        tm.open_trade("NQ", "short", 100.0, 110.0, 70.0, 10.0, 500.0, 5.0)
+        tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
+        tm.open_trade("MNQ", "short", 100.0, 110.0, 70.0, 10.0, 500.0, 5.0)
 
         assert len(tm.open_trades) == 2
         assert len(executor.closes) == 0
 
-        resp, status = controller.close_all_trades("NQ")
+        resp, status = controller.close_all_trades("MNQ")
 
         assert status == 200
         data = resp.get_json()
@@ -79,7 +79,7 @@ class TestCloseAllTrades:
     def test_returns_empty_when_no_open_trades(self, app_context):
         controller, tm, executor, repo = _make_controller()
 
-        resp, status = controller.close_all_trades("NQ")
+        resp, status = controller.close_all_trades("MNQ")
 
         assert status == 200
         data = resp.get_json()
@@ -89,10 +89,10 @@ class TestCloseAllTrades:
     def test_only_closes_trades_for_requested_pair(self, app_context):
         controller, tm, executor, repo = _make_controller(close_price=105.0)
 
-        tm.open_trade("NQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
+        tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
         tm.open_trade("ES", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
 
-        resp, status = controller.close_all_trades("NQ")
+        resp, status = controller.close_all_trades("MNQ")
 
         assert status == 200
         data = resp.get_json()

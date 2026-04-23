@@ -1,5 +1,5 @@
 """
-CLI entry point for daily NQ Futures data sync.
+CLI entry point for daily MNQ Futures data sync.
 
 Configuration is read from .env in the project root. CLI flags override .env values.
 
@@ -24,7 +24,7 @@ USING THE FETCHED CSV IN CSVDataSource
   Pass the same FETCH_TZ value as the 'tz' parameter to CSVDataSource:
 
       ds = CSVDataSource(
-          pair="NQ",
+          pair="MNQ",
           filename="csvs/NQ_live.csv",
           tz="America/Chicago",   # must match FETCH_TZ in .env
       )
@@ -74,7 +74,7 @@ def _build_provider(args: argparse.Namespace) -> FetchProvider:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="python -m fetcher.run",
-        description="Sync NQ Futures 1m bar data to a CSV file.",
+        description="Sync MNQ Futures 1m bar data to a CSV file.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -88,7 +88,7 @@ def main() -> None:
             "'yfinance' is free but limited to the last 7 days of 1m data. "
             "'polygon' requires POLYGON_API_KEY and supports full history. "
             "'alpaca' requires ALPACA_API_KEY + ALPACA_SECRET_KEY, supports years of 1m history. "
-            "'databento' requires DATABENTO_API_KEY, full CME NQ futures history. "
+            "'databento' requires DATABENTO_API_KEY, full CME MNQ futures history. "
             "[env: FETCH_PROVIDER, default: yfinance]"
         ),
     )
@@ -108,8 +108,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--pair",
-        default=os.environ.get("FETCH_PAIR", "NQ"),
-        help="Pair name embedded in each bar dict. [env: FETCH_PAIR, default: NQ]",
+        default=os.environ.get("FETCH_PAIR", "MNQ"),
+        help="Pair name embedded in each bar dict. [env: FETCH_PAIR, default: MNQ]",
     )
     parser.add_argument(
         "--tz",

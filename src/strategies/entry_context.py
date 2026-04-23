@@ -11,7 +11,7 @@ from src.types import Direction
 # This allows the filter to automatically convert UTC timestamps to the 
 # correct local time (e.g. NY time for Indices) without manual config.
 PAIR_TIMEZONES = {
-    "NQ": "America/New_York",
+    "MNQ": "America/New_York",
     "MNQ": "America/New_York",
     "ES": "America/New_York",
     "MES": "America/New_York",
@@ -91,7 +91,7 @@ def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: Opti
     
     :param start_time_str: "HH:MM" (24-hour format), e.g., "09:30"
     :param end_time_str: "HH:MM" (24-hour format), e.g., "17:00"
-    :param timezone_str: Optional. If None, it is automatically resolved from the pair (e.g. NQ -> NY Time).
+    :param timezone_str: Optional. If None, it is automatically resolved from the pair (e.g. MNQ -> NY Time).
     """
     t_start = datetime.strptime(start_time_str, "%H:%M").time()
     t_end = datetime.strptime(end_time_str, "%H:%M").time()

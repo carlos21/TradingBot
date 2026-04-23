@@ -54,7 +54,7 @@ def write_discovery_yaml(sc: dict):
     content = (
         f'scenarios:\n'
         f'  - name: "{sc["name"]}"\n'
-        f'    pair: "NQ"\n'
+        f'    pair: "MNQ"\n'
         f'    tf: "5m"\n'
         f'    start: "{sc["start"]}"\n'
         f'    end:   "{sc["end"]}"\n'
@@ -70,7 +70,7 @@ def write_snapshot_yaml(sc: dict):
     content = (
         f'scenarios:\n'
         f'  - name: "{sc["name"]}"\n'
-        f'    pair: "NQ"\n'
+        f'    pair: "MNQ"\n'
         f'    tf: "{sc["tf"]}"\n'
         f'    start: "{sc["start"]}"\n'
         f'    end:   "{sc["end"]}"\n'

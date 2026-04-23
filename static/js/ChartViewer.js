@@ -3,7 +3,6 @@ import { MarkerManager } from './MarkerManager.js';
 import { SocketHandler } from './SocketHandler.js';
 
 const PRICE_FORMATS = {
-  NQ:     { precision: 2, minMove: 0.01 },
   MNQ:    { precision: 2, minMove: 0.01 },
   EURUSD: { precision: 5, minMove: 0.00001 },
 };

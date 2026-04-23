@@ -15,7 +15,7 @@ def register_core_routes(
     
     Args:
         app: Flask application instance
-        pair: Trading pair (e.g., "NQ")
+        pair: Trading pair (e.g., "MNQ")
         data_source: Data source for historical bars
     """
     

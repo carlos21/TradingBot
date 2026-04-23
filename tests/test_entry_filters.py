@@ -17,7 +17,7 @@ from src.strategies.entry_context import (
 from src.models import TradeData
 
 
-def _make_ctx(strategy=None, bar_time=None, pair="NQ", cross_depth=10.0, level=100.0, extreme=90.0):
+def _make_ctx(strategy=None, bar_time=None, pair="MNQ", cross_depth=10.0, level=100.0, extreme=90.0):
     if strategy is None:
         strategy = MagicMock()
         strategy.open_trades = []
@@ -141,7 +141,7 @@ class TestTimeRangeFilter:
         f = time_range_filter("08:00", "17:00")
         # 10:00 AM NY
         bar_time = int(datetime(2025, 6, 15, 14, 0, tzinfo=timezone.utc).timestamp())
-        ctx = _make_ctx(bar_time=bar_time, pair="NQ")
+        ctx = _make_ctx(bar_time=bar_time, pair="MNQ")
         ok, _ = f(ctx)
         assert ok is True
 
@@ -166,7 +166,7 @@ class TestDailyTradesLimitFilter:
         strategy.trade_repository = MagicMock()
         strategy.trade_repository.list_trades.return_value = [
             TradeData(
-                trade_id="T1", pair="NQ", trade_type="long",
+                trade_id="T1", pair="MNQ", trade_type="long",
                 entry_price=100, stop_loss=90, take_profit=130, risk=10,
                 risk_dollars=None, risk_pct=None, contracts=None,
                 entry_time=datetime(2025, 6, 15, 13, 0, tzinfo=timezone.utc),
@@ -187,7 +187,7 @@ class TestDailyTradesLimitFilter:
         strategy.trade_repository = MagicMock()
         strategy.trade_repository.list_trades.return_value = [
             TradeData(
-                trade_id="T1", pair="NQ", trade_type="long",
+                trade_id="T1", pair="MNQ", trade_type="long",
                 entry_price=100, stop_loss=90, take_profit=130, risk=10,
                 risk_dollars=None, risk_pct=None, contracts=None,
                 entry_time=datetime(2025, 6, 14, 14, 0, tzinfo=timezone.utc),
@@ -207,7 +207,7 @@ class TestDailyTradesLimitFilter:
         strategy.trade_repository = MagicMock()
         strategy.trade_repository.list_trades.return_value = [
             TradeData(
-                trade_id="T1", pair="NQ", trade_type="long",
+                trade_id="T1", pair="MNQ", trade_type="long",
                 entry_price=100, stop_loss=90, take_profit=130, risk=10,
                 risk_dollars=None, risk_pct=None, contracts=None,
                 entry_time=datetime(2025, 6, 15, 13, 0, tzinfo=timezone.utc),
@@ -215,7 +215,7 @@ class TestDailyTradesLimitFilter:
                 fees=None, pnl_usd=None, params=None, source="test",
             ),
             TradeData(
-                trade_id="T2", pair="NQ", trade_type="long",
+                trade_id="T2", pair="MNQ", trade_type="long",
                 entry_price=100, stop_loss=90, take_profit=130, risk=10,
                 risk_dollars=None, risk_pct=None, contracts=None,
                 entry_time=datetime(2025, 6, 15, 13, 0, tzinfo=timezone.utc),
@@ -223,7 +223,7 @@ class TestDailyTradesLimitFilter:
                 fees=None, pnl_usd=None, params=None, source="manual",
             ),
             TradeData(
-                trade_id="T3", pair="NQ", trade_type="long",
+                trade_id="T3", pair="MNQ", trade_type="long",
                 entry_price=100, stop_loss=90, take_profit=130, risk=10,
                 risk_dollars=None, risk_pct=None, contracts=None,
                 entry_time=datetime(2025, 6, 15, 13, 0, tzinfo=timezone.utc),

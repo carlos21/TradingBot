@@ -22,7 +22,7 @@ from src.strategies.strategy_config import CandleConfig
 # ─── Helper to build bars ───────────────────────────────────────────
 
 
-def _bar(time=0, open_=100, high=102, low=98, close=101, pair="NQ", tf="5m"):
+def _bar(time=0, open_=100, high=102, low=98, close=101, pair="MNQ", tf="5m"):
     return {"time": time, "open": open_, "high": high, "low": low,
             "close": close, "volume": 100, "pair": pair, "tf": tf}
 

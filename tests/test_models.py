@@ -8,25 +8,25 @@ class TestLineData:
 
     def test_equality(self):
         dt = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        a = LineData(line_id="L1", pair="NQ", price=100.0, creation_date=dt)
-        b = LineData(line_id="L1", pair="NQ", price=100.0, creation_date=dt)
+        a = LineData(line_id="L1", pair="MNQ", price=100.0, creation_date=dt)
+        b = LineData(line_id="L1", pair="MNQ", price=100.0, creation_date=dt)
         assert a == b
 
     def test_inequality_different_price(self):
         dt = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        a = LineData(line_id="L1", pair="NQ", price=100.0, creation_date=dt)
-        b = LineData(line_id="L1", pair="NQ", price=200.0, creation_date=dt)
+        a = LineData(line_id="L1", pair="MNQ", price=100.0, creation_date=dt)
+        b = LineData(line_id="L1", pair="MNQ", price=200.0, creation_date=dt)
         assert a != b
 
     def test_hash_consistency(self):
         dt = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        a = LineData(line_id="L1", pair="NQ", price=100.0, creation_date=dt)
-        b = LineData(line_id="L1", pair="NQ", price=100.0, creation_date=dt)
+        a = LineData(line_id="L1", pair="MNQ", price=100.0, creation_date=dt)
+        b = LineData(line_id="L1", pair="MNQ", price=100.0, creation_date=dt)
         assert hash(a) == hash(b)
 
     def test_not_equal_to_non_linedata(self):
         dt = datetime(2025, 1, 1, tzinfo=timezone.utc)
-        a = LineData(line_id="L1", pair="NQ", price=100.0, creation_date=dt)
+        a = LineData(line_id="L1", pair="MNQ", price=100.0, creation_date=dt)
         assert a != "not a LineData"
 
 
@@ -35,7 +35,7 @@ class TestTradeData:
     def _make(self, **overrides):
         defaults = dict(
             trade_id="T1",
-            pair="NQ",
+            pair="MNQ",
             trade_type="long",
             entry_price=100.0,
             stop_loss=90.0,

@@ -148,5 +148,5 @@ def _ensure_utc(dt: datetime) -> datetime:
 
 
 def _symbol_to_pair(symbol: str) -> str:
-    """'NQ:XCME' → 'NQ',  'NQH25:XCME' → 'NQH25'"""
+    """'NQ:XCME' → 'MNQ',  'NQH25:XCME' → 'NQH25'"""
     return symbol.split(":")[0].upper()

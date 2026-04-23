@@ -54,7 +54,7 @@ def trade_manager(trade_repo, socketio, trade_executor, analytics, logger):
     return TradeManager(
         trade_repository=trade_repo,
         socketio=socketio,
-        pair="NQ",
+        pair="MNQ",
         trade_executor=trade_executor,
         analytics=analytics,
         point_value=2.0,
@@ -143,7 +143,7 @@ def make_bar(
     low=98.0,
     close=101.0,
     volume=100,
-    pair="NQ",
+    pair="MNQ",
     tf=None,
 ):
     bar = {

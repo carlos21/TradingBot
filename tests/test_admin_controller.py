@@ -34,7 +34,7 @@ class TestDecisionLogs:
 
     def test_get_decision_logs_empty(self, admin_ctrl, app_context):
         ctrl, _ = admin_ctrl
-        resp, status = ctrl.get_decision_logs("NQ")
+        resp, status = ctrl.get_decision_logs("MNQ")
         assert status == 200
         data = resp.get_json()
         assert data["logs"] == []
@@ -42,23 +42,23 @@ class TestDecisionLogs:
 
     def test_get_decision_logs_with_filters(self, admin_ctrl, app_context):
         ctrl, repo = admin_ctrl
-        repo.add_log(bar_time=1000.0, pair="NQ", event="LATCH", line_id="L1")
-        repo.add_log(bar_time=2000.0, pair="NQ", event="FILTER_BLOCK", line_id="L1", filter_name="min_cross_depth")
+        repo.add_log(bar_time=1000.0, pair="MNQ", event="LATCH", line_id="L1")
+        repo.add_log(bar_time=2000.0, pair="MNQ", event="FILTER_BLOCK", line_id="L1", filter_name="min_cross_depth")
         repo.add_log(bar_time=3000.0, pair="ES", event="LATCH", line_id="L2")
 
         # Filter by pair
-        resp, _ = ctrl.get_decision_logs("NQ")
+        resp, _ = ctrl.get_decision_logs("MNQ")
         data = resp.get_json()
         assert len(data["logs"]) == 2
 
         # Filter by event
-        resp, _ = ctrl.get_decision_logs("NQ", event="FILTER_BLOCK")
+        resp, _ = ctrl.get_decision_logs("MNQ", event="FILTER_BLOCK")
         data = resp.get_json()
         assert len(data["logs"]) == 1
         assert data["logs"][0]["event"] == "FILTER_BLOCK"
 
         # Filter by line_id
-        resp, _ = ctrl.get_decision_logs("NQ", line_id="L1")
+        resp, _ = ctrl.get_decision_logs("MNQ", line_id="L1")
         data = resp.get_json()
         assert len(data["logs"]) == 2
 

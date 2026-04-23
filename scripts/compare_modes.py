@@ -91,7 +91,7 @@ def main():
     cfd_commission = args.cfd_commission
 
     # Detect pair for timezone
-    pair = "NQ"
+    pair = "MNQ"
     if results:
         pair = _detect_pair(results[0].get("name", ""))
     pair_tz = PAIR_TZS.get(pair, "Etc/GMT+5")

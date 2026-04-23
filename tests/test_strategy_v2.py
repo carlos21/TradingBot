@@ -89,7 +89,7 @@ class TestLatching:
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
 
         # Price below -> accumulate pending
-        bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="NQ")
+        bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar1)
         line = strat.strategy_lines["L1"]
         # Direction should latch to short since close < level and pending extreme (99) <= level
@@ -99,7 +99,7 @@ class TestLatching:
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0)
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
-        bar = make_bar(time=60, open_=100, high=100, low=100, close=100, pair="NQ")
+        bar = make_bar(time=60, open_=100, high=100, low=100, close=100, pair="MNQ")
         strat.on_raw_bar(bar)
         assert strat.strategy_lines["L1"]["direction"] is None
 
@@ -108,7 +108,7 @@ class TestLatching:
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0)
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
         # Price above level -> latches long (low >= level or depth sufficient)
-        bar = make_bar(time=60, open_=101, high=103, low=100, close=102, pair="NQ")
+        bar = make_bar(time=60, open_=101, high=103, low=100, close=102, pair="MNQ")
         strat.on_raw_bar(bar)
         line = strat.strategy_lines["L1"]
         assert line["direction"] == "long"
@@ -121,10 +121,10 @@ class TestExtremeTracking:
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0)
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
         # Latch short
-        bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="NQ")
+        bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar1)
         # New higher high
-        bar2 = make_bar(time=120, open_=98, high=103, low=97, close=98, pair="NQ")
+        bar2 = make_bar(time=120, open_=98, high=103, low=97, close=98, pair="MNQ")
         strat.on_raw_bar(bar2)
         assert strat.strategy_lines["L1"]["extreme"] == 103
 
@@ -133,10 +133,10 @@ class TestExtremeTracking:
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0)
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
         # Latch long
-        bar1 = make_bar(time=60, open_=101, high=103, low=100, close=102, pair="NQ")
+        bar1 = make_bar(time=60, open_=101, high=103, low=100, close=102, pair="MNQ")
         strat.on_raw_bar(bar1)
         # New lower low
-        bar2 = make_bar(time=120, open_=101, high=103, low=95, close=101, pair="NQ")
+        bar2 = make_bar(time=120, open_=101, high=103, low=95, close=101, pair="MNQ")
         strat.on_raw_bar(bar2)
         assert strat.strategy_lines["L1"]["extreme"] == 95
 
@@ -148,10 +148,10 @@ class TestMaxBounceRemoval:
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
         # Latch short
-        bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="NQ")
+        bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar1)
         # Price goes above max bounce (100 + 10 = 110)
-        bar2 = make_bar(time=120, open_=111, high=112, low=110, close=111, pair="NQ")
+        bar2 = make_bar(time=120, open_=111, high=112, low=110, close=111, pair="MNQ")
         strat.on_raw_bar(bar2)
         assert "L1" not in strat.strategy_lines
 
@@ -159,9 +159,9 @@ class TestMaxBounceRemoval:
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
-        bar1 = make_bar(time=60, open_=101, high=103, low=100, close=102, pair="NQ")
+        bar1 = make_bar(time=60, open_=101, high=103, low=100, close=102, pair="MNQ")
         strat.on_raw_bar(bar1)
-        bar2 = make_bar(time=120, open_=89, high=90, low=88, close=89, pair="NQ")
+        bar2 = make_bar(time=120, open_=89, high=90, low=88, close=89, pair="MNQ")
         strat.on_raw_bar(bar2)
         assert "L1" not in strat.strategy_lines
 
@@ -198,7 +198,7 @@ class TestCreationTimestamp:
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0)
         strat.add_strategy_line("L1", 100.0, creation_timestamp=500)
-        bar = make_bar(time=100, close=97, pair="NQ")
+        bar = make_bar(time=100, close=97, pair="MNQ")
         strat.on_raw_bar(bar)
 
 
@@ -209,7 +209,7 @@ class TestLatchPending:
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=5.0)
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
         # Price goes below but high only touches 101 (1pt above line) — depth < 5
-        bar1 = make_bar(time=60, open_=99, high=101, low=98, close=98, pair="NQ")
+        bar1 = make_bar(time=60, open_=99, high=101, low=98, close=98, pair="MNQ")
         strat.on_raw_bar(bar1)
         line = strat.strategy_lines["L1"]
         assert line["direction"] is None
@@ -225,7 +225,7 @@ class TestLatchPending:
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=5.0)
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
         # Price goes above but low only touches 99 (1pt below line) — depth < 5
-        bar1 = make_bar(time=60, open_=101, high=102, low=99, close=101, pair="NQ")
+        bar1 = make_bar(time=60, open_=101, high=102, low=99, close=101, pair="MNQ")
         strat.on_raw_bar(bar1)
         line = strat.strategy_lines["L1"]
         assert line["direction"] is None
@@ -238,11 +238,11 @@ class TestLatchPending:
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=5.0)
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
         # First bar: high=101 (depth=1) -> pending
-        bar1 = make_bar(time=60, open_=99, high=101, low=98, close=98, pair="NQ")
+        bar1 = make_bar(time=60, open_=99, high=101, low=98, close=98, pair="MNQ")
         strat.on_raw_bar(bar1)
         assert strat.strategy_lines["L1"]["direction"] is None
         # Second bar: high=106 (depth=6) -> latch
-        bar2 = make_bar(time=120, open_=98, high=106, low=97, close=97, pair="NQ")
+        bar2 = make_bar(time=120, open_=98, high=106, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar2)
         assert strat.strategy_lines["L1"]["direction"] == "short"
         latch_logs = [d for d in strat.decision_logs if d["event"] == "LATCH"]
@@ -262,8 +262,8 @@ class TestMultiTimeframeAggregation:
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm, timeframes=["1m"])
         # Feed 2 minutes of 1m bars (each in a different window)
-        bar1 = make_bar(time=0, open_=100, close=101, high=102, low=99, pair="NQ")
-        bar2 = make_bar(time=60, open_=101, close=102, high=103, low=100, pair="NQ")
+        bar1 = make_bar(time=0, open_=100, close=101, high=102, low=99, pair="MNQ")
+        bar2 = make_bar(time=60, open_=101, close=102, high=103, low=100, pair="MNQ")
         strat.on_raw_bar(bar1)
         strat.on_raw_bar(bar2)
         # After bar2, bar1's window should have produced an aggregated bar in 1m history

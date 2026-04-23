@@ -24,8 +24,8 @@ class AppConfig:
     mode: str = "backtest"
     """Run mode: ``"live"`` for ZeroMQ live trading, ``"backtest"`` for CSV replay."""
 
-    pair: str = "NQ"
-    """Trading instrument (e.g. ``"NQ"``, ``"MNQ"``, ``"ES"``).
+    pair: str = "MNQ"
+    """Trading instrument (e.g. ``"MNQ"``, ``"MNQ"``, ``"ES"``).
     Passed to data sources, strategies, and repositories."""
 
     # ------------------------------------------------------------------

@@ -140,7 +140,7 @@ class CliConfigLoader:
             description="TradingBot — Live & Backtest Mode",
         )
         p.add_argument("--mode", choices=["live", "backtest"], help="Run mode")
-        p.add_argument("--pair", help="Trading pair (e.g. NQ, MNQ)")
+        p.add_argument("--pair", help="Trading pair (e.g. MNQ)")
         p.add_argument("--csv-file", dest="csv_file", help="CSV file for backtest")
         p.add_argument("--bars-per-second", dest="bars_per_second", type=float, help="Replay speed")
         p.add_argument("--input-tz", dest="input_tz", help="Timezone for input dates")

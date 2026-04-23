@@ -141,7 +141,7 @@ The service uses these environment variables (with defaults):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PAIR` | `MNQ` | Trading pair (e.g., `MNQ`, `NQ`) |
+| `PAIR` | `MNQ` | Trading pair (e.g., `MNQ`) |
 | `NT_ACCOUNT` | `FNFTCHCARLOSDUCLOS74105` | NinjaTrader account name |
 | `RISK` | `50` | Fixed risk in USD per trade |
 | `RISK_PCT` | _(empty)_ | Risk as % of account balance (overrides RISK if set) |
@@ -160,7 +160,7 @@ This opens an override file. Add:
 
 ```ini
 [Service]
-Environment=PAIR=NQ
+Environment=PAIR=MNQ
 Environment=NT_ACCOUNT=MyAccount
 ```
 
@@ -176,7 +176,7 @@ sudo systemctl restart tradingbot
 Edit `bin/live.sh` and change the defaults:
 
 ```bash
-export PAIR="${PAIR:-NQ}"
+export PAIR="${PAIR:-MNQ}"
 export NT_ACCOUNT="${NT_ACCOUNT:-MyAccount}"
 ```
 
@@ -210,7 +210,7 @@ For quick testing or debugging, run the launcher directly:
 ./bin/start_live.sh
 
 # With overrides
-PAIR=NQ NT_ACCOUNT=MyAccount RISK=100 ./bin/start_live.sh
+PAIR=MNQ NT_ACCOUNT=MyAccount RISK=100 ./bin/start_live.sh
 ```
 
 ---

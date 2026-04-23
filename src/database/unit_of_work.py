@@ -6,14 +6,14 @@ boilerplate in repository implementations.
 
 Usage:
     with UnitOfWork() as uow:
-        line = uow.lines.insert_line(pair="NQ", price=5000.0)
-        trade = uow.trades.insert_trade(pair="NQ", ...)
+        line = uow.lines.insert_line(pair="MNQ", price=5000.0)
+        trade = uow.trades.insert_trade(pair="MNQ", ...)
         # Both operations committed together on __exit__
         
     # Or manual control:
     uow = UnitOfWork()
     try:
-        line = uow.lines.insert_line(pair="NQ", price=5000.0)
+        line = uow.lines.insert_line(pair="MNQ", price=5000.0)
         uow.commit()
     except:
         uow.rollback()
@@ -357,8 +357,8 @@ class UnitOfWork:
     Usage:
         # Context manager (recommended)
         with UnitOfWork() as uow:
-            line = uow.lines.insert_line(pair="NQ", price=5000.0)
-            trade = uow.trades.insert_trade(pair="NQ", ...)
+            line = uow.lines.insert_line(pair="MNQ", price=5000.0)
+            trade = uow.trades.insert_trade(pair="MNQ", ...)
             # Auto-commits on success, rolls back on exception
             
         # Manual control

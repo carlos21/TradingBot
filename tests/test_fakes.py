@@ -9,24 +9,24 @@ class TestFakeLineRepository:
 
     def test_insert_and_list(self):
         repo = FakeLineRepository()
-        line = repo.insert_line("NQ", 100.0)
+        line = repo.insert_line("MNQ", 100.0)
         assert isinstance(line, LineData)
         assert line.price == 100.0
-        lines = repo.list_lines("NQ")
+        lines = repo.list_lines("MNQ")
         assert len(lines) == 1
 
     def test_list_filters_by_pair(self):
         repo = FakeLineRepository()
-        repo.insert_line("NQ", 100.0)
+        repo.insert_line("MNQ", 100.0)
         repo.insert_line("ES", 200.0)
-        assert len(repo.list_lines("NQ")) == 1
+        assert len(repo.list_lines("MNQ")) == 1
         assert len(repo.list_lines("ES")) == 1
 
     def test_delete(self):
         repo = FakeLineRepository()
-        line = repo.insert_line("NQ", 100.0)
+        line = repo.insert_line("MNQ", 100.0)
         repo.delete_line(line.line_id)
-        assert len(repo.list_lines("NQ")) == 0
+        assert len(repo.list_lines("MNQ")) == 0
 
     def test_delete_nonexistent_no_error(self):
         repo = FakeLineRepository()
@@ -37,45 +37,45 @@ class TestFakeTradeRepository:
 
     def test_insert_returns_trade_data(self):
         repo = FakeTradeRepository()
-        td = repo.insert_trade("NQ", "long", 100, 90, 130, 10,
+        td = repo.insert_trade("MNQ", "long", 100, 90, 130, 10,
                                datetime(2025, 1, 1, tzinfo=timezone.utc))
         assert isinstance(td, TradeData)
         assert td.trade_id == "T1"
 
     def test_list_trades(self):
         repo = FakeTradeRepository()
-        repo.insert_trade("NQ", "long", 100, 90, 130, 10,
+        repo.insert_trade("MNQ", "long", 100, 90, 130, 10,
                           datetime(2025, 1, 1, tzinfo=timezone.utc))
-        trades = repo.list_trades("NQ")
+        trades = repo.list_trades("MNQ")
         assert len(trades) == 1
         assert isinstance(trades[0], TradeData)
 
     def test_close_trade(self):
         repo = FakeTradeRepository()
-        repo.insert_trade("NQ", "long", 100, 90, 130, 10,
+        repo.insert_trade("MNQ", "long", 100, 90, 130, 10,
                           datetime(2025, 1, 1, tzinfo=timezone.utc))
         repo.close_trade("T1", 120, datetime(2025, 1, 2, tzinfo=timezone.utc), 2.0, "TP")
-        trades = repo.list_trades("NQ")
+        trades = repo.list_trades("MNQ")
         assert trades[0].exit_price == 120
         assert trades[0].result == 2.0
 
     def test_update_stop_loss(self):
         repo = FakeTradeRepository()
-        repo.insert_trade("NQ", "long", 100, 90, 130, 10,
+        repo.insert_trade("MNQ", "long", 100, 90, 130, 10,
                           datetime(2025, 1, 1, tzinfo=timezone.utc))
         repo.update_stop_loss("T1", 95)
         assert repo.inserted[0]["stop_loss"] == 95
 
     def test_update_entry_price(self):
         repo = FakeTradeRepository()
-        repo.insert_trade("NQ", "long", 100, 90, 130, 10,
+        repo.insert_trade("MNQ", "long", 100, 90, 130, 10,
                           datetime(2025, 1, 1, tzinfo=timezone.utc))
         repo.update_entry_price("T1", 101)
         assert repo.inserted[0]["entry"] == 101
 
     def test_append_and_get_trade_logs(self):
         repo = FakeTradeRepository()
-        repo.insert_trade("NQ", "long", 100, 90, 130, 10,
+        repo.insert_trade("MNQ", "long", 100, 90, 130, 10,
                           datetime(2025, 1, 1, tzinfo=timezone.utc))
         repo.append_trade_log("T1", "OPEN", "opened")
         logs = repo.get_trade_logs("T1")
@@ -83,7 +83,7 @@ class TestFakeTradeRepository:
 
     def test_clear(self):
         repo = FakeTradeRepository()
-        repo.insert_trade("NQ", "long", 100, 90, 130, 10,
+        repo.insert_trade("MNQ", "long", 100, 90, 130, 10,
                           datetime(2025, 1, 1, tzinfo=timezone.utc))
         repo.clear()
         assert len(repo.inserted) == 0
@@ -126,8 +126,8 @@ class TestFakeAnalyticsReporter:
 
     def test_records_context(self):
         a = FakeAnalyticsReporter()
-        a.set_context("app", {"pair": "NQ"})
-        assert a.contexts["app"]["pair"] == "NQ"
+        a.set_context("app", {"pair": "MNQ"})
+        assert a.contexts["app"]["pair"] == "MNQ"
 
 
 class TestFakeTradeExecutor:

@@ -72,7 +72,7 @@ CSV File → CSVDataSource → BarsLoader → LiquidityStrategyV2
 The app handles three timezone contexts:
 - **FILE_TZ** (`Etc/GMT+3`): timezone of the source CSV bars
 - **INPUT_TZ** (`America/New_York`): timezone for user-facing timestamps and trading-hours filters
-- Per-pair mapping: NQ → `America/New_York`
+- Per-pair mapping: MNQ → `America/New_York`
 
 Timezone conversion is done centrally when bars are ingested; strategy logic operates in INPUT_TZ.
 
