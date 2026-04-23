@@ -13,7 +13,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 export MODE="live"
 export PAIR="${PAIR:-MNQ}"
 export NT_ACCOUNT="${NT_ACCOUNT:-FNFTCHCARLOSDUCLOS42006}"
-export RISK="${RISK:-50}"
+export RISK="${RISK:-160}"
 export RISK_PCT="${RISK_PCT:-}"
 export RR_RATIO="${RR_RATIO:-5.0}"
 
