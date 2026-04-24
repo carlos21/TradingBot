@@ -9,8 +9,9 @@
 //+------------------------------------------------------------------+
 //| ZmqConfiguration — runtime config loaded from JSON file          |
 //+------------------------------------------------------------------+
-struct ZmqConfiguration
+class ZmqConfiguration
 {
+public:
    string host;
    int    marketPort;
    int    commandPort;

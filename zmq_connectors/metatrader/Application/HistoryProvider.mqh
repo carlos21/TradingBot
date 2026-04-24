@@ -44,18 +44,19 @@ public:
       if(total <= 0)
       {
          if(m_logger != NULL)
-            m_logger->Warning("HistoryProvider: CopyRates returned " + IntegerToString(total));
+            m_logger.Warning("HistoryProvider: CopyRates returned " + IntegerToString(total));
          m_network.SendHistoryEnd(m_symbol);
          return;
       }
 
       if(m_logger != NULL)
-         m_logger->Info("HistoryProvider: sending " + IntegerToString(total) + " bars (" + IntegerToString(m_config.historyDays) + " days)");
+         m_logger.Info("HistoryProvider: sending " + IntegerToString(total) + " bars (" + IntegerToString(m_config.historyDays) + " days)");
 
       // Send in batches
-      for(int i = 0; i < total; i += m_config.batchSize)
+      int batchSize = (m_config.batchSize > 0) ? m_config.batchSize : 500;
+      for(int i = 0; i < total; i += batchSize)
       {
-         int endIdx = MathMin(i + m_config.batchSize, total);
+         int endIdx = MathMin(i + batchSize, total);
          JSONValue *barsArray = new JSONValue(JSON_ARRAY);
 
          for(int j = i; j < endIdx; j++)
@@ -85,6 +86,6 @@ public:
       m_network.SendHistoryEnd(m_symbol);
 
       if(m_logger != NULL)
-         m_logger->Info("HistoryProvider: history send complete");
+         m_logger.Info("HistoryProvider: history send complete");
    }
 };

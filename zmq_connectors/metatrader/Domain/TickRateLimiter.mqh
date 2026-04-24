@@ -15,14 +15,14 @@ class TickRateLimiter : public IRateLimiter
 private:
    int    m_maxPerSecond;
    int    m_count;
-   datetime m_lastReset;
+   uint   m_lastResetMs;
 
 public:
    TickRateLimiter(int maxPerSecond)
    {
       m_maxPerSecond = maxPerSecond > 0 ? maxPerSecond : 1;
       m_count = 0;
-      m_lastReset = TimeLocal();
+      m_lastResetMs = GetTickCount();
    }
 
    ~TickRateLimiter() {}
@@ -30,10 +30,10 @@ public:
    //--- IRateLimiter implementation
    bool TryAllow() override
    {
-      datetime now = TimeLocal();
-      if(now != m_lastReset)
+      uint nowMs = GetTickCount();
+      if(nowMs - m_lastResetMs >= 1000)
       {
-         m_lastReset = now;
+         m_lastResetMs = nowMs;
          m_count = 0;
       }
       if(m_count >= m_maxPerSecond)
@@ -46,6 +46,6 @@ public:
    void Reset() override
    {
       m_count = 0;
-      m_lastReset = TimeLocal();
+      m_lastResetMs = GetTickCount();
    }
 };

@@ -36,12 +36,12 @@ public:
    bool Handle(MessageEnvelope *envelope) override
    {
       if(m_logger != NULL)
-         m_logger->Info("Refresh request received — resending history");
+         m_logger.Info("Refresh request received — resending history");
 
       if(m_historyProvider != NULL)
          m_historyProvider.SendHistory();
       else if(m_logger != NULL)
-         m_logger->Warning("RefreshRequestHandler: no history provider available");
+         m_logger.Warning("RefreshRequestHandler: no history provider available");
 
       return true;
    }

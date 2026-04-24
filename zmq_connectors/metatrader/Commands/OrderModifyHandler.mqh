@@ -44,7 +44,7 @@ public:
       if(envelope == NULL || envelope.root == NULL)
       {
          if(m_logger != NULL)
-            m_logger->Warning("OrderModifyHandler: empty envelope");
+            m_logger.Warning("OrderModifyHandler: empty envelope");
          return false;
       }
 
@@ -52,7 +52,7 @@ public:
       if(StringLen(tradeId) == 0)
       {
          if(m_logger != NULL)
-            m_logger->Error("OrderModifyHandler: missing trade_id");
+            m_logger.Error("OrderModifyHandler: missing trade_id");
          return false;
       }
 
@@ -60,9 +60,9 @@ public:
       ulong ticket = 0;
       if(m_tracker != NULL)
       {
-         ulong entryTicket, slTicket, tpTicket;
+         ulong entryTicket = 0;
          double slPoints, rrRatio;
-         if(m_tracker->TryGetEntry(tradeId, entryTicket, slPoints, rrRatio))
+         if(m_tracker.TryGetEntry(tradeId, entryTicket, slPoints, rrRatio))
             ticket = entryTicket;
       }
 
@@ -72,14 +72,14 @@ public:
       if(ticket == 0)
       {
          if(m_logger != NULL)
-            m_logger->Error("OrderModifyHandler: no position for trade_id=" + tradeId);
+            m_logger.Error("OrderModifyHandler: no position for trade_id=" + tradeId);
          return false;
       }
 
       if(!PositionSelectByTicket(ticket))
       {
          if(m_logger != NULL)
-            m_logger->Error("OrderModifyHandler: PositionSelectByTicket failed");
+            m_logger.Error("OrderModifyHandler: PositionSelectByTicket failed");
          return false;
       }
 
@@ -102,13 +102,13 @@ public:
       request.tp       = newTp;
 
       if(m_logger != NULL)
-         m_logger->Info("Modifying " + tradeId + " SL=" + DoubleToString(newSl, 5) + " TP=" + DoubleToString(newTp, 5));
+         m_logger.Info("Modifying " + tradeId + " SL=" + DoubleToString(newSl, 5) + " TP=" + DoubleToString(newTp, 5));
 
       if(!OrderSend(request, result))
       {
          int err = GetLastError();
          if(m_logger != NULL)
-            m_logger->Error("Modify OrderSend failed for " + tradeId + " err=" + IntegerToString(err));
+            m_logger.Error("Modify OrderSend failed for " + tradeId + " err=" + IntegerToString(err));
          return false;
       }
 
@@ -116,13 +116,13 @@ public:
       {
          m_network.SendTradeLog(tradeId, "MT5:MODIFY", "SL/TP changed to SL=" + DoubleToString(newSl, 5) + " TP=" + DoubleToString(newTp, 5));
          if(m_logger != NULL)
-            m_logger->Success("Modified " + tradeId + " SL=" + DoubleToString(newSl, 5) + " TP=" + DoubleToString(newTp, 5));
+            m_logger.Success("Modified " + tradeId + " SL=" + DoubleToString(newSl, 5) + " TP=" + DoubleToString(newTp, 5));
          return true;
       }
       else
       {
          if(m_logger != NULL)
-            m_logger->Error("Modify failed for " + tradeId + " retcode=" + IntegerToString(result.retcode));
+            m_logger.Error("Modify failed for " + tradeId + " retcode=" + IntegerToString(result.retcode));
          return false;
       }
    }

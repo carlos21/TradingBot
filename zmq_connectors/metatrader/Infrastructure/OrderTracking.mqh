@@ -78,17 +78,44 @@ public:
 
    void TrackStopLoss(string tradeId, ulong ticket) override
    {
-      TrackInArray(m_stopLosses, tradeId, ticket);
+      int idx = FindInArray(m_stopLosses, tradeId);
+      if(idx >= 0)
+         m_stopLosses[idx].ticket = ticket;
+      else
+      {
+         int size = ArraySize(m_stopLosses);
+         ArrayResize(m_stopLosses, size + 1);
+         m_stopLosses[size].tradeId = tradeId;
+         m_stopLosses[size].ticket = ticket;
+      }
    }
 
    void TrackTakeProfit(string tradeId, ulong ticket) override
    {
-      TrackInArray(m_takeProfits, tradeId, ticket);
+      int idx = FindInArray(m_takeProfits, tradeId);
+      if(idx >= 0)
+         m_takeProfits[idx].ticket = ticket;
+      else
+      {
+         int size = ArraySize(m_takeProfits);
+         ArrayResize(m_takeProfits, size + 1);
+         m_takeProfits[size].tradeId = tradeId;
+         m_takeProfits[size].ticket = ticket;
+      }
    }
 
    void TrackCloseOrder(string tradeId, ulong ticket) override
    {
-      TrackInArray(m_closeOrders, tradeId, ticket);
+      int idx = FindInArray(m_closeOrders, tradeId);
+      if(idx >= 0)
+         m_closeOrders[idx].ticket = ticket;
+      else
+      {
+         int size = ArraySize(m_closeOrders);
+         ArrayResize(m_closeOrders, size + 1);
+         m_closeOrders[size].tradeId = tradeId;
+         m_closeOrders[size].ticket = ticket;
+      }
    }
 
    bool TryGetEntry(string tradeId, ulong &ticket, double &slPoints, double &rrRatio) override
@@ -132,10 +159,46 @@ public:
 
    void RemoveTrade(string tradeId) override
    {
-      RemoveFromArray(m_entries, tradeId);
-      RemoveFromArray(m_stopLosses, tradeId);
-      RemoveFromArray(m_takeProfits, tradeId);
-      RemoveFromArray(m_closeOrders, tradeId);
+      // Remove from m_entries
+      int idx = FindEntryIndex(tradeId);
+      if(idx >= 0)
+      {
+         int size = ArraySize(m_entries);
+         for(int j = idx; j < size - 1; j++)
+            m_entries[j] = m_entries[j + 1];
+         ArrayResize(m_entries, size - 1);
+      }
+
+      // Remove from m_stopLosses
+      idx = FindInArray(m_stopLosses, tradeId);
+      if(idx >= 0)
+      {
+         int size = ArraySize(m_stopLosses);
+         for(int j = idx; j < size - 1; j++)
+            m_stopLosses[j] = m_stopLosses[j + 1];
+         ArrayResize(m_stopLosses, size - 1);
+      }
+
+      // Remove from m_takeProfits
+      idx = FindInArray(m_takeProfits, tradeId);
+      if(idx >= 0)
+      {
+         int size = ArraySize(m_takeProfits);
+         for(int j = idx; j < size - 1; j++)
+            m_takeProfits[j] = m_takeProfits[j + 1];
+         ArrayResize(m_takeProfits, size - 1);
+      }
+
+      // Remove from m_closeOrders
+      idx = FindInArray(m_closeOrders, tradeId);
+      if(idx >= 0)
+      {
+         int size = ArraySize(m_closeOrders);
+         for(int j = idx; j < size - 1; j++)
+            m_closeOrders[j] = m_closeOrders[j + 1];
+         ArrayResize(m_closeOrders, size - 1);
+      }
+
       RemovePendingModify(tradeId);
    }
 
@@ -199,7 +262,7 @@ public:
    }
 
 private:
-   //--- Helpers for array operations
+   //--- Helpers for array operations (no & syntax for old MQL5 builds)
 
    int FindEntryIndex(string tradeId)
    {
@@ -222,20 +285,6 @@ private:
       return -1;
    }
 
-   void TrackInArray(TicketMapping &arr[], string tradeId, ulong ticket)
-   {
-      int idx = FindInArray(arr, tradeId);
-      if(idx >= 0)
-         arr[idx].ticket = ticket;
-      else
-      {
-         int size = ArraySize(arr);
-         ArrayResize(arr, size + 1);
-         arr[size].tradeId = tradeId;
-         arr[size].ticket = ticket;
-      }
-   }
-
    bool TryGetFromArray(TicketMapping &arr[], string tradeId, ulong &ticket)
    {
       int idx = FindInArray(arr, tradeId);
@@ -244,23 +293,5 @@ private:
       return true;
    }
 
-   void RemoveFromArray(TicketMapping &arr[], string tradeId)
-   {
-      int idx = FindInArray(arr, tradeId);
-      if(idx < 0) return;
-      int size = ArraySize(arr);
-      for(int j = idx; j < size - 1; j++)
-         arr[j] = arr[j + 1];
-      ArrayResize(arr, size - 1);
-   }
 
-   void RemoveFromArray(EntryRecord &arr[], string tradeId)
-   {
-      int idx = FindEntryIndex(tradeId);
-      if(idx < 0) return;
-      int size = ArraySize(arr);
-      for(int j = idx; j < size - 1; j++)
-         arr[j] = arr[j + 1];
-      ArrayResize(arr, size - 1);
-   }
 };

@@ -47,20 +47,20 @@ public:
       if(envelope == NULL)
       {
          if(m_logger != NULL)
-            m_logger->Warning("Dispatch called with NULL envelope");
+            m_logger.Warning("Dispatch called with NULL envelope");
          return false;
       }
 
       for(int i = 0; i < m_count; i++)
       {
-         if(m_handlers[i].CanHandle(envelope.msgType))
+         if(m_handlers[i].CanHandle(envelope.MsgType()))
          {
             return m_handlers[i].Handle(envelope);
          }
       }
 
       if(m_logger != NULL)
-         m_logger->Warning("No handler registered for msg_type: " + envelope.msgType);
+         m_logger.Warning("No handler registered for msg_type: " + envelope.MsgType());
       return false;
    }
 };

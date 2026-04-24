@@ -43,7 +43,7 @@ public:
       if(envelope == NULL || envelope.root == NULL)
       {
          if(m_logger != NULL)
-            m_logger->Warning("OrderCloseHandler: empty envelope");
+            m_logger.Warning("OrderCloseHandler: empty envelope");
          return false;
       }
 
@@ -51,7 +51,7 @@ public:
       if(StringLen(tradeId) == 0)
       {
          if(m_logger != NULL)
-            m_logger->Error("OrderCloseHandler: missing trade_id");
+            m_logger.Error("OrderCloseHandler: missing trade_id");
          return false;
       }
 
@@ -59,9 +59,9 @@ public:
       ulong ticket = 0;
       if(m_tracker != NULL)
       {
-         ulong entryTicket, slTicket, tpTicket, closeTicket;
+         ulong entryTicket = 0;
          double slPoints, rrRatio;
-         if(m_tracker->TryGetEntry(tradeId, entryTicket, slPoints, rrRatio))
+         if(m_tracker.TryGetEntry(tradeId, entryTicket, slPoints, rrRatio))
             ticket = entryTicket;
       }
 
@@ -72,7 +72,7 @@ public:
       if(ticket == 0)
       {
          if(m_logger != NULL)
-            m_logger->Error("OrderCloseHandler: no open position for trade_id=" + tradeId);
+            m_logger.Error("OrderCloseHandler: no open position for trade_id=" + tradeId);
          m_network.SendError("metatrader5", "order_close_failed", "Position not found: " + tradeId);
          return false;
       }
@@ -80,7 +80,7 @@ public:
       if(!PositionSelectByTicket(ticket))
       {
          if(m_logger != NULL)
-            m_logger->Error("OrderCloseHandler: PositionSelectByTicket failed for " + tradeId);
+            m_logger.Error("OrderCloseHandler: PositionSelectByTicket failed for " + tradeId);
          return false;
       }
 
@@ -104,13 +104,13 @@ public:
       request.magic    = m_magicNumber;
 
       if(m_logger != NULL)
-         m_logger->Info("Closing " + tradeId + " vol=" + DoubleToString(volume, 2) + " @ " + DoubleToString(closePrice, 5));
+         m_logger.Info("Closing " + tradeId + " vol=" + DoubleToString(volume, 2) + " @ " + DoubleToString(closePrice, 5));
 
       if(!OrderSend(request, result))
       {
          int err = GetLastError();
          if(m_logger != NULL)
-            m_logger->Error("Close OrderSend failed for " + tradeId + " err=" + IntegerToString(err));
+            m_logger.Error("Close OrderSend failed for " + tradeId + " err=" + IntegerToString(err));
          return false;
       }
 
@@ -120,16 +120,16 @@ public:
          m_network.SendTradeLog(tradeId, "MT5:CLOSE", "Position closed @ " + DoubleToString(result.price, 5));
 
          if(m_tracker != NULL)
-            m_tracker->RemoveTrade(tradeId);
+            m_tracker.RemoveTrade(tradeId);
 
          if(m_logger != NULL)
-            m_logger->Success("Closed " + tradeId + " @ " + DoubleToString(result.price, 5));
+            m_logger.Success("Closed " + tradeId + " @ " + DoubleToString(result.price, 5));
          return true;
       }
       else
       {
          if(m_logger != NULL)
-            m_logger->Error("Close failed for " + tradeId + " retcode=" + IntegerToString(result.retcode));
+            m_logger.Error("Close failed for " + tradeId + " retcode=" + IntegerToString(result.retcode));
          return false;
       }
    }

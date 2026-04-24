@@ -28,32 +28,32 @@ public:
    void RunAllScenarios()
    {
       if(m_logger != NULL)
-         m_logger->Info("=== E2E TESTS START ===");
+         m_logger.Info("=== E2E TESTS START ===");
 
       TestPingPong();
       TestSendTick();
       TestSendBar();
 
       if(m_logger != NULL)
-         m_logger->Info("=== E2E TESTS COMPLETE ===");
+         m_logger.Info("=== E2E TESTS COMPLETE ===");
    }
 
    //--- Test 1: REQ/REP ping/pong
    void TestPingPong()
    {
       if(m_logger != NULL)
-         m_logger->Info("[E2E] Testing ping/pong...");
+         m_logger.Info("[E2E] Testing ping/pong...");
 
       bool ok = m_network.SendTestPingWithResponse(2000);
       if(ok)
       {
          if(m_logger != NULL)
-            m_logger->Success("[E2E] Ping/Pong: PASSED");
+            m_logger.Success("[E2E] Ping/Pong: PASSED");
       }
       else
       {
          if(m_logger != NULL)
-            m_logger->Warning("[E2E] Ping/Pong: FAILED");
+            m_logger.Warning("[E2E] Ping/Pong: FAILED");
       }
    }
 
@@ -61,24 +61,24 @@ public:
    void TestSendTick()
    {
       if(m_logger != NULL)
-         m_logger->Info("[E2E] Testing tick send...");
+         m_logger.Info("[E2E] Testing tick send...");
 
       m_network.SendTick("TEST", 1.12345, 100, TimeCurrent());
 
       if(m_logger != NULL)
-         m_logger->Success("[E2E] Tick send: PASSED");
+         m_logger.Success("[E2E] Tick send: PASSED");
    }
 
    //--- Test 3: Send a dummy bar
    void TestSendBar()
    {
       if(m_logger != NULL)
-         m_logger->Info("[E2E] Testing bar send...");
+         m_logger.Info("[E2E] Testing bar send...");
 
       datetime now = TimeCurrent();
       m_network.SendBar("TEST", now, 1.12000, 1.12500, 1.11900, 1.12300, 500, false);
 
       if(m_logger != NULL)
-         m_logger->Success("[E2E] Bar send: PASSED");
+         m_logger.Success("[E2E] Bar send: PASSED");
    }
 };

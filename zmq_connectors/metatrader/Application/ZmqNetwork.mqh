@@ -53,8 +53,6 @@ public:
 
    bool Start() override
    {
-      m_context = new Context();
-
       m_marketSocket    = new Socket(m_context, ZMQ_PUB);
       m_commandSocket   = new Socket(m_context, ZMQ_PULL);
       m_querySocket     = new Socket(m_context, ZMQ_REQ);
@@ -75,11 +73,11 @@ public:
 
       if(m_logger != NULL)
       {
-         m_logger->Info("ZMQ connected:");
-         m_logger->Info("  Market: " + marketAddr);
-         m_logger->Info("  Commands: " + commandAddr);
-         m_logger->Info("  Queries: " + queryAddr);
-         m_logger->Info("  Heartbeat: " + heartbeatAddr);
+         m_logger.Info("ZMQ connected:");
+         m_logger.Info("  Market: " + marketAddr);
+         m_logger.Info("  Commands: " + commandAddr);
+         m_logger.Info("  Queries: " + queryAddr);
+         m_logger.Info("  Heartbeat: " + heartbeatAddr);
       }
       return true;
    }
@@ -93,7 +91,8 @@ public:
       if(m_commandSocket != NULL)   { delete m_commandSocket; m_commandSocket = NULL; }
       if(m_querySocket != NULL)     { delete m_querySocket; m_querySocket = NULL; }
       if(m_heartbeatSocket != NULL) { delete m_heartbeatSocket; m_heartbeatSocket = NULL; }
-      delete m_context; // Clean up ZMQ context after all sockets
+      // m_context is a value type; its destructor runs automatically
+      // when ZmqNetwork is destroyed, after all sockets are closed
    }
 
    //--- Send helpers
@@ -207,7 +206,7 @@ public:
          payload["trade_id"]  = new JSONValue(tradeId);
       if(StringLen(message) > 0)
          payload["message"]   = new JSONValue(message);
-      payload["timestamp"]    = new JSONValue(TimeCurrent());
+      payload["timestamp"]    = new JSONValue((long)TimeCurrent());
       SendEnvelope(MT_COMMAND_ACK, payload, m_marketSocket);
    }
 
@@ -245,12 +244,13 @@ public:
    //--- Query config (synchronous REQ/REP)
    string QueryConfig(string key, int timeoutMs) override
    {
+      // NOTE: timeoutMs is currently unused — Zmq.mqh recv() does not support timeouts
       JSONValue *reqPayload = new JSONValue(JSON_OBJECT);
       reqPayload["key"] = new JSONValue(key);
 
       JSONValue *reqRoot = new JSONValue(JSON_OBJECT);
       reqRoot["msg_type"]  = new JSONValue(MT_CONFIG_QUERY);
-      reqRoot["timestamp"] = new JSONValue(TimeCurrent());
+      reqRoot["timestamp"] = new JSONValue((long)TimeCurrent());
       reqRoot["seq_num"]   = new JSONValue(++m_seqNum);
       reqRoot["payload"]   = reqPayload;
 
@@ -261,7 +261,7 @@ public:
       if(!m_querySocket.send(reqMsg))
       {
          if(m_logger != NULL)
-            m_logger->Warning("QueryConfig send failed");
+            m_logger.Warning("QueryConfig send failed");
          return "";
       }
 
@@ -269,7 +269,7 @@ public:
       if(!m_querySocket.recv(repMsg))
       {
          if(m_logger != NULL)
-            m_logger->Warning("QueryConfig receive failed (timeout?)");
+            m_logger.Warning("QueryConfig receive failed (timeout?)");
          return "";
       }
 
@@ -291,9 +291,10 @@ public:
    //--- Test ping/pong (synchronous REQ/REP)
    bool SendTestPingWithResponse(int timeoutMs) override
    {
+      // NOTE: timeoutMs is currently unused — Zmq.mqh recv() does not support timeouts
       JSONValue *reqRoot = new JSONValue(JSON_OBJECT);
       reqRoot["msg_type"]  = new JSONValue(MT_TEST_PING);
-      reqRoot["timestamp"] = new JSONValue(TimeCurrent());
+      reqRoot["timestamp"] = new JSONValue((long)TimeCurrent());
       reqRoot["seq_num"]   = new JSONValue(++m_seqNum);
 
       string reqJson = m_serializer.Serialize(reqRoot);
@@ -328,7 +329,7 @@ private:
 
       JSONValue *root = new JSONValue(JSON_OBJECT);
       root["msg_type"]  = new JSONValue(msgType);
-      root["timestamp"] = new JSONValue(TimeCurrent());
+      root["timestamp"] = new JSONValue((long)TimeCurrent());
       root["seq_num"]   = new JSONValue(++m_seqNum);
       root["payload"]   = payload;
 

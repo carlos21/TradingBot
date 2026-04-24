@@ -30,7 +30,7 @@ public:
       if(root == NULL)
       {
          if(m_logger != NULL)
-            m_logger->Warning("Serialize called with NULL root");
+            m_logger.Warning("Serialize called with NULL root");
          return "{}";
       }
       return root.ToString();
@@ -44,7 +44,7 @@ public:
       JSONValue *root = JSONParser::Parse(json);
       if(root == NULL && m_logger != NULL)
       {
-         m_logger->Warning("JSON parse failed: " + json);
+         m_logger.Warning("JSON parse failed: " + json);
       }
       return root;
    }

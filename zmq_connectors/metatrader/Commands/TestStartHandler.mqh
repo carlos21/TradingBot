@@ -44,7 +44,7 @@ public:
    bool Handle(MessageEnvelope *envelope) override
    {
       if(m_logger != NULL)
-         m_logger->Info("Test start received — running E2E scenarios");
+         m_logger.Info("Test start received — running E2E scenarios");
 
       if(m_testRunner != NULL)
          m_testRunner.RunAllScenarios();

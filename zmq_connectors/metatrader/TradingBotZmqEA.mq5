@@ -245,7 +245,8 @@ void SendTickIfAllowed()
    if(!SymbolInfoTick(_Symbol, tick))
       return;
 
-   _network.SendTick(_Symbol, tick.last, tick.volume, tick.time);
+   double price = (tick.last > 0) ? tick.last : tick.bid;
+   _network.SendTick(_Symbol, price, tick.volume, tick.time);
    _ticksSent++;
 }
 
@@ -292,8 +293,9 @@ void PollCommands()
 {
    if(_network == NULL || _dispatcher == NULL) return;
 
-   // Process all available commands (non-blocking)
-   while(true)
+   // Process available commands (non-blocking, capped)
+   const int MAX_COMMANDS_PER_TICK = 10;
+   for(int cmdCount = 0; cmdCount < MAX_COMMANDS_PER_TICK; cmdCount++)
    {
       MessageEnvelope *env = _network.ReceiveCommand(0);
       if(env == NULL) break;
@@ -330,13 +332,19 @@ bool IsDuplicateCommand(long seqNum)
       if(_processedSeqNums[i] == seqNum)
          return true;
 
+   // Prevent unbounded growth — shift out oldest half first
+   if(size >= MAX_TRACKED_SEQ_NUMS)
+   {
+      int shift = MAX_TRACKED_SEQ_NUMS / 2;
+      for(int i = 0; i < shift; i++)
+         _processedSeqNums[i] = _processedSeqNums[i + shift];
+      ArrayResize(_processedSeqNums, shift);
+      size = shift;
+   }
+
    // Add to tracking
    ArrayResize(_processedSeqNums, size + 1);
    _processedSeqNums[size] = seqNum;
-
-   // Prevent unbounded growth
-   if(size >= MAX_TRACKED_SEQ_NUMS)
-      ArrayResize(_processedSeqNums, 0);
 
    return false;
 }
@@ -412,6 +420,8 @@ void ReportPositionsToPython()
 
 void ProcessNewDeals()
 {
+   if(_network == NULL || _logger == NULL) return;
+
    // Load recent history (last hour)
    datetime from = TimeCurrent() - 3600;
    if(from < 0) from = 0;
@@ -511,7 +521,8 @@ void UpdatePanel()
                    "Cmds: " + IntegerToString(_commandsReceived) +
                    " | Trades: " + IntegerToString(_orderTracker != NULL ? _orderTracker.GetActiveCount() : 0);
 
-   _logger.UpdatePanel(status);
+   MetaTraderLogger *panelLogger = (MetaTraderLogger *)_logger;
+   panelLogger.UpdatePanel(status);
 }
 
 // ═══════════════════════════════════════════════════════════════════

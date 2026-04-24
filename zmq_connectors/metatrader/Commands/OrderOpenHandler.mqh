@@ -43,7 +43,7 @@ public:
       if(envelope == NULL || envelope.root == NULL)
       {
          if(m_logger != NULL)
-            m_logger->Warning("OrderOpenHandler: empty envelope");
+            m_logger.Warning("OrderOpenHandler: empty envelope");
          return false;
       }
 
@@ -61,7 +61,7 @@ public:
       if(StringLen(tradeId) == 0 || StringLen(direction) == 0)
       {
          if(m_logger != NULL)
-            m_logger->Error("OrderOpenHandler: missing trade_id or direction");
+            m_logger.Error("OrderOpenHandler: missing trade_id or direction");
          return false;
       }
 
@@ -70,7 +70,7 @@ public:
       if(volume <= 0)
       {
          if(m_logger != NULL)
-            m_logger->Error("OrderOpenHandler: calculated volume is zero");
+            m_logger.Error("OrderOpenHandler: calculated volume is zero");
          return false;
       }
 
@@ -94,13 +94,13 @@ public:
       request.comment   = tradeId;
 
       if(m_logger != NULL)
-         m_logger->Info("Opening " + direction + " " + tradeId + " vol=" + DoubleToString(volume, 2) + " @ " + DoubleToString(price, 5));
+         m_logger.Info("Opening " + direction + " " + tradeId + " vol=" + DoubleToString(volume, 2) + " @ " + DoubleToString(price, 5));
 
       if(!OrderSend(request, result))
       {
          int err = GetLastError();
          if(m_logger != NULL)
-            m_logger->Error("OrderSend failed for " + tradeId + " err=" + IntegerToString(err));
+            m_logger.Error("OrderSend failed for " + tradeId + " err=" + IntegerToString(err));
          m_network.SendError("metatrader5", "order_open_failed", "OrderSend err=" + IntegerToString(err));
          return false;
       }
@@ -109,7 +109,7 @@ public:
       {
          // Track the order
          if(m_tracker != NULL)
-            m_tracker->TrackEntry(tradeId, result.order, riskPoints, rrRatio);
+            m_tracker.TrackEntry(tradeId, result.order, riskPoints, rrRatio);
 
          // Send entry fill immediately for market orders (they fill right away)
          // For pending orders we would wait for OnTrade, but this bot uses market orders
@@ -130,13 +130,13 @@ public:
          m_network.SendTradeLog(tradeId, "MT5:ORDER", "Opened " + direction + " vol=" + DoubleToString(volume, 2));
 
          if(m_logger != NULL)
-            m_logger->Success("Opened " + tradeId + " @ " + DoubleToString(result.price, 5));
+            m_logger.Success("Opened " + tradeId + " @ " + DoubleToString(result.price, 5));
          return true;
       }
       else
       {
          if(m_logger != NULL)
-            m_logger->Error("Order failed for " + tradeId + " retcode=" + IntegerToString(result.retcode));
+            m_logger.Error("Order failed for " + tradeId + " retcode=" + IntegerToString(result.retcode));
          m_network.SendError("metatrader5", "order_open_failed", "Retcode=" + IntegerToString(result.retcode));
          return false;
       }
@@ -175,7 +175,9 @@ private:
       if(volStep > 0)
          volume = MathFloor(volume / volStep) * volStep;
 
-      int digits = (int)SymbolInfoInteger(m_symbol, SYMBOL_VOLUME_DIGITS);
-      return NormalizeDouble(volume, digits);
+      int volDigits = 0;
+      if(volStep > 0)
+         volDigits = (int)(-MathLog10(volStep) + 0.5);
+      return NormalizeDouble(volume, volDigits);
    }
 };
