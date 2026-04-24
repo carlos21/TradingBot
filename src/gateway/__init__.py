@@ -8,7 +8,7 @@ MetaTrader, cTrader, etc.).
 Usage:
     from src.gateway import TradingGateway, create_zmq_executor
     
-    gateway = TradingGateway(pair="NQ")
+    gateway = TradingGateway(pair="MNQ")
     gateway.start()
     
     # Use with trade manager

@@ -40,7 +40,7 @@ class CSVStore:
         """
         Args:
             filepath: Path to the CSV file. Created automatically on first write.
-            pair:     Pair name embedded in each bar (e.g., "NQ").
+            pair:     Pair name embedded in each bar (e.g., "MNQ").
             tz:       Timezone for Date/Time columns in the CSV.
                       Must match the 'tz' parameter in CSVDataSource when reading.
         """

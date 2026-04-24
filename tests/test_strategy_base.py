@@ -61,7 +61,7 @@ class TestLineManagement:
     def test_remove_line(self):
         sio = DummySocketIO()
         lr = FakeLineRepository()
-        lr.insert_line("NQ", 100.0)
+        lr.insert_line("MNQ", 100.0)
         strat = _make_base(socketio=sio, line_repo=lr)
         strat.add_strategy_line("L1", 100.0)
         strat.remove_strategy_line("L1")
@@ -92,7 +92,7 @@ class TestSLSelection:
 class TestBuildTrade:
 
     def _make_ctx(self, strat, direction=Direction.LONG, close=100.0, extreme=90.0, level=100.0, bar_time=1000):
-        bar = make_bar(time=bar_time, close=close, pair="NQ")
+        bar = make_bar(time=bar_time, close=close, pair="MNQ")
         return EntryContext(
             strategy=strat, line_id="L1", direction=direction,
             level=level, bar=bar, close=close,
@@ -143,44 +143,44 @@ class TestCheckOpenTrades:
     def test_long_sl_hit_closes_trade(self):
         strat = _make_base()
         strat.open_trades.append({
-            "trade_id": "T1", "pair": "NQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open",
         })
-        bar = make_bar(time=1000, low=85, high=95, pair="NQ")
+        bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
         strat._check_open_trades(bar)
         assert len(strat.open_trades) == 0
 
     def test_long_tp_hit_closes_trade(self):
         strat = _make_base()
         strat.open_trades.append({
-            "trade_id": "T1", "pair": "NQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open",
         })
-        bar = make_bar(time=1000, low=100, high=135, pair="NQ")
+        bar = make_bar(time=1000, low=100, high=135, pair="MNQ")
         strat._check_open_trades(bar)
         assert len(strat.open_trades) == 0
 
     def test_short_sl_hit(self):
         strat = _make_base()
         strat.open_trades.append({
-            "trade_id": "T1", "pair": "NQ", "type": "short",
+            "trade_id": "T1", "pair": "MNQ", "type": "short",
             "entry": 100, "stop_loss": 110, "take_profit": 70,
             "risk": 10, "status": "open",
         })
-        bar = make_bar(time=1000, low=99, high=115, pair="NQ")
+        bar = make_bar(time=1000, low=99, high=115, pair="MNQ")
         strat._check_open_trades(bar)
         assert len(strat.open_trades) == 0
 
     def test_no_hit_keeps_trade(self):
         strat = _make_base()
         strat.open_trades.append({
-            "trade_id": "T1", "pair": "NQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open",
         })
-        bar = make_bar(time=1000, low=95, high=110, pair="NQ")
+        bar = make_bar(time=1000, low=95, high=110, pair="MNQ")
         strat._check_open_trades(bar)
         assert len(strat.open_trades) == 1
 
@@ -262,12 +262,12 @@ class TestBreakeven:
             options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
         )
         strat.open_trades.append({
-            "trade_id": "T1", "pair": "NQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "is_reentry": False,
         })
         # High reaches trigger_price = 100 + 10*2 = 120
-        bar = make_bar(time=1000, high=121, low=100, pair="NQ")
+        bar = make_bar(time=1000, high=121, low=100, pair="MNQ")
         strat._check_breakeven(bar)
         # SL should move to entry + risk * 0.05 = 100.5
         assert strat.open_trades[0]["stop_loss"] == pytest.approx(100.5, abs=0.01)
@@ -277,11 +277,11 @@ class TestBreakeven:
             options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
         )
         strat.open_trades.append({
-            "trade_id": "T1", "pair": "NQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "is_reentry": False,
         })
-        bar = make_bar(time=1000, high=115, low=100, pair="NQ")
+        bar = make_bar(time=1000, high=115, low=100, pair="MNQ")
         strat._check_breakeven(bar)
         assert strat.open_trades[0]["stop_loss"] == 90  # unchanged
 
@@ -301,7 +301,7 @@ class TestStoreAndEmitOpen:
         )
         strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
         trade = {
-            "pair": "NQ", "type": "long", "entry": 100,
+            "pair": "MNQ", "type": "long", "entry": 100,
             "stop_loss": 90, "take_profit": 130, "risk": 10,
             "entry_time": 1000, "status": "open",
         }

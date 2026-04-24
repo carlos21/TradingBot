@@ -15,7 +15,7 @@ class TestEnvConfigLoader:
         with patch.dict(os.environ, {}, clear=True):
             cfg = EnvConfigLoader().load()
         assert cfg.rr_ratio == 5.0
-        assert cfg.pair == "NQ"
+        assert cfg.pair == "MNQ"
         assert cfg.mode == "backtest"
         assert cfg.risk_per_trade is None
 
@@ -70,7 +70,7 @@ class TestCliConfigLoader:
     def test_defaults_when_no_args(self):
         cfg = CliConfigLoader(args=[]).load()
         assert cfg.rr_ratio == 5.0
-        assert cfg.pair == "NQ"
+        assert cfg.pair == "MNQ"
 
     def test_reads_rr_ratio(self):
         cfg = CliConfigLoader(args=["--rr", "3.3"]).load()
@@ -143,7 +143,7 @@ class TestCompositeConfigLoader:
         cli = CliConfigLoader(args=["--mode", "live", "--pair", "MNQ", "--risk", "75"])
         composite = CompositeConfigLoader(env, cli)
 
-        with patch.dict(os.environ, {"MODE": "backtest", "PAIR": "NQ", "RISK": "50"}, clear=False):
+        with patch.dict(os.environ, {"MODE": "backtest", "PAIR": "MNQ", "RISK": "50"}, clear=False):
             cfg = composite.load()
 
         assert cfg.mode == "live"

@@ -34,12 +34,12 @@ from src.prod_config import get_prod_strategy_options, get_prod_candle_config
 # ---------------------------------------------------------------------------
 
 CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "csvs", "NQ_live.csv")
-NQ_TZ = ZoneInfo("America/Chicago")
-NQ_FMT = "%d/%m/%Y %H:%M:%S"
+MNQ_TZ = ZoneInfo("America/Chicago")
+MNQ_FMT = "%d/%m/%Y %H:%M:%S"
 
 
 def load_bars(start_epoch: float, end_epoch: float) -> List[Dict]:
-    """Load 1m bars from the NQ CSV for the given UTC epoch range."""
+    """Load 1m bars from the MNQ CSV for the given UTC epoch range."""
     bars = []
     with open(CSV_PATH, newline="") as f:
         sample = f.read(2048)
@@ -48,7 +48,7 @@ def load_bars(start_epoch: float, end_epoch: float) -> List[Dict]:
         reader = csv.DictReader(f, dialect=dialect)
         for row in reader:
             ts = f"{row['Date']} {row['Time']}"
-            dt = datetime.strptime(ts, NQ_FMT).replace(tzinfo=NQ_TZ)
+            dt = datetime.strptime(ts, MNQ_FMT).replace(tzinfo=MNQ_TZ)
             epoch = int(dt.astimezone(timezone.utc).timestamp())
             if epoch < start_epoch:
                 continue
@@ -61,7 +61,7 @@ def load_bars(start_epoch: float, end_epoch: float) -> List[Dict]:
                 "low": float(row["Low"]),
                 "close": float(row["Close"]),
                 "volume": int(row.get("Volume", 0)),
-                "pair": "NQ",
+                "pair": "MNQ",
             })
     return bars
 
@@ -79,7 +79,7 @@ def make_recovery_strategy(
     tm = TradeManager(
         trade_repository=trade_repo,
         socketio=sio,
-        pair="NQ",
+        pair="MNQ",
         trade_executor=te,
         analytics=ana,
         point_value=2.0,
@@ -144,7 +144,7 @@ def _utc_dt(epoch):
     return datetime.fromtimestamp(epoch, tz=timezone.utc)
 
 
-# Scenario: NQ 2025-05-01
+# Scenario: MNQ 2025-05-01
 # Lines: 20046.00, 20198.25 (at 01:00Z)
 # Trade 1: short entry=20041.50, sl=20056.50, tp=19966.50 → SL hit
 # Trade 2 (reentry): short entry=20038.00, sl=20053.00, tp=19963.00 → TP hit
@@ -158,7 +158,7 @@ def _may01_bars():
 
 MAY01_LINE_TS = _utc_epoch(2025, 5, 1, 1)
 
-# Scenario: NQ 2025-05-08
+# Scenario: MNQ 2025-05-08
 # Lines: 20123.75, 20292.00 (at 06:00Z)
 # Trade 1: long entry=20132.75, sl=20102.75, tp=20282.75 → SL hit
 # Trade 2 (reentry): long entry=20129.25, sl=20114.25, tp=20204.25
@@ -182,7 +182,7 @@ class TestCrashRecoveryReentry:
     """Crash right after an SL hit — re-entry must fire after restart."""
 
     def test_crash_after_sl_short_reentry(self):
-        """NQ 2025-05-01: short trade SL'd, crash → short re-entry fires."""
+        """MNQ 2025-05-01: short trade SL'd, crash → short re-entry fires."""
         trade_repo = FakeTradeRepository()
         tsr = InMemoryLineTriggerStateRepository()
         all_bars = _may01_bars()
@@ -202,9 +202,9 @@ class TestCrashRecoveryReentry:
         strat2 = make_recovery_strategy(trade_repo, tsr)
         strat2.add_strategy_line("line-20046", 20046.00, creation_timestamp=MAY01_LINE_TS)
         strat2.add_strategy_line("line-20198", 20198.25, creation_timestamp=MAY01_LINE_TS)
-        strat2.restore_trigger_states("NQ")
+        strat2.restore_trigger_states("MNQ")
         strat2.restore_open_trades()
-        strat2.restore_reentry_opportunities("NQ", reference_time=_utc_dt(all_bars[crash_idx]["time"]))
+        strat2.restore_reentry_opportunities("MNQ", reference_time=_utc_dt(all_bars[crash_idx]["time"]))
 
         assert len(strat2._reentry_opportunities) == 1
         assert strat2._reentry_opportunities[0]["direction"] == "short"
@@ -224,7 +224,7 @@ class TestCrashRecoveryReentry:
         assert reentry["take_profit"] == 19963.00
 
     def test_crash_after_sl_long_reentry(self):
-        """NQ 2025-05-08: long trade SL'd, crash → long re-entry fires."""
+        """MNQ 2025-05-08: long trade SL'd, crash → long re-entry fires."""
         trade_repo = FakeTradeRepository()
         tsr = InMemoryLineTriggerStateRepository()
         all_bars = _may08_bars()
@@ -244,9 +244,9 @@ class TestCrashRecoveryReentry:
         strat2 = make_recovery_strategy(trade_repo, tsr)
         strat2.add_strategy_line("line-20123", 20123.75, creation_timestamp=MAY08_LINE_TS)
         strat2.add_strategy_line("line-20292", 20292.00, creation_timestamp=MAY08_LINE_TS)
-        strat2.restore_trigger_states("NQ")
+        strat2.restore_trigger_states("MNQ")
         strat2.restore_open_trades()
-        strat2.restore_reentry_opportunities("NQ", reference_time=_utc_dt(all_bars[crash_idx]["time"]))
+        strat2.restore_reentry_opportunities("MNQ", reference_time=_utc_dt(all_bars[crash_idx]["time"]))
 
         assert len(strat2._reentry_opportunities) == 1
         assert strat2._reentry_opportunities[0]["direction"] == "long"
@@ -265,7 +265,7 @@ class TestCrashRecoveryReentry:
         assert reentry["take_profit"] == 20204.25
 
     def test_reentry_trade_reaches_tp_after_crash(self):
-        """NQ 2025-05-01: crash after initial SL, re-entry fires AND reaches TP."""
+        """MNQ 2025-05-01: crash after initial SL, re-entry fires AND reaches TP."""
         trade_repo = FakeTradeRepository()
         tsr = InMemoryLineTriggerStateRepository()
         all_bars = _may01_bars()
@@ -281,9 +281,9 @@ class TestCrashRecoveryReentry:
         strat2 = make_recovery_strategy(trade_repo, tsr)
         strat2.add_strategy_line("line-20046", 20046.00, creation_timestamp=MAY01_LINE_TS)
         strat2.add_strategy_line("line-20198", 20198.25, creation_timestamp=MAY01_LINE_TS)
-        strat2.restore_trigger_states("NQ")
+        strat2.restore_trigger_states("MNQ")
         strat2.restore_open_trades()
-        strat2.restore_reentry_opportunities("NQ", reference_time=_utc_dt(all_bars[crash_idx]["time"]))
+        strat2.restore_reentry_opportunities("MNQ", reference_time=_utc_dt(all_bars[crash_idx]["time"]))
 
         # PHASE 3: Feed all remaining bars — re-entry should fire AND reach TP
         for bar in all_bars[crash_idx + 1:]:
@@ -301,7 +301,7 @@ class TestCrashRecoveryOpenTrade:
     """Crash while a trade is open — trade must survive."""
 
     def test_open_trade_restored_after_crash(self):
-        """NQ 2025-05-01: crash while initial trade is open, trade restored in strategy."""
+        """MNQ 2025-05-01: crash while initial trade is open, trade restored in strategy."""
         trade_repo = FakeTradeRepository()
         tsr = InMemoryLineTriggerStateRepository()
         all_bars = _may01_bars()
@@ -322,7 +322,7 @@ class TestCrashRecoveryOpenTrade:
         strat2 = make_recovery_strategy(trade_repo, tsr)
         strat2.add_strategy_line("line-20046", 20046.00, creation_timestamp=MAY01_LINE_TS)
         strat2.add_strategy_line("line-20198", 20198.25, creation_timestamp=MAY01_LINE_TS)
-        strat2.restore_trigger_states("NQ")
+        strat2.restore_trigger_states("MNQ")
         strat2.restore_open_trades()
 
         # Trade is back in strategy's open_trades
@@ -357,7 +357,7 @@ class TestCrashRecoveryOpenTrade:
         strat2.add_strategy_line("line-20046", 20046.00, creation_timestamp=MAY01_LINE_TS)
         strat2.add_strategy_line("line-20198", 20198.25, creation_timestamp=MAY01_LINE_TS)
         strat2.add_strategy_line("line-extra", 20100.00, creation_timestamp=MAY01_LINE_TS)
-        strat2.restore_trigger_states("NQ")
+        strat2.restore_trigger_states("MNQ")
         strat2.restore_open_trades()
         assert len(strat2.open_trades) == 1
 
@@ -402,7 +402,7 @@ class TestCrashRecoveryTriggerState:
         assert strat2.strategy_lines["line-20046"]["direction"] is None
         assert strat2.strategy_lines["line-20046"]["extreme"] == 0.0
 
-        strat2.restore_trigger_states("NQ")
+        strat2.restore_trigger_states("MNQ")
 
         # After restore
         assert strat2.strategy_lines["line-20046"]["direction"] == saved_dir
@@ -433,7 +433,7 @@ class TestCrashRecoveryTriggerState:
         strat2 = make_recovery_strategy(trade_repo, tsr)
         strat2.add_strategy_line("line-20046", 20046.00, creation_timestamp=MAY01_LINE_TS)
         strat2.add_strategy_line("line-20198", 20198.25, creation_timestamp=MAY01_LINE_TS)
-        strat2.restore_trigger_states("NQ")
+        strat2.restore_trigger_states("MNQ")
 
         assert strat2.strategy_lines["line-20046"]["vat_regime"] == saved_regime
         assert strat2.strategy_lines["line-20046"]["vat_velocity"] == saved_velocity
@@ -461,7 +461,7 @@ class TestCrashRecoveryTriggerState:
         strat2 = make_recovery_strategy(trade_repo, tsr)
         strat2.add_strategy_line("line-A", 20046.00, creation_timestamp=MAY01_LINE_TS)
         strat2.add_strategy_line("line-B", 20198.25, creation_timestamp=MAY01_LINE_TS)
-        strat2.restore_trigger_states("NQ")
+        strat2.restore_trigger_states("MNQ")
 
         for key in ("direction", "extreme"):
             assert strat2.strategy_lines["line-A"].get(key) == state_a.get(key), (
@@ -492,7 +492,7 @@ class TestCrashRecoveryEdgeCases:
         opts.breakeven = None
         opts.reentry_after_sl = False
         strat2 = make_recovery_strategy(trade_repo, tsr, options_override=opts)
-        strat2.restore_reentry_opportunities("NQ", reference_time=_utc_dt(all_bars[crash_idx]["time"]))
+        strat2.restore_reentry_opportunities("MNQ", reference_time=_utc_dt(all_bars[crash_idx]["time"]))
 
         assert len(strat2._reentry_opportunities) == 0
 
@@ -528,7 +528,7 @@ class TestCrashRecoveryEdgeCases:
 
         # Recover — no re-entry-of-re-entry
         strat2 = make_recovery_strategy(trade_repo, tsr)
-        strat2.restore_reentry_opportunities("NQ", reference_time=_utc_dt(last_time))
+        strat2.restore_reentry_opportunities("MNQ", reference_time=_utc_dt(last_time))
 
         # Every restored opportunity must come from a non-reentry source trade
         for opp in strat2._reentry_opportunities:
@@ -555,7 +555,7 @@ class TestCrashRecoveryEdgeCases:
         # Reference time 5 hours after SL — outside 4h window
         far_future = _utc_dt(all_bars[crash_idx]["time"] + 5 * 3600)
         strat2 = make_recovery_strategy(trade_repo, tsr)
-        strat2.restore_reentry_opportunities("NQ", reference_time=far_future)
+        strat2.restore_reentry_opportunities("MNQ", reference_time=far_future)
 
         assert len(strat2._reentry_opportunities) == 0
 
@@ -567,9 +567,9 @@ class TestCrashRecoveryEdgeCases:
         strat = make_recovery_strategy(trade_repo, tsr)
         strat.add_strategy_line("line-test", 20000.00, creation_timestamp=0)
 
-        strat.restore_trigger_states("NQ")
+        strat.restore_trigger_states("MNQ")
         strat.restore_open_trades()
-        strat.restore_reentry_opportunities("NQ")
+        strat.restore_reentry_opportunities("MNQ")
 
         assert len(strat.open_trades) == 0
         assert len(strat._reentry_opportunities) == 0
@@ -595,7 +595,7 @@ class TestResetPreserveTriggerState:
         line_state = strat.strategy_lines.get("line-20046")
         assert line_state is not None and line_state["direction"] is not None
 
-        saved = tsr.load_all("NQ")
+        saved = tsr.load_all("MNQ")
         assert "line-20046" in saved
         saved_dir = saved["line-20046"]["direction"]
 
@@ -604,7 +604,7 @@ class TestResetPreserveTriggerState:
         assert len(strat.strategy_lines) == 0
 
         # Repo still has state
-        assert tsr.load_all("NQ")["line-20046"]["direction"] == saved_dir
+        assert tsr.load_all("MNQ")["line-20046"]["direction"] == saved_dir
 
     def test_reset_without_preserve_deletes_trigger_state(self):
         """reset(preserve=False) deletes trigger state from repo."""
@@ -618,11 +618,11 @@ class TestResetPreserveTriggerState:
         for bar in all_bars[:60]:
             strat.on_raw_bar(bar)
 
-        assert "line-20046" in tsr.load_all("NQ")
+        assert "line-20046" in tsr.load_all("MNQ")
 
         strat.reset(preserve_trigger_state=False)
 
-        assert "line-20046" not in tsr.load_all("NQ")
+        assert "line-20046" not in tsr.load_all("MNQ")
 
     def test_refresh_restores_trigger_state_after_warmup(self):
         """Refresh: reset(preserve) → re-add lines → warmup → restore_trigger_states."""
@@ -655,7 +655,7 @@ class TestResetPreserveTriggerState:
             strat.on_raw_bar(bar)
 
         # Restore (overlays persisted state)
-        strat.restore_trigger_states("NQ")
+        strat.restore_trigger_states("MNQ")
 
         # Direction should match pre-refresh state
         assert strat.strategy_lines["line-20046"]["direction"] == saved_dir

@@ -88,7 +88,7 @@ All connectors use the same protocol defined in `src/gateway/protocol.py`.
     "timestamp": 1712789432.123,
     "seq_num": 12345,
     "payload": {
-        "pair": "NQ",
+        "pair": "MNQ",
         "price": 21050.25,
         "volume": 150
     }

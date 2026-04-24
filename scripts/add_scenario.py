@@ -70,7 +70,7 @@ def parse_ts_with_date(s: str, session_date: str) -> str:
 
 def derive_name(start_ts: str, existing_names: list) -> str:
     """Derive a unique scenario name from the start date."""
-    base = f"NQ - {ts_date(start_ts)}"
+    base = f"MNQ - {ts_date(start_ts)}"
     if base not in existing_names:
         return base
     i = 2
@@ -132,7 +132,7 @@ def format_scenario_block(sc: dict) -> str:
     """Format a scenario dict as a YAML block matching the existing file style."""
     return (
         f'  - name: "{sc["name"]}"\n'
-        f'    pair: "NQ"\n'
+        f'    pair: "MNQ"\n'
         f'    tf: "{sc["tf"]}"\n'
         f'    start: "{sc["start"]}"\n'
         f'    end:   "{sc["end"]}"\n'
@@ -189,7 +189,7 @@ def write_test_scenario_yaml(sc: dict):
     content = (
         f'scenarios:\n'
         f'  - name: "{sc["name"]}"\n'
-        f'    pair: "NQ"\n'
+        f'    pair: "MNQ"\n'
         f'    tf: "{sc["tf"]}"\n'
         f'    start: "{sc["start"]}"\n'
         f'    end:   "{sc["end"]}"\n'
@@ -311,7 +311,7 @@ def main():
     discovery_content = (
         f'scenarios:\n'
         f'  - name: "{name}"\n'
-        f'    pair: "NQ"\n'
+        f'    pair: "MNQ"\n'
         f'    tf: "{tf}"\n'
         f'    start: "{start_ts}"\n'
         f'    end:   "{end_ts}"\n'
@@ -376,7 +376,7 @@ def main():
     if tf != "5m":
         # Remove the stale 5m snapshot from the discovery run
         date_label = ts_date(start_ts)
-        stale_snapshot = PROJECT_ROOT / "scenarios_out" / "NQ" / f"{date_label}_5m.png"
+        stale_snapshot = PROJECT_ROOT / "scenarios_out" / "MNQ" / f"{date_label}_5m.png"
         stale_snapshot.unlink(missing_ok=True)
 
         print(f"\nRe-running with tf={tf} to generate correct snapshot...")

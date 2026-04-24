@@ -119,7 +119,7 @@ to be:
         self,
         logger: ILogger,
         config: Optional[GatewayConfig] = None,
-        pair: str = "NQ",
+        pair: str = "MNQ",
     ):
         self.logger = logger
         self.config = config or GatewayConfig()

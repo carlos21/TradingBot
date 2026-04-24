@@ -53,13 +53,13 @@ trade_executor = NinjaTraderExecutor(data_source, risk_usd=500)
 from src.gateway import create_live_components
 
 data_source, trade_executor = create_live_components(
-    pair="NQ",
+    pair="MNQ",
     risk_usd=500,
 )
 
 # Rest of your code stays the same!
 wiring = create_app(
-    pair="NQ",
+    pair="MNQ",
     data_source=data_source,
     trade_executor=trade_executor,
     live_mode=True,
@@ -97,12 +97,12 @@ from app_factory import create_app, Repositories
 
 def main():
     # Create data source
-    cfg = NinjaTraderConfig(pair="NQ", account="")
+    cfg = NinjaTraderConfig(pair="MNQ", account="")
     data_source = NinjaTraderDataSource(cfg=cfg)
     
     # Create app
     wiring = create_app(
-        pair="NQ",
+        pair="MNQ",
         data_source=data_source,
         repos=repos,
         numbers=numbers,
@@ -123,13 +123,13 @@ from app_factory import create_app, Repositories
 def main():
     # Create ZeroMQ components
     data_source, trade_executor = create_live_components(
-        pair="NQ",
+        pair="MNQ",
         risk_usd=500,
     )
     
     # Create app - pass the trade_executor!
     wiring = create_app(
-        pair="NQ",
+        pair="MNQ",
         data_source=data_source,
         trade_executor=trade_executor,  # NEW: Pass the executor
         repos=repos,
@@ -165,7 +165,7 @@ config = GatewayConfig(
     heartbeat_pub="tcp://127.0.0.1:5558",
 )
 
-gateway = TradingGateway(config=config, pair="NQ")
+gateway = TradingGateway(config=config, pair="MNQ")
 data_source = ZMQDataSource(gateway=gateway)
 trade_executor = ZMQTradeExecutor(gateway=gateway, risk_usd=500)
 ```
@@ -194,7 +194,7 @@ trade_executor = ZMQTradeExecutor(gateway=gateway, risk_usd=500)
 ```python
 from src.gateway import TradingGateway
 
-gateway = TradingGateway(pair="NQ")
+gateway = TradingGateway(pair="MNQ")
 
 # Register callbacks for specific events
 gateway.on_tick(lambda tick: print(f"Tick: {tick['price']}"))
@@ -298,7 +298,7 @@ All messages use JSON with this envelope:
     "timestamp": 1712789432.123,
     "seq_num": 100,
     "payload": {
-        "pair": "NQ",
+        "pair": "MNQ",
         "price": 21050.25,
         "volume": 150,
         "time": 1712789432
@@ -314,7 +314,7 @@ All messages use JSON with this envelope:
     "seq_num": 50,
     "payload": {
         "trade_id": "trade_123",
-        "pair": "NQ",
+        "pair": "MNQ",
         "direction": "long",
         "entry_price": 21000,
         "stop_loss": 20920,
@@ -521,7 +521,7 @@ If you need to switch back to HTTP:
 # The HTTP routes will handle everything
 
 wiring = create_app(
-    pair="NQ",
+    pair="MNQ",
     data_source=data_source,  # Can still use ZMQ for data
     # trade_executor=executor,  # Comment out - uses HTTP
     ...

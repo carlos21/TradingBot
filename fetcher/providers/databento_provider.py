@@ -1,5 +1,5 @@
 """
-Databento provider for CME NQ futures market data.
+Databento provider for CME MNQ futures market data.
 
 REQUIREMENTS:
   - Databento account at databento.com (free $10 credit on signup)
@@ -164,5 +164,5 @@ def _parse_databento_ts(ts: str) -> datetime:
 
 
 def _symbol_to_pair(symbol: str) -> str:
-    """'NQ.FUT' → 'NQ',  'NQH5' → 'NQ'"""
+    """'NQ.FUT' → 'MNQ',  'NQH5' → 'MNQ'"""
     return symbol.split(".")[0].rstrip("FGHMNQUVXZ0123456789").upper() or symbol.split(".")[0].upper()

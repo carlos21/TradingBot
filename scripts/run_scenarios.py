@@ -56,7 +56,7 @@ APP_HOST = "127.0.0.1"
 # --- TIMEZONE CONFIGURATION ---
 PAIR_TZS = {
     'EURUSD': 'Europe/London',
-    'NQ':     'Etc/GMT+5',   # fixed UTC-5, matches TradingView "UTC-5" (no DST shift)
+    'MNQ':     'Etc/GMT+5',   # fixed UTC-5, matches TradingView "UTC-5" (no DST shift)
     'ES':     'Etc/GMT+5',
 }
 
@@ -67,7 +67,7 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
     print(f"🔍 Verifying data in {csv_path.name}...")
     print(f"   Requested Range: {start_ts} -> {end_ts}")
     
-    csv_tz_name = 'America/Chicago' if pair in ('NQ', 'ES') else 'UTC'
+    csv_tz_name = 'America/Chicago' if pair in ('MNQ', 'ES') else 'UTC'
     csv_tz = ZoneInfo(csv_tz_name)
     utc = ZoneInfo("UTC")
     
@@ -140,7 +140,7 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
         )
 
     ds = CSVDataSource(
-        pair="NQ",
+        pair="MNQ",
         filename=csv_path,
         initial_start_time=0,
         initial_end_time=9999999999,
@@ -160,7 +160,7 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
         options.reentry_breakeven = None
 
     wiring = create_app(
-        pair="NQ",
+        pair="MNQ",
         data_source=ds,
         repos=repos,
         numbers=numbers,

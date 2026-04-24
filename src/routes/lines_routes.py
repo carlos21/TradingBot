@@ -21,7 +21,7 @@ def register_lines_routes(
     def list_lines():
         pair = request.args.get('pair')
         if not pair:
-            abort(400, "Query param 'pair' is required, e.g. /api/lines?pair=NQ")
+            abort(400, "Query param 'pair' is required, e.g. /api/lines?pair=MNQ")
         return lines_controller.list_lines(pair)
 
     @app.route('/api/lines', methods=['POST'])

@@ -28,7 +28,7 @@ def write_discovery_yaml(scenarios: list, path: Path):
     lines = ["scenarios:\n"]
     for sc in scenarios:
         lines.append(f'  - name: "{sc["name"]}"\n')
-        lines.append(f'    pair: "NQ"\n')
+        lines.append(f'    pair: "MNQ"\n')
         lines.append(f'    tf: "{sc.get("tf", "5m")}"\n')
         lines.append(f'    start: "{sc["start"]}"\n')
         lines.append(f'    end:   "{sc["end"]}"\n')

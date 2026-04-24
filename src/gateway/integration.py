@@ -5,7 +5,7 @@ This module provides the live trading entry point using ZeroMQ.
 
 Usage:
     from src.gateway import create_live_components
-    data_source, trade_executor = create_live_components(pair="NQ")
+    data_source, trade_executor = create_live_components(pair="MNQ")
     
     # Then pass to app_factory:
     wiring = create_app(
@@ -49,7 +49,7 @@ def create_live_components(
     This is the main entry point for using ZeroMQ with the existing app_factory.
     
     Args:
-        pair: Trading pair symbol (e.g., "NQ", "MNQ")
+        pair: Trading pair symbol (e.g., "MNQ", "MNQ")
         logger: Logger instance (required)
         risk_usd: Fixed dollar risk per trade (optional)
         risk_pct: Percentage of account to risk per trade (optional)
@@ -73,7 +73,7 @@ def create_live_components(
         >>> 
         >>> # Create ZeroMQ components
         >>> data_source, executor = create_live_components(
-        ...     pair="NQ",
+        ...     pair="MNQ",
         ...     logger=logger,
         ...     risk_usd=500,
         ...     account="MyAccount",
@@ -81,7 +81,7 @@ def create_live_components(
         >>> 
         >>> # Create Flask app with ZeroMQ components
         >>> wiring = create_app(
-        ...     pair="NQ",
+        ...     pair="MNQ",
         ...     data_source=data_source,
         ...     trade_executor=executor,
         ...     live_mode=True,

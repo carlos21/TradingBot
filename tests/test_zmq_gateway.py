@@ -65,7 +65,7 @@ class TestProtocol:
     
     def test_tick_message(self):
         tick = TickMessage(
-            pair="NQ",
+            pair="MNQ",
             price=21000.5,
             volume=100,
             time=1712789432,
@@ -73,12 +73,12 @@ class TestProtocol:
         envelope = tick.to_envelope(seq_num=1)
         
         assert envelope.msg_type == MessageType.TICK
-        assert envelope.payload["pair"] == "NQ"
+        assert envelope.payload["pair"] == "MNQ"
         assert envelope.payload["price"] == 21000.5
     
     def test_bar_message(self):
         bar = BarMessage(
-            pair="NQ",
+            pair="MNQ",
             time=1712789400,
             open=21000,
             high=21050,
@@ -94,7 +94,7 @@ class TestProtocol:
     def test_open_order_command(self):
         cmd = OpenOrderCommand(
             trade_id="test_123",
-            pair="NQ",
+            pair="MNQ",
             direction="long",
             entry_price=21000,
             stop_loss=20920,
@@ -118,15 +118,15 @@ class TestGateway:
             command_pull="tcp://127.0.0.1:5556",
         )
         logger = ConsoleLogger()
-        gateway = TradingGateway(logger, config=config, pair="NQ")
+        gateway = TradingGateway(logger, config=config, pair="MNQ")
         
-        assert gateway.pair == "NQ"
+        assert gateway.pair == "MNQ"
         assert gateway.config == config
         assert not gateway.is_connected
     
     def test_callback_registration(self):
         logger = ConsoleLogger()
-        gateway = TradingGateway(logger, pair="NQ")
+        gateway = TradingGateway(logger, pair="MNQ")
         
         received = []
         def callback(payload):
@@ -149,7 +149,7 @@ class TestGateway:
     
     def test_sequence_number_increment(self):
         logger = ConsoleLogger()
-        gateway = TradingGateway(logger, pair="NQ")
+        gateway = TradingGateway(logger, pair="MNQ")
         
         seq1 = gateway._next_seq()
         seq2 = gateway._next_seq()
@@ -221,9 +221,9 @@ class TestDataSource:
         from src.utils.app_logger import ConsoleLogger
         
         logger = ConsoleLogger()
-        ds = ZMQDataSource(logger, pair="NQ")
+        ds = ZMQDataSource(logger, pair="MNQ")
         
-        assert ds.pair == "NQ"
+        assert ds.pair == "MNQ"
         assert not ds.is_live
         assert ds._historical_bars == []
     
@@ -232,12 +232,12 @@ class TestDataSource:
         from src.utils.app_logger import ConsoleLogger
         
         logger = ConsoleLogger()
-        ds = ZMQDataSource(logger, pair="NQ")
+        ds = ZMQDataSource(logger, pair="MNQ")
         
         # Add some bars
         bars = [
-            {"time": 1000, "open": 100, "high": 110, "low": 90, "close": 105, "volume": 100, "pair": "NQ"},
-            {"time": 1060, "open": 105, "high": 115, "low": 100, "close": 110, "volume": 200, "pair": "NQ"},
+            {"time": 1000, "open": 100, "high": 110, "low": 90, "close": 105, "volume": 100, "pair": "MNQ"},
+            {"time": 1060, "open": 105, "high": 115, "low": 100, "close": 110, "volume": 200, "pair": "MNQ"},
         ]
         ds._historical_bars = bars
         

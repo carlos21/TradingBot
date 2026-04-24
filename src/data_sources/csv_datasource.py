@@ -32,15 +32,15 @@ class CSVDataSource(CombinedDataSource):
     DEFAULT_FMT  = '%d/%m/%Y %H:%M:%S'
     PAIR_FORMATS = {
         'EURUSD': '%Y.%m.%d %H:%M',
-        'NQ':      '%d/%m/%Y %H:%M:%S',
+        'MNQ':      '%d/%m/%Y %H:%M:%S',
     }
     PAIR_TZS     = {
         'EURUSD': 'Europe/London',
-        'NQ':      'America/Chicago',
+        'MNQ':      'America/Chicago',
     }
     PAIR_FILES   = {
         'EURUSD': 'csvs/EURUSD_2024.csv',
-        'NQ':      'csvs/NQ_21-24.csv',
+        'MNQ':      'csvs/NQ_21-24.csv',
     }
 
     def __init__(
@@ -131,7 +131,7 @@ class CSVDataSource(CombinedDataSource):
 
     def _load_historical_bars(self) -> List[Dict]:
         bars: List[Dict] = []
-        local_tz = self.local_tz             # e.g., America/Chicago for NQ
+        local_tz = self.local_tz             # e.g., America/Chicago for MNQ
         with (self._fileobj or open(self.file, newline='')) as f:
             sample  = f.read(2048); f.seek(0)
             dialect = csv.Sniffer().sniff(sample, delimiters=",;")

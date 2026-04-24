@@ -60,7 +60,7 @@ def build_3candle_scenario_bars() -> List[Dict[str, Any]]:
             "high": 100.0 + i + 0.8, 
             "low":  100.0 + i - 0.2, 
             "close": 100.0 + i + 1.0, 
-            "volume": 100, "pair": "NQ"
+            "volume": 100, "pair": "MNQ"
         })
 
     # --- Candle 2: Hammer at Top (5-9 mins) ---
@@ -80,7 +80,7 @@ def build_3candle_scenario_bars() -> List[Dict[str, Any]]:
             "high": 105.2, # Keep high constant to form the 'top'
             "low":  102.0 if i == 2 else price - 0.5,
             "close": 104.8 if i == 4 else price - 0.2,
-            "volume": 80, "pair": "NQ"
+            "volume": 80, "pair": "MNQ"
         })
 
     # --- Candle 3: Big Red (10-14 mins) ---
@@ -92,7 +92,7 @@ def build_3candle_scenario_bars() -> List[Dict[str, Any]]:
             "high": 104.8 - (i*0.5) + 0.2,
             "low":  104.8 - (i*0.5) - 0.5,
             "close": 104.8 - (i*0.5) - 0.8,
-            "volume": 120, "pair": "NQ"
+            "volume": 120, "pair": "MNQ"
         })
         
     # --- Trigger Bar (15 min) ---
@@ -100,7 +100,7 @@ def build_3candle_scenario_bars() -> List[Dict[str, Any]]:
     bars.append({
         "time": 15 * 60, 
         "open": 101.0, "high": 101.2, "low": 100.8, "close": 101.0, 
-        "volume": 10, "pair": "NQ"
+        "volume": 10, "pair": "MNQ"
     })
 
     return bars

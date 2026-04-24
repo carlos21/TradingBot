@@ -49,7 +49,7 @@ def build_15m_scenario_bars() -> List[Dict[str, Any]]:
         bars.append({
             "time": i * 60, 
             "open": 100.0, "high": 100.5, "low": 99.8, "close": 100.2, 
-            "volume": 10, "pair": "NQ"
+            "volume": 10, "pair": "MNQ"
         })
 
     # 5-9: Price crashes down to 98.0 (The Wick)
@@ -60,7 +60,7 @@ def build_15m_scenario_bars() -> List[Dict[str, Any]]:
             "high": 100.0 - (i*0.4),
             "low": 98.0, # The extreme low
             "close": 98.5,
-            "volume": 50, "pair": "NQ"
+            "volume": 50, "pair": "MNQ"
         })
 
     # 10-14: Price recovers back to 100.0
@@ -71,14 +71,14 @@ def build_15m_scenario_bars() -> List[Dict[str, Any]]:
             "high": 99.0 + (i*0.3),
             "low": 98.5 + (i*0.3),
             "close": 100.1, # Closes near open -> Hammer shape on 15m
-            "volume": 20, "pair": "NQ"
+            "volume": 20, "pair": "MNQ"
         })
         
     # Bar 15: The start of the NEXT 15m candle (triggers the previous one to close)
     bars.append({
         "time": 15 * 60, 
         "open": 100.1, "high": 100.2, "low": 100.0, "close": 100.1, 
-        "volume": 5, "pair": "NQ"
+        "volume": 5, "pair": "MNQ"
     })
 
     return bars

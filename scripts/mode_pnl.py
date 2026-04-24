@@ -27,7 +27,7 @@ BE_THRESHOLD = FinancialCalc.DEFAULT_BE_THRESHOLD_R
 
 PAIR_TZS = {
     "EURUSD": "Europe/London",
-    "NQ": "Etc/GMT+5",
+    "MNQ": "Etc/GMT+5",
     "ES": "Etc/GMT+5",
 }
 
@@ -39,11 +39,11 @@ def _resolve_risk(balance: float, risk_usd_fix: float, risk_pct: float | None) -
 
 
 def _detect_pair(name: str) -> str:
-    """Infer pair from scenario name (e.g. 'NQ - 2025-05-01' -> 'NQ')."""
-    for key in ("NQ", "ES", "EURUSD"):
+    """Infer pair from scenario name (e.g. 'MNQ - 2025-05-01' -> 'MNQ')."""
+    for key in ("MNQ", "ES", "EURUSD"):
         if name.upper().startswith(key):
             return key
-    return "NQ"
+    return "MNQ"
 
 
 def per_trade_sim(

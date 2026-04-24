@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fetch / update NQ Futures 1m bar data.
+# Fetch / update MNQ Futures 1m bar data.
 # Configuration lives in .env — no arguments needed.
 #
 # Usage:
