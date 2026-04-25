@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from add_scenario import (
+    PROJECT_ROOT,
     SCENARIOS_YAML,
     TEST_SCENARIO_YAML,
     load_scenarios_yaml,
@@ -23,6 +24,7 @@ from add_scenario import (
     write_test_scenario_yaml,
     _format_lines_block,
     run_discovery,
+    ts_date,
 )
 
 
@@ -253,6 +255,11 @@ def main():
 
     # Re-run with correct tf to get proper snapshot
     if new_tf != "5m":
+        date_label = ts_date(sc["start"])
+        snap_dir = PROJECT_ROOT / "scenarios_out" / "MNQ" / date_label
+        for stale in snap_dir.glob(f"{date_label}_5m*.png"):
+            stale.unlink(missing_ok=True)
+
         print(f"\n  Re-running with tf={new_tf} for snapshot...")
         write_snapshot_yaml(updated_sc)
         _run_and_discard()

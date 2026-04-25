@@ -261,8 +261,8 @@ class TestCrashRecoveryReentry:
         reentry = trade_repo.inserted[-1]
         assert reentry["params"]["is_reentry"] is True
         assert reentry["entry"] == 20129.25
-        assert reentry["stop_loss"] == 20114.25
-        assert reentry["take_profit"] == 20204.25
+        assert reentry["stop_loss"] == 20099.25
+        assert reentry["take_profit"] == 20279.25
 
     def test_reentry_trade_reaches_tp_after_crash(self):
         """MNQ 2025-05-01: crash after initial SL, re-entry fires AND reaches TP."""

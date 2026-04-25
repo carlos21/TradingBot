@@ -374,10 +374,11 @@ def main():
 
     # ── Re-run with correct tf if it differs from discovery tf ("5m") ────────
     if tf != "5m":
-        # Remove the stale 5m snapshot from the discovery run
+        # Remove the stale 5m snapshots from the discovery run
         date_label = ts_date(start_ts)
-        stale_snapshot = PROJECT_ROOT / "scenarios_out" / "MNQ" / f"{date_label}_5m.png"
-        stale_snapshot.unlink(missing_ok=True)
+        snap_dir = PROJECT_ROOT / "scenarios_out" / "MNQ" / date_label
+        for stale in snap_dir.glob(f"{date_label}_5m*.png"):
+            stale.unlink(missing_ok=True)
 
         print(f"\nRe-running with tf={tf} to generate correct snapshot...")
         write_test_scenario_yaml(sc)
