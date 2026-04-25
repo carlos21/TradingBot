@@ -59,6 +59,7 @@ export class SocketHandler {
 
       if (!c.keepClosedTradeLines) {
         [c.tradeEntryLine, c.tradeSLLine, c.tradeTPLine].forEach(h => h && c.series.removePriceLine(h));
+        c.allTradeLines = c.allTradeLines.filter(h => h !== c.tradeEntryLine && h !== c.tradeSLLine && h !== c.tradeTPLine);
       }
       if (!c._seriesBusy) c.markers.update(c.allTrades, c.lastTime, new Set(c.historicalBars.map(b => b.time)));
     });

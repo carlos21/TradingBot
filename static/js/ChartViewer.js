@@ -27,6 +27,7 @@ export class ChartViewer {
     this.historicalBars = [];
     this.allTrades = [];
     this.pinnedLines = [];
+    this.allTradeLines = [];  // track all Entry/SL/TP price lines
     this._seriesBusy = false;
     this._lastShadedTime = -Infinity;
 
@@ -310,6 +311,7 @@ export class ChartViewer {
     const isSameTrade = this.activeTrade && this.activeTrade.trade_id === trade.trade_id;
     if (isSameTrade || !this.keepClosedTradeLines) {
       [this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine].forEach(h => h && this.series.removePriceLine(h));
+      this.allTradeLines = this.allTradeLines.filter(h => h !== this.tradeEntryLine && h !== this.tradeSLLine && h !== this.tradeTPLine);
     } else {
       [this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine].forEach(h => h && h.applyOptions({ lineStyle: LightweightCharts.LineStyle.Dashed, lineWidth: 1 }));
     }
@@ -318,6 +320,34 @@ export class ChartViewer {
     this.tradeEntryLine = this.series.createPriceLine({ price: trade.entry, color: 'yellow', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: entryLabel });
     this.tradeSLLine = this.series.createPriceLine({ price: trade.stop_loss || trade.stopLoss, color: 'red', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'SL #' + n });
     this.tradeTPLine = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP #' + n });
+    this.allTradeLines.push(this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine);
+  }
+
+  clearAllTradeLines() {
+    this.allTradeLines.forEach(h => h && this.series.removePriceLine(h));
+    this.allTradeLines = [];
+    this.tradeEntryLine = null;
+    this.tradeSLLine = null;
+    this.tradeTPLine = null;
+  }
+
+  showOnlyTrade(tradeId) {
+    this.clearAllTradeLines();
+    const trade = this.allTrades.find(t => t.trade_id === tradeId);
+    if (!trade) return;
+    const n = this.allTrades.findIndex(t => t.trade_id === tradeId) + 1;
+    const entryLabel = n > 1 ? 'Re-entry #' + n : 'Entry #' + n;
+    this.tradeEntryLine = this.series.createPriceLine({ price: trade.entry, color: 'yellow', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: entryLabel });
+    // Always show the ORIGINAL SL as the primary line
+    const origSL = trade.orig_sl || trade.stop_loss || trade.stopLoss;
+    this.tradeSLLine = this.series.createPriceLine({ price: origSL, color: 'red', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'SL #' + n });
+    this.tradeTPLine = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP #' + n });
+    this.allTradeLines.push(this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine);
+    // If SL was moved, show the adjusted SL as a thin dashed line
+    const currSL = trade.stop_loss || trade.stopLoss;
+    if (currSL && origSL && Math.abs(currSL - origSL) > 0.01) {
+      this.allTradeLines.push(this.series.createPriceLine({ price: currSL, color: '#ff5252', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Adj SL #' + n }));
+    }
   }
 
   // --- Interaction ---

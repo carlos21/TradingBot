@@ -543,7 +543,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 print(f"\r  {bar} {pct:3d}% ({i}/{total}) {name:<40}", end="", flush=True)
                 
                 pair_name_val = sc.get("pair", "unknown")
-                sdir = Path(args.outdir) / pair_name_val
+                date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
+                sdir = Path(args.outdir) / pair_name_val / date_label
                 sdir.mkdir(parents=True, exist_ok=True)
                 
                 start_ts = get_epoch(sc["start"])
@@ -581,6 +582,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     window.__done = false;
                     window.__trades = [];
                     window.__closes = {};
+                    window.__extraLines = {};  // trade_id -> priceLine
 
                     const sock = window.chartViewer.socket;
                     if (!sock) throw new Error("ChartViewer socket not found");
@@ -591,7 +593,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         if (window.chartViewer && window.chartViewer.series) {
                             const sl = t.stop_loss ?? t.sl ?? t.stopLoss;
                             if (typeof sl === 'number') {
-                                window.chartViewer.series.createPriceLine({
+                                const line = window.chartViewer.series.createPriceLine({
                                     price: sl,
                                     color: '#ff5252',
                                     lineWidth: 1,
@@ -599,8 +601,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                                     axisLabelVisible: true,
                                     title: 'Orig SL #' + n
                                 });
+                                window.__extraLines[t.trade_id] = line;
                             }
-
                         }
                     });
                     sock.on('trade_close', (c) => { window.__closes[String(c.trade_id)] = c; });
@@ -660,7 +662,6 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     "date": sc["start"],
                     "velocity": None,
                 })
-                date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
 
                 # Always fetch logs to extract velocity
                 try:
@@ -726,7 +727,28 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         
                         for zt_trade, zt_label in zoom_targets:
                             entry_ts = zt_trade.get("entry_time")
+                            trade_id = zt_trade.get("trade_id")
                             if entry_ts:
+                                # Show only this trade's lines (entry/SL/TP)
+                                if trade_id:
+                                    await page.evaluate(
+                                        """(tid) => { if (window.chartViewer && window.chartViewer.showOnlyTrade) window.chartViewer.showOnlyTrade(tid); }""",
+                                        trade_id
+                                    )
+                                    await page.wait_for_timeout(300)
+                                # Remove all injected Orig SL lines from zoomed snapshots
+                                # (showOnlyTrade now draws the original SL itself)
+                                await page.evaluate("""() => {
+                                    if (window.__extraLines) {
+                                        Object.entries(window.__extraLines).forEach(([tid, line]) => {
+                                            if (window.chartViewer && window.chartViewer.series) {
+                                                window.chartViewer.series.removePriceLine(line);
+                                            }
+                                        });
+                                        window.__extraLines = {};
+                                    }
+                                }""")
+                                await page.wait_for_timeout(200)
                                 await page.evaluate(
                                     """(range) => { window.chartViewer.chart.timeScale().setVisibleRange({ from: range.start, to: range.end }); }""",
                                     {"start": entry_ts - 3600, "end": entry_ts + 3600}
