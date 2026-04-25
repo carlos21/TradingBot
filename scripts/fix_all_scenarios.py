@@ -13,14 +13,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from add_scenario import (
+from scenario_management import (
+    PROJECT_ROOT,
     SCENARIOS_YAML,
-    load_scenarios_yaml,
-    replace_scenario_block,
-    _format_lines_block,
+    FileScenarioRepository,
+    ScenarioYamlFormatter,
 )
-
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def write_discovery_yaml(scenarios: list, path: Path):
@@ -33,7 +31,7 @@ def write_discovery_yaml(scenarios: list, path: Path):
         lines.append(f'    start: "{sc["start"]}"\n')
         lines.append(f'    end:   "{sc["end"]}"\n')
         lines.append(f'    lines:\n')
-        lines.append(_format_lines_block(sc.get("lines", [])))
+        lines.append(ScenarioYamlFormatter.format_lines_block(sc.get("lines", [])))
         lines.append(f'    snapshot: false\n')
         lines.append(f'\n')
     path.write_text("".join(lines))
@@ -68,7 +66,6 @@ def _expect_changed(old: dict, new: dict) -> bool:
             return True
         if abs(float(ov) - float(nv)) > 0.01:
             return True
-    # Check reentry
     old_re, new_re = old.get("reentry"), new.get("reentry")
     if bool(old_re) != bool(new_re):
         return True
@@ -83,10 +80,10 @@ def _expect_changed(old: dict, new: dict) -> bool:
 
 
 def main():
-    # Extract arguments to pass to run_scenarios.py (skip script name and any fix_all-specific args)
     extra_args = [arg for arg in sys.argv[1:] if not arg.startswith("--fix")]
 
-    yaml_doc = load_scenarios_yaml()
+    repo = FileScenarioRepository(SCENARIOS_YAML)
+    yaml_doc = repo.load()
     scenarios = yaml_doc.get("scenarios", [])
     if not scenarios:
         print("No scenarios found.")
@@ -130,13 +127,13 @@ def main():
             continue
 
         trade_pairs = result.get("trade_pairs", [])
-        trades      = [tp[0] for tp in trade_pairs if tp[0]] if trade_pairs else []
-        old_tf      = sc.get("tf", "5m")
-        old_expect  = sc.get("expect", {})
+        trades = [tp[0] for tp in trade_pairs if tp[0]] if trade_pairs else []
+        old_tf = sc.get("tf", "5m")
+        old_expect = sc.get("expect", {})
 
         if trades:
-            trade      = trades[0]
-            new_tf     = trade.get("tf") or "1m"
+            trade = trades[0]
+            new_tf = trade.get("tf") or "1m"
             new_expect = {
                 "entry": trade.get("entry"),
                 "sl":    trade.get("orig_sl") or trade.get("stop_loss"),
@@ -150,10 +147,10 @@ def main():
                     "tp":    re_trade.get("take_profit"),
                 }
         else:
-            new_tf     = old_tf
+            new_tf = old_tf
             new_expect = {"none": True}
 
-        tf_changed     = new_tf != old_tf
+        tf_changed = new_tf != old_tf
         expect_changed = _expect_changed(old_expect, new_expect)
 
         if not tf_changed and not expect_changed:
@@ -168,10 +165,13 @@ def main():
             if new_expect.get("none"):
                 changes.append("expect→none")
             else:
-                changes.append(f"entry={new_expect.get('entry')} sl={new_expect.get('sl')} tp={new_expect.get('tp')}")
+                changes.append(
+                    f"entry={new_expect.get('entry')} "
+                    f"sl={new_expect.get('sl')} tp={new_expect.get('tp')}"
+                )
 
         updated_sc = {**sc, "tf": new_tf, "expect": new_expect}
-        if replace_scenario_block(name, updated_sc):
+        if repo.replace(name, updated_sc):
             print(f"  🔄 {name}: {', '.join(changes)}")
             updated += 1
         else:

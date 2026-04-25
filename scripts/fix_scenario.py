@@ -12,97 +12,41 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Make sibling scripts importable without a package __init__.py
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from add_scenario import (
+from scenario_management import (
     PROJECT_ROOT,
     SCENARIOS_YAML,
     TEST_SCENARIO_YAML,
-    load_scenarios_yaml,
-    replace_scenario_block,
-    write_test_scenario_yaml,
-    _format_lines_block,
-    run_discovery,
+    SNAP_BASE_DIR,
+    ConsolePrompter,
+    DiscoveryResultParser,
+    FileScenarioRepository,
+    FileSnapshotCleaner,
+    FileTestScenarioWriter,
+    ScenarioDiffService,
+    SubprocessDiscoveryRunner,
+    expect_summary,
     ts_date,
 )
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def prompt(msg: str, default: str = "") -> str:
-    if default:
-        val = input(f"{msg} [{default}]: ").strip()
-        return val if val else default
-    return input(f"{msg}: ").strip()
-
-
-def _expect_summary(expect: dict) -> str:
-    if not expect:
-        return "(none set)"
-    if expect.get("none"):
-        return "none: true"
-    s = f"entry={expect.get('entry')}  sl={expect.get('sl')}  tp={expect.get('tp')}"
-    if "reentry" in expect:
-        re_ = expect["reentry"]
-        s += f"  | reentry: entry={re_.get('entry')}  sl={re_.get('sl')}  tp={re_.get('tp')}"
-    return s
-
-
-def write_discovery_yaml(sc: dict):
-    """Write test_scenario.yaml for a discovery run (no expect)."""
-    content = (
-        f'scenarios:\n'
-        f'  - name: "{sc["name"]}"\n'
-        f'    pair: "MNQ"\n'
-        f'    tf: "5m"\n'
-        f'    start: "{sc["start"]}"\n'
-        f'    end:   "{sc["end"]}"\n'
-        f'    lines:\n'
-        f'{_format_lines_block(sc["lines"])}'
-        f'    show_tsi: false\n'
-    )
-    TEST_SCENARIO_YAML.write_text(content)
-
-
-def write_snapshot_yaml(sc: dict):
-    """Write test_scenario.yaml for a snapshot re-run (with expect)."""
-    content = (
-        f'scenarios:\n'
-        f'  - name: "{sc["name"]}"\n'
-        f'    pair: "MNQ"\n'
-        f'    tf: "{sc["tf"]}"\n'
-        f'    start: "{sc["start"]}"\n'
-        f'    end:   "{sc["end"]}"\n'
-        f'    lines:\n'
-        f'{_format_lines_block(sc["lines"])}'
-        f'    show_tsi: false\n'
-    )
-    TEST_SCENARIO_YAML.write_text(content)
-
-
-def _run_and_discard() -> None:
-    fd, path = tempfile.mkstemp(suffix=".json", prefix="fix_snap_")
-    os.close(fd)
-    run_discovery(path)
-    Path(path).unlink(missing_ok=True)
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main():
-    yaml_doc = load_scenarios_yaml()
+    # Dependencies
+    repo = FileScenarioRepository(SCENARIOS_YAML)
+    writer = FileTestScenarioWriter(TEST_SCENARIO_YAML)
+    runner = SubprocessDiscoveryRunner(PROJECT_ROOT, TEST_SCENARIO_YAML)
+    cleaner = FileSnapshotCleaner(SNAP_BASE_DIR)
+    prompter = ConsolePrompter()
+
+    yaml_doc = repo.load()
     scenarios = yaml_doc.get("scenarios", [])
 
     if not scenarios:
         print("No scenarios found in scenarios.yaml.")
         return
 
-    # ── Show list ────────────────────────────────────────────────────────────
+    # Show list
     print("Existing scenarios:\n")
     for i, sc in enumerate(scenarios):
         tf_str = sc.get("tf", "?")
@@ -111,9 +55,9 @@ def main():
         print(f"  {i+1:3}.  {sc['name']:<38}  tf={tf_str:<4}  {exp_str}")
 
     print()
-    sel = prompt("Enter number or part of name").strip()
+    sel = prompter.ask("Enter number or part of name").strip()
 
-    # ── Select scenario ──────────────────────────────────────────────────────
+    # Select scenario
     sc = None
     if sel.isdigit():
         idx = int(sel) - 1
@@ -139,59 +83,47 @@ def main():
     old_tf = sc.get("tf", "5m")
     old_expect = sc.get("expect", {})
     print(f"  Current tf:     {old_tf}")
-    print(f"  Current expect: {_expect_summary(old_expect)}")
+    print(f"  Current expect: {expect_summary(old_expect)}")
 
-    # ── Discovery run ────────────────────────────────────────────────────────
-    write_discovery_yaml(sc)
+    # Discovery run
+    discovery_sc = {**sc, "tf": "5m", "expect": {}}
+    writer.write(discovery_sc, include_expect=False)
 
     fd, results_json = tempfile.mkstemp(suffix=".json", prefix="fix_scenario_")
     os.close(fd)
 
     print("\nRunning scenario...")
-    run_discovery(results_json)
+    runner.run(results_json)
 
-    # ── Read results ─────────────────────────────────────────────────────────
+    # Read results
     new_tf = old_tf
     new_expect = old_expect
 
     try:
         raw = json.loads(Path(results_json).read_text())
-        results = raw.get("results", raw) if isinstance(raw, dict) else raw
-        trade_pairs = results[0].get("trade_pairs", []) if results else []
-        trades = [tp[0] for tp in trade_pairs if tp[0]] if trade_pairs else []
+        result = DiscoveryResultParser.parse(raw)
 
-        if trades:
-            trade = trades[0]
-            entry    = trade.get("entry")
-            sl       = trade.get("orig_sl") or trade.get("stop_loss")
-            tp       = trade.get("take_profit")
-            trade_tf = trade.get("tf")
-
-            new_tf     = trade_tf or "1m"
-            new_expect = {"entry": entry, "sl": sl, "tp": tp}
+        if result.had_trade:
+            new_tf = result.tf
+            new_expect = result.expect
 
             print(f"\n  Found trade #1:")
             print(f"    tf:     {new_tf}")
-            print(f"    entry:  {entry}")
-            print(f"    sl:     {sl}")
-            print(f"    tp:     {tp}")
+            print(f"    entry:  {new_expect['entry']}")
+            print(f"    sl:     {new_expect['sl']}")
+            print(f"    tp:     {new_expect['tp']}")
 
-            if len(trades) > 1:
-                re_trade = trades[1]
-                re_entry = re_trade.get("entry")
-                re_sl    = re_trade.get("orig_sl") or re_trade.get("stop_loss")
-                re_tp    = re_trade.get("take_profit")
-                new_expect["reentry"] = {"entry": re_entry, "sl": re_sl, "tp": re_tp}
+            if result.reentry:
                 print(f"\n  Found re-entry trade #2:")
-                print(f"    entry:  {re_entry}")
-                print(f"    sl:     {re_sl}")
-                print(f"    tp:     {re_tp}")
+                print(f"    entry:  {result.reentry['entry']}")
+                print(f"    sl:     {result.reentry['sl']}")
+                print(f"    tp:     {result.reentry['tp']}")
         else:
             print("\n  No trade found.")
-            ans = prompt("  Update expect to {none: true}?", default="n")
+            ans = prompter.ask("  Update expect to {none: true}?", default="n")
             if ans.lower() in ("y", "yes"):
                 new_expect = {"none": True}
-                new_tf = old_tf   # keep existing tf
+                new_tf = old_tf
             else:
                 print("  No changes made.")
                 return
@@ -201,70 +133,55 @@ def main():
     finally:
         Path(results_json).unlink(missing_ok=True)
 
-    # ── Compute diff ─────────────────────────────────────────────────────────
-    changes = []
-
-    if new_tf != old_tf:
-        changes.append(f"  tf:    {old_tf} → {new_tf}")
-
-    if old_expect.get("none") and not new_expect.get("none"):
-        changes.append(f"  expect: none:true → trade found")
-    elif not old_expect.get("none") and new_expect.get("none"):
-        changes.append(f"  expect: had values → none:true")
-    elif not new_expect.get("none"):
-        for key in ("entry", "sl", "tp"):
-            ov = old_expect.get(key)
-            nv = new_expect.get(key)
-            if ov is None or nv is None or abs(float(ov) - float(nv)) > 0.01:
-                changes.append(f"  {key}: {ov} → {nv}")
-
-    # Compare reentry
-    old_re = old_expect.get("reentry")
-    new_re = new_expect.get("reentry")
-    if new_re and not old_re:
-        changes.append(f"  reentry: (new) entry={new_re.get('entry')} sl={new_re.get('sl')} tp={new_re.get('tp')}")
-    elif old_re and not new_re:
-        changes.append(f"  reentry: removed")
-    elif old_re and new_re:
-        for key in ("entry", "sl", "tp"):
-            ov = old_re.get(key)
-            nv = new_re.get(key)
-            if ov is None or nv is None or abs(float(ov) - float(nv)) > 0.01:
-                changes.append(f"  reentry {key}: {ov} → {nv}")
+    # Compute diff
+    changes = ScenarioDiffService.compute_diff(old_expect, new_expect, old_tf, new_tf)
 
     if not changes:
         print("\n✅ No changes needed — scenario is already correct.")
-        write_test_scenario_yaml(sc)
+        writer.write(sc)
         return
 
     print("\n  Changes:")
     for c in changes:
         print(c)
 
-    ans = prompt("\nApply changes?", default="y")
+    ans = prompter.ask("\nApply changes?", default="y")
     if ans.lower() not in ("y", "yes", ""):
         print("Aborted.")
         return
 
-    # ── Apply ────────────────────────────────────────────────────────────────
+    # Apply
     updated_sc = {**sc, "tf": new_tf, "expect": new_expect}
 
-    if not replace_scenario_block(sc["name"], updated_sc):
+    if not repo.replace(sc["name"], updated_sc):
         print(f"  ❌ Could not find '{sc['name']}' in scenarios.yaml")
         return
 
     # Re-run with correct tf to get proper snapshot
     if new_tf != "5m":
         date_label = ts_date(sc["start"])
-        snap_dir = PROJECT_ROOT / "scenarios_out" / "MNQ" / date_label
-        for stale in snap_dir.glob(f"{date_label}_5m*.png"):
-            stale.unlink(missing_ok=True)
+        cleaner.clean_stale(date_label, stale_tf="5m")
 
         print(f"\n  Re-running with tf={new_tf} for snapshot...")
-        write_snapshot_yaml(updated_sc)
-        _run_and_discard()
+        writer.write(updated_sc, include_expect=False)
 
-    write_test_scenario_yaml(updated_sc)
+        snap_fd, snap_json = tempfile.mkstemp(suffix=".json", prefix="fix_snap_")
+        os.close(snap_fd)
+        runner.run(snap_json)
+
+        # Parse the snapshot re-run so expect matches the actual snapshotted trades
+        try:
+            raw_snap = json.loads(Path(snap_json).read_text())
+            snap_result = DiscoveryResultParser.parse(raw_snap)
+            if snap_result.had_trade:
+                updated_sc["expect"] = snap_result.expect
+                updated_sc["tf"] = snap_result.tf
+        except Exception as e:
+            print(f"  ⚠️  Could not parse snapshot run results ({e}), using discovery expect.")
+        finally:
+            Path(snap_json).unlink(missing_ok=True)
+
+    writer.write(updated_sc)
 
     print(f"\n✅ Done! '{sc['name']}' updated.")
     print(f"   scenarios.yaml     — updated")
