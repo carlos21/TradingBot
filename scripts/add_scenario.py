@@ -5,6 +5,7 @@ and tests/test_scenario.yaml by running the scenario and extracting real results
 """
 
 import argparse
+import json
 import os
 import tempfile
 from pathlib import Path
