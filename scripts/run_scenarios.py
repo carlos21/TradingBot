@@ -841,7 +841,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         def _new_bucket():
             return {"usd": 0.0, "pct": 0.0, "commission": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0,
                     "reentry_win": 0, "reentry_loss": 0, "reentry_be": 0, "all_passed": True,
-                    "velocity": None, "start_balance": None}
+                    "velocity": None, "start_balance": None, "trades": 0}
 
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
@@ -929,17 +929,19 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             has_reentry = any(v["reentry_win"] + v["reentry_loss"] + v["reentry_be"] > 0 for v in data.values())
             has_velocity = show_velocity and any(v.get("velocity") is not None for v in data.values())
             COMM_W = 12
+            TRADES_W = 8
             WL_W  = 16
             RE_W  = 12
             PAS_W = 8
             VEL_W = 12
             lbl_w = max(len(k) for k in data) + 2
-            sep   = "-" * (lbl_w + 3 + WL_W + 54 + 3 + COMM_W + (3 + RE_W if has_reentry else 0) + (3 + PAS_W if show_passed else 0) + (3 + VEL_W if has_velocity else 0))
+            sep   = "-" * (lbl_w + 3 + WL_W + 54 + 3 + COMM_W + 3 + TRADES_W + (3 + RE_W if has_reentry else 0) + (3 + PAS_W if show_passed else 0) + (3 + VEL_W if has_velocity else 0))
             hdr_re = f" | {'RE-ENTRY':^{RE_W}}" if has_reentry else ""
             hdr_pas = f" | {'PASSED':^{PAS_W}}" if show_passed else ""
             hdr_vel = f" | {'VELOCITY':^{VEL_W}}" if has_velocity else ""
+            hdr_trades = f" | {'TRADES':^{TRADES_W}}"
             print(f"\n{BOLD}{CYAN}{title}{RST}")
-            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11} | {'COMMISSION':>{COMM_W}}{hdr_re}{hdr_pas}{hdr_vel}")
+            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11} | {'COMMISSION':>{COMM_W}}{hdr_trades}{hdr_re}{hdr_pas}{hdr_vel}")
             print(f"  {sep}")
             balance = ACCT
             for key in sorted(data):
@@ -982,7 +984,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         vel_str = f" | {f'-':^{VEL_W}}"
                 comm_val = v.get("commission", 0.0)
                 comm_str = f"${comm_val:>10,.2f}" if comm_val > 0 else f"{'--':>{COMM_W}}"
-                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str} | {comm_str}{re_str}{pas_str}{vel_str}")
+                trades_val = v["wins"] + v["losses"] + v["be"] + v["sp"] + v["open"]
+                trades_str = f"{trades_val:^{TRADES_W}}"
+                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str} | {comm_str} | {trades_str}{re_str}{pas_str}{vel_str}")
             total_usd = sum(v["usd"]    for v in data.values())
             total_pct = total_usd / ACCT * 100
             total_w   = sum(v["wins"]   for v in data.values())
@@ -993,11 +997,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             total_rw  = sum(v["reentry_win"]  for v in data.values())
             total_rl  = sum(v["reentry_loss"] for v in data.values())
             total_rb  = sum(v["reentry_be"]   for v in data.values())
+            total_trades = sum(v["wins"] + v["losses"] + v["be"] + v["sp"] + v["open"] for v in data.values())
             print(f"  {sep}")
             tot_pct  = _col(total_pct, f"{total_pct:>+8.2f}%")
             tot_usd  = _col(total_usd, f"${total_usd:>+9,.0f}")
             tot_bal  = _col(total_usd, f"${ACCT + total_usd:>10,.0f}")
             tot_comm = f"${total_comm:>10,.2f}" if total_comm > 0 else f"{'--':>{COMM_W}}"
+            tot_trades = f"{total_trades:^{TRADES_W}}"
             tot_parts = []
             if total_w:   tot_parts.append(f"{GREEN}{total_w}W{RST}")
             if total_l:   tot_parts.append(f"{RED}{total_l}L{RST}")
@@ -1019,7 +1025,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 else:
                     failed = sum(1 for v in data.values() if not v.get("all_passed", True))
                     tot_pas = f" | {_center(f'{RED}{failed}{CROSSMARK}{RST}', PAS_W)}"
-            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal} | {tot_comm}{tot_re}{tot_pas}")
+            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal} | {tot_comm} | {tot_trades}{tot_re}{tot_pas}")
 
         _print_agg(f"DAILY PnL   — {mode_label}", daily, show_passed=True, show_velocity=True)
         _print_agg(f"WEEKLY PnL  — {mode_label}", weekly)
