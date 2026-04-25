@@ -464,7 +464,7 @@ class BaseLiquidityStrategy:
                     self.log_decision(bar["time"], "1m", lid, "REENTRY_CANCEL",
                                       f"Cancelled — price went {adverse:.1f}pts below line={level:.2f} (threshold={threshold:.0f}pts)")
                     continue  # drop opportunity
-                if bar["close"] > level:
+                if bar["close"] > level and adverse >= 0:
                     self.logger.info(f"[ReEntry] Triggering LONG re-entry at {bar['close']:.2f} (line={level:.2f})")
                     self.log_decision(bar["time"], "1m", lid, "ENTRY",
                                       f"Re-entry LONG @ {bar['close']:.2f} — close above line={level:.2f} (max adverse={adverse:.1f}pts)")
@@ -486,7 +486,7 @@ class BaseLiquidityStrategy:
                     self.log_decision(bar["time"], "1m", lid, "REENTRY_CANCEL",
                                       f"Cancelled — price went {adverse:.1f}pts above line={level:.2f} (threshold={threshold:.0f}pts)")
                     continue  # drop opportunity
-                if bar["close"] < level:
+                if bar["close"] < level and adverse >= 0:
                     self.logger.info(f"[ReEntry] Triggering SHORT re-entry at {bar['close']:.2f} (line={level:.2f})")
                     self.log_decision(bar["time"], "1m", lid, "ENTRY",
                                       f"Re-entry SHORT @ {bar['close']:.2f} — close below line={level:.2f} (max adverse={adverse:.1f}pts)")

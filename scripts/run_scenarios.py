@@ -715,6 +715,35 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                             
                         await chart_locator.wait_for(state="visible", timeout=2000)
                         await chart_locator.screenshot(path=str(sdir / f"{date_label}_{tf}.png"))
+                        
+                        # 5. Zoomed-in snapshot(s)
+                        # Prefer reentry (2nd trade) if present, otherwise first trade
+                        zoom_targets = []
+                        if len(captured_trades) >= 2:
+                            zoom_targets.append((captured_trades[1], "reentry"))
+                        if captured_trades:
+                            zoom_targets.append((captured_trades[0], "entry"))
+                        
+                        for zt_trade, zt_label in zoom_targets:
+                            entry_ts = zt_trade.get("entry_time")
+                            if entry_ts:
+                                await page.evaluate(
+                                    """(range) => { window.chartViewer.chart.timeScale().setVisibleRange({ from: range.start, to: range.end }); }""",
+                                    {"start": entry_ts - 3600, "end": entry_ts + 3600}
+                                )
+                                await page.wait_for_timeout(500)
+                                await chart_locator.screenshot(path=str(sdir / f"{date_label}_{tf}_{zt_label}.png"))
+                        
+                        if not captured_trades and tf == "1m":
+                            # No trade: zoom to last 2h so candles are readable
+                            zoom_start = end_ts - 7200
+                            if zoom_start > start_ts:
+                                await page.evaluate(
+                                    """(range) => { window.chartViewer.chart.timeScale().setVisibleRange({ from: range.start, to: range.end }); }""",
+                                    {"start": zoom_start, "end": end_ts}
+                                )
+                                await page.wait_for_timeout(500)
+                                await chart_locator.screenshot(path=str(sdir / f"{date_label}_{tf}_zoomed.png"))
                     except Exception as e:
                         if not quiet:
                             print(f"   ⚠️ Snapshot failed: {e}")
