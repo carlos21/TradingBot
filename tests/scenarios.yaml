@@ -73,8 +73,8 @@ scenarios:
       tp:    19869.00
       reentry:
         entry: 19760.00
-        sl:    19740.00
-        tp:    19860.00
+        sl:    19720.00
+        tp:    19960.00
   - name: "MNQ - 2025-05-08"
     pair: "MNQ"
     tf: "1m"
@@ -89,8 +89,8 @@ scenarios:
       tp:    20282.75
       reentry:
         entry: 20129.25
-        sl:    20114.25
-        tp:    20204.25
+        sl:    20099.25
+        tp:    20279.25
   - name: "MNQ - 2025-05-09"
     pair: "MNQ"
     tf: "1m"
@@ -188,8 +188,8 @@ scenarios:
       tp:    21429.25
       reentry:
         entry: 21471.25
-        sl:    21486.25
-        tp:    21396.25
+        sl:    21491.25
+        tp:    21371.25
   - name: "MNQ - 2025-05-22"
     pair: "MNQ"
     tf: "1m"
@@ -307,8 +307,8 @@ scenarios:
       tp:    21631.50
       reentry:
         entry: 21855.50
-        sl:    21870.50
-        tp:    21780.50
+        sl:    21885.50
+        tp:    21705.50
   - name: "MNQ - 2025-06-09"
     pair: "MNQ"
     tf: "1m"
@@ -365,8 +365,8 @@ scenarios:
       tp:    21542.00
       reentry:
         entry: 21689.25
-        sl:    21719.25
-        tp:    21539.25
+        sl:    21729.25
+        tp:    21489.25
   - name: "MNQ - 2025-06-16"
     pair: "MNQ"
     tf: "5m"
@@ -481,8 +481,8 @@ scenarios:
       tp:    22975.50
       reentry:
         entry: 23026.25
-        sl:    23041.25
-        tp:    22951.25
+        sl:    23046.25
+        tp:    22926.25
   - name: "MNQ - 2025-07-10"
     pair: "MNQ"
     tf: "1m"
@@ -603,8 +603,8 @@ scenarios:
       tp:    23426.00
       reentry:
         entry: 23207.00
-        sl:    23192.00
-        tp:    23282.00
+        sl:    23187.00
+        tp:    23307.00
   - name: "MNQ - 2025-07-24"
     pair: "MNQ"
     tf: "1m"
@@ -653,8 +653,8 @@ scenarios:
       tp:    23622.25
       reentry:
         entry: 23414.00
-        sl:    23399.00
-        tp:    23489.00
+        sl:    23394.00
+        tp:    23514.00
   - name: "MNQ - 2025-08-01"
     pair: "MNQ"
     tf: "1m"
@@ -691,8 +691,8 @@ scenarios:
       tp:    23223.25
       reentry:
         entry: 23175.75
-        sl:    23160.75
-        tp:    23250.75
+        sl:    23155.75
+        tp:    23275.75
   - name: "MNQ - 2025-08-06"
     pair: "MNQ"
     tf: "1m"
@@ -736,7 +736,9 @@ scenarios:
     lines:
       - { price: 23846.75, at: "2025-08-12 07:00:00Z" }
     expect:
-      none: true
+      entry: 23848.25
+      sl:    23863.25
+      tp:    23773.25
   - name: "MNQ - 2025-08-14"
     pair: "MNQ"
     tf: "1m"
@@ -788,8 +790,8 @@ scenarios:
       tp:    23898.50
       reentry:
         entry: 23721.75
-        sl:    23706.75
-        tp:    23796.75
+        sl:    23691.75
+        tp:    23871.75
   - name: "MNQ - 2025-08-20"
     pair: "MNQ"
     tf: "1m"
@@ -805,8 +807,8 @@ scenarios:
       tp:    23212.00
       reentry:
         entry: 23115.00
-        sl:    23100.00
-        tp:    23190.00
+        sl:    23085.00
+        tp:    23265.00
   - name: "MNQ - 2025-08-21"
     pair: "MNQ"
     tf: "1m"
@@ -849,8 +851,8 @@ scenarios:
       tp:    23688.50
       reentry:
         entry: 23469.00
-        sl:    23454.00
-        tp:    23544.00
+        sl:    23449.00
+        tp:    23569.00
   - name: "MNQ - 2025-08-27"
     pair: "MNQ"
     tf: "1m"
@@ -876,8 +878,8 @@ scenarios:
       tp:    23493.50
       reentry:
         entry: 23706.00
-        sl:    23721.00
-        tp:    23631.00
+        sl:    23726.00
+        tp:    23606.00
   - name: "MNQ - 2025-08-29"
     pair: "MNQ"
     tf: "1m"
@@ -892,8 +894,8 @@ scenarios:
       tp:    23759.75
       reentry:
         entry: 23544.00
-        sl:    23529.00
-        tp:    23619.00
+        sl:    23504.00
+        tp:    23744.00
   - name: "MNQ - 2025-09-02"
     pair: "MNQ"
     tf: "1m"
@@ -905,7 +907,10 @@ scenarios:
       entry: 23087.75
       sl:    23047.75
       tp:    23287.75
-    show_tsi: false
+      reentry:
+        entry: 23036.50
+        sl:    23021.50
+        tp:    23111.50
   - name: "MNQ - 2025-09-03"
     pair: "MNQ"
     tf: "1m"
@@ -918,7 +923,10 @@ scenarios:
       entry: 23504.50
       sl:    23519.50
       tp:    23429.50
-
+      reentry:
+        entry: 23501.00
+        sl:    23521.00
+        tp:    23401.00
   - name: "MNQ - 2025-09-04"
     pair: "MNQ"
     tf: "1m"
@@ -931,7 +939,10 @@ scenarios:
       entry: 23445.50
       sl:    23415.50
       tp:    23595.50
-
+      reentry:
+        entry: 23443.75
+        sl:    23428.75
+        tp:    23518.75
   - name: "MNQ - 2025-09-05"
     pair: "MNQ"
     tf: "1m"
@@ -945,7 +956,10 @@ scenarios:
       entry: 23746.75
       sl:    23786.75
       tp:    23546.75
-
+      reentry:
+        entry: 23796.75
+        sl:    23811.75
+        tp:    23721.75
   - name: "MNQ - 2025-09-09"
     pair: "MNQ"
     tf: "1m"
@@ -958,7 +972,10 @@ scenarios:
       entry: 23904.00
       sl:    23919.00
       tp:    23829.00
-
+      reentry:
+        entry: 23895.50
+        sl:    23910.50
+        tp:    23820.50
   - name: "MNQ - 2025-09-26"
     pair: "MNQ"
     tf: "1m"
@@ -982,7 +999,10 @@ scenarios:
       entry: 24939.25
       sl:    24954.25
       tp:    24864.25
-
+      reentry:
+        entry: 24905.75
+        sl:    24920.75
+        tp:    24830.75
   - name: "MNQ - 2025-10-01"
     pair: "MNQ"
     tf: "1m"
@@ -1348,8 +1368,8 @@ scenarios:
       tp:    24212.25
       reentry:
         entry: 24364.50
-        sl:    24379.50
-        tp:    24289.50
+        sl:    24394.50
+        tp:    24214.50
   - name: "MNQ - 2025-11-25"
     pair: "MNQ"
     tf: "1m"
@@ -1462,8 +1482,8 @@ scenarios:
       tp:    25310.75
       reentry:
         entry: 25380.00
-        sl:    25395.00
-        tp:    25305.00
+        sl:    25410.00
+        tp:    25230.00
   - name: "MNQ - 2025-12-17"
     pair: "MNQ"
     tf: "1m"
@@ -1572,8 +1592,8 @@ scenarios:
       tp:    25413.75
       reentry:
         entry: 25355.00
-        sl:    25340.00
-        tp:    25430.00
+        sl:    25325.00
+        tp:    25505.00
   - name: "MNQ - 2026-01-05"
     pair: "MNQ"
     tf: "1m"
@@ -1587,8 +1607,8 @@ scenarios:
       tp:    25471.00
       reentry:
         entry: 25630.50
-        sl:    25645.50
-        tp:    25555.50
+        sl:    25670.50
+        tp:    25430.50
   - name: "MNQ - 2026-01-06"
     pair: "MNQ"
     tf: "3m"
@@ -1632,8 +1652,8 @@ scenarios:
       tp:    25884.75
       reentry:
         entry: 25724.25
-        sl:    25704.25
-        tp:    25824.25
+        sl:    25684.25
+        tp:    25924.25
   - name: "MNQ - 2026-01-12"
     pair: "MNQ"
     tf: "1m"
@@ -1717,8 +1737,8 @@ scenarios:
       tp:    25091.00
       reentry:
         entry: 25300.50
-        sl:    25330.50
-        tp:    25150.50
+        sl:    25340.50
+        tp:    25100.50
   - name: "MNQ - 2026-01-21"
     pair: "MNQ"
     tf: "1m"
@@ -1784,9 +1804,9 @@ scenarios:
       sl:    25933.00
       tp:    26173.00
       reentry:
-        entry: 25935.25
-        sl:    25920.25
-        tp:    26010.25
+        entry: 25941.00
+        sl:    25901.00
+        tp:    26141.00
   - name: "MNQ - 2026-01-30"
     pair: "MNQ"
     tf: "1m"
@@ -1823,8 +1843,8 @@ scenarios:
       tp:    25707.25
       reentry:
         entry: 25549.25
-        sl:    25534.25
-        tp:    25624.25
+        sl:    25519.25
+        tp:    25699.25
   - name: "MNQ - 2026-02-04"
     pair: "MNQ"
     tf: "1m"
@@ -1854,8 +1874,8 @@ scenarios:
       tp:    24672.75
       reentry:
         entry: 24913.50
-        sl:    24928.50
-        tp:    24838.50
+        sl:    24933.50
+        tp:    24813.50
   - name: "MNQ - 2026-02-06"
     pair: "MNQ"
     tf: "1m"
@@ -1870,8 +1890,8 @@ scenarios:
       tp:    24913.25
       reentry:
         entry: 24981.75
-        sl:    24996.75
-        tp:    24906.75
+        sl:    25001.75
+        tp:    24881.75
   - name: "MNQ - 2026-02-09"
     pair: "MNQ"
     tf: "1m"
@@ -1955,8 +1975,8 @@ scenarios:
       tp:    25004.50
       reentry:
         entry: 24782.75
-        sl:    24767.75
-        tp:    24857.75
+        sl:    24752.75
+        tp:    24932.75
   - name: "MNQ - 2026-02-19"
     pair: "MNQ"
     tf: "1m"
@@ -1970,8 +1990,8 @@ scenarios:
       tp:    24708.75
       reentry:
         entry: 24926.50
-        sl:    24941.50
-        tp:    24851.50
+        sl:    24956.50
+        tp:    24776.50
   - name: "MNQ - 2026-02-20"
     pair: "MNQ"
     tf: "1m"
@@ -1985,8 +2005,8 @@ scenarios:
       tp:    24898.25
       reentry:
         entry: 24780.50
-        sl:    24750.50
-        tp:    24930.50
+        sl:    24740.50
+        tp:    24980.50
   - name: "MNQ - 2026-02-23"
     pair: "MNQ"
     tf: "1m"
@@ -2000,8 +2020,8 @@ scenarios:
       tp:    24776.75
       reentry:
         entry: 25011.75
-        sl:    25026.75
-        tp:    24936.75
+        sl:    25041.75
+        tp:    24861.75
   - name: "MNQ - 2026-02-24"
     pair: "MNQ"
     tf: "1m"
@@ -2015,8 +2035,8 @@ scenarios:
       tp:    24889.00
       reentry:
         entry: 24720.50
-        sl:    24705.50
-        tp:    24795.50
+        sl:    24690.50
+        tp:    24870.50
   - name: "MNQ - 2026-02-25"
     pair: "MNQ"
     tf: "1m"
@@ -2030,8 +2050,8 @@ scenarios:
       tp:    25226.00
       reentry:
         entry: 25321.00
-        sl:    25336.00
-        tp:    25246.00
+        sl:    25341.00
+        tp:    25221.00
   - name: "MNQ - 2026-02-26"
     pair: "MNQ"
     tf: "1m"
@@ -2045,8 +2065,8 @@ scenarios:
       tp:    25139.75
       reentry:
         entry: 24932.25
-        sl:    24917.25
-        tp:    25007.25
+        sl:    24902.25
+        tp:    25082.25
   - name: "MNQ - 2026-02-27"
     pair: "MNQ"
     tf: "1m"
@@ -2060,8 +2080,8 @@ scenarios:
       tp:    24898.50
       reentry:
         entry: 24866.00
-        sl:    24851.00
-        tp:    24941.00
+        sl:    24846.00
+        tp:    24966.00
   - name: "MNQ - 2026-03-02"
     pair: "MNQ"
     tf: "1m"
@@ -2075,8 +2095,8 @@ scenarios:
       tp:    24765.50
       reentry:
         entry: 24920.50
-        sl:    24940.50
-        tp:    24820.50
+        sl:    24950.50
+        tp:    24770.50
   - name: "MNQ - 2026-03-03"
     pair: "MNQ"
     tf: "1m"
@@ -2126,10 +2146,6 @@ scenarios:
       entry: 24823.50
       sl:    24783.50
       tp:    25023.50
-      reentry:
-        entry: 24786.50
-        sl:    24771.50
-        tp:    24861.50
   - name: "MNQ - 2026-03-09"
     pair: "MNQ"
     tf: "1m"
@@ -2143,8 +2159,8 @@ scenarios:
       tp:    24259.00
       reentry:
         entry: 24483.50
-        sl:    24498.50
-        tp:    24408.50
+        sl:    24503.50
+        tp:    24383.50
   - name: "MNQ - 2026-03-10"
     pair: "MNQ"
     tf: "1m"
@@ -2257,8 +2273,8 @@ scenarios:
       tp:    24388.00
       reentry:
         entry: 24207.00
-        sl:    24192.00
-        tp:    24282.00
+        sl:    24177.00
+        tp:    24357.00
   - name: "MNQ - 2026-03-25"
     pair: "MNQ"
     tf: "1m"
@@ -2308,8 +2324,8 @@ scenarios:
       tp:    23217.00
       reentry:
         entry: 23416.75
-        sl:    23436.75
-        tp:    23316.75
+        sl:    23446.75
+        tp:    23266.75
   - name: "MNQ - 2026-04-01"
     pair: "MNQ"
     tf: "1m"
@@ -2322,10 +2338,9 @@ scenarios:
       sl:    24129.50
       tp:    23889.50
       reentry:
-        entry: 24143.75
-        sl:    24183.75
-        tp:    23943.75
-
+        entry: 24213.25
+        sl:    24243.25
+        tp:    24063.25
   - name: "MNQ - 2026-04-02"
     pair: "MNQ"
     tf: "5m"
@@ -2384,7 +2399,10 @@ scenarios:
       entry: 25225.75
       sl:    25265.75
       tp:    25025.75
-
+      reentry:
+        entry: 25253.75
+        sl:    25268.75
+        tp:    25178.75
   - name: "MNQ - 2026-04-10"
     pair: "MNQ"
     tf: "1m"
@@ -2396,7 +2414,10 @@ scenarios:
       entry: 25314.25
       sl:    25354.25
       tp:    25114.25
-
+      reentry:
+        entry: 25313.50
+        sl:    25343.50
+        tp:    25163.50
   - name: "MNQ - 2026-04-13"
     pair: "MNQ"
     tf: "3m"
@@ -2430,3 +2451,7 @@ scenarios:
       entry: 26748.00
       sl:    26708.00
       tp:    26948.00
+      reentry:
+        entry: 26822.75
+        sl:    26782.75
+        tp:    27022.75
