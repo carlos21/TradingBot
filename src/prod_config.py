@@ -43,7 +43,7 @@ def get_prod_strategy_options(max_bounce: float,
             min_cross_depth_filter(min_cross_depth),
             max_bounce_filter(max_bounce),
             # It will now automatically detect MNQ -> America/New_York
-            time_range_filter("08:00", "17:00"),
+            time_range_filter("08:00", "15:30"),
             daily_trades_limit_filter(max_trades_per_day=1),
             rollover_filter(enabled=skip_rollover_days),
         ],
