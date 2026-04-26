@@ -183,7 +183,10 @@ def tsi_cross_trigger(
     if line["tsi_stage"] == -1:
         return None
 
-    # 1. Interaction Check
+    # 1. Interaction Check — price must have touched the line on or before this bar
+    interaction_ts = line.get('interaction_ts')
+    if interaction_ts is not None and interaction_ts > bar['time']:
+        return None
     if dir_ == Direction.LONG:
         if line['extreme'] > lvl: return None
     elif dir_ == Direction.SHORT:
@@ -451,7 +454,10 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
         if not bar.get('tf'):
             return None
 
-        # Interaction check: price must have touched the line
+        # Interaction check: price must have touched the line on or before this bar
+        interaction_ts = line.get('interaction_ts')
+        if interaction_ts is not None and interaction_ts > bar['time']:
+            return None
         if dir_ == Direction.LONG  and line['extreme'] > lvl:
             return None
         if dir_ == Direction.SHORT and line['extreme'] < lvl:
@@ -509,6 +515,20 @@ velocity_adaptive_tsi_trigger = make_velocity_adaptive_tsi_trigger()
 
 
 def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val):
+    entry_price = bar['close']
+    # Prevent entries too far from the line level (entry price farther than max SL tier)
+    sl_levels = getattr(strategy, 'sl_levels', None)
+    if sl_levels:
+        max_sl = max(sl_levels)
+        if dir_ == Direction.LONG and entry_price > lvl + max_sl:
+            strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_DIST",
+                f"Entry {entry_price:.2f} is {entry_price - lvl:.1f}pts above line (max allowed={max_sl}). Skipping.")
+            return None
+        if dir_ == Direction.SHORT and entry_price < lvl - max_sl:
+            strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_DIST",
+                f"Entry {entry_price:.2f} is {lvl - entry_price:.1f}pts below line (max allowed={max_sl}). Skipping.")
+            return None
+
     if dir_ == Direction.LONG:
         true_extreme = min(line['extreme'], bar['low'])
         cross_depth = max(0.0, lvl - true_extreme)

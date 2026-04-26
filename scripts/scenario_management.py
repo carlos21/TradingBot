@@ -368,8 +368,8 @@ def ts_date(ts: str) -> str:
 
 def parse_ts(s: str) -> str:
     """
-    Parse a user-input datetime string (NY local time) and return the
-    canonical YAML format: 'YYYY-MM-DD HH:MM:SSZ'.
+    Parse a user-input datetime string (pair local time) and return the
+    canonical YAML format: 'YYYY-MM-DD HH:MM:SS'.
     """
     from datetime import datetime
 
@@ -379,7 +379,7 @@ def parse_ts(s: str) -> str:
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"):
         try:
             dt = datetime.strptime(s, fmt)
-            return dt.strftime("%Y-%m-%d %H:%M:%SZ")
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
         except ValueError:
             pass
     raise ValueError(

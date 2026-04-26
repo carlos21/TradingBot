@@ -21,7 +21,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly Dictionary<string, Order> _closeOrders = new Dictionary<string, Order>();  // Closing orders
         private readonly Dictionary<string, PendingEntryInfo> _pendingEntries = new Dictionary<string, PendingEntryInfo>();
         private readonly Dictionary<string, PendingModifyInfo> _pendingModifies = new Dictionary<string, PendingModifyInfo>();
-        private readonly Dictionary<string, string> _atmStrategies = new Dictionary<string, string>();  // tradeId -> ATM strategy name
+
         private readonly HashSet<string> _expectedCancellations = new HashSet<string>();  // order names we expect to be cancelled
         private readonly object _lock = new object();
         
@@ -204,18 +204,6 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             if (orderName == null) return;
             lock (_lock) _expectedCancellations.Remove(orderName);
-        }
-
-        public void TrackAtmStrategy(string tradeId, string atmStrategyName)
-        {
-            if (tradeId == null) throw new System.ArgumentNullException(nameof(tradeId));
-            if (atmStrategyName == null) throw new System.ArgumentNullException(nameof(atmStrategyName));
-            lock (_lock) _atmStrategies[tradeId] = atmStrategyName;
-        }
-
-        public bool TryGetAtmStrategy(string tradeId, out string atmStrategyName)
-        {
-            lock (_lock) return _atmStrategies.TryGetValue(tradeId, out atmStrategyName);
         }
 
         /// <summary>

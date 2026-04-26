@@ -42,7 +42,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         void TrackStopLoss(string tradeId, Order order);
         void TrackTakeProfit(string tradeId, Order order);
         void TrackPendingEntry(string tradeId, PendingEntryInfo entry);
-        void TrackAtmStrategy(string tradeId, string atmStrategyName);
+
         void TrackCloseOrder(string tradeId, Order order);
         void TrackPendingModify(string tradeId, PendingModifyInfo info);
         bool TryGetPendingModify(string tradeId, out PendingModifyInfo info);
@@ -53,7 +53,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         bool TryGetTakeProfit(string tradeId, out Order order);
         bool TryGetPendingEntry(string tradeId, out PendingEntryInfo entry);
         bool TryGetTradeIdForOrder(Order order, out string tradeId);
-        bool TryGetAtmStrategy(string tradeId, out string atmStrategyName);
+
         bool TryGetCloseOrder(string tradeId, out Order order);
 
         void RemoveTrade(string tradeId);

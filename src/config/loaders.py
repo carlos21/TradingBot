@@ -79,7 +79,6 @@ class EnvConfigLoader:
         "RISK_PCT": ("risk_pct_per_trade", _float_or_none),
         "ACCOUNT_BALANCE": ("account_balance", float),
         "POINT_VALUE": ("point_value", float),
-        "SL_LEVELS": ("sl_levels", _csv_to_floats),
         "MIN_STOP_LOSS": ("min_stop_loss", float),
         "MAX_BOUNCE": ("max_bounce", float),
         "EXTRA_SL_SPACE": ("extra_sl_space", float),
@@ -152,7 +151,6 @@ class CliConfigLoader:
         p.add_argument("--risk-pct", dest="risk_pct_per_trade", type=float, help="Risk %% of account")
         p.add_argument("--account-balance", dest="account_balance", type=float, help="Account balance")
         p.add_argument("--point-value", dest="point_value", type=float, help="$ per point")
-        p.add_argument("--sl-levels", dest="sl_levels", help="Comma-separated SL levels")
         p.add_argument("--min-stop-loss", dest="min_stop_loss", type=float, help="Min SL points")
         p.add_argument("--max-bounce", dest="max_bounce", type=float, help="Max bounce points")
         p.add_argument("--extra-sl-space", dest="extra_sl_space", type=float, help="Extra SL space")
@@ -194,8 +192,6 @@ class CliConfigLoader:
             val = getattr(ns, attr, None)
             if val is not None:
                 # argparse lists come as strings when using nargs, but here we use simple types
-                if attr == "sl_levels" and isinstance(val, str):
-                    val = [float(x.strip()) for x in val.split(",")]
                 if attr == "timeframes" and isinstance(val, str):
                     val = [x.strip() for x in val.split(",")]
                 setattr(cfg, attr, val)

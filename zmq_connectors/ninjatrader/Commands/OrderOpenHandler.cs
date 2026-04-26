@@ -57,8 +57,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                 var orderAction = isLong ? OrderAction.Buy : OrderAction.SellShort;
                 int qty = CalculatePositionSize(instrument, payload, slPoints);
 
-                string atmStrategyName = GetAtmStrategyName(slPoints);
-
                 _logger.Info($"OPEN ORDER: {tradeId} {direction} {instrument.MasterInstrument.Name} x{qty} SL={slPoints}pt");
 
                 // Embed trade_id in order name for recovery after crash
@@ -72,13 +70,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                     throw new InvalidOperationException("Failed to create entry order");
 
                 _orderTracker.TrackEntry(tradeId, entryOrder);
-                _orderTracker.TrackAtmStrategy(tradeId, atmStrategyName);
-                _orderTracker.TrackPendingEntry(tradeId, new PendingEntryInfo(direction, slPoints, rrRatio, atmStrategyName));
+                _orderTracker.TrackPendingEntry(tradeId, new PendingEntryInfo(direction, slPoints, rrRatio));
 
                 _account.Submit(new[] { entryOrder });
 
                 _logger.Info($"OPEN ORDER SUBMITTED: {tradeId} {direction} {instrument.MasterInstrument.Name} x{qty} SL={slPoints}pt");
-                _network?.SendTradeLog(tradeId, "NT:ORDER", $"Market {direction} x{qty} submitted, ATM '{atmStrategyName}' pending");
+                _network?.SendTradeLog(tradeId, "NT:ORDER", $"Market {direction} x{qty} submitted, bracket pending");
             }
             catch (Exception ex)
             {
@@ -128,12 +125,5 @@ namespace NinjaTrader.NinjaScript.AddOns
             return Math.Max(1, Math.Min(qty, MaxQuantity));
         }
 
-        private static string GetAtmStrategyName(double slPoints)
-        {
-            if (slPoints <= 15.0) return "TA_MNQ_15pt";
-            if (slPoints <= 20.0) return "TA_MNQ_20pt";
-            if (slPoints <= 30.0) return "TA_MNQ_30pt";
-            return "TA_MNQ_40pt";
-        }
     }
 }

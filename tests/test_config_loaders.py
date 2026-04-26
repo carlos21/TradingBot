@@ -39,11 +39,6 @@ class TestEnvConfigLoader:
             cfg = EnvConfigLoader().load()
         assert cfg.pair == "MNQ"
 
-    def test_reads_sl_levels(self):
-        with patch.dict(os.environ, {"SL_LEVELS": "10,20,30"}, clear=False):
-            cfg = EnvConfigLoader().load()
-        assert cfg.sl_levels == [10.0, 20.0, 30.0]
-
     def test_reads_timeframes(self):
         with patch.dict(os.environ, {"TIMEFRAMES": "5m,15m,1h"}, clear=False):
             cfg = EnvConfigLoader().load()
@@ -87,10 +82,6 @@ class TestCliConfigLoader:
     def test_reads_pair(self):
         cfg = CliConfigLoader(args=["--pair", "MNQ"]).load()
         assert cfg.pair == "MNQ"
-
-    def test_reads_sl_levels(self):
-        cfg = CliConfigLoader(args=["--sl-levels", "10,20,30"]).load()
-        assert cfg.sl_levels == [10.0, 20.0, 30.0]
 
     def test_reads_timeframes(self):
         cfg = CliConfigLoader(args=["--timeframes", "5m,15m"]).load()

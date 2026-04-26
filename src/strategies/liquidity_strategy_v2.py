@@ -218,8 +218,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 if creation_ts > bar_time:
                     continue
 
+                lvl = line['level']
                 if line['direction'] is None:
-                    lvl = line['level']
                     if current_price < lvl:
                         # Potential short: close is below the line.
                         # Accumulate the highest high seen while close stays below the line.
@@ -235,6 +235,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             line['direction'] = 'short'
                             line['extreme'] = line.pop('_pending_extreme')
                             line.pop('_pending_dir', None)
+                            if line['extreme'] >= lvl and 'interaction_ts' not in line:
+                                line['interaction_ts'] = bar_time
                             depth = pending_ext - lvl if pending_ext > lvl else 0.0
                             self.log_decision(bar_time, "1m", sid, "LATCH",
                                 f"Latched short @ {current_price} (depth={depth:.2f})",
@@ -260,6 +262,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             line['direction'] = 'long'
                             line['extreme'] = line.pop('_pending_extreme')
                             line.pop('_pending_dir', None)
+                            if line['extreme'] <= lvl and 'interaction_ts' not in line:
+                                line['interaction_ts'] = bar_time
                             depth = lvl - pending_ext if pending_ext < lvl else 0.0
                             self.log_decision(bar_time, "1m", sid, "LATCH",
                                 f"Latched long @ {current_price} (depth={depth:.2f})",
@@ -272,7 +276,10 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                 direction="long", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
                 
                 elif line['direction'] == 'short':
-                    line['extreme'] = max(line['extreme'], bar['high'])
+                    if bar['high'] > line['extreme']:
+                        line['extreme'] = bar['high']
+                        if line['extreme'] >= lvl and 'interaction_ts' not in line:
+                            line['interaction_ts'] = bar_time
                     if current_price > (line['level'] + self.max_bounce):
                         msg = f"Price {current_price} > {line['level'] + self.max_bounce} (Max Bounce)"
                         self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
@@ -281,7 +288,10 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         lines_to_remove.add(sid)
 
                 elif line['direction'] == 'long':
-                    line['extreme'] = min(line['extreme'], bar['low'])
+                    if bar['low'] < line['extreme']:
+                        line['extreme'] = bar['low']
+                        if line['extreme'] <= lvl and 'interaction_ts' not in line:
+                            line['interaction_ts'] = bar_time
                     if current_price < (line['level'] - self.max_bounce):
                         msg = f"Price {current_price} < {line['level'] - self.max_bounce} (Max Bounce)"
                         self.log_decision(bar_time, "1m", sid, "REMOVE", msg,

@@ -72,10 +72,6 @@ class AppConfig:
     """Dollar value of one price point for the traded instrument.
     ``2.0`` = MNQ ($2 per point)."""
 
-    sl_levels: List[float] = field(default_factory=lambda: [15.0, 20.0, 30.0, 40.0])
-    """Tiered stop-loss levels (points). The strategy picks the smallest level
-    that covers the distance from entry to the structural extreme."""
-
     min_stop_loss: float = 10.0
     """Minimum allowed stop-loss distance in points.
     Prevents trades with unrealistically tight SL."""

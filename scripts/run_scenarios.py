@@ -519,7 +519,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
     def get_epoch(dt_str):
         dt = dtparser.parse(dt_str)
-        dt = dt.replace(tzinfo=pair_tz)  # always interpret in pair's local TZ
+        # Strip any existing timezone suffix (e.g. Z) and treat the wall-clock time
+        # as belonging to the pair's local timezone.
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        dt = dt.replace(tzinfo=pair_tz)
         return int(dt.timestamp())
 
     try:

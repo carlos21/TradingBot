@@ -1275,12 +1275,6 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        private void TryStartAtmForEntryOrder(string tradeId)
-        {
-            // ATM strategies don't work reliably from AddOn context.
-            // Bracket orders (SL/TP) are created manually in HandleEntryFill instead.
-        }
-
         private (double sl, double tp) CalculateSlTp(double fillPrice, string direction, double slPoints, double rrRatio)
         {
             if (direction == "long")

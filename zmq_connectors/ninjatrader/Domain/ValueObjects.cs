@@ -109,14 +109,11 @@ namespace NinjaTrader.NinjaScript.AddOns
         public string Direction { get; }
         public double SlPoints { get; }
         public double RrRatio { get; }
-        public string AtmStrategyName { get; }
-
-        public PendingEntryInfo(string direction, double slPoints, double rrRatio, string atmStrategyName)
+        public PendingEntryInfo(string direction, double slPoints, double rrRatio)
         {
             Direction = direction ?? throw new ArgumentNullException(nameof(direction));
             SlPoints = slPoints;
             RrRatio = rrRatio;
-            AtmStrategyName = atmStrategyName ?? throw new ArgumentNullException(nameof(atmStrategyName));
         }
     }
 

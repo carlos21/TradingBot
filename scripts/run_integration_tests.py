@@ -133,7 +133,12 @@ def main():
     pair_tz   = ZoneInfo(PAIR_TZS.get(pair_name, "UTC"))
 
     def get_epoch(dt_str: str) -> int:
-        dt = dtparser.parse(dt_str).replace(tzinfo=pair_tz)
+        dt = dtparser.parse(dt_str)
+        # Strip any existing timezone suffix (e.g. Z) and treat the wall-clock time
+        # as belonging to the pair's local timezone.
+        if dt.tzinfo is not None:
+            dt = dt.replace(tzinfo=None)
+        dt = dt.replace(tzinfo=pair_tz)
         return int(dt.timestamp())
 
     print(f"\n{BOLD}{CYAN}🧪 Integration Tests — {len(scenarios)} scenarios  [{pair_name}]{RST}\n")
