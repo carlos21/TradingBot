@@ -49,11 +49,11 @@ def get_prod_strategy_options(max_bounce: float,
         ],
         triggers=[
             make_velocity_adaptive_tsi_trigger(VelocityTriggerConfig(
-                fast_threshold=999.0,   # effectively disabled — SLOW regime always wins and produces better long-term results
-                slow_threshold=999.0,   # velocity (pts/min) is still calculated & logged for future analysis
+                fast_threshold=5.0,   # velocity > 3.0 pts/min  -> need 2 TSI crosses on 5m
+                slow_threshold=5.0,   # velocity <= 3.0 pts/min -> considered SLOW
                 lookback=30,
                 fast=    [TsiCrossCondition("5m", 2)],
-                moderate=[TsiCrossCondition("1m", 2), TsiCrossCondition("3m", 1)],
+                moderate=[TsiCrossCondition("1m", 1), TsiCrossCondition("3m", 1)],
                 slow=    [TsiCrossCondition("1m", 1), TsiCrossCondition("3m", 1)],
                 post_cross1_max_dist=80.0,  # invalidate if price moves >80pts from line after 1st cross
             )),

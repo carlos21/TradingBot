@@ -550,6 +550,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
                 sdir = Path(args.outdir) / pair_name_val / date_label
                 sdir.mkdir(parents=True, exist_ok=True)
+                # Clean up previous snapshots for this scenario
+                for old_png in sdir.glob("*.png"):
+                    old_png.unlink()
                 
                 start_ts = get_epoch(sc["start"])
                 end_ts   = get_epoch(sc["end"])
@@ -760,16 +763,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                                 await page.wait_for_timeout(500)
                                 await chart_locator.screenshot(path=str(sdir / f"{date_label}_{tf}_{zt_label}.png"))
                         
-                        if not captured_trades and tf == "1m":
-                            # No trade: zoom to last 2h so candles are readable
-                            zoom_start = end_ts - 7200
-                            if zoom_start > start_ts:
-                                await page.evaluate(
-                                    """(range) => { window.chartViewer.chart.timeScale().setVisibleRange({ from: range.start, to: range.end }); }""",
-                                    {"start": zoom_start, "end": end_ts}
-                                )
-                                await page.wait_for_timeout(500)
-                                await chart_locator.screenshot(path=str(sdir / f"{date_label}_{tf}_zoomed.png"))
+
                     except Exception as e:
                         if not quiet:
                             print(f"   ⚠️ Snapshot failed: {e}")
