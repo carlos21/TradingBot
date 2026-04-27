@@ -3,8 +3,7 @@
 This module provides enums to replace string-based type checking.
 """
 
-from enum import Enum, auto
-from typing import Literal
+from enum import Enum
 
 
 class Direction(Enum):

@@ -168,6 +168,7 @@ class TradeManager:
             hit_tp = False
 
             if is_long:
+                # NOTE: If both SL and TP are hit in the same bar, SL takes precedence.
                 if bar['low'] <= trade['stop_loss']:
                     hit_sl = True
                     self.logger.info(f"[TradeManager] LONG SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= SL {trade['stop_loss']:.2f}")
@@ -175,6 +176,7 @@ class TradeManager:
                     hit_tp = True
                     self.logger.info(f"[TradeManager] LONG TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= TP {trade['take_profit']:.2f}")
             elif is_short:
+                # NOTE: If both SL and TP are hit in the same bar, SL takes precedence.
                 if bar['high'] >= trade['stop_loss']:
                     hit_sl = True
                     self.logger.info(f"[TradeManager] SHORT SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= SL {trade['stop_loss']:.2f}")
@@ -737,7 +739,10 @@ class TradeManager:
             self.trade_logger.log(trade_id, "CLOSE", "Persisted to DB")
 
         # Remove from in-memory lists
-        self.open_trades.remove(trade)
+        try:
+            self.open_trades.remove(trade)
+        except ValueError:
+            pass  # already removed by another thread/callback
 
         # Emit to UI
         self.socketio.emit('trade_close', {

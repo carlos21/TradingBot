@@ -1,4 +1,4 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from src.notifier import NoOpNotifier, TelegramNotifier
 from tests.fakes import FakeNotifier

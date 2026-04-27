@@ -1,7 +1,7 @@
+from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
-from typing import Callable, Sequence, Optional, Tuple, Dict, Any, List
+from typing import Callable, Optional, Tuple, Dict, Any
 from zoneinfo import ZoneInfo
 
 from src.types import Direction

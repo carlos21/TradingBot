@@ -81,7 +81,7 @@ class TestAppBuilderLive:
              patch("src.config.builder.SQLLineRepository"), \
              patch("src.config.builder.SQLTradeRepository"), \
              patch("src.config.builder.SQLiteLineTriggerStateRepository"), \
-             patch("src.config.builder.create_app") as mock_create_app, \
+             patch("src.config.builder.create_app"), \
              patch("src.config.builder._build_notifier"), \
              patch("src.config.builder._build_analytics"), \
              patch("src.config.builder.FileAndConsoleLogger"), \

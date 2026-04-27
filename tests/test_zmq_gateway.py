@@ -5,10 +5,9 @@ Run with: pytest tests/test_zmq_gateway.py -v
 """
 
 import pytest
-import threading
 import time
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 # Skip if zmq not installed
 zmq = pytest.importorskip("zmq")
@@ -19,7 +18,6 @@ from src.gateway.protocol import (
     TickMessage,
     BarMessage,
     OpenOrderCommand,
-    CloseOrderCommand,
 )
 from src.gateway.gateway import TradingGateway, GatewayConfig
 from src.utils.app_logger import ConsoleLogger

@@ -2,11 +2,6 @@ from src.strategies.base_liquidity_strategy import BreakevenConfig, StrategyOpti
 from src.strategies.entry_context import daily_trades_limit_filter, open_trades_limit_filter, max_bounce_filter, time_range_filter, min_cross_depth_filter, rollover_filter
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.strategies.triggers import (
-    three_candle_reversal_trigger,
-    tsi_cross_trigger,
-    wick_near_line_trigger,
-    double_5m_cross_trigger,
-    trigger_with_timeframes,
     make_velocity_adaptive_tsi_trigger,
     VelocityTriggerConfig,
     TsiCrossCondition,

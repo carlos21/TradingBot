@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
-from dotenv import load_dotenv, find_dotenv
+
 
 
 Base = declarative_base()

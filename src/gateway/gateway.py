@@ -16,28 +16,18 @@ import zmq
 import json
 import threading
 import time
-import logging
-from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, Callable, List, Union
+from dataclasses import dataclass
+from typing import Dict, Any, Optional, Callable, List
 from collections import deque
-from concurrent.futures import Future
 
-from src.utils.app_logger import ILogger, ConsoleLogger
+from src.utils.app_logger import ILogger
 
 from .protocol import (
     MessageType,
     MessageEnvelope,
-    TickMessage,
-    BarMessage,
-    HistoryBatchMessage,
     OpenOrderCommand,
     CloseOrderCommand,
     ModifyOrderCommand,
-    EntryFillMessage,
-    ExitFillMessage,
-    TradeLogMessage,
-    HeartbeatMessage,
-    ConnectMessage,
     RefreshRequestMessage,
 )
 
@@ -214,7 +204,7 @@ to be:
         for t in self._threads:
             t.start()
         
-        self.logger.info(f"TradingGateway started. Listening on:")
+        self.logger.info("TradingGateway started. Listening on:")
         self.logger.info(f"  - Market data: {self.config.market_data_pub}")
         self.logger.info(f"  - Commands: {self.config.command_pull}")
         self.logger.info(f"  - Queries: {self.config.query_rep}")
@@ -612,7 +602,7 @@ to be:
         error_type = payload.get('error_type', 'unknown')
         message = payload.get('message', 'No message')
         details = payload.get('details', '')
-        timestamp = payload.get('timestamp', 0)
+        payload.get('timestamp', 0)
         
         # Log with high visibility
         self.logger.error(f"PLATFORM ERROR from {source}: [{error_type}] {message}")
@@ -932,7 +922,6 @@ to be:
         
         This allows Python to report errors back to the platform.
         """
-        from .protocol import OrderRejectedMessage
         
         payload = {
             "source": source,
@@ -957,7 +946,7 @@ to be:
         pong = TestPongMessage(timestamp=timestamp)
         envelope = pong.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
-        self.logger.debug(f"Sent TEST_PONG")
+        self.logger.debug("Sent TEST_PONG")
     
     def send_test_result(
         self,

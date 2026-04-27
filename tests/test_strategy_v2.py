@@ -1,10 +1,8 @@
 """Tests for src/strategies/liquidity_strategy_v2.py — V2 strategy: latching, aggregation, reset, history."""
 
-import pytest
 from tests.conftest import make_bar, make_strategy
 from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter, FakeLogger
 from src.services.trade_manager import TradeManager
-from src.strategies.base_liquidity_strategy import StrategyOptions, LineRemovalMode
 
 
 def _deps():

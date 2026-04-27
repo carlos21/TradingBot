@@ -1,7 +1,6 @@
 """Tests for src/strategies/base_liquidity_strategy.py — line management, trade building, SL selection, exits."""
 
 import pytest
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from src.strategies.base_liquidity_strategy import (
@@ -12,7 +11,7 @@ from src.strategies.base_liquidity_strategy import (
 )
 from src.strategies.entry_context import EntryContext
 from src.types import Direction
-from tests.conftest import make_bar, make_strategy
+from tests.conftest import make_bar
 from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter, FakeLogger
 from src.services.trade_manager import TradeManager
 

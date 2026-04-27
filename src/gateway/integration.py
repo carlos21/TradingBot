@@ -21,9 +21,7 @@ Usage:
 
 from typing import Tuple, Optional
 
-from src.data_sources.combined_datasource import CombinedDataSource
-from src.services.trade_executor import TradeExecutor
-from src.utils.app_logger import ILogger, ConsoleLogger
+from src.utils.app_logger import ILogger
 
 from .gateway import TradingGateway, GatewayConfig
 from .datasource import ZMQDataSource

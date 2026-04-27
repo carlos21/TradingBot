@@ -1,4 +1,3 @@
-from enum import Enum
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -69,8 +68,9 @@ class TradeData:
             self.result_type,
             self.fees,
             self.pnl_usd,
+            self.params,
             self.source,
-            self.created_at
+            self.created_at,
         ))
 
     def __eq__(self, other):

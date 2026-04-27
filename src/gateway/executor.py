@@ -8,7 +8,7 @@ ZeroMQ gateway to send trade commands to the platform.
 from typing import Optional
 
 from src.services.trade_executor import TradeExecutor
-from src.utils.app_logger import ILogger, ConsoleLogger
+from src.utils.app_logger import ILogger
 from .gateway import TradingGateway
 
 

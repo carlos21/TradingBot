@@ -1,4 +1,3 @@
-from typing import Callable, List
 from datetime import datetime, timezone
 from flask import jsonify, abort
 
@@ -39,7 +38,7 @@ class LinesController:
             self.logger.info(f"[LinesController] Using Loader Replay Time: {c_date}")
         else:
             c_date = datetime.fromtimestamp(0, tz=timezone.utc)
-            self.logger.info(f"[LinesController] Loader not started -> Defaulting to Epoch 0 (1970)")
+            self.logger.info("[LinesController] Loader not started -> Defaulting to Epoch 0 (1970)")
 
         # 2. Persist
         line = self.line_repository.insert_line(

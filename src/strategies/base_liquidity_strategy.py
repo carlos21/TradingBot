@@ -14,7 +14,6 @@ from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
 from src.repositories.line_trigger_state_repository import LineTriggerStateRepository, InMemoryLineTriggerStateRepository
 from src.services.trade_manager import TradeManager
-from zoneinfo import ZoneInfo
 from src.utils.app_logger import ILogger
 
 from src.strategies.entry_context import (
@@ -127,6 +126,8 @@ class BaseLiquidityStrategy:
         self.lock = RLock()
 
         # parse TF like "5m" or "1h"
+        if not strategy_tf or len(strategy_tf) < 2 or strategy_tf[-1] not in ('m', 'h'):
+            raise ValueError(f"Invalid strategy_tf: {strategy_tf!r}")
         num, unit = int(strategy_tf[:-1]), strategy_tf[-1]
         self.strategy_window = num * (60 if unit == "m" else 3600)
         self._buf: List[Dict[str, Any]] = []
@@ -631,26 +632,20 @@ class BaseLiquidityStrategy:
             result_type = None
 
             exit_price = None
-            hit_sl = False
-            hit_tp = False
 
             if t["type"] == "long":
                 if low <= t["stop_loss"]:
                     exit_price = t["stop_loss"]
-                    hit_sl = True
                     closed = True
                 elif high >= t["take_profit"]:
                     exit_price = t["take_profit"]
-                    hit_tp = True
                     closed = True
             else:  # short
                 if high >= t["stop_loss"]:
                     exit_price = t["stop_loss"]
-                    hit_sl = True
                     closed = True
                 elif low <= t["take_profit"]:
                     exit_price = t["take_profit"]
-                    hit_tp = True
                     closed = True
 
             if closed and exit_price is not None:

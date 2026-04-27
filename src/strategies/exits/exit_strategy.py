@@ -13,11 +13,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum, auto
-from typing import Dict, List, Optional, Protocol, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from zoneinfo import ZoneInfo
 
-from src.types import Direction
 
 
 class ExitType(Enum):

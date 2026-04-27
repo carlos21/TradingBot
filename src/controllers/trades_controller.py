@@ -66,7 +66,7 @@ class TradesController:
 
     def open_trade(self, pair, stop_loss, trade_type):
         # compute entry & risk based on last 1m
-        idx = self.bars_loader.current_1m_index.get(pair, 0)
+        self.bars_loader.current_1m_index.get(pair, 0)
         
         # Resolve entry price from the loader's buffer or datasource
         entry_price = 0.0

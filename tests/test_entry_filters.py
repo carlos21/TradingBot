@@ -1,9 +1,7 @@
 """Tests for entry filters in src/strategies/entry_context.py."""
 
-import time as _time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
-from zoneinfo import ZoneInfo
 
 from src.strategies.entry_context import (
     EntryContext,

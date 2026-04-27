@@ -1,12 +1,9 @@
 """Tests for src.config.loaders — env, CLI, and composite configuration loading."""
 import os
-import sys
 from unittest.mock import patch
 
-import pytest
 
 from src.config.loaders import EnvConfigLoader, CliConfigLoader, CompositeConfigLoader
-from src.config.models import AppConfig
 
 
 class TestEnvConfigLoader:

@@ -15,7 +15,7 @@ import bisect
 import logging
 
 from src.data_sources.combined_datasource import CombinedDataSource
-from src.utils.app_logger import ILogger, ConsoleLogger
+from src.utils.app_logger import ILogger
 from .gateway import TradingGateway, GatewayConfig
 from .protocol import MessageType
 
@@ -358,7 +358,7 @@ class ZMQDataSource(CombinedDataSource):
         self._stats["history_batches"] += 1
         
         bars = payload.get("bars", [])
-        days = payload.get("days", 1)
+        payload.get("days", 1)
         pair = payload.get("pair", self.pair)
         
         new_bars = []

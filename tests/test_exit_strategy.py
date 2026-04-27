@@ -1,7 +1,5 @@
 """Tests for ExitStrategy implementations."""
 
-import pytest
-from datetime import datetime
 from src.types import Direction
 from src.strategies.exits import (
     ExitType,
@@ -78,9 +76,7 @@ class TestSLTPExitStrategy:
 class TestSessionEndExitStrategy:
     def test_before_session_end(self):
         strategy = SessionEndExitStrategy("17:00", "America/New_York")
-        trade = {"entry_time": 1000}
         # 14:00 NY time = 19:00 UTC
-        bar = {"time": 1709851200, "close": 100}  # Some timestamp
 
         # This test needs actual timestamps, skipping detailed test
         # Just verify the strategy structure

@@ -1,8 +1,6 @@
 """Tests for src/strategies/triggers.py — TSI calculations, velocity, trigger functions."""
 
-import pytest
 from unittest.mock import MagicMock
-from collections import deque
 
 from src.strategies.triggers import (
     _calculate_ema,

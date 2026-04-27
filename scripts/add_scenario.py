@@ -65,7 +65,7 @@ def main():
     # Collect lines
     lines: list[dict] = []
     print(
-        f"\nEnter support/resistance lines (press Enter with no price to stop):"
+        "\nEnter support/resistance lines (press Enter with no price to stop):"
     )
     print(
         f"  'at' time: type HH:MM to use {session_date}, "
@@ -129,7 +129,7 @@ def main():
         tf = result.tf
 
         if result.had_trade:
-            print(f"\nTrade found:")
+            print("\nTrade found:")
             print(f"  Type:   {result.trade_type}")
             print(f"  Entry:  {expect['entry']}")
             print(f"  SL:     {expect['sl']}")
@@ -191,9 +191,9 @@ def main():
     writer.write(sc)
 
     print(f"\n✅ Done! Scenario '{name}' added.")
-    print(f"   scenarios.yaml     — updated")
-    print(f"   test_scenario.yaml — updated")
-    print(f"\nRun './bin/run_test_scenario.sh' to validate.")
+    print("   scenarios.yaml     — updated")
+    print("   test_scenario.yaml — updated")
+    print("\nRun './bin/run_test_scenario.sh' to validate.")
 
 
 if __name__ == "__main__":

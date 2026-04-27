@@ -1,5 +1,5 @@
 # (path: src/strategies/triggers.py)
-
+from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, List
 from src.strategies.entry_context import EntryContext, EntryTrigger
@@ -118,13 +118,13 @@ def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_
             if t_curr < s_curr:
                 line["tsi_reset_occurred"] = True
                 strategy.log_decision(bar['time'], tf, line_id, "TSI_RESET", 
-                    f"TSI Reset detected (Blue < Orange). Ready for Rescue Cross.")
+                    "TSI Reset detected (Blue < Orange). Ready for Rescue Cross.")
         elif dir_ == Direction.SHORT:
             # Reset condition: Blue is ABOVE Orange (Bullish state)
             if t_curr > s_curr:
                 line["tsi_reset_occurred"] = True
                 strategy.log_decision(bar['time'], tf, line_id, "TSI_RESET", 
-                    f"TSI Reset detected (Blue > Orange). Ready for Rescue Cross.")
+                    "TSI Reset detected (Blue > Orange). Ready for Rescue Cross.")
 
     # 2. CHECK FOR TRIGGER (Only if Reset has occurred)
     if line.get("tsi_reset_occurred", False):

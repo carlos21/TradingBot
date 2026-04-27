@@ -1,10 +1,8 @@
 """Tests for src/repositories/decision_log_repository.py."""
 
 import pytest
-from datetime import datetime, timezone
 
-from src.database.database_protocol import Base, get_database
-from src.database.database import DecisionLog, setup_database
+from src.database.database import setup_database
 from src.repositories.decision_log_repository import DecisionLogRepository
 
 

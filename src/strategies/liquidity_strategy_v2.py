@@ -6,7 +6,7 @@ from collections import deque
 from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy, StrategyOptions
 from src.financial_calc import FinancialCalc
-from src.strategies.entry_context import EntryContext, EntryTrigger
+from src.strategies.entry_context import EntryContext
 from src.strategies.strategy_config import CandleConfig
 from src.strategies.triggers import _calculate_tsi_series, RESCUE_TSI_TIMEFRAME
 from src.utils.app_logger import ILogger
@@ -45,7 +45,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         logger: ILogger = None,
         decision_log_repository=None,
     ):
-        self.timeframes = timeframes or ["5m"]
+        self.timeframes = list(timeframes) if timeframes else ["5m"]
         
         # Internal: Ensure we always aggregate required timeframes.
         # 15m: velocity scoring; RESCUE_TSI_TIMEFRAME (5m): rescue logic;

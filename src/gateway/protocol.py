@@ -9,7 +9,7 @@ All messages are JSON-serializable with a consistent envelope format.
 
 from __future__ import annotations
 from enum import Enum
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from typing import Dict, Any, Optional, Literal
 import time
 import json

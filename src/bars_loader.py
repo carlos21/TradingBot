@@ -118,8 +118,10 @@ class BarsLoader:
         self._stop_at = None
         self._step_mode = False
         if not self.live_mode:
-            try: self.data_source.pause()
-            except Exception: pass
+            try:
+                self.data_source.pause()
+            except Exception as e:
+                self.logger.debug(f"[BarsLoader] pause() failed: {e}")
         self.streaming = False
 
     def seek(self, from_time: int):
@@ -151,7 +153,7 @@ class BarsLoader:
             self.logger.info(f"[BarsLoader] _END message received! last_bar_close={self._last_bar_close}, last_played_ts={self._last_played_ts}")
             self.logger.info(f"[BarsLoader] stream_end_callback exists: {self.stream_end_callback is not None}")
             if self.stream_end_callback and self._last_played_ts > 0:
-                self.logger.info(f"[BarsLoader] Calling stream_end_callback NOW!")
+                self.logger.info("[BarsLoader] Calling stream_end_callback NOW!")
                 self.stream_end_callback(self._last_bar_close, self._last_played_ts)
             else:
                 self.logger.info(f"[BarsLoader] NOT calling callback: callback={self.stream_end_callback is not None}, last_ts={self._last_played_ts}")
@@ -208,7 +210,7 @@ class BarsLoader:
                 self.logger.info(f"[BarsLoader] Calling stream_end_callback with close={close_price}, time={msg['time']}")
                 self.stream_end_callback(close_price, msg['time'])
             else:
-                self.logger.info(f"[BarsLoader] NO callback set, trades will remain open")
+                self.logger.info("[BarsLoader] NO callback set, trades will remain open")
             self.socketio.emit('stream_status', {'playing': False})
             self.socketio.emit('stream_end', {'reason': 'day_end', 'stop_at': self._stop_at})
             return

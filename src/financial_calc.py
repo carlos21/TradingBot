@@ -1,7 +1,7 @@
 """Single source of truth for trade financial calculations (contracts, fees, PNL, result types)."""
 
 from __future__ import annotations
-from typing import Tuple
+from typing import Tuple, Literal
 
 from src.types import Direction
 

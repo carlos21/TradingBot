@@ -1,6 +1,5 @@
 """Tests for TradesController — especially close_all_trades reuse of close_trade path."""
 
-from datetime import datetime, timezone
 from src.controllers.trades_controller import TradesController
 from tests.fakes import FakeTradeRepository, FakeTradeExecutor, FakeLogger, DummySocketIO
 

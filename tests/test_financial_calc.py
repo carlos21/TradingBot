@@ -1,6 +1,5 @@
 """Comprehensive tests for src/financial_calc.FinancialCalc — Single Source of Truth."""
 
-import pytest
 from src.financial_calc import FinancialCalc
 from src.types import Direction
 

@@ -91,16 +91,18 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
                     
                     if start_ts <= row_ts <= end_ts:
                         count += 1
-                except: continue
+                except Exception as e:
+                    self.logger.warning(f"[ScenarioLoader] Skipping scenario due to error: {e}")
+                    continue
                 
         print(f"   ✅ Found {count} bars in requested range.")
         if count == 0:
-            print(f"   ⚠️  WARNING: ZERO bars found!")
+            print("   ⚠️  WARNING: ZERO bars found!")
             print(f"       Last bar in CSV is at: {last_ts} ({datetime.fromtimestamp(last_ts, tz=utc)})")
             if end_ts > last_ts:
                 print(f"       Requested End {end_ts} is AFTER the CSV data ends.")
             else:
-                print(f"       Data might be missing (Weekend/Holiday?).")
+                print("       Data might be missing (Weekend/Holiday?).")
                 
     except Exception as e:
         print(f"   ❌ Could not verify CSV data: {e}")
@@ -234,7 +236,8 @@ def wait_http_ok(url, timeout=30):
     while time.time() - t0 < timeout:
         try:
             if requests.get(url, timeout=1).ok: return
-        except: pass
+        except Exception:
+            pass
         time.sleep(0.2)
     raise TimeoutError(f"Server at {url} did not start.")
 
@@ -511,7 +514,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         server_proc.terminate()
         return
 
-    pair_resp = requests.get(f"{base_url}/api/pair").json()
+    pair_resp = requests.get(f"{base_url}/api/pair", timeout=10).json()
     pair_name = pair_resp['pair']
     pair_tz = ZoneInfo(PAIR_TZS.get(pair_name, 'UTC'))
     if not quiet:
@@ -980,7 +983,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     if vel_val is not None:
                         vel_str = f" | {f'{vel_val:.2f} pts/m':^{VEL_W}}"
                     else:
-                        vel_str = f" | {f'-':^{VEL_W}}"
+                        vel_str = f" | {'-':^{VEL_W}}"
                 comm_val = v.get("commission", 0.0)
                 comm_str = f"${comm_val:>10,.2f}" if comm_val > 0 else f"{'--':>{COMM_W}}"
                 trades_val = v["wins"] + v["losses"] + v["be"] + v["sp"] + v["open"]
@@ -1251,12 +1254,12 @@ def main():
         return
 
     if not ydoc:
-        print(f"⚠️  YAML file is empty or invalid.")
+        print("⚠️  YAML file is empty or invalid.")
         return
 
     scenarios = ydoc.get("scenarios", [])
     if not scenarios:
-        print(f"⚠️  No 'scenarios' key found in YAML or list is empty.")
+        print("⚠️  No 'scenarios' key found in YAML or list is empty.")
         return
 
     if not args.quiet:

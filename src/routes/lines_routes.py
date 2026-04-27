@@ -1,6 +1,6 @@
 """Line management HTTP routes."""
 
-from flask import Flask, jsonify, request, abort
+from flask import Flask, request, abort
 from src.controllers.lines_controller import LinesController
 from src.utils.app_logger import ILogger
 

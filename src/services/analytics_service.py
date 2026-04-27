@@ -1,17 +1,14 @@
 """Analytics service for calculating trade statistics and chart data."""
 from typing import List, Dict, Any
-from datetime import datetime
 from collections import defaultdict
 
 from src.repositories.trades_repository import TradeRepository
-from src.analytics import TradeStatistics
 from src.analytics import (
     TradeStatistics,
     TimeSeriesData,
     DistributionData,
     TradeDetail,
 )
-from src.models import TradeData
 
 
 class AnalyticsService:

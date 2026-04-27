@@ -23,13 +23,11 @@ Usage:
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional, TypeVar, Generic, List, Dict, Any
-from contextlib import contextmanager
+from typing import Optional, TypeVar, List, Dict, Any
 
-from src.database.database import get_db_session
 from src.database.database import Line, Trade, LineTriggerState
 from src.models import LineData, TradeData
-from src.dbexception import DBException, DBNotFoundException
+from src.dbexception import DBNotFoundException
 from datetime import datetime, timezone
 import uuid
 

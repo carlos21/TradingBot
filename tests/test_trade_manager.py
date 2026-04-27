@@ -1,6 +1,6 @@
 """Tests for src/services/trade_manager.py — SL/TP hit detection, session close, trade lifecycle."""
 
-from datetime import datetime, timezone
+from datetime import datetime
 from tests.conftest import make_bar
 from tests.fakes import DummySocketIO, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter, FakeLogger
 

@@ -26,14 +26,14 @@ def write_discovery_yaml(scenarios: list, path: Path):
     lines = ["scenarios:\n"]
     for sc in scenarios:
         lines.append(f'  - name: "{sc["name"]}"\n')
-        lines.append(f'    pair: "MNQ"\n')
+        lines.append('    pair: "MNQ"\n')
         lines.append(f'    tf: "{sc.get("tf", "5m")}"\n')
         lines.append(f'    start: "{sc["start"]}"\n')
         lines.append(f'    end:   "{sc["end"]}"\n')
-        lines.append(f'    lines:\n')
+        lines.append('    lines:\n')
         lines.append(ScenarioYamlFormatter.format_lines_block(sc.get("lines", [])))
-        lines.append(f'    snapshot: false\n')
-        lines.append(f'\n')
+        lines.append('    snapshot: false\n')
+        lines.append('\n')
     path.write_text("".join(lines))
 
 

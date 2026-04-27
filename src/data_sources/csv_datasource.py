@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from dateutil import parser
-from typing import Callable, Dict, List, Optional
+from typing import Dict, List
 
 from .combined_datasource import CombinedDataSource
 

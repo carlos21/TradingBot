@@ -286,6 +286,38 @@ def create_app(
         logger=logger,
     )
     
+    # Initialize strategy BEFORE registering ZMQ callbacks so closures can reference it safely
+    tstrategy = LiquidityStrategyV2(
+        min_stop_loss   = numbers.min_stop_loss,
+        max_bounce      = numbers.max_bounce,
+        socketio        = socketio,
+        line_repository = repos.lines,
+        trade_repository= repos.trades,
+        trade_manager   = trade_manager,
+        extra_sl_space  = numbers.extra_sl_space,
+        fixed_stop_loss = numbers.fixed_stop_loss,
+        max_stop_loss   = numbers.max_stop_loss,
+        sl_levels       = numbers.sl_levels,
+        sl_level_tolerance = numbers.sl_level_tolerance,
+        min_cross_depth = numbers.min_cross_depth,
+        rr_ratio        = numbers.rr_ratio,
+        point_value     = numbers.point_value,
+        account_balance = numbers.account_balance,
+        risk_per_trade  = numbers.risk_per_trade,
+        risk_pct_per_trade = numbers.risk_pct_per_trade,
+        use_fractional_lots = use_fractional_lots,
+        fee_per_rt = fee_per_rt,
+        broker_spread = broker_spread,
+        options         = options,
+        timeframes      = timeframes,
+        candle_config   = candle_config,
+        trade_logger    = trade_logger,
+        analytics       = analytics,
+        trigger_state_repo = repos.trigger_state,
+        logger          = logger,
+        decision_log_repository = repos.decision_logs,
+    )
+    
     # Wire up position sync handler for crash recovery (ZeroMQ only)
     # Broker (NinjaTrader) is the source of truth - it reports actual positions to Python
     if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
@@ -404,38 +436,6 @@ def create_app(
         data_source.gateway.on_entry_fill(_handle_entry_fill)
         data_source.gateway.on_exit_fill(_handle_exit_fill)
         logger.info("[ZMQ] Broker fill handlers registered")
-
-    # Initialize strategy
-    tstrategy = LiquidityStrategyV2(
-        min_stop_loss   = numbers.min_stop_loss,
-        max_bounce      = numbers.max_bounce,
-        socketio        = socketio,
-        line_repository = repos.lines,
-        trade_repository= repos.trades,
-        trade_manager   = trade_manager,
-        extra_sl_space  = numbers.extra_sl_space,
-        fixed_stop_loss = numbers.fixed_stop_loss,
-        max_stop_loss   = numbers.max_stop_loss,
-        sl_levels       = numbers.sl_levels,
-        sl_level_tolerance = numbers.sl_level_tolerance,
-        min_cross_depth = numbers.min_cross_depth,
-        rr_ratio        = numbers.rr_ratio,
-        point_value     = numbers.point_value,
-        account_balance = numbers.account_balance,
-        risk_per_trade  = numbers.risk_per_trade,
-        risk_pct_per_trade = numbers.risk_pct_per_trade,
-        use_fractional_lots = use_fractional_lots,
-        fee_per_rt = fee_per_rt,
-        broker_spread = broker_spread,
-        options         = options,
-        timeframes      = timeframes,
-        candle_config   = candle_config,
-        trade_logger    = trade_logger,
-        analytics       = analytics,
-        trigger_state_repo = repos.trigger_state,
-        logger          = logger,
-        decision_log_repository = repos.decision_logs,
-    )
 
     # Create bar callbacks based on mode
     bar_callback, stream_end_callback = _create_bar_callbacks(
