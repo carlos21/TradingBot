@@ -1,9 +1,43 @@
 # (path: src/strategies/triggers.py)
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, List
+from enum import Enum
+from typing import Any, Dict, Optional, List, Protocol
 from src.strategies.entry_context import EntryContext, EntryTrigger
 from src.types import Direction
+
+
+# ---------------------------------------------------------------------------
+# Divergence types
+# ---------------------------------------------------------------------------
+
+class DivergenceType(str, Enum):
+    """The four classical TSI/indicator divergences."""
+    BULLISH = "bullish"
+    HIDDEN_BULLISH = "hidden_bullish"
+    BEARISH = "bearish"
+    HIDDEN_BEARISH = "hidden_bearish"
+
+
+# ---------------------------------------------------------------------------
+# TriggerCondition protocol — Strategy Pattern for extensible entry conditions
+# ---------------------------------------------------------------------------
+
+class TriggerCondition(Protocol):
+    """Pluggable entry condition. Any condition can be dropped into
+    VelocityTriggerConfig.fast/moderate/slow lists."""
+
+    def check(
+        self,
+        strategy: "LiquidityStrategyV2",
+        line_id: Any,
+        line: Dict[str, Any],
+        bar: Dict[str, Any],
+        lvl: float,
+        dir_: Direction,
+    ) -> Optional[EntryContext]: ...
+
+    def describe(self) -> str: ...
 
 # --- CONFIGURATION ---
 FAST_MOVE_LOOKBACK   = 5      # Check the last 5 bars (15m)
@@ -23,13 +57,31 @@ VELOCITY_SLOW_THRESHOLD = 1.0  # |velocity| < this → slow move → 1m TSI cros
 @dataclass
 class TsiCrossCondition:
     """
-    A single confirmaton requirement: N TSI crosses on a given timeframe.
+    A single confirmation requirement: N TSI crosses on a given timeframe.
 
     count=1 → single cross (stateless, fires on any qualifying crossover bar)
     count=2 → double cross with a reset in between (stateful, tracked per line)
     """
     timeframe: str   # e.g. "1m", "3m", "5m"
     count: int = 1   # 1 or 2
+    max_dist: float = 0.0  # invalidate if price moves this far after 1st cross
+
+    # --- TriggerCondition implementation ---
+
+    def check(self, strategy, line_id, line, bar, lvl, dir_) -> Optional[EntryContext]:
+        if bar.get('tf') != self.timeframe:
+            return None
+        if self.count == 1:
+            return _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, self.timeframe)
+        else:
+            state_prefix = f"vat_{self.timeframe}_{self.count}x"
+            return _handle_double_tsi_cross(
+                strategy, line_id, line, bar, lvl, dir_,
+                self.timeframe, state_prefix, self.max_dist,
+            )
+
+    def describe(self) -> str:
+        return f"{self.timeframe}×{self.count}"
 
 
 @dataclass
@@ -47,9 +99,9 @@ class VelocityTriggerConfig:
     fast_threshold: float = 5.0   # pts/min — above this is fast
     slow_threshold: float = 2.0   # pts/min — below this is slow; between = moderate
     lookback: int = 30            # number of 1m bars to measure over
-    fast:     List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("5m", 2)])
-    moderate: List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("3m", 1)])
-    slow:     List[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("1m", 1)])
+    fast:     List[TriggerCondition] = field(default_factory=lambda: [TsiCrossCondition("5m", 2)])
+    moderate: List[TriggerCondition] = field(default_factory=lambda: [TsiCrossCondition("3m", 1)])
+    slow:     List[TriggerCondition] = field(default_factory=lambda: [TsiCrossCondition("1m", 1)])
     # After the 1st TSI cross in a double-cross setup, if price moves this many points
     # away from the line (in the trade direction), the setup is invalidated and the
     # line is removed. 0.0 = disabled.
@@ -399,27 +451,12 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
     return None
 
 
-def _check_tsi_condition(strategy, line_id, line, bar, lvl, dir_, cond: TsiCrossCondition, max_dist: float = 0.0):
-    """
-    Evaluate one TsiCrossCondition against the current bar.
-    Returns an EntryContext if the condition fires, otherwise None.
-    Only runs when bar['tf'] matches cond.timeframe.
-    """
-    if bar.get('tf') != cond.timeframe:
-        return None
-    if cond.count == 1:
-        return _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, cond.timeframe)
-    else:
-        state_prefix = f"vat_{cond.timeframe}_{cond.count}x"
-        return _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, cond.timeframe, state_prefix, max_dist)
-
-
 def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
     """
     Factory that returns a velocity-adaptive TSI trigger function.
 
     The returned trigger classifies the current velocity into slow / moderate / fast
-    and tries each TsiCrossCondition in the matching regime list (OR logic: first
+    and tries each TriggerCondition in the matching regime list (OR logic: first
     condition that fires wins).
 
     Usage in prod_config.py:
@@ -438,6 +475,12 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
     """
     if config is None:
         config = VelocityTriggerConfig()
+
+    # Patch post_cross1_max_dist onto any TsiCrossCondition that didn't set its own.
+    if config.post_cross1_max_dist > 0:
+        for cond in (*config.fast, *config.moderate, *config.slow):
+            if isinstance(cond, TsiCrossCondition) and cond.max_dist == 0.0:
+                cond.max_dist = config.post_cross1_max_dist
 
     def trigger(
         strategy: "LiquidityStrategyV2",
@@ -479,7 +522,7 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
             line['vat_velocity'] = velocity_score
 
             regime_conditions = config.fast if is_fast else (config.moderate if is_moderate else config.slow)
-            conds_str = " OR ".join(f"{c.timeframe}×{c.count}" for c in regime_conditions)
+            conds_str = " OR ".join(c.describe() for c in regime_conditions)
             strategy.log_decision(bar['time'], tf, line_id, "VAT_REGIME",
                 f"vel={abs_vel:.2f} pts/min → {regime_label} | need [{conds_str}] (locked at touch)")
         else:
@@ -496,13 +539,13 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
 
         # Try each condition in order; return the first that fires
         for cond in regime_conditions:
-            result = _check_tsi_condition(strategy, line_id, line, bar, lvl, dir_, cond, config.post_cross1_max_dist)
+            result = cond.check(strategy, line_id, line, bar, lvl, dir_)
             if result is not None:
                 return result
         # None of the conditions fired — log why
-        conds_str = " OR ".join(f"{c.timeframe}×{c.count}" for c in regime_conditions)
+        conds_str = " OR ".join(c.describe() for c in regime_conditions)
         strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TRIGGER_SKIP",
-            f"VAT {regime_label}: no TSI cross for [{conds_str}]",
+            f"VAT {regime_label}: no condition met for [{conds_str}]",
             trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_))
         return None
 
@@ -514,7 +557,10 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
 velocity_adaptive_tsi_trigger = make_velocity_adaptive_tsi_trigger()
 
 
-def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val):
+def _build_entry_context(
+    strategy, line_id, line, bar, lvl, dir_, event: str, details: str
+) -> Optional[EntryContext]:
+    """Generic EntryContext builder used by both cross and divergence triggers."""
     entry_price = bar['close']
     # Prevent entries too far from the line level (entry price farther than max SL tier)
     sl_levels = getattr(strategy, 'sl_levels', None)
@@ -532,13 +578,157 @@ def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val
     if dir_ == Direction.LONG:
         true_extreme = min(line['extreme'], bar['low'])
         cross_depth = max(0.0, lvl - true_extreme)
-        strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_CROSS", f"Long Trigger: TSI({tsi_val:.2f}) > Sig({sig_val:.2f})")
-        return EntryContext(strategy, line_id, Direction.LONG, lvl, bar, bar['close'], bar['low'], bar['high'], true_extreme, cross_depth)
     else:
         true_extreme = max(line['extreme'], bar['high'])
         cross_depth = max(0.0, true_extreme - lvl)
-        strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_CROSS", f"Short Trigger: TSI({tsi_val:.2f}) < Sig({sig_val:.2f})")
-        return EntryContext(strategy, line_id, Direction.SHORT, lvl, bar, bar['close'], bar['low'], bar['high'], true_extreme, cross_depth)
+
+    strategy.log_decision(bar['time'], bar.get('tf'), line_id, event, details)
+    return EntryContext(
+        strategy, line_id, dir_, lvl, bar, bar['close'],
+        bar['low'], bar['high'], true_extreme, cross_depth,
+    )
+
+
+def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val):
+    if dir_ == Direction.LONG:
+        details = f"Long Trigger: TSI({tsi_val:.2f}) > Sig({sig_val:.2f})"
+    else:
+        details = f"Short Trigger: TSI({tsi_val:.2f}) < Sig({sig_val:.2f})"
+    return _build_entry_context(strategy, line_id, line, bar, lvl, dir_, "TSI_CROSS", details)
+
+
+# ---------------------------------------------------------------------------
+# Divergence detection helpers
+# ---------------------------------------------------------------------------
+
+def _find_swing_lows(values: List[float], window: int) -> List[tuple]:
+    """Return list of (index, value) for every swing low.
+    A swing low at index i satisfies values[i] < values[i-j] and values[i] < values[i+j]
+    for all j in 1..window.
+    """
+    swings = []
+    for i in range(window, len(values) - window):
+        v = values[i]
+        is_low = all(v < values[i - j] for j in range(1, window + 1))
+        is_low = is_low and all(v < values[i + j] for j in range(1, window + 1))
+        if is_low:
+            swings.append((i, v))
+    return swings
+
+
+def _find_swing_highs(values: List[float], window: int) -> List[tuple]:
+    """Return list of (index, value) for every swing high.
+    A swing high at index i satisfies values[i] > values[i-j] and values[i] > values[i+j]
+    for all j in 1..window.
+    """
+    swings = []
+    for i in range(window, len(values) - window):
+        v = values[i]
+        is_high = all(v > values[i - j] for j in range(1, window + 1))
+        is_high = is_high and all(v > values[i + j] for j in range(1, window + 1))
+        if is_high:
+            swings.append((i, v))
+    return swings
+
+
+def _detect_divergence(
+    lows: List[float],
+    highs: List[float],
+    tsi_vals: List[float],
+    dir_: Direction,
+    swing_window: int,
+    allowed_types: Optional[List[DivergenceType]] = None,
+) -> Optional[DivergenceType]:
+    """Detect the most recent applicable divergence for the given direction.
+
+    For LONG: checks bullish and hidden-bullish using swing lows.
+    For SHORT: checks bearish and hidden-bearish using swing highs.
+    Returns the first matching DivergenceType or None.
+    """
+    allowed = set(allowed_types) if allowed_types else None
+
+    if dir_ == Direction.LONG:
+        price_swings = _find_swing_lows(lows, swing_window)
+        if len(price_swings) < 2:
+            return None
+        (idx1, p1), (idx2, p2) = price_swings[-2], price_swings[-1]
+        t1, t2 = tsi_vals[idx1], tsi_vals[idx2]
+
+        if p2 < p1 and t2 > t1:
+            d = DivergenceType.BULLISH
+            if allowed is None or d in allowed:
+                return d
+        if p2 > p1 and t2 < t1:
+            d = DivergenceType.HIDDEN_BULLISH
+            if allowed is None or d in allowed:
+                return d
+
+    elif dir_ == Direction.SHORT:
+        price_swings = _find_swing_highs(highs, swing_window)
+        if len(price_swings) < 2:
+            return None
+        (idx1, p1), (idx2, p2) = price_swings[-2], price_swings[-1]
+        t1, t2 = tsi_vals[idx1], tsi_vals[idx2]
+
+        if p2 > p1 and t2 < t1:
+            d = DivergenceType.BEARISH
+            if allowed is None or d in allowed:
+                return d
+        if p2 < p1 and t2 > t1:
+            d = DivergenceType.HIDDEN_BEARISH
+            if allowed is None or d in allowed:
+                return d
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# TsiDivergenceCondition — TriggerCondition implementation
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TsiDivergenceCondition:
+    """Entry condition based on TSI/price divergence.
+
+    Detects swing-point divergences over the last *lookback* bars on the
+    specified timeframe. If any allowed divergence type matches the line
+    direction, the condition fires.
+    """
+    timeframe: str
+    lookback: int = 30          # bars to scan for swing points
+    swing_window: int = 3       # bars on each side to qualify as a swing high/low
+    allowed_types: Optional[List[DivergenceType]] = None  # None = all applicable for direction
+
+    def check(self, strategy, line_id, line, bar, lvl, dir_) -> Optional[EntryContext]:
+        if bar.get('tf') != self.timeframe:
+            return None
+
+        history = strategy.get_history(self.timeframe, self.lookback + 10)
+        if len(history) < 30:
+            return None
+
+        lows = [b['low'] for b in history]
+        highs = [b['high'] for b in history]
+        closes = [b['close'] for b in history]
+        tsi_vals, sig_vals = _calculate_tsi_series(closes, 6, 13, 4)
+        if len(tsi_vals) < 2:
+            return None
+
+        div_type = _detect_divergence(
+            lows, highs, tsi_vals, dir_, self.swing_window, self.allowed_types
+        )
+        if div_type is not None:
+            curr_tsi = tsi_vals[-1]
+            curr_sig = sig_vals[-1]
+            details = f"{div_type.value} divergence | TSI({curr_tsi:.2f}) Sig({curr_sig:.2f})"
+            return _build_entry_context(
+                strategy, line_id, line, bar, lvl, dir_, "TSI_DIV", details
+            )
+        return None
+
+    def describe(self) -> str:
+        return f"{self.timeframe}-DIV"
+
 
 # --- HELPER FUNCTIONS FOR TSI ---
 

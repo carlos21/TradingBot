@@ -1,7 +1,7 @@
 """Tests for src/strategies/triggers.py — TSI calculations, velocity, trigger functions."""
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from collections import deque
 
 from src.strategies.triggers import (
@@ -12,11 +12,17 @@ from src.strategies.triggers import (
     make_velocity_adaptive_tsi_trigger,
     VelocityTriggerConfig,
     TsiCrossCondition,
+    TsiDivergenceCondition,
+    DivergenceType,
+    _find_swing_lows,
+    _find_swing_highs,
+    _detect_divergence,
     wick_near_line_trigger,
     three_candle_reversal_trigger,
     double_5m_cross_trigger,
 )
 from src.strategies.strategy_config import CandleConfig
+from src.types import Direction
 
 
 # ─── Helper to build bars ───────────────────────────────────────────
@@ -31,6 +37,7 @@ def _make_strategy_mock(history_map=None):
     """Create a mock strategy with configurable history per timeframe."""
     s = MagicMock()
     s.candle_config = CandleConfig()
+    s.sl_levels = None
     _map = history_map or {}
 
     def get_history(tf, count):
@@ -319,3 +326,229 @@ class TestThreeCandleReversalTrigger:
         # Direction can be enum or string
         from src.types import Direction
         assert result.direction == Direction.SHORT or result.direction == "short"
+
+
+# ─── Divergence Detector ────────────────────────────────────────────
+
+
+class TestDivergenceDetector:
+
+    def test_find_swing_lows_basic(self):
+        values = [5, 4, 3, 4, 5, 4, 3, 2, 3, 4, 3, 2, 1, 2, 3]
+        lows = _find_swing_lows(values, window=2)
+        assert lows == [(2, 3), (7, 2), (12, 1)]
+
+    def test_find_swing_highs_basic(self):
+        values = [1, 2, 3, 2, 1, 2, 3, 4, 3, 2, 3, 4, 5, 4, 3]
+        highs = _find_swing_highs(values, window=2)
+        assert highs == [(2, 3), (7, 4), (12, 5)]
+
+    def test_find_swing_lows_empty_when_too_short(self):
+        assert _find_swing_lows([1, 2, 3], window=2) == []
+
+    def test_detect_bullish_divergence(self):
+        lows = [5, 4, 3, 4, 5, 4, 3, 2, 3, 4, 3, 2, 1, 2, 3]
+        highs = [6] * len(lows)
+        tsi = [0.0] * len(lows)
+        tsi[2] = -20
+        tsi[7] = -15
+        tsi[12] = -10
+        result = _detect_divergence(lows, highs, tsi, Direction.LONG, swing_window=2)
+        assert result == DivergenceType.BULLISH
+
+    def test_detect_hidden_bullish_divergence(self):
+        # Need strictly higher lows: 6 -> 6.5 with clear swing windows
+        lows = [10, 9, 8, 7, 6, 7, 8, 9, 10, 9, 8, 7, 6.5, 7, 8]
+        highs = [11] * len(lows)
+        tsi = [0.0] * len(lows)
+        tsi[4] = -10
+        tsi[12] = -15
+        result = _detect_divergence(lows, highs, tsi, Direction.LONG, swing_window=2)
+        assert result == DivergenceType.HIDDEN_BULLISH
+
+    def test_detect_bearish_divergence(self):
+        highs = [1, 2, 3, 2, 1, 2, 3, 4, 3, 2, 3, 4, 5, 4, 3]
+        lows = [0] * len(highs)
+        tsi = [0.0] * len(highs)
+        tsi[2] = 20
+        tsi[7] = 15
+        tsi[12] = 10
+        result = _detect_divergence(lows, highs, tsi, Direction.SHORT, swing_window=2)
+        assert result == DivergenceType.BEARISH
+
+    def test_detect_hidden_bearish_divergence(self):
+        # Need strictly lower highs: 5 -> 4.5 with clear swing windows
+        highs = [1, 2, 3, 4, 5, 4, 3, 2, 1, 2, 3, 4, 4.5, 3, 2]
+        lows = [0] * len(highs)
+        tsi = [0.0] * len(highs)
+        tsi[4] = 10
+        tsi[12] = 15
+        result = _detect_divergence(lows, highs, tsi, Direction.SHORT, swing_window=2)
+        assert result == DivergenceType.HIDDEN_BEARISH
+
+    def test_no_divergence_when_no_swings(self):
+        lows = list(range(1, 10))
+        highs = list(range(10, 1, -1))
+        tsi = [0.0] * len(lows)
+        result = _detect_divergence(lows, highs, tsi, Direction.LONG, swing_window=2)
+        assert result is None
+
+    def test_allowed_types_filters_out_others(self):
+        lows = [5, 4, 3, 4, 5, 4, 3, 2, 3, 4, 3, 2, 1, 2, 3]
+        highs = [6] * len(lows)
+        tsi = [0.0] * len(lows)
+        tsi[2] = -20
+        tsi[7] = -15
+        tsi[12] = -10
+        result = _detect_divergence(
+            lows, highs, tsi, Direction.LONG, swing_window=2,
+            allowed_types=[DivergenceType.HIDDEN_BULLISH]
+        )
+        assert result is None
+
+
+# ─── Tsi Divergence Condition ───────────────────────────────────────
+
+
+class TestTsiDivergenceCondition:
+
+    @patch("src.strategies.triggers._calculate_tsi_series")
+    def test_bullish_divergence_triggers_long(self, mock_tsi):
+        # 30 bars with swing lows at indices 2, 6, 12, 18, 24
+        # Last two price lows: 5 -> 4 (lower low)
+        lows = [10, 9, 8, 9, 10, 9, 7, 8, 9, 10, 9, 8, 6, 7, 8,
+                9, 8, 7, 5, 6, 7, 8, 7, 6, 4, 5, 6, 7, 6, 5]
+        highs = [l + 1 for l in lows]
+        closes = [l + 0.5 for l in lows]
+        bars = [_bar(time=i * 60, close=closes[i], high=highs[i], low=lows[i], tf="5m")
+                for i in range(30)]
+        s = _make_strategy_mock({"5m": bars})
+        line = {"level": 100, "extreme": 95, "direction": "long"}
+        cond = TsiDivergenceCondition("5m", lookback=40, swing_window=2)
+
+        tsi_vals = [0.0] * 30
+        sig_vals = [0.0] * 30
+        # TSI higher lows at indices 18, 24: -15 -> -10
+        tsi_vals[18] = -15
+        tsi_vals[24] = -10
+        mock_tsi.return_value = (tsi_vals, sig_vals)
+
+        result = cond.check(s, "L1", line, _bar(time=9999, tf="5m"), line["level"], Direction.LONG)
+        assert result is not None
+        assert result.direction == Direction.LONG
+
+    @patch("src.strategies.triggers._calculate_tsi_series")
+    def test_hidden_bullish_divergence_triggers_long(self, mock_tsi):
+        # 30 bars with swing lows at indices 2, 6, 12, 18, 24
+        # Last two price lows: 5 -> 6 (higher low)
+        lows = [10, 9, 8, 9, 10, 9, 7, 8, 9, 10, 9, 8, 6, 7, 8,
+                9, 8, 7, 5, 6, 7, 8, 7.5, 7, 6, 7, 8, 9, 8, 7.5]
+        highs = [l + 1 for l in lows]
+        closes = [l + 0.5 for l in lows]
+        bars = [_bar(time=i * 60, close=closes[i], high=highs[i], low=lows[i], tf="5m")
+                for i in range(30)]
+        s = _make_strategy_mock({"5m": bars})
+        line = {"level": 100, "extreme": 95, "direction": "long"}
+        cond = TsiDivergenceCondition("5m", lookback=40, swing_window=2)
+
+        tsi_vals = [0.0] * 30
+        sig_vals = [0.0] * 30
+        # TSI lower lows at indices 18, 24: -10 -> -15
+        tsi_vals[18] = -10
+        tsi_vals[24] = -15
+        mock_tsi.return_value = (tsi_vals, sig_vals)
+
+        result = cond.check(s, "L1", line, _bar(time=9999, tf="5m"), line["level"], Direction.LONG)
+        assert result is not None
+        assert result.direction == Direction.LONG
+
+    @patch("src.strategies.triggers._calculate_tsi_series")
+    def test_bearish_divergence_triggers_short(self, mock_tsi):
+        # 30 bars with swing highs at indices 2, 6, 12, 18, 24
+        # Last two price highs: 6 -> 7 (higher high)
+        highs = [1, 2, 3, 2, 1, 2, 4, 3, 2, 1, 2, 3, 5, 4, 3,
+                 2, 3, 4, 6, 5, 4, 3, 4, 5, 7, 6, 5, 4, 5, 6]
+        lows = [h - 1 for h in highs]
+        closes = [h - 0.5 for h in highs]
+        bars = [_bar(time=i * 60, close=closes[i], high=highs[i], low=lows[i], tf="5m")
+                for i in range(30)]
+        s = _make_strategy_mock({"5m": bars})
+        line = {"level": 100, "extreme": 105, "direction": "short"}
+        cond = TsiDivergenceCondition("5m", lookback=40, swing_window=2)
+
+        tsi_vals = [0.0] * 30
+        sig_vals = [0.0] * 30
+        # TSI lower highs at indices 18, 24: 15 -> 10
+        tsi_vals[18] = 15
+        tsi_vals[24] = 10
+        mock_tsi.return_value = (tsi_vals, sig_vals)
+
+        result = cond.check(s, "L1", line, _bar(time=9999, tf="5m"), line["level"], Direction.SHORT)
+        assert result is not None
+        assert result.direction == Direction.SHORT
+
+    @patch("src.strategies.triggers._calculate_tsi_series")
+    def test_hidden_bearish_divergence_triggers_short(self, mock_tsi):
+        # 30 bars with swing highs at indices 2, 6, 12, 18, 24
+        # Last two price highs: 6 -> 5 (lower high)
+        highs = [1, 2, 3, 2, 1, 2, 4, 3, 2, 1, 2, 3, 5, 4, 3,
+                 2, 3, 4, 6, 5, 4, 3, 4, 4.5, 5, 4.5, 4, 3, 3.5, 4]
+        lows = [h - 1 for h in highs]
+        closes = [h - 0.5 for h in highs]
+        bars = [_bar(time=i * 60, close=closes[i], high=highs[i], low=lows[i], tf="5m")
+                for i in range(30)]
+        s = _make_strategy_mock({"5m": bars})
+        line = {"level": 100, "extreme": 105, "direction": "short"}
+        cond = TsiDivergenceCondition("5m", lookback=40, swing_window=2)
+
+        tsi_vals = [0.0] * 30
+        sig_vals = [0.0] * 30
+        # TSI higher highs at indices 18, 24: 10 -> 15
+        tsi_vals[18] = 10
+        tsi_vals[24] = 15
+        mock_tsi.return_value = (tsi_vals, sig_vals)
+
+        result = cond.check(s, "L1", line, _bar(time=9999, tf="5m"), line["level"], Direction.SHORT)
+        assert result is not None
+        assert result.direction == Direction.SHORT
+
+    @patch("src.strategies.triggers._calculate_tsi_series")
+    def test_no_divergence_returns_none(self, mock_tsi):
+        # Same bars as bullish test, but TSI also makes lower lows
+        lows = [10, 9, 8, 9, 10, 9, 7, 8, 9, 10, 9, 8, 6, 7, 8,
+                9, 8, 7, 5, 6, 7, 8, 7, 6, 4, 5, 6, 7, 6, 5]
+        highs = [l + 1 for l in lows]
+        closes = [l + 0.5 for l in lows]
+        bars = [_bar(time=i * 60, close=closes[i], high=highs[i], low=lows[i], tf="5m")
+                for i in range(30)]
+        s = _make_strategy_mock({"5m": bars})
+        line = {"level": 100, "extreme": 95, "direction": "long"}
+        cond = TsiDivergenceCondition("5m", lookback=40, swing_window=2)
+
+        tsi_vals = [0.0] * 30
+        sig_vals = [0.0] * 30
+        # TSI lower lows: -10 -> -15 (same direction as price) → no divergence
+        tsi_vals[18] = -10
+        tsi_vals[24] = -15
+        mock_tsi.return_value = (tsi_vals, sig_vals)
+
+        result = cond.check(s, "L1", line, _bar(time=9999, tf="5m"), line["level"], Direction.LONG)
+        assert result is None
+
+    def test_wrong_timeframe_returns_none(self):
+        s = _make_strategy_mock()
+        line = {"level": 100, "extreme": 95, "direction": "long"}
+        cond = TsiDivergenceCondition("5m", lookback=40)
+        result = cond.check(s, "L1", line, _bar(time=9999, tf="1m"), line["level"], Direction.LONG)
+        assert result is None
+
+    def test_insufficient_history_returns_none(self):
+        s = _make_strategy_mock({"5m": [_bar()] * 5})
+        line = {"level": 100, "extreme": 95, "direction": "long"}
+        cond = TsiDivergenceCondition("5m", lookback=40)
+        result = cond.check(s, "L1", line, _bar(time=9999, tf="5m"), line["level"], Direction.LONG)
+        assert result is None
+
+    def test_describe(self):
+        cond = TsiDivergenceCondition("5m", lookback=30)
+        assert cond.describe() == "5m-DIV"

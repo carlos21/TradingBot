@@ -10,6 +10,7 @@ from src.strategies.triggers import (
     make_velocity_adaptive_tsi_trigger,
     VelocityTriggerConfig,
     TsiCrossCondition,
+    TsiDivergenceCondition,
 )
 def get_prod_strategy_numbers(rr_ratio: float,
                               risk_per_trade: float = None,
@@ -57,6 +58,16 @@ def get_prod_strategy_options(max_bounce: float,
                 slow=    [TsiCrossCondition("1m", 1), TsiCrossCondition("3m", 1)],
                 post_cross1_max_dist=80.0,  # invalidate if price moves >80pts from line after 1st cross
             )),
+            # Example: mix cross and divergence conditions per regime
+            # make_velocity_adaptive_tsi_trigger(VelocityTriggerConfig(
+            #     fast=[
+            #         TsiCrossCondition("5m", 2),
+            #         TsiDivergenceCondition("5m", lookback=30),
+            #     ],
+            #     moderate=[TsiCrossCondition("3m", 1)],
+            #     slow=[TsiDivergenceCondition("1m", lookback=20)],
+            #     post_cross1_max_dist=80.0,
+            # )),
             # trigger_with_timeframes(tsi_cross_trigger, ['5m', '15m']),
             # trigger_with_timeframes(three_candle_reversal_trigger, ['5m', '15m','30m', '1h']),
             # trigger_with_timeframes(double_5m_cross_trigger, ['5m']),
