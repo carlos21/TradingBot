@@ -1,1 +1,26 @@
+# Normalize all text files to LF in the repo and working tree.
+# This prevents CRLF chaos when switching between Mac and Windows.
+* text=auto eol=lf
+
+# Shell scripts MUST be LF or they break on Linux/macOS/WSL
 *.sh text eol=lf
+
+# --- Binary files: never treat as text ---
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.svg binary
+*.zip binary
+*.tar.gz binary
+*.gz binary
+*.7z binary
+*.db binary
+*.db-shm binary
+*.db-wal binary
+*.pyc binary
+*.pyo binary
+*.so binary
+*.dll binary
+*.exe binary
