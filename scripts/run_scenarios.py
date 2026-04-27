@@ -550,9 +550,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
                 sdir = Path(args.outdir) / pair_name_val / date_label
                 sdir.mkdir(parents=True, exist_ok=True)
-                # Clean up previous snapshots for this scenario
-                for old_png in sdir.glob("*.png"):
-                    old_png.unlink()
+                if args.snapshot:
+                    # Clean up previous snapshots for this scenario
+                    for old_png in sdir.glob("*.png"):
+                        old_png.unlink()
                 
                 start_ts = get_epoch(sc["start"])
                 end_ts   = get_epoch(sc["end"])
