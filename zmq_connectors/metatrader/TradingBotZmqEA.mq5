@@ -6,7 +6,7 @@
 //+------------------------------------------------------------------+
 #property copyright "TradingBot"
 #property link      ""
-#property version   "2.00"
+#property version   "2.10"
 #property strict
 
 #include <Zmq/Zmq.mqh>
@@ -29,6 +29,7 @@
 #include "Commands/OrderModifyHandler.mqh"
 #include "Commands/RefreshRequestHandler.mqh"
 #include "Commands/TestStartHandler.mqh"
+#include "UI/ConnectorDialog.mqh"
 
 //--- Input Parameters (fallback if config file missing)
 input string   InpHost            = "127.0.0.1";
@@ -43,7 +44,7 @@ input ulong    InpMagicNumber     = 424242;
 
 //--- Dependencies (injected)
 ZmqConfiguration   *_config;
-MetaTraderLogger   *_logger;  // Concrete type for panel access; upcasts to ILogger*
+MetaTraderLogger   *_logger;
 IMessageSerializer *_serializer;
 IOrderTracker      *_orderTracker;
 IZmqNetwork        *_network;
@@ -82,6 +83,34 @@ const int          MAX_TRACKED_DEALS = 1000;
 //--- Pending refresh flag
 bool               _pendingHistoryRefresh = false;
 
+//--- Dialog UI
+CConnectorDialog  *g_dialog = NULL;
+bool               g_dialogCreated = false;
+
+//+------------------------------------------------------------------+
+//| UI Callbacks                                                     |
+//+------------------------------------------------------------------+
+void LogToUI(string msg)
+{
+   if(g_dialog != NULL)
+      g_dialog.Log(msg);
+}
+
+void OnConnectClick(void)
+{
+   ToggleConnection();
+}
+
+void OnTestClick(void)
+{
+   TestConnection();
+}
+
+void OnE2EClick(void)
+{
+   RunE2ETests();
+}
+
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
@@ -102,63 +131,25 @@ int OnInit()
    _config.heartbeatSec = (fileCfg.heartbeatSec > 0) ? fileCfg.heartbeatSec : InpHeartbeatSec;
    _config.magicNumber = (fileCfg.magicNumber > 0) ? fileCfg.magicNumber : InpMagicNumber;
 
-   // 2. Create dependencies (Dependency Injection)
+   // 2. Create logger
    _logger = new MetaTraderLogger("[ZMQ]");
-   _serializer = new JsonMessageSerializer(_logger);
-   _orderTracker = new OrderStateManager();
-   _network = new ZmqNetwork(_config, _serializer, _logger);
-   _tickRateLimiter = new TickRateLimiter(_config.maxTicksPerSecond);
-   _partialBarRateLimiter = new TickRateLimiter(1); // 1 partial bar/sec
-   _historyProvider = new HistoryProvider(_network, _logger, _config, _Symbol);
+   _logger.SetUICallback(LogToUI);
 
-   // 3. Connect ZMQ
-   if(!_network.Start())
+   // 3. Create and show dialog
+   g_dialog = new CConnectorDialog();
+   if(!g_dialog.Create(0, "TradingBotZmqDialog", 0, 100, 100, 660, 540))
    {
-      _logger.Error("Failed to start ZMQ network");
+      _logger.Error("Failed to create connector dialog");
+      delete g_dialog;
+      g_dialog = NULL;
       Cleanup();
       return INIT_FAILED;
    }
-   _connected = true;
+   g_dialogCreated = true;
+   g_dialog.SetHandlers(OnConnectClick, OnTestClick, OnE2EClick);
+   g_dialog.Log("Window opened. Click Connect to start ZMQ connection.");
 
-   // 4. Query config from Python (account name, etc.)
-   string configuredAccount = _network.QueryConfig("account", 2000);
-   if(StringLen(configuredAccount) > 0)
-      _logger.Info("Python specified account: " + configuredAccount);
-   else
-      configuredAccount = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
-
-   // 5. Send connect handshake
-   _network.SendConnect("metatrader5", _config.platformVersion, configuredAccount, _Symbol);
-   _logger.Success("Connected to Python TradingBot via ZeroMQ");
-
-   // 6. Restore order tracking from broker (crash recovery)
-   RestoreFromBroker();
-
-   // 7. Report positions to Python (source of truth sync)
-   ReportPositionsToPython();
-
-   // 8. Send historical data
-   _historyProvider.SendHistory();
-
-   // 9. Setup command dispatcher
-   _dispatcher = new CommandDispatcher(_logger);
-
-   _handlerOpen = new OrderOpenHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
-   _handlerClose = new OrderCloseHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
-   _handlerModify = new OrderModifyHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
-   _handlerRefresh = new RefreshRequestHandler(_network, _logger, _historyProvider);
-   _handlerTest = new TestStartHandler(_network, _logger);
-
-   _dispatcher.Register(_handlerOpen);
-   _dispatcher.Register(_handlerClose);
-   _dispatcher.Register(_handlerModify);
-   _dispatcher.Register(_handlerRefresh);
-   _dispatcher.Register(_handlerTest);
-
-   // 10. Start heartbeat timer (1-second granularity)
-   EventSetTimer(1);
-
-   _logger.Info("Command dispatcher ready. Handlers: open, close, modify, refresh, test");
+   _logger.Info("TradingBot ZMQ Connector UI ready");
    UpdatePanel();
    return INIT_SUCCEEDED;
 }
@@ -168,10 +159,7 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
 {
-   _connected = false;
-   EventKillTimer();
-   Sleep(100); // Let in-flight sends drain
-   Cleanup();
+   Cleanup(reason);
    Comment(""); // Clear chart comment
 }
 
@@ -230,6 +218,188 @@ void OnTrade()
 {
    if(!_connected) return;
    ProcessNewDeals();
+}
+
+//+------------------------------------------------------------------+
+//| Chart event function (dialog UI)                                 |
+//+------------------------------------------------------------------+
+void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
+{
+   if(g_dialog == NULL) return;
+   
+   // Forward all chart events to the dialog for processing
+   g_dialog.ChartEvent(id, lparam, dparam, sparam);
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Connection Management
+// ═══════════════════════════════════════════════════════════════════
+
+void Connect()
+{
+   if(_connected) return;
+   
+   if(_logger != NULL)
+      _logger.Info("Starting ZeroMQ connection...");
+
+   // Create dependencies (Dependency Injection)
+   _serializer = new JsonMessageSerializer(_logger);
+   _orderTracker = new OrderStateManager();
+   _network = new ZmqNetwork(_config, _serializer, _logger);
+   _tickRateLimiter = new TickRateLimiter(_config.maxTicksPerSecond);
+   _partialBarRateLimiter = new TickRateLimiter(1); // 1 partial bar/sec
+   _historyProvider = new HistoryProvider(_network, _logger, _config, _Symbol);
+
+   // Connect ZMQ
+   if(!_network.Start())
+   {
+      if(_logger != NULL)
+         _logger.Error("Failed to start ZMQ network");
+      Disconnect();
+      return;
+   }
+
+   // Query config from Python (account name, etc.)
+   string configuredAccount = _network.QueryConfig("account", 2000);
+   if(StringLen(configuredAccount) > 0)
+   {
+      if(_logger != NULL)
+         _logger.Info("Python specified account: " + configuredAccount);
+   }
+   else
+   {
+      configuredAccount = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+   }
+
+   // Send connect handshake
+   _network.SendConnect("metatrader5", _config.platformVersion, configuredAccount, _Symbol);
+   if(_logger != NULL)
+      _logger.Success("Connected to Python TradingBot via ZeroMQ");
+
+   // Restore order tracking from broker (crash recovery)
+   RestoreFromBroker();
+
+   // Report positions to Python (source of truth sync)
+   ReportPositionsToPython();
+
+   // Send historical data
+   _historyProvider.SendHistory();
+
+   // Setup command dispatcher
+   _dispatcher = new CommandDispatcher(_logger);
+
+   _handlerOpen = new OrderOpenHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
+   _handlerClose = new OrderCloseHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
+   _handlerModify = new OrderModifyHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
+   _handlerRefresh = new RefreshRequestHandler(_network, _logger, _historyProvider);
+   _handlerTest = new TestStartHandler(_network, _logger);
+
+   _dispatcher.Register(_handlerOpen);
+   _dispatcher.Register(_handlerClose);
+   _dispatcher.Register(_handlerModify);
+   _dispatcher.Register(_handlerRefresh);
+   _dispatcher.Register(_handlerTest);
+
+   // Start heartbeat timer (1-second granularity)
+   EventSetTimer(1);
+
+   _connected = true;
+   if(_logger != NULL)
+      _logger.Info("Command dispatcher ready. Handlers: open, close, modify, refresh, test");
+   UpdatePanel();
+}
+
+void Disconnect()
+{
+   if(!_connected && _network == NULL) return;
+   
+   if(_logger != NULL)
+      _logger.Info("Disconnecting...");
+
+   _connected = false;
+   EventKillTimer();
+   Sleep(100); // Let in-flight sends drain
+
+   // Handlers (must be deleted before dispatcher)
+   if(_handlerOpen != NULL)     { delete _handlerOpen; _handlerOpen = NULL; }
+   if(_handlerClose != NULL)    { delete _handlerClose; _handlerClose = NULL; }
+   if(_handlerModify != NULL)   { delete _handlerModify; _handlerModify = NULL; }
+   if(_handlerRefresh != NULL)  { delete _handlerRefresh; _handlerRefresh = NULL; }
+   if(_handlerTest != NULL)     { delete _handlerTest; _handlerTest = NULL; }
+
+   if(_dispatcher != NULL)      { delete _dispatcher; _dispatcher = NULL; }
+   if(_historyProvider != NULL) { delete _historyProvider; _historyProvider = NULL; }
+   if(_network != NULL)         { _network.Dispose(); delete _network; _network = NULL; }
+   if(_orderTracker != NULL)    { delete _orderTracker; _orderTracker = NULL; }
+   if(_serializer != NULL)      { delete _serializer; _serializer = NULL; }
+   if(_tickRateLimiter != NULL) { delete _tickRateLimiter; _tickRateLimiter = NULL; }
+   if(_partialBarRateLimiter != NULL) { delete _partialBarRateLimiter; _partialBarRateLimiter = NULL; }
+
+   // Reset stats
+   _ticksSent = 0;
+   _barsSent = 0;
+   _partialBarsSent = 0;
+   _commandsReceived = 0;
+   _heartbeatCounter = 0;
+   _seqNum = 0;
+   _lastBarTime = 0;
+   ArrayResize(_processedSeqNums, 0);
+   ArrayResize(_processedDeals, 0);
+   _pendingHistoryRefresh = false;
+
+   if(_logger != NULL)
+      _logger.Info("Disconnected from Python TradingBot");
+   UpdatePanel();
+}
+
+void ToggleConnection()
+{
+   if(_connected) Disconnect();
+   else Connect();
+}
+
+void TestConnection()
+{
+   if(!_connected || _network == NULL)
+   {
+      if(_logger != NULL)
+         _logger.Warning("Not connected. Click Connect first.");
+      return;
+   }
+   
+   if(_logger != NULL)
+      _logger.Info("=== TEST CONNECTION ===");
+   
+   bool success = _network.SendTestPingWithResponse(2000);
+   if(success)
+   {
+      if(_logger != NULL)
+         _logger.Success("TEST CONNECTION: PASSED - ZMQ REQ/REP working");
+   }
+   else
+   {
+      if(_logger != NULL)
+         _logger.Warning("TEST CONNECTION: FAILED - No response from Python");
+   }
+}
+
+void RunE2ETests()
+{
+   if(!_connected || _network == NULL)
+   {
+      if(_logger != NULL)
+         _logger.Warning("Not connected. Click Connect first.");
+      return;
+   }
+   
+   if(g_dialog != NULL)
+      g_dialog.SetButtonEnabled(2, false);
+   
+   E2ETestRunner runner(_network, _logger);
+   runner.RunAllScenarios();
+   
+   if(g_dialog != NULL)
+      g_dialog.SetButtonEnabled(2, true);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -511,40 +681,44 @@ void MarkDealProcessed(ulong ticket)
 
 void UpdatePanel()
 {
-   if(_logger == NULL) return;
+   string stats = "Ticks: " + IntegerToString(_ticksSent) +
+                  " | Bars: " + IntegerToString(_barsSent) +
+                  " | Partial: " + IntegerToString(_partialBarsSent) + "\n" +
+                  "Cmds: " + IntegerToString(_commandsReceived) +
+                  " | Trades: " + IntegerToString(_orderTracker != NULL ? _orderTracker.GetActiveCount() : 0);
 
-   string status = "Status: " + (_connected ? "CONNECTED" : "DISCONNECTED") + "\n" +
-                   "Symbol: " + _Symbol + "\n" +
-                   "Ticks: " + IntegerToString(_ticksSent) +
-                   " | Bars: " + IntegerToString(_barsSent) +
-                   " | Partial: " + IntegerToString(_partialBarsSent) + "\n" +
-                   "Cmds: " + IntegerToString(_commandsReceived) +
-                   " | Trades: " + IntegerToString(_orderTracker != NULL ? _orderTracker.GetActiveCount() : 0);
-
-   MetaTraderLogger *panelLogger = (MetaTraderLogger *)_logger;
-   panelLogger.UpdatePanel(status);
+   if(g_dialog != NULL)
+   {
+      g_dialog.UpdateStatus(_connected, stats);
+      g_dialog.SetButtonEnabled(1, _connected); // Test Connection
+      g_dialog.SetButtonEnabled(2, _connected); // Run E2E Tests
+   }
+   else if(_logger != NULL)
+   {
+      string status = "Status: " + (_connected ? "CONNECTED" : "DISCONNECTED") + "\n" +
+                      "Symbol: " + _Symbol + "\n" + stats;
+      MetaTraderLogger *panelLogger = (MetaTraderLogger *)_logger;
+      panelLogger.UpdatePanel(status);
+   }
 }
 
 // ═══════════════════════════════════════════════════════════════════
 // Cleanup
 // ═══════════════════════════════════════════════════════════════════
 
-void Cleanup()
+void Cleanup(const int reason = 0)
 {
-   // Handlers (must be deleted before dispatcher)
-   if(_handlerOpen != NULL)     { delete _handlerOpen; _handlerOpen = NULL; }
-   if(_handlerClose != NULL)    { delete _handlerClose; _handlerClose = NULL; }
-   if(_handlerModify != NULL)   { delete _handlerModify; _handlerModify = NULL; }
-   if(_handlerRefresh != NULL)  { delete _handlerRefresh; _handlerRefresh = NULL; }
-   if(_handlerTest != NULL)     { delete _handlerTest; _handlerTest = NULL; }
+   Disconnect();
 
-   if(_dispatcher != NULL)      { delete _dispatcher; _dispatcher = NULL; }
-   if(_historyProvider != NULL) { delete _historyProvider; _historyProvider = NULL; }
-   if(_network != NULL)         { _network.Dispose(); delete _network; _network = NULL; }
-   if(_orderTracker != NULL)    { delete _orderTracker; _orderTracker = NULL; }
-   if(_serializer != NULL)      { delete _serializer; _serializer = NULL; }
-   if(_logger != NULL)          { delete _logger; _logger = NULL; }
-   if(_config != NULL)          { delete _config; _config = NULL; }
-   if(_tickRateLimiter != NULL) { delete _tickRateLimiter; _tickRateLimiter = NULL; }
-   if(_partialBarRateLimiter != NULL) { delete _partialBarRateLimiter; _partialBarRateLimiter = NULL; }
+   if(g_dialog != NULL)
+   {
+      if(g_dialogCreated)
+         g_dialog.Destroy(reason);
+      delete g_dialog;
+      g_dialog = NULL;
+      g_dialogCreated = false;
+   }
+
+   if(_logger != NULL) { delete _logger; _logger = NULL; }
+   if(_config != NULL) { delete _config; _config = NULL; }
 }
