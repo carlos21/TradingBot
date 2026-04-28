@@ -11,23 +11,22 @@ import csv
 import os
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
-from typing import List, Dict
 
-
-from tests.fakes import (
-    DummySocketIO,
-    FakeLineRepository,
-    FakeTradeRepository,
-    FakeTradeExecutor,
-    FakeAnalyticsReporter,
-    FakeLogger,
+from src.prod_config import get_prod_candle_config, get_prod_strategy_options
+from src.repositories.line_trigger_state_repository import (
+    InMemoryLineTriggerStateRepository,
 )
-from src.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
 from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import StrategyOptions
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
-from src.prod_config import get_prod_strategy_options, get_prod_candle_config
-
+from tests.fakes import (
+    DummySocketIO,
+    FakeAnalyticsReporter,
+    FakeLineRepository,
+    FakeLogger,
+    FakeTradeExecutor,
+    FakeTradeRepository,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -38,7 +37,7 @@ MNQ_TZ = ZoneInfo("America/Chicago")
 MNQ_FMT = "%d/%m/%Y %H:%M:%S"
 
 
-def load_bars(start_epoch: float, end_epoch: float) -> List[Dict]:
+def load_bars(start_epoch: float, end_epoch: float) -> list[dict]:
     """Load 1m bars from the MNQ CSV for the given UTC epoch range."""
     bars = []
     with open(CSV_PATH, newline="") as f:

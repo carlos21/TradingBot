@@ -4,18 +4,22 @@ Provides both SQL and in-memory implementations for persisting trigger state.
 """
 
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any
 
 from src.dbexception import DBException
-from src.repositories.interfaces import LineTriggerStateRepository as ILineTriggerStateRepository
+from src.repositories.interfaces import (
+    LineTriggerStateRepository as ILineTriggerStateRepository,
+)
 
 
 class SQLiteLineTriggerStateRepository(ILineTriggerStateRepository):
     """SQL-based trigger state repository."""
 
-    def save(self, line_id: str, pair: str, state: Dict[str, Any]) -> None:
+    def save(self, line_id: str, pair: str, state: dict[str, Any]) -> None:
         import json
+
         from sqlalchemy import text
+
         from src.database.database import get_db_session
         now = datetime.now(timezone.utc)
         with get_db_session() as db:
@@ -42,48 +46,51 @@ class SQLiteLineTriggerStateRepository(ILineTriggerStateRepository):
                 db.commit()
             except Exception as e:
                 db.rollback()
-                raise DBException(message=str(e))
+                raise DBException(message=str(e)) from e
 
-    def load(self, line_id: str) -> Optional[Dict[str, Any]]:
+    def load(self, line_id: str) -> dict[str, Any] | None:
         """Load state for a single line."""
-        from src.database.database import get_db_session, LineTriggerState as _ORM
+        from src.database.database import LineTriggerState as _ORM
+        from src.database.database import get_db_session
         with get_db_session() as db:
             row = db.query(_ORM).filter_by(line_id=line_id).first()
             if row:
                 return dict(row.state_json or {})
             return None
 
-    def load_all(self, pair: str) -> Dict[str, Dict[str, Any]]:
-        from src.database.database import get_db_session, LineTriggerState as _ORM
+    def load_all(self, pair: str) -> dict[str, dict[str, Any]]:
+        from src.database.database import LineTriggerState as _ORM
+        from src.database.database import get_db_session
         with get_db_session() as db:
             rows = db.query(_ORM).filter_by(pair=pair).all()
             return {row.line_id: dict(row.state_json or {}) for row in rows}
 
     def delete(self, line_id: str) -> None:
-        from src.database.database import get_db_session, LineTriggerState as _ORM
+        from src.database.database import LineTriggerState as _ORM
+        from src.database.database import get_db_session
         with get_db_session() as db:
             db.query(_ORM).filter_by(line_id=line_id).delete()
             try:
                 db.commit()
             except Exception as e:
                 db.rollback()
-                raise DBException(message=str(e))
+                raise DBException(message=str(e)) from e
 
 
 class InMemoryLineTriggerStateRepository(ILineTriggerStateRepository):
     """No-op in-memory implementation for tests and backtest runs."""
 
     def __init__(self):
-        self._store: Dict[str, Dict[str, Any]] = {}
+        self._store: dict[str, dict[str, Any]] = {}
 
-    def save(self, line_id: str, pair: str, state: Dict[str, Any]) -> None:
+    def save(self, line_id: str, _pair: str, state: dict[str, Any]) -> None:
         self._store[line_id] = dict(state)
 
-    def load(self, line_id: str) -> Optional[Dict[str, Any]]:
+    def load(self, line_id: str) -> dict[str, Any] | None:
         """Load state for a single line."""
         return self._store.get(line_id)
 
-    def load_all(self, pair: str) -> Dict[str, Dict[str, Any]]:
+    def load_all(self, _pair: str) -> dict[str, dict[str, Any]]:
         return dict(self._store)
 
     def delete(self, line_id: str) -> None:

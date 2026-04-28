@@ -1,13 +1,14 @@
 # src/trade_manager.py
 
+import contextlib
 from datetime import datetime, timezone
-from typing import Optional
 from zoneinfo import ZoneInfo
-from src.repositories.trades_repository import TradeRepository
-from src.services.trade_executor import TradeExecutor, NoOpExecutor
-from src.notifier import Notifier, NoOpNotifier
+
 from src.analytics import AnalyticsReporter, NoOpReporter
 from src.financial_calc import FinancialCalc
+from src.notifier import NoOpNotifier, Notifier
+from src.repositories.trades_repository import TradeRepository
+from src.services.trade_executor import NoOpExecutor, TradeExecutor
 from src.types import Direction
 from src.utils.app_logger import ILogger
 
@@ -103,7 +104,7 @@ class TradeManager:
             all_trades = self.trade_repository.list_trades(self.pair)
             open_count = 0
             closed_count = 0
-            
+
             for t in all_trades:
                 if t.exit_time is None:
                     # Map TradeData back to the dict structure TradeManager expects
@@ -126,13 +127,13 @@ class TradeManager:
                     self.logger.info(f"[TradeManager] LOADED OPEN TRADE: ID={t.trade_id} Entry={t.entry_price} SL={t.stop_loss} TP={t.take_profit} EntryTime={t.entry_time}")
                 else:
                     closed_count += 1
-            
+
             self.logger.info(f"[TradeManager] DB scan complete: {open_count} open, {closed_count} closed, {len(all_trades)} total trades for {self.pair}")
             if open_count > 0:
                 self.logger.info(f"[TradeManager] Resumed {open_count} open trade(s) from DB.")
             else:
                 self.logger.info("[TradeManager] No open trades found in DB to resume.")
-                
+
         except Exception as e:
             self.logger.error(f"[TradeManager] Failed to load open trades on init: {e}")
             self.analytics.capture_exception(e, {"op": "load_open_trades"})
@@ -168,6 +169,7 @@ class TradeManager:
             hit_tp = False
 
             if is_long:
+                # NOTE: If both SL and TP are hit in the same bar, SL takes precedence.
                 if bar['low'] <= trade['stop_loss']:
                     hit_sl = True
                     self.logger.info(f"[TradeManager] LONG SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= SL {trade['stop_loss']:.2f}")
@@ -175,6 +177,7 @@ class TradeManager:
                     hit_tp = True
                     self.logger.info(f"[TradeManager] LONG TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= TP {trade['take_profit']:.2f}")
             elif is_short:
+                # NOTE: If both SL and TP are hit in the same bar, SL takes precedence.
                 if bar['high'] >= trade['stop_loss']:
                     hit_sl = True
                     self.logger.info(f"[TradeManager] SHORT SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= SL {trade['stop_loss']:.2f}")
@@ -193,7 +196,7 @@ class TradeManager:
             if risk <= 0:
                 risk = 1.0
             contracts = trade.get('contracts') or 1
-            
+
             result, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
                 direction=Direction.from_string(trade['type']),
                 entry_price=trade['entry'],
@@ -343,7 +346,7 @@ class TradeManager:
     def open_trade(self, pair: str, trade_type: str, entry_price: float,
                    stop_loss: float, take_profit: float,
                    risk: float, entry_time: float, rr_ratio: float = 5.0,
-                   source: Optional[str] = None):
+                   source: str | None = None):
         """
         Open a new trade with precomputed parameters.
         """
@@ -497,7 +500,7 @@ class TradeManager:
         self.socketio.emit('trade_close', payload)
 
         return payload
-    
+
     def close_remaining_trades_at_stream_end(self, final_close_price: float, final_time: float):
         """
         Close any remaining open trades at stream end (end of day/replay).
@@ -737,7 +740,8 @@ class TradeManager:
             self.trade_logger.log(trade_id, "CLOSE", "Persisted to DB")
 
         # Remove from in-memory lists
-        self.open_trades.remove(trade)
+        with contextlib.suppress(ValueError):
+            self.open_trades.remove(trade)
 
         # Emit to UI
         self.socketio.emit('trade_close', {

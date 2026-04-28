@@ -5,29 +5,31 @@ functions that previously lived in ``app.py``. It follows SRP by
 containing *only* the "how do I assemble the app?" logic.
 """
 from __future__ import annotations
+
 from datetime import datetime
-from typing import Optional, Tuple
 from zoneinfo import ZoneInfo
 
-from app_factory import create_app, Repositories, AppWiring
+from app_factory import AppWiring, Repositories, create_app
+from src.analytics import AnalyticsReporter, NoOpReporter, SentryReporter
 from src.config.models import AppConfig
-from src.data_sources.csv_datasource import CSVDataSource
 from src.data_sources.combined_datasource import CombinedDataSource
+from src.data_sources.csv_datasource import CSVDataSource
 from src.database import database
-from src.notifier import Notifier, TelegramNotifier, NoOpNotifier
-from src.analytics import AnalyticsReporter, SentryReporter, NoOpReporter
-from src.repositories.lines_repository import SQLLineRepository
-from src.repositories.trades_repository import SQLTradeRepository
-from src.repositories.line_trigger_state_repository import SQLiteLineTriggerStateRepository
-from src.utils.app_logger import FileAndConsoleLogger
+from src.notifier import NoOpNotifier, Notifier, TelegramNotifier
 from src.prod_config import (
-    get_prod_strategy_numbers,
     get_prod_candle_config,
+    get_prod_strategy_numbers,
     get_prod_strategy_options,
 )
+from src.repositories.line_trigger_state_repository import (
+    SQLiteLineTriggerStateRepository,
+)
+from src.repositories.lines_repository import SQLLineRepository
+from src.repositories.trades_repository import SQLTradeRepository
+from src.utils.app_logger import FileAndConsoleLogger
 
 
-def _parse_input_to_epoch(date_str: str, tz_name: str) -> Optional[int]:
+def _parse_input_to_epoch(date_str: str, tz_name: str) -> int | None:
     """Parse a date string using the specified timezone, return UTC epoch."""
     if not date_str:
         return None
@@ -61,7 +63,7 @@ class AppBuilder:
     def __init__(self, config: AppConfig):
         self.config = config
 
-    def build(self) -> Tuple[AppWiring, Optional[CombinedDataSource]]:
+    def build(self) -> tuple[AppWiring, CombinedDataSource | None]:
         if self.config.mode == "live":
             return self._build_live()
         return self._build_backtest(), None
@@ -129,7 +131,7 @@ class AppBuilder:
     # ------------------------------------------------------------------
     # Live
     # ------------------------------------------------------------------
-    def _build_live(self) -> Tuple[AppWiring, CombinedDataSource]:
+    def _build_live(self) -> tuple[AppWiring, CombinedDataSource]:
         from src.gateway import create_live_components
 
         cfg = self.config

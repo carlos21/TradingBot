@@ -1,10 +1,10 @@
 """Tests for src.config.builder — application assembly from AppConfig."""
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.config.models import AppConfig
 from src.config.builder import AppBuilder
+from src.config.models import AppConfig
 
 
 class TestAppBuilderBacktest:
@@ -81,7 +81,7 @@ class TestAppBuilderLive:
              patch("src.config.builder.SQLLineRepository"), \
              patch("src.config.builder.SQLTradeRepository"), \
              patch("src.config.builder.SQLiteLineTriggerStateRepository"), \
-             patch("src.config.builder.create_app") as mock_create_app, \
+             patch("src.config.builder.create_app"), \
              patch("src.config.builder._build_notifier"), \
              patch("src.config.builder._build_analytics"), \
              patch("src.config.builder.FileAndConsoleLogger"), \

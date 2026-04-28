@@ -225,7 +225,7 @@ def main():
     captured_trades = []
     original_store = strategy._store_and_emit_open
     def mock_store(trade):
-        print(f"✅ Trade Triggered!")
+        print("✅ Trade Triggered!")
         captured_trades.append(trade)
         original_store(trade)
     

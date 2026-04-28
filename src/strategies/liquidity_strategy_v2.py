@@ -1,14 +1,19 @@
 # (path: src/strategies/liquidity_strategy_v2.py)
 
 from __future__ import annotations
-from typing import Any, Dict, List, Optional
+
 from collections import deque
-from src.services.trade_manager import TradeManager
-from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy, StrategyOptions
+from typing import Any
+
 from src.financial_calc import FinancialCalc
-from src.strategies.entry_context import EntryContext, EntryTrigger
+from src.services.trade_manager import TradeManager
+from src.strategies.base_liquidity_strategy import (
+    BaseLiquidityStrategy,
+    StrategyOptions,
+)
+from src.strategies.entry_context import EntryContext
 from src.strategies.strategy_config import CandleConfig
-from src.strategies.triggers import _calculate_tsi_series, RESCUE_TSI_TIMEFRAME
+from src.strategies.triggers import RESCUE_TSI_TIMEFRAME, _calculate_tsi_series
 from src.utils.app_logger import ILogger
 
 
@@ -24,15 +29,15 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         extra_sl_space: float,
         point_value: float,
         account_balance: float,
-        risk_per_trade: Optional[float] = None,
-        risk_pct_per_trade: Optional[float] = None,
-        fixed_stop_loss: Optional[float] = None,
-        max_stop_loss: Optional[float] = None,
-        timeframes: List[str] = None,
-        options: Optional[StrategyOptions] = None,
+        risk_per_trade: float | None = None,
+        risk_pct_per_trade: float | None = None,
+        fixed_stop_loss: float | None = None,
+        max_stop_loss: float | None = None,
+        timeframes: list[str] = None,
+        options: StrategyOptions | None = None,
         htf_fetcher=None,
-        candle_config: Optional[CandleConfig] = None,
-        sl_levels: Optional[List[float]] = None,
+        candle_config: CandleConfig | None = None,
+        sl_levels: list[float] | None = None,
         sl_level_tolerance: float = 5.0,
         min_cross_depth: float = 0.0,
         rr_ratio: float = 5.0,
@@ -45,8 +50,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         logger: ILogger = None,
         decision_log_repository=None,
     ):
-        self.timeframes = timeframes or ["5m"]
-        
+        self.timeframes = list(timeframes) if timeframes else ["5m"]
+
         # Internal: Ensure we always aggregate required timeframes.
         # 15m: velocity scoring; RESCUE_TSI_TIMEFRAME (5m): rescue logic;
         # 1m / 3m: velocity-adaptive trigger (slow / moderate regimes).
@@ -89,7 +94,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         self.candle_config = candle_config
         self._tf_aggregators = {}
         self._tf_histories = {}
-        
+
         self.decision_logs = []
 
         for tf in self._internal_timeframes:
@@ -119,7 +124,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 self._tf_histories[tf].clear()
             self.logger.info("[StrategyV2] Internal state fully reset.")
 
-    def _reset_trigger_state(self, line_state: Dict[str, Any]):
+    def _reset_trigger_state(self, line_state: dict[str, Any]):
         """Reset trigger-specific state only, preserving direction and extreme."""
         if "d5_stage" in line_state:
             line_state["d5_stage"] = 0
@@ -133,7 +138,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         line_state.pop("vat_regime", None)
         line_state.pop("vat_velocity", None)
 
-    def _reset_line_state(self, line_state: Dict[str, Any]):
+    def _reset_line_state(self, line_state: dict[str, Any]):
         super()._reset_line_state(line_state)
         self._reset_trigger_state(line_state)
 
@@ -141,14 +146,14 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         from src.utils.bar_aggregator import BarAggregator
         return BarAggregator.parse_timeframe(tf)
 
-    def get_history(self, tf: str, count: int) -> List[Dict[str, Any]]:
+    def get_history(self, tf: str, count: int) -> list[dict[str, Any]]:
         hist = self._tf_histories.get(tf, [])
         return list(hist)[-count:] if hist else []
 
     def log_decision(self, bar_time: int, tf: str, line_id: str, event: str,
                      details: str = "", *, direction: str = None,
                      trigger_name: str = None, filter_name: str = None,
-                     reason: str = None, extra: dict = None):
+                     reason: str = None, _extra: dict = None):
         entry = {
             "time": bar_time,
             "tf": tf,
@@ -199,7 +204,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 parts.append(details)
             self.logger.info(" | ".join(parts))
 
-    def on_raw_bar(self, bar: Dict[str, Any]):
+    def on_raw_bar(self, bar: dict[str, Any]):
         with self.lock:
             self._check_open_trades(bar)
 
@@ -208,7 +213,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
             if (self.options.reentry_after_sl or self.options.reentry_only) and self._reentry_opportunities:
                 self._check_reentry_opportunities(bar)
-            
+
             current_price = bar['close']
             bar_time = bar['time']
             lines_to_remove = set()
@@ -274,7 +279,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
                                 f"Pending long @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
                                 direction="long", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
-                
+
                 elif line['direction'] == 'short':
                     if bar['high'] > line['extreme']:
                         line['extreme'] = bar['high']
@@ -299,21 +304,24 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
                         lines_to_remove.add(sid)
 
-            short_lines = [l for l in self.strategy_lines.values() if l['direction'] == 'short']
-            long_lines  = [l for l in self.strategy_lines.values() if l['direction'] == 'long']
+            short_lines = [line for line in self.strategy_lines.values() if line['direction'] == 'short']
+            long_lines  = [line for line in self.strategy_lines.values() if line['direction'] == 'long']
 
             for sid, line in self.strategy_lines.items():
-                if sid in lines_to_remove: continue
+                if sid in lines_to_remove:
+                    continue
                 if line['direction'] == 'short':
                     for other in short_lines:
-                        if other is line: continue
+                        if other is line:
+                            continue
                         if line['level'] < other['level'] <= bar['high']:
                             self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit higher resistance {other['level']}")
                             lines_to_remove.add(sid)
                             break
                 elif line['direction'] == 'long':
                     for other in long_lines:
-                        if other is line: continue
+                        if other is line:
+                            continue
                         if line['level'] > other['level'] >= bar['low']:
                             self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit lower support {other['level']}")
                             lines_to_remove.add(sid)
@@ -339,7 +347,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             else:
                 if state["buf"]:
                     agg_bar = self._aggregate_bars(state["buf"], state["start"], window_secs)
-                    agg_bar['tf'] = tf 
+                    agg_bar['tf'] = tf
                     self._tf_histories[tf].append(agg_bar)
                     self._on_strategy_bar(agg_bar)
 
@@ -348,7 +356,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
         self._persist_all_line_states()
 
-    def _on_strategy_bar(self, bar: Dict[str, Any]):
+    def _on_strategy_bar(self, bar: dict[str, Any]):
         with self.lock:
             # Calculate and Emit TSI for Visualization ---
             tf = bar.get('tf')
@@ -356,7 +364,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 history = self.get_history(tf, 100)
                 closes = [b['close'] for b in history]
                 tsi_vals, sig_vals = _calculate_tsi_series(closes, 6, 13, 4)
-                
+
                 if tsi_vals and sig_vals:
                     # --- NEW: Detect Crossover ---
                     cross_type = None
@@ -378,7 +386,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         'time': bar['time'],
                         'tsi': tsi_vals[-1],
                         'signal': sig_vals[-1],
-                        'cross_type': cross_type 
+                        'cross_type': cross_type
                     })
 
             for sid, line in list(self.strategy_lines.items()):
@@ -386,7 +394,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     continue
 
                 opened = False
-                proposed_ctx: Optional[EntryContext] = None
+                proposed_ctx: EntryContext | None = None
                 trigger_name = "None"
 
                 for trig in self.triggers:
@@ -394,7 +402,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     if proposed_ctx is not None:
                         trigger_name = trig.__name__
                         break
-                
+
                 if proposed_ctx is None:
                     continue
 
@@ -444,8 +452,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 class LiveLiquidityStrategyV2(LiquidityStrategyV2):
     """Live mode variant — NinjaTrader handles all SL/TP/session-end closes."""
 
-    def _check_open_trades(self, bar: Dict[str, Any]):
+    def _check_open_trades(self, bar: dict[str, Any]):
         pass  # NinjaTrader is source of truth for SL/TP
 
-    def _check_session_end_close(self, bar: Dict[str, Any]):
+    def _check_session_end_close(self, bar: dict[str, Any]):
         pass  # Wiring layer sends close commands to NinjaTrader

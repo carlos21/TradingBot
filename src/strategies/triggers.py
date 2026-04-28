@@ -1,10 +1,15 @@
 # (path: src/strategies/triggers.py)
+from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional, List, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
 from src.strategies.entry_context import EntryContext, EntryTrigger
 from src.types import Direction
+
+if TYPE_CHECKING:
+    from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 
 
 # ---------------------------------------------------------------------------
@@ -29,13 +34,13 @@ class TriggerCondition(Protocol):
 
     def check(
         self,
-        strategy: "LiquidityStrategyV2",
+        strategy: LiquidityStrategyV2,
         line_id: Any,
-        line: Dict[str, Any],
-        bar: Dict[str, Any],
+        line: dict[str, Any],
+        bar: dict[str, Any],
         lvl: float,
         dir_: Direction,
-    ) -> Optional[EntryContext]: ...
+    ) -> EntryContext | None: ...
 
     def describe(self) -> str: ...
 
@@ -68,7 +73,7 @@ class TsiCrossCondition:
 
     # --- TriggerCondition implementation ---
 
-    def check(self, strategy, line_id, line, bar, lvl, dir_) -> Optional[EntryContext]:
+    def check(self, strategy, line_id, line, bar, lvl, dir_) -> EntryContext | None:
         if bar.get('tf') != self.timeframe:
             return None
         if self.count == 1:
@@ -99,27 +104,27 @@ class VelocityTriggerConfig:
     fast_threshold: float = 5.0   # pts/min — above this is fast
     slow_threshold: float = 2.0   # pts/min — below this is slow; between = moderate
     lookback: int = 30            # number of 1m bars to measure over
-    fast:     List[TriggerCondition] = field(default_factory=lambda: [TsiCrossCondition("5m", 2)])
-    moderate: List[TriggerCondition] = field(default_factory=lambda: [TsiCrossCondition("3m", 1)])
-    slow:     List[TriggerCondition] = field(default_factory=lambda: [TsiCrossCondition("1m", 1)])
+    fast:     list[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("5m", 2)])
+    moderate: list[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("3m", 1)])
+    slow:     list[TsiCrossCondition] = field(default_factory=lambda: [TsiCrossCondition("1m", 1)])
     # After the 1st TSI cross in a double-cross setup, if price moves this many points
     # away from the line (in the trade direction), the setup is invalidated and the
     # line is removed. 0.0 = disabled.
     post_cross1_max_dist: float = 0.0
 
-def trigger_with_timeframes(trigger_func: EntryTrigger, timeframes: List[str]) -> EntryTrigger:
+def trigger_with_timeframes(trigger_func: EntryTrigger, timeframes: list[str]) -> EntryTrigger:
     """
     Returns a new trigger that only executes if the bar's timeframe is in the allowed list.
     """
-    def wrapper(strategy, line_id, line, bar) -> Optional[EntryContext]:
+    def wrapper(strategy, line_id, line, bar) -> EntryContext | None:
         if bar.get('tf') not in timeframes:
             return None
         return trigger_func(strategy, line_id, line, bar)
-    
+
     wrapper.__name__ = trigger_func.__name__
     return wrapper
 
-def _calculate_velocity_score(history_1m: List[Dict[str, Any]], lookback: int) -> float:
+def _calculate_velocity_score(history_1m: list[dict[str, Any]], lookback: int) -> float:
     """
     Calculates velocity as points-per-minute using 1m bars.
 
@@ -142,26 +147,26 @@ def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_
     Handles the 'Rescue' logic:
     1. Wait for TSI to Reset (go against trade direction).
     2. Wait for TSI to Cross back (in trade direction).
-    
+
     Updates line["tsi_reset_occurred"] state.
     Returns EntryContext if rescue triggers, else None.
     """
     rescue_tf = RESCUE_TSI_TIMEFRAME
     hist = strategy.get_history(rescue_tf, 50)
-    
+
     if len(hist) < 30:
         return None
 
     closes = [b['close'] for b in hist]
     tsi_vals, sig_vals = _calculate_tsi_series(closes, 6, 13, 4)
-    
+
     if len(tsi_vals) < 2:
         return None
 
     # Check the latest closed bar
     t_curr, t_prev = tsi_vals[-1], tsi_vals[-2]
     s_curr, s_prev = sig_vals[-1], sig_vals[-2]
-    
+
     # 1. CHECK FOR RESET
     # If we haven't reset yet, check if the lines are currently in the "bad" direction
     if not line.get("tsi_reset_occurred", False):
@@ -169,49 +174,47 @@ def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_
             # Reset condition: Blue is BELOW Orange (Bearish state)
             if t_curr < s_curr:
                 line["tsi_reset_occurred"] = True
-                strategy.log_decision(bar['time'], tf, line_id, "TSI_RESET", 
-                    f"TSI Reset detected (Blue < Orange). Ready for Rescue Cross.")
-        elif dir_ == Direction.SHORT:
+                strategy.log_decision(bar['time'], tf, line_id, "TSI_RESET",
+                    "TSI Reset detected (Blue < Orange). Ready for Rescue Cross.")
+        elif dir_ == Direction.SHORT and t_curr > s_curr:
             # Reset condition: Blue is ABOVE Orange (Bullish state)
-            if t_curr > s_curr:
                 line["tsi_reset_occurred"] = True
-                strategy.log_decision(bar['time'], tf, line_id, "TSI_RESET", 
-                    f"TSI Reset detected (Blue > Orange). Ready for Rescue Cross.")
+                strategy.log_decision(bar['time'], tf, line_id, "TSI_RESET",
+                    "TSI Reset detected (Blue > Orange). Ready for Rescue Cross.")
 
     # 2. CHECK FOR TRIGGER (Only if Reset has occurred)
     if line.get("tsi_reset_occurred", False):
         rescue = False
         if dir_ == Direction.LONG:
             # Rescue Long: Blue crosses ABOVE Orange
-            if t_prev <= s_prev and t_curr > s_curr: 
+            if t_prev <= s_prev and t_curr > s_curr:
                 rescue = True
-        elif dir_ == Direction.SHORT:
+        elif dir_ == Direction.SHORT and t_prev >= s_prev and t_curr < s_curr:
             # Rescue Short: Blue crosses BELOW Orange
-            if t_prev >= s_prev and t_curr < s_curr: 
                 rescue = True
-        
+
         if rescue:
-            strategy.log_decision(bar['time'], tf, line_id, f"TSI_{rescue_tf}_RESCUE", 
+            strategy.log_decision(bar['time'], tf, line_id, f"TSI_{rescue_tf}_RESCUE",
                 f"{rescue_tf} TSI Rescue Cross detected. Triggering Entry.")
-            
+
             # Reset internal state
             line["tsi_stage"] = 0
             line["tsi_ref_price"] = 0.0
             line["tsi_reset_occurred"] = False
-            
+
             return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
-    
+
     return None
 
 def tsi_cross_trigger(
-    strategy: "LiquidityStrategyV2",
+    strategy: LiquidityStrategyV2,
     line_id: Any,
-    line: Dict[str, Any],
-    bar: Dict[str, Any],
-) -> Optional[EntryContext]:
+    line: dict[str, Any],
+    bar: dict[str, Any],
+) -> EntryContext | None:
     """
     TSI Trigger with "Fast Move" Protection.
-    
+
     Stages:
     0: Waiting for initial TSI Cross.
     1: Protection Mode (Fast Move Detected).
@@ -221,14 +224,15 @@ def tsi_cross_trigger(
     -1: Invalidated/Dead.
     """
     dir_str = line.get("direction")
-    if dir_str is None: return None
+    if dir_str is None:
+        return None
     dir_ = Direction.from_string(dir_str)
 
     lvl = line["level"]
-    
+
     if "tsi_stage" not in line:
-        line["tsi_stage"] = 0       
-        line["tsi_ref_price"] = 0.0 
+        line["tsi_stage"] = 0
+        line["tsi_ref_price"] = 0.0
         line["tsi_reset_occurred"] = False
 
     # If line is dead, ignore
@@ -240,21 +244,25 @@ def tsi_cross_trigger(
     if interaction_ts is not None and interaction_ts > bar['time']:
         return None
     if dir_ == Direction.LONG:
-        if line['extreme'] > lvl: return None
-    elif dir_ == Direction.SHORT:
-        if line['extreme'] < lvl: return None
+        if line['extreme'] > lvl:
+            return None
+    elif dir_ == Direction.SHORT and line['extreme'] < lvl:
+        return None
 
     tf = bar.get('tf')
-    if not tf: return None
+    if not tf:
+        return None
 
     # 2. Fetch History & Calculate TSI (Current Timeframe)
-    history = strategy.get_history(tf, 100) 
-    if len(history) < 30: return None
+    history = strategy.get_history(tf, 100)
+    if len(history) < 30:
+        return None
 
     closes = [b['close'] for b in history]
     tsi_line, sig_line = _calculate_tsi_series(closes, 6, 13, 4)
 
-    if len(tsi_line) < 2 or len(sig_line) < 2: return None
+    if len(tsi_line) < 2 or len(sig_line) < 2:
+        return None
 
     curr_tsi = tsi_line[-1]
     curr_sig = sig_line[-1]
@@ -266,27 +274,28 @@ def tsi_cross_trigger(
     # STAGE 0: Waiting for the Cross
     if line["tsi_stage"] == 0:
         has_crossed = False
-        
+
         if dir_ == Direction.LONG:
-            if (prev_tsi <= prev_sig) and (curr_tsi > curr_sig): has_crossed = True
-        elif dir_ == Direction.SHORT:
-            if (prev_tsi >= prev_sig) and (curr_tsi < curr_sig): has_crossed = True
-        
+            if (prev_tsi <= prev_sig) and (curr_tsi > curr_sig):
+                has_crossed = True
+        elif dir_ == Direction.SHORT and (prev_tsi >= prev_sig) and (curr_tsi < curr_sig):
+                has_crossed = True
+
         if has_crossed:
             # Fast Move Check (1m bars)
             hist_1m = strategy.get_history("1m", FAST_MOVE_LOOKBACK + 5)
             velocity_score = _calculate_velocity_score(hist_1m, FAST_MOVE_LOOKBACK)
-            
+
             is_fast = False
-            if dir_ == Direction.LONG and velocity_score < -FAST_MOVE_THRESHOLD: is_fast = True
-            elif dir_ == Direction.SHORT and velocity_score > FAST_MOVE_THRESHOLD: is_fast = True
+            if dir_ == Direction.LONG and velocity_score < -FAST_MOVE_THRESHOLD or dir_ == Direction.SHORT and velocity_score > FAST_MOVE_THRESHOLD:
+                is_fast = True
 
             if is_fast:
                 line["tsi_stage"] = 1
                 line["tsi_ref_price"] = bar["low"] if dir_ == Direction.LONG else bar["high"]
-                line["tsi_reset_occurred"] = False 
-                
-                strategy.log_decision(bar['time'], tf, line_id, "TSI_FAST", 
+                line["tsi_reset_occurred"] = False
+
+                strategy.log_decision(bar['time'], tf, line_id, "TSI_FAST",
                     f"Fast Move ({velocity_score:.2f}). Protection Mode ON. Wait for Sweep of {line['tsi_ref_price']}.")
                 return None
             else:
@@ -294,16 +303,14 @@ def tsi_cross_trigger(
 
     # STAGE 1: Protection Mode (Wait for Sweep)
     elif line["tsi_stage"] == 1:
-        
+
         # A) CHECK INVALIDATION
         invalidated = False
-        if dir_ == Direction.LONG:
-            if bar['close'] < (lvl - PROTECTION_INVALIDATION_DIST): invalidated = True
-        elif dir_ == Direction.SHORT:
-            if bar['close'] > (lvl + PROTECTION_INVALIDATION_DIST): invalidated = True
-        
+        if (dir_ == Direction.LONG and bar['close'] < (lvl - PROTECTION_INVALIDATION_DIST)) or (dir_ == Direction.SHORT and bar['close'] > (lvl + PROTECTION_INVALIDATION_DIST)):
+            invalidated = True
+
         if invalidated:
-            strategy.log_decision(bar['time'], tf, line_id, "TSI_INVALID", 
+            strategy.log_decision(bar['time'], tf, line_id, "TSI_INVALID",
                 f"Price moved > {PROTECTION_INVALIDATION_DIST}pts against trade. Line Invalidated.")
             line["tsi_stage"] = -1
             return None
@@ -311,37 +318,40 @@ def tsi_cross_trigger(
         # B) CHECK SWEEP
         ref = line["tsi_ref_price"]
         swept = False
-        
+
         if dir_ == Direction.LONG:
-            if bar["low"] < ref: swept = True
-        elif dir_ == Direction.SHORT:
-            if bar["high"] > ref: swept = True
-            
+            if bar["low"] < ref:
+                swept = True
+        elif dir_ == Direction.SHORT and bar["high"] > ref:
+            swept = True
+
         if swept:
             line["tsi_stage"] = 2
             line["tsi_reset_occurred"] = False # Ensure reset logic starts fresh
-            strategy.log_decision(bar['time'], tf, line_id, "TSI_SWEEP", 
+            strategy.log_decision(bar['time'], tf, line_id, "TSI_SWEEP",
                 f"Swept previous extreme {ref}. Now waiting for {RESCUE_TSI_TIMEFRAME} TSI Rescue.")
 
     # STAGE 2: Post-Sweep (Wait for TSI Rescue)
     elif line["tsi_stage"] == 2:
-        
+
         # A) CHECK INVALIDATION (Still applies)
         invalidated = False
         if dir_ == Direction.LONG:
-            if bar['close'] < (lvl - PROTECTION_INVALIDATION_DIST): invalidated = True
-        elif dir_ == Direction.SHORT:
-            if bar['close'] > (lvl + PROTECTION_INVALIDATION_DIST): invalidated = True
-        
+            if bar['close'] < (lvl - PROTECTION_INVALIDATION_DIST):
+                invalidated = True
+        elif dir_ == Direction.SHORT and bar['close'] > (lvl + PROTECTION_INVALIDATION_DIST):
+            invalidated = True
+
         if invalidated:
-            strategy.log_decision(bar['time'], tf, line_id, "TSI_INVALID", 
+            strategy.log_decision(bar['time'], tf, line_id, "TSI_INVALID",
                 f"Price moved > {PROTECTION_INVALIDATION_DIST}pts against trade. Line Invalidated.")
             line["tsi_stage"] = -1
             return None
 
         # B) CHECK RESCUE
         rescue_ctx = _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig, tf)
-        if rescue_ctx: return rescue_ctx
+        if rescue_ctx:
+            return rescue_ctx
 
     return None
 
@@ -483,11 +493,11 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
                 cond.max_dist = config.post_cross1_max_dist
 
     def trigger(
-        strategy: "LiquidityStrategyV2",
+        strategy: LiquidityStrategyV2,
         line_id: Any,
-        line: Dict[str, Any],
-        bar: Dict[str, Any],
-    ) -> Optional[EntryContext]:
+        line: dict[str, Any],
+        bar: dict[str, Any],
+    ) -> EntryContext | None:
         dir_str = line.get("direction")
         if dir_str is None:
             return None
@@ -559,7 +569,7 @@ velocity_adaptive_tsi_trigger = make_velocity_adaptive_tsi_trigger()
 
 def _build_entry_context(
     strategy, line_id, line, bar, lvl, dir_, event: str, details: str
-) -> Optional[EntryContext]:
+) -> EntryContext | None:
     """Generic EntryContext builder used by both cross and divergence triggers."""
     entry_price = bar['close']
     # Prevent entries too far from the line level (entry price farther than max SL tier)
@@ -601,7 +611,7 @@ def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val
 # Divergence detection helpers
 # ---------------------------------------------------------------------------
 
-def _find_swing_lows(values: List[float], window: int) -> List[tuple]:
+def _find_swing_lows(values: list[float], window: int) -> list[tuple]:
     """Return list of (index, value) for every swing low.
     A swing low at index i satisfies values[i] < values[i-j] and values[i] < values[i+j]
     for all j in 1..window.
@@ -616,7 +626,7 @@ def _find_swing_lows(values: List[float], window: int) -> List[tuple]:
     return swings
 
 
-def _find_swing_highs(values: List[float], window: int) -> List[tuple]:
+def _find_swing_highs(values: list[float], window: int) -> list[tuple]:
     """Return list of (index, value) for every swing high.
     A swing high at index i satisfies values[i] > values[i-j] and values[i] > values[i+j]
     for all j in 1..window.
@@ -632,13 +642,13 @@ def _find_swing_highs(values: List[float], window: int) -> List[tuple]:
 
 
 def _detect_divergence(
-    lows: List[float],
-    highs: List[float],
-    tsi_vals: List[float],
+    lows: list[float],
+    highs: list[float],
+    tsi_vals: list[float],
     dir_: Direction,
     swing_window: int,
-    allowed_types: Optional[List[DivergenceType]] = None,
-) -> Optional[DivergenceType]:
+    allowed_types: list[DivergenceType] | None = None,
+) -> DivergenceType | None:
     """Detect the most recent applicable divergence for the given direction.
 
     For LONG: checks bullish and hidden-bullish using swing lows.
@@ -697,9 +707,9 @@ class TsiDivergenceCondition:
     timeframe: str
     lookback: int = 30          # bars to scan for swing points
     swing_window: int = 3       # bars on each side to qualify as a swing high/low
-    allowed_types: Optional[List[DivergenceType]] = None  # None = all applicable for direction
+    allowed_types: list[DivergenceType] | None = None  # None = all applicable for direction
 
-    def check(self, strategy, line_id, line, bar, lvl, dir_) -> Optional[EntryContext]:
+    def check(self, strategy, line_id, line, bar, lvl, dir_) -> EntryContext | None:
         if bar.get('tf') != self.timeframe:
             return None
 
@@ -732,8 +742,9 @@ class TsiDivergenceCondition:
 
 # --- HELPER FUNCTIONS FOR TSI ---
 
-def _calculate_ema(values: List[float], length: int) -> List[float]:
-    if not values: return []
+def _calculate_ema(values: list[float], length: int) -> list[float]:
+    if not values:
+        return []
     alpha = 2 / (length + 1)
     ema_values = [values[0]]
     for price in values[1:]:
@@ -742,8 +753,9 @@ def _calculate_ema(values: List[float], length: int) -> List[float]:
         ema_values.append(new_ema)
     return ema_values
 
-def _calculate_tsi_series(closes: List[float], long_len: int, short_len: int, sig_len: int):
-    if len(closes) < long_len + short_len + sig_len: return [], []
+def _calculate_tsi_series(closes: list[float], long_len: int, short_len: int, sig_len: int):
+    if len(closes) < long_len + short_len + sig_len:
+        return [], []
     pc = [0.0] * len(closes)
     abs_pc = [0.0] * len(closes)
     for i in range(1, len(closes)):
@@ -753,31 +765,33 @@ def _calculate_tsi_series(closes: List[float], long_len: int, short_len: int, si
     ema_pc_2  = _calculate_ema(_calculate_ema(pc, long_len), short_len)
     ema_apc_2 = _calculate_ema(_calculate_ema(abs_pc, long_len), short_len)
     tsi_values = []
-    for val, abs_val in zip(ema_pc_2, ema_apc_2):
+    for val, abs_val in zip(ema_pc_2, ema_apc_2, strict=False):
         tsi_values.append(100.0 * (val / abs_val) if abs_val != 0 else 0.0)
     signal_values = _calculate_ema(tsi_values, sig_len)
     return tsi_values, signal_values
 
 def wick_near_line_trigger(
-    strategy: "LiquidityStrategyV2",
+    strategy: LiquidityStrategyV2,
     line_id: Any,
-    line: Dict[str, Any],
-    bar: Dict[str, Any],
-) -> Optional[EntryContext]:
-    
+    line: dict[str, Any],
+    bar: dict[str, Any],
+) -> EntryContext | None:
+
     dir_str = line.get("direction")
-    if dir_str is None: return None
+    if dir_str is None:
+        return None
     dir_ = Direction.from_string(dir_str) if isinstance(dir_str, str) else dir_str
 
     lvl = line["level"]
-    
+
     # 1. Check for Line Interaction (Touch)
     if not (bar["high"] >= lvl >= bar["low"]):
         return None
 
-    o, h, l, c = bar["open"], bar["high"], bar["low"], bar["close"]
-    rng = h - l
-    if rng <= 0: return None
+    o, h, low, c = bar["open"], bar["high"], bar["low"], bar["close"]
+    rng = h - low
+    if rng <= 0:
+        return None
 
     body = abs(c - o)
     body_ratio = body / rng
@@ -786,13 +800,13 @@ def wick_near_line_trigger(
     # 2. Check Body Size
     if body_ratio > cfg.small_body_max_ratio:
         strategy.log_decision(
-            bar['time'], bar.get('tf'), line_id, "WICK_FAIL", 
+            bar['time'], bar.get('tf'), line_id, "WICK_FAIL",
             f"Body too big: {body_ratio:.2f} > Max {cfg.small_body_max_ratio}"
         )
         return None
 
     upper_wick = h - max(o, c)
-    lower_wick = min(o, c) - l
+    lower_wick = min(o, c) - low
     upper_ratio = upper_wick / rng
     lower_ratio = lower_wick / rng
 
@@ -800,16 +814,16 @@ def wick_near_line_trigger(
     if dir_ == Direction.LONG:
         if lower_ratio < cfg.wick_min_ratio:
             strategy.log_decision(
-                bar['time'], bar.get('tf'), line_id, "WICK_FAIL", 
+                bar['time'], bar.get('tf'), line_id, "WICK_FAIL",
                 f"Long wick too small: {lower_ratio:.2f} < Min {cfg.wick_min_ratio}"
             )
             return None
-        true_extreme = min(line['extreme'], l)
+        true_extreme = min(line['extreme'], low)
         cross_depth = max(0.0, lvl - true_extreme)
     else:
         if upper_ratio < cfg.wick_min_ratio:
             strategy.log_decision(
-                bar['time'], bar.get('tf'), line_id, "WICK_FAIL", 
+                bar['time'], bar.get('tf'), line_id, "WICK_FAIL",
                 f"Short wick too small: {upper_ratio:.2f} < Min {cfg.wick_min_ratio}"
             )
             return None
@@ -823,28 +837,31 @@ def wick_near_line_trigger(
         level=lvl,
         bar=bar,
         close=c,
-        low=l,
+        low=low,
         high=h,
         extreme=true_extreme,
         cross_depth=cross_depth,
     )
 
 def three_candle_reversal_trigger(
-    strategy: "LiquidityStrategyV2",
+    strategy: LiquidityStrategyV2,
     line_id: Any,
-    line: Dict[str, Any],
-    bar: Dict[str, Any],
-) -> Optional[EntryContext]:
-    
+    line: dict[str, Any],
+    bar: dict[str, Any],
+) -> EntryContext | None:
+
     dir_str = line.get("direction")
-    if dir_str is None: return None
+    if dir_str is None:
+        return None
     dir_ = Direction.from_string(dir_str)
 
     tf = bar.get('tf')
-    if not tf: return None
+    if not tf:
+        return None
 
     history = strategy.get_history(tf, 3)
-    if len(history) < 3: return None
+    if len(history) < 3:
+        return None
 
     c1, c2, c3 = history[0], history[1], history[2]
     lvl = line["level"]
@@ -852,34 +869,35 @@ def three_candle_reversal_trigger(
 
     def get_ratios(b):
         rng = b['high'] - b['low']
-        if rng <= 0: return 0, 0, 0
+        if rng <= 0:
+            return 0, 0, 0
         body = abs(b['close'] - b['open'])
         upper = b['high'] - max(b['open'], b['close'])
         lower = min(b['open'], b['close']) - b['low']
         return body/rng, upper/rng, lower/rng
 
     c2_touches = (c2['high'] >= lvl >= c2['low'])
-    
+
     if not c2_touches:
         return None
 
     if dir_ == Direction.SHORT:
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
-        if b2_ratio > cfg.hammer_body_max_ratio: 
+        if b2_ratio > cfg.hammer_body_max_ratio:
             strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Body {b2_ratio:.2f} > Max {cfg.hammer_body_max_ratio}")
             return None
-        if b2_upper > cfg.hammer_nose_max_ratio: 
+        if b2_upper > cfg.hammer_nose_max_ratio:
             strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Nose {b2_upper:.2f} > Max {cfg.hammer_nose_max_ratio}")
             return None
 
-        if c3['close'] >= c3['open']: 
+        if c3['close'] >= c3['open']:
             strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C3 is not Bearish (Red)")
             return None
 
         pattern_high = max(c1['high'], c2['high'], c3['high'])
         true_extreme = max(line['extreme'], pattern_high)
         cross_depth = max(0.0, true_extreme - lvl)
-        
+
         return EntryContext(
             strategy=strategy,
             line_id=line_id,
@@ -890,19 +908,19 @@ def three_candle_reversal_trigger(
             low=c3['low'],
             high=c3['high'],
             extreme=true_extreme,
-            cross_depth=cross_depth 
+            cross_depth=cross_depth
         )
 
     elif dir_ == Direction.LONG:
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
-        if b2_ratio > cfg.hammer_body_max_ratio: 
+        if b2_ratio > cfg.hammer_body_max_ratio:
             strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Body {b2_ratio:.2f} > Max {cfg.hammer_body_max_ratio}")
             return None
-        if b2_lower > cfg.hammer_nose_max_ratio: 
+        if b2_lower > cfg.hammer_nose_max_ratio:
             strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Nose {b2_lower:.2f} > Max {cfg.hammer_nose_max_ratio}")
             return None
 
-        if c3['close'] <= c3['open']: 
+        if c3['close'] <= c3['open']:
             strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C3 is not Bullish (Green)")
             return None
 
@@ -926,11 +944,11 @@ def three_candle_reversal_trigger(
     return None
 
 def double_5m_cross_trigger(
-    strategy: "LiquidityStrategyV2",
+    strategy: LiquidityStrategyV2,
     line_id: Any,
-    line: Dict[str, Any],
-    bar: Dict[str, Any],
-) -> Optional[EntryContext]:
+    line: dict[str, Any],
+    bar: dict[str, Any],
+) -> EntryContext | None:
     """
     Logic:
     1. Dip below the line (Stage 0 -> 1)
@@ -939,10 +957,11 @@ def double_5m_cross_trigger(
     4. Second 5m bar closing above the line (Stage 3 -> Trigger)
        * MUST have Open < Level (Body Cross)
     """
-    
+
     tf = bar.get('tf', 'unknown')
     dir_str = line.get("direction")
-    if dir_str is None: return None
+    if dir_str is None:
+        return None
     dir_ = Direction.from_string(dir_str)
 
     lvl = line["level"]
@@ -950,7 +969,7 @@ def double_5m_cross_trigger(
     open_ = bar["open"]
     low = bar["low"]
     high = bar["high"]
-    
+
     # State: d5_stage
     # 0: Waiting for 1st Dip
     # 1: Waiting for 1st Close Back
@@ -964,39 +983,34 @@ def double_5m_cross_trigger(
 
     if dir_ == Direction.LONG:
         # --- LONG LOGIC ---
-        
+
         # 1. Initial Dip
-        if stage == 0:
-            if low < lvl:
-                line["d5_stage"] = 1
-                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_1", f"1. Initial Dip < {lvl}")
-                stage = 1 # Allow fallthrough
-        
+        if stage == 0 and low < lvl:
+            line["d5_stage"] = 1
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_1", f"1. Initial Dip < {lvl}")
+            stage = 1 # Allow fallthrough
+
         # 2. First Close Above
-        if stage == 1:
-            if close > lvl:
-                line["d5_stage"] = 2
-                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_2", f"2. 1st Close > {lvl}")
-                # STOP HERE. Wait for new dip in subsequent bars.
-                return None 
+        if stage == 1 and close > lvl:
+            line["d5_stage"] = 2
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_2", f"2. 1st Close > {lvl}")
+            # STOP HERE. Wait for new dip in subsequent bars.
+            return None
 
         # 3. Second Dip
-        if stage == 2:
-            if low < lvl:
-                line["d5_stage"] = 3
-                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_3", f"3. 2nd Dip < {lvl}")
-                stage = 3 # Allow fallthrough
+        if stage == 2 and low < lvl:
+            line["d5_stage"] = 3
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_3", f"3. 2nd Dip < {lvl}")
+            stage = 3 # Allow fallthrough
 
         # 4. Second Close Above (Trigger)
-        if stage == 3:
-            # Must Close Above AND Open Below (Body Cross)
-            if close > lvl and open_ < lvl:
+        if stage == 3 and close > lvl and open_ < lvl:
                 # TRIGGER
                 true_extreme = min(line['extreme'], low)
                 cross_depth = max(0.0, lvl - true_extreme)
-                
+
                 line["d5_stage"] = 0 # Reset
-                
+
                 return EntryContext(
                     strategy=strategy,
                     line_id=line_id,
@@ -1014,35 +1028,30 @@ def double_5m_cross_trigger(
         # --- SHORT LOGIC ---
 
         # 1. Initial Pop
-        if stage == 0:
-            if high > lvl:
-                line["d5_stage"] = 1
-                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_1", f"1. Initial Pop > {lvl}")
-                stage = 1
+        if stage == 0 and high > lvl:
+            line["d5_stage"] = 1
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_1", f"1. Initial Pop > {lvl}")
+            stage = 1
 
         # 2. First Close Below
-        if stage == 1:
-            if close < lvl:
-                line["d5_stage"] = 2
-                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_2", f"2. 1st Close < {lvl}")
-                # STOP HERE.
-                return None
+        if stage == 1 and close < lvl:
+            line["d5_stage"] = 2
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_2", f"2. 1st Close < {lvl}")
+            # STOP HERE.
+            return None
 
         # 3. Second Pop
-        if stage == 2:
-            if high > lvl:
-                line["d5_stage"] = 3
-                strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_3", f"3. 2nd Pop > {lvl}")
-                stage = 3
+        if stage == 2 and high > lvl:
+            line["d5_stage"] = 3
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_3", f"3. 2nd Pop > {lvl}")
+            stage = 3
 
         # 4. Second Close Below (Trigger)
-        if stage == 3:
-            # Must Close Below AND Open Above (Body Cross)
-            if close < lvl and open_ > lvl:
+        if stage == 3 and close < lvl and open_ > lvl:
                 # TRIGGER
                 true_extreme = max(line['extreme'], high)
                 cross_depth = max(0.0, true_extreme - lvl)
-                
+
                 line["d5_stage"] = 0
 
                 return EntryContext(

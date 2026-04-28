@@ -1,6 +1,8 @@
 from contextlib import contextmanager
+
+from sqlalchemy import JSON, Column, DateTime, Float, Index, Integer, String, Text, func
+
 from src.database.database_protocol import Base, get_database
-from sqlalchemy import Column, String, DateTime, JSON, Float, Integer, Text, func, Index
 
 
 class Line(Base):

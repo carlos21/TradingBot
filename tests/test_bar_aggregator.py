@@ -1,6 +1,7 @@
 """Tests for BarAggregator utility."""
 
 import pytest
+
 from src.utils.bar_aggregator import BarAggregator
 
 

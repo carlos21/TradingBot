@@ -1,4 +1,4 @@
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from src.notifier import NoOpNotifier, TelegramNotifier
 from tests.fakes import FakeNotifier
@@ -29,6 +29,6 @@ def test_telegram_notifier_posts_to_api(mock_post):
 
 
 @patch("src.notifier.requests.post", side_effect=Exception("network down"))
-def test_telegram_notifier_swallows_errors(mock_post):
+def test_telegram_notifier_swallows_errors(_mock_post):
     n = TelegramNotifier(bot_token="TOKEN", chat_id="CHAT")
     n._send("hello")  # should not raise

@@ -1,6 +1,9 @@
-import threading, time
+import threading
+import time
+
 from src.data_sources.bars_datasource import BarsDataSource
 from src.data_sources.live.live_datasource import LiveDataSource
+
 
 class CSVReplayTickSource(LiveDataSource):
 

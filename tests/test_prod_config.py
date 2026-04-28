@@ -1,12 +1,12 @@
 """Tests for src/prod_config.py — factory functions for production configuration."""
 
 from src.prod_config import (
-    get_prod_strategy_numbers,
     get_prod_candle_config,
+    get_prod_strategy_numbers,
     get_prod_strategy_options,
 )
-from src.strategies.strategy_config import StrategyNumbers, CandleConfig
 from src.strategies.base_liquidity_strategy import StrategyOptions
+from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 
 
 class TestGetProdStrategyNumbers:

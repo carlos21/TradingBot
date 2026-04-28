@@ -107,14 +107,14 @@ def main():
             new_tf = result.tf
             new_expect = result.expect
 
-            print(f"\n  Found trade #1:")
+            print("\n  Found trade #1:")
             print(f"    tf:     {new_tf}")
             print(f"    entry:  {new_expect['entry']}")
             print(f"    sl:     {new_expect['sl']}")
             print(f"    tp:     {new_expect['tp']}")
 
             if result.reentry:
-                print(f"\n  Found re-entry trade #2:")
+                print("\n  Found re-entry trade #2:")
                 print(f"    entry:  {result.reentry['entry']}")
                 print(f"    sl:     {result.reentry['sl']}")
                 print(f"    tp:     {result.reentry['tp']}")
@@ -184,8 +184,8 @@ def main():
     writer.write(updated_sc)
 
     print(f"\n✅ Done! '{sc['name']}' updated.")
-    print(f"   scenarios.yaml     — updated")
-    print(f"   test_scenario.yaml — updated")
+    print("   scenarios.yaml     — updated")
+    print("   test_scenario.yaml — updated")
 
 
 if __name__ == "__main__":

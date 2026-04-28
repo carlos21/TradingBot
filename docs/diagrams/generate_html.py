@@ -193,7 +193,7 @@ def main():
         f.write(html)
     
     print(f"Generated: {output_path}")
-    print(f"Open this file in any browser to view the diagrams")
+    print("Open this file in any browser to view the diagrams")
 
 if __name__ == "__main__":
     main()

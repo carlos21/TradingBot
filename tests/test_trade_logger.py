@@ -1,8 +1,9 @@
 """Tests for src/services/trade_logger.py."""
 
 from datetime import datetime, timezone
-from src.services.trade_logger import TradeLogger
+
 from src.models import TradeData
+from src.services.trade_logger import TradeLogger
 from tests.fakes import FakeTradeRepository
 
 

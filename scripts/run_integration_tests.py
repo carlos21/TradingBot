@@ -129,7 +129,7 @@ def main():
         server_proc.terminate()
         sys.exit(1)
 
-    pair_name = requests.get(f"{base_url}/api/pair").json()["pair"]
+    pair_name = requests.get(f"{base_url}/api/pair", timeout=10).json()["pair"]
     pair_tz   = ZoneInfo(PAIR_TZS.get(pair_name, "UTC"))
 
     def get_epoch(dt_str: str) -> int:

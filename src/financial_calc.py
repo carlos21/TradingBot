@@ -1,7 +1,8 @@
 """Single source of truth for trade financial calculations (contracts, fees, PNL, result types)."""
 
 from __future__ import annotations
-from typing import Tuple
+
+from typing import Literal
 
 from src.types import Direction
 
@@ -74,12 +75,12 @@ class FinancialCalc:
         threshold_points: float = DEFAULT_BE_THRESHOLD_POINTS,
     ) -> bool:
         """Check if exit price is within threshold of entry (breakeven).
-        
+
         Args:
             exit_price: The price at which the trade closed
             entry_price: The entry price of the trade
             threshold_points: Distance in points to consider as breakeven
-            
+
         Returns:
             True if the exit is within threshold of entry
         """
@@ -91,11 +92,11 @@ class FinancialCalc:
         threshold_r: float = DEFAULT_BE_THRESHOLD_R,
     ) -> bool:
         """Check if R result is effectively breakeven (near zero).
-        
+
         Args:
             result_r: The R-multiple result of the trade
             threshold_r: R threshold below which is considered breakeven
-            
+
         Returns:
             True if |result_r| < threshold_r
         """
@@ -107,19 +108,19 @@ class FinancialCalc:
         entry_price: float,
         stop_loss: float,
         take_profit: float,
-        result_r: float | None = None,
+        _result_r: float | None = None,
         be_threshold_points: float = DEFAULT_BE_THRESHOLD_POINTS,
         sl_tp_tolerance: float = 0.5,
     ) -> Literal["BE", "SL", "TP", "SP"]:
         """Determine the result type of a closed trade.
-        
+
         This is the SINGLE SOURCE OF TRUTH for result type classification.
         Order of precedence:
         1. BE - if exit is close to entry price (within threshold)
         2. SL - if exit is close to stop loss (within tolerance)
-        3. TP - if exit is close to take profit (within tolerance)  
+        3. TP - if exit is close to take profit (within tolerance)
         4. SP - manual/unknown close (session end, etc.)
-        
+
         Args:
             exit_price: The price at which the trade closed
             entry_price: The entry price of the trade
@@ -128,22 +129,22 @@ class FinancialCalc:
             result_r: Optional R-multiple result (for additional context)
             be_threshold_points: Distance from entry to consider as breakeven
             sl_tp_tolerance: Distance tolerance for SL/TP detection
-            
+
         Returns:
             One of: "BE" (breakeven), "SL" (stop loss), "TP" (take profit), "SP" (manual/unknown)
         """
         # Check BE first (SL might be at entry for breakeven trades)
         if FinancialCalc.is_breakeven(exit_price, entry_price, be_threshold_points):
             return "BE"
-        
+
         # Check SL proximity
         if abs(exit_price - stop_loss) < sl_tp_tolerance:
             return "SL"
-        
+
         # Check TP proximity
         if abs(exit_price - take_profit) < sl_tp_tolerance:
             return "TP"
-        
+
         # Default: manual close or session end
         return "SP"
 
@@ -156,26 +157,26 @@ class FinancialCalc:
         be_threshold_points: float = DEFAULT_BE_THRESHOLD_POINTS,
     ) -> Literal["BE", "SL", "TP", "SP"]:
         """Determine result type when SL/TP hit flags are known.
-        
+
         Args:
             hit_sl: True if stop loss was hit
             hit_tp: True if take profit was hit
             exit_price: The exit price
             entry_price: The entry price
             be_threshold_points: Distance from entry to consider as breakeven
-            
+
         Returns:
             One of: "BE", "SL", "TP", "SP"
         """
         # Check BE first (even if SL/TP flags are set)
         if FinancialCalc.is_breakeven(exit_price, entry_price, be_threshold_points):
             return "BE"
-        
+
         if hit_sl:
             return "SL"
         if hit_tp:
             return "TP"
-        
+
         return "SP"
 
     # =========================================================================
@@ -190,24 +191,24 @@ class FinancialCalc:
         risk_points: float,
     ) -> float:
         """Calculate R-multiple result for a trade.
-        
+
         Args:
             direction: Trade direction (Direction enum)
             entry_price: Entry price
             exit_price: Exit price
             risk_points: Risk in points (distance from entry to original SL)
-            
+
         Returns:
             R-multiple (pnl_points / risk_points)
         """
         if risk_points <= 0:
             risk_points = 1.0
-        
+
         if direction.is_long:
             pnl_points = exit_price - entry_price
         else:  # SHORT
             pnl_points = entry_price - exit_price
-            
+
         return pnl_points / risk_points
 
     @staticmethod
@@ -223,12 +224,12 @@ class FinancialCalc:
         fee_per_rt: float = DEFAULT_FEE_PER_RT,
         be_threshold_points: float = DEFAULT_BE_THRESHOLD_POINTS,
         sl_tp_tolerance: float = 0.5,
-    ) -> Tuple[float, float, float, str]:
+    ) -> tuple[float, float, float, str]:
         """Calculate all metrics for a trade close in ONE call.
-        
+
         This is the SINGLE SOURCE OF TRUTH for trade close calculations.
         Returns all values needed to persist a trade close.
-        
+
         Args:
             direction: Trade direction (Direction enum)
             entry_price: Entry price
@@ -241,7 +242,7 @@ class FinancialCalc:
             fee_per_rt: Fee per round-trip per contract
             be_threshold_points: BE detection threshold
             sl_tp_tolerance: SL/TP proximity tolerance
-            
+
         Returns:
             Tuple of (result_r, fees, pnl_usd, result_type)
         """
@@ -249,21 +250,21 @@ class FinancialCalc:
         result_r = FinancialCalc.calculate_r_multiple(
             direction, entry_price, exit_price, risk_points
         )
-        
+
         # Calculate fees
         fees = FinancialCalc.fees(contracts, fee_per_rt)
-        
+
         # Calculate PnL USD
         pnl_usd = FinancialCalc.pnl_usd(
             contracts, result_r, risk_points, point_value, fees
         )
-        
+
         # Determine result type
         result_type = FinancialCalc.determine_result_type(
             exit_price, entry_price, stop_loss, take_profit,
             result_r, be_threshold_points, sl_tp_tolerance
         )
-        
+
         return result_r, fees, pnl_usd, result_type
 
     @staticmethod
@@ -272,13 +273,13 @@ class FinancialCalc:
         be_threshold_r: float = DEFAULT_BE_THRESHOLD_R,
     ) -> Literal["BE", "SP"]:
         """Determine result type for session-end closes.
-        
+
         Session ends are special - they're always SP unless very close to breakeven.
-        
+
         Args:
             result_r: The R-multiple result
             be_threshold_r: R threshold for considering as breakeven
-            
+
         Returns:
             "BE" if result is near zero, "SP" otherwise
         """

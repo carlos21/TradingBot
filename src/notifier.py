@@ -1,5 +1,6 @@
-from abc import ABC, abstractmethod
+import contextlib
 import threading
+from abc import ABC, abstractmethod
 
 import requests
 
@@ -24,11 +25,9 @@ class TelegramNotifier(Notifier):
         t.start()
 
     def _send(self, message: str) -> None:
-        try:
+        with contextlib.suppress(Exception):
             requests.post(self._url, json={
                 "chat_id": self._chat_id,
                 "text": message,
                 "parse_mode": "HTML",
             }, timeout=10)
-        except Exception:
-            pass

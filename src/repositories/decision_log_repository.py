@@ -1,7 +1,6 @@
 """Decision log repository for persistent signal/trade decision logging."""
 
-from typing import List, Optional
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from threading import Lock
 
 from src.database.database import DecisionLog, get_db_session
@@ -22,46 +21,45 @@ class DecisionLogRepository:
         *,
         bar_time: float,
         pair: str,
-        tf: Optional[str] = None,
-        line_id: Optional[str] = None,
+        tf: str | None = None,
+        line_id: str | None = None,
         event: str,
-        direction: Optional[str] = None,
-        trigger_name: Optional[str] = None,
-        filter_name: Optional[str] = None,
-        reason: Optional[str] = None,
-        details: Optional[str] = None,
+        direction: str | None = None,
+        trigger_name: str | None = None,
+        filter_name: str | None = None,
+        reason: str | None = None,
+        details: str | None = None,
     ) -> None:
         """Insert a single decision log."""
-        with self._lock:
-            with get_db_session() as db:
-                log = DecisionLog(
-                    bar_time=bar_time,
-                    pair=pair,
-                    tf=tf,
-                    line_id=line_id,
-                    event=event,
-                    direction=direction,
-                    trigger_name=trigger_name,
-                    filter_name=filter_name,
-                    reason=reason,
-                    details=details,
-                )
-                db.add(log)
-                try:
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    raise
-                finally:
-                    db.close()
+        with self._lock, get_db_session() as db:
+            log = DecisionLog(
+                bar_time=bar_time,
+                pair=pair,
+                tf=tf,
+                line_id=line_id,
+                event=event,
+                direction=direction,
+                trigger_name=trigger_name,
+                filter_name=filter_name,
+                reason=reason,
+                details=details,
+            )
+            db.add(log)
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
 
     def get_recent(
         self,
-        pair: Optional[str] = None,
-        event: Optional[str] = None,
-        line_id: Optional[str] = None,
+        pair: str | None = None,
+        event: str | None = None,
+        line_id: str | None = None,
         limit: int = 500,
-    ) -> List[dict]:
+    ) -> list[dict]:
         """Query recent decision logs with optional filters."""
         with get_db_session() as db:
             query = db.query(DecisionLog).order_by(DecisionLog.bar_time.desc())
@@ -76,7 +74,7 @@ class DecisionLogRepository:
             db.close()
             return result
 
-    def get_by_line_id(self, line_id: str) -> List[dict]:
+    def get_by_line_id(self, line_id: str) -> list[dict]:
         """Full audit trail for a single strategy line."""
         with get_db_session() as db:
             rows = (
@@ -92,21 +90,20 @@ class DecisionLogRepository:
     def cleanup_old(self, days: int = 30) -> int:
         """Delete logs older than N days. Returns number of rows deleted."""
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        with self._lock:
-            with get_db_session() as db:
-                count = (
-                    db.query(DecisionLog)
-                    .filter(DecisionLog.created_at < cutoff)
-                    .delete(synchronize_session=False)
-                )
-                try:
-                    db.commit()
-                except Exception:
-                    db.rollback()
-                    raise
-                finally:
-                    db.close()
-                return count
+        with self._lock, get_db_session() as db:
+            count = (
+                db.query(DecisionLog)
+                .filter(DecisionLog.created_at < cutoff)
+                .delete(synchronize_session=False)
+            )
+            try:
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+            return count
 
     @staticmethod
     def _to_dict(row: DecisionLog) -> dict:

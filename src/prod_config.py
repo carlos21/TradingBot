@@ -1,17 +1,24 @@
-from src.strategies.base_liquidity_strategy import BreakevenConfig, StrategyOptions, LineRemovalMode
-from src.strategies.entry_context import daily_trades_limit_filter, open_trades_limit_filter, max_bounce_filter, time_range_filter, min_cross_depth_filter, rollover_filter
+from src.strategies.base_liquidity_strategy import (
+    BreakevenConfig,
+    LineRemovalMode,
+    StrategyOptions,
+)
+from src.strategies.entry_context import (
+    daily_trades_limit_filter,
+    max_bounce_filter,
+    min_cross_depth_filter,
+    open_trades_limit_filter,
+    rollover_filter,
+    time_range_filter,
+)
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.strategies.triggers import (
-    three_candle_reversal_trigger,
-    tsi_cross_trigger,
-    wick_near_line_trigger,
-    double_5m_cross_trigger,
-    trigger_with_timeframes,
-    make_velocity_adaptive_tsi_trigger,
-    VelocityTriggerConfig,
     TsiCrossCondition,
-    TsiDivergenceCondition,
+    VelocityTriggerConfig,
+    make_velocity_adaptive_tsi_trigger,
 )
+
+
 def get_prod_strategy_numbers(rr_ratio: float,
                               risk_per_trade: float = None,
                               risk_pct_per_trade: float = None) -> StrategyNumbers:

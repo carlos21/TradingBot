@@ -6,20 +6,20 @@ Instead of direct SocketIO emissions, components publish domain events that can 
 consumed by multiple subscribers.
 """
 
-from .event_bus import EventBus, EventType, DomainEvent, EventSubscriber
+from .event_bus import DomainEvent, EventBus, EventSubscriber, EventType
 from .trade_events import (
-    TradeOpenedEvent,
-    TradeClosedEvent,
-    TradeUpdatedEvent,
     LineAddedEvent,
     LineRemovedEvent,
     LineUpdatedEvent,
+    TradeClosedEvent,
+    TradeOpenedEvent,
+    TradeUpdatedEvent,
 )
 
 __all__ = [
     # Core
     "EventBus",
-    "EventType", 
+    "EventType",
     "DomainEvent",
     "EventSubscriber",
     # Trade events

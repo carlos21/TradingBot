@@ -1,12 +1,12 @@
+import contextlib
 import csv
+import logging
 import threading
 import time
-import logging
-
 from datetime import datetime
 from zoneinfo import ZoneInfo
+
 from dateutil import parser
-from typing import Callable, Dict, List, Optional
 
 from .combined_datasource import CombinedDataSource
 
@@ -100,12 +100,12 @@ class CSVDataSource(CombinedDataSource):
         """
         Resets the datasource to its initial state.
         Re-seeds _played_bars with the full allowed range.
-        
+
         :param start_time: Optional epoch timestamp to start the history buffer.
         :param end_time:   Optional epoch timestamp to end the history buffer.
         """
         t_logger.debug(f"[CSV_DS] Resetting state... start={start_time}, end={end_time}")
-        
+
         # Use provided bounds or fall back to initial config
         s = start_time if start_time is not None else self.initial_start_time
         e = end_time   if end_time   is not None else self.initial_end_time
@@ -116,24 +116,25 @@ class CSVDataSource(CombinedDataSource):
             if (s is None or b['time'] >= s)
             and (e is None or b['time'] <= e)
         ]
-        
+
         self.current_1m_index = 0
         self._1m_buffer = []
         self._current_group_start = None
-        
+
         # Stop any running replay thread
         self._stop_event.set()
         if self._thread and self._thread.is_alive():
              self._thread.join(timeout=1.0)
         self._stop_event.clear()
-        
+
         t_logger.info(f"[CSV_DS] Reset complete. _played_bars re-seeded with {len(self._played_bars)} bars.")
 
-    def _load_historical_bars(self) -> List[Dict]:
-        bars: List[Dict] = []
+    def _load_historical_bars(self) -> list[dict]:
+        bars: list[dict] = []
         local_tz = self.local_tz             # e.g., America/Chicago for MNQ
         with (self._fileobj or open(self.file, newline='')) as f:
-            sample  = f.read(2048); f.seek(0)
+            sample  = f.read(2048)
+            f.seek(0)
             dialect = csv.Sniffer().sniff(sample, delimiters=",;")
             reader  = csv.DictReader(f, dialect=dialect)
 
@@ -162,7 +163,7 @@ class CSVDataSource(CombinedDataSource):
     def load_historical_bars(self, timeframe='1m', start_time=None):
         print(f"[CSV_DS] load_historical_bars → tf={timeframe!r}, start_time={start_time!r}, "
             f"_played_bars_len={len(self._played_bars)}")
-        
+
         # Filter source bars based on start_time if provided
         source = self._played_bars
         if start_time is not None:
@@ -190,10 +191,8 @@ class CSVDataSource(CombinedDataSource):
             pass
         else:
             # If we are at the end, just return
-            try:
+            with contextlib.suppress(Exception):
                 callback({'_end': True})
-            except Exception:
-                pass
             return
 
         # 3. Stream bars
@@ -212,10 +211,8 @@ class CSVDataSource(CombinedDataSource):
         # End of stream - send _end message regardless of stop event
         # (the stop_event is used to break out of the loop, but we still need to notify
         # the listener that streaming is complete)
-        try:
+        with contextlib.suppress(Exception):
             callback({'_end': True})
-        except Exception:
-            pass
 
     def set_timeframe(self, tf: str):
         t_logger.debug(f"set_timeframe called → tf={tf}")
@@ -225,9 +222,12 @@ class CSVDataSource(CombinedDataSource):
 
         unit = tf[-1]
         num  = int(tf[:-1])
-        if unit == 'm':        self.group_size = max(1, num)
-        elif unit == 'h':      self.group_size = max(1, num * 60)
-        else:                  raise ValueError(f"Unsupported timeframe '{tf}'")
+        if unit == 'm':
+            self.group_size = max(1, num)
+        elif unit == 'h':
+            self.group_size = max(1, num * 60)
+        else:
+            raise ValueError(f"Unsupported timeframe '{tf}'")
 
         self.current_tf           = tf
         self.current_1m_index     = 0
@@ -287,7 +287,7 @@ class CSVDataSource(CombinedDataSource):
         self.streaming = False
         t_logger.debug("_run_replay() exiting loop, streaming=False")
 
-    def _process_bar(self, bar: Dict):
+    def _process_bar(self, bar: dict):
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
             t_logger.debug(f"_process_bar → emitting raw 1m bar time={bar['time']}")
             self.callback(bar)
@@ -310,11 +310,11 @@ class CSVDataSource(CombinedDataSource):
             self._1m_buffer           = [bar]
             self._current_group_start = start
 
-    def _aggregate_whole_history_from_list(self, bars: List[Dict], tf: str) -> List[Dict]:
+    def _aggregate_whole_history_from_list(self, bars: list[dict], tf: str) -> list[dict]:
         from src.utils.bar_aggregator import BarAggregator
-        
+
         buckets = BarAggregator.bucket_by_timeframe(bars, tf)
-        
+
         agg_bars = []
         for win in sorted(buckets.keys()):
             group = buckets[win]
@@ -323,7 +323,7 @@ class CSVDataSource(CombinedDataSource):
         return agg_bars
 
     def _aggregate_time_window(
-        self, bars: List[Dict], window_start: int, window_secs: int
-    ) -> Dict:
+        self, bars: list[dict], window_start: int, window_secs: int
+    ) -> dict:
         from src.utils.bar_aggregator import BarAggregator
         return BarAggregator.aggregate_with_window(bars, window_start, window_secs)

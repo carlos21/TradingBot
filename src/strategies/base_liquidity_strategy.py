@@ -1,27 +1,30 @@
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from threading import RLock
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
 
 from src.analytics import AnalyticsReporter, NoOpReporter
 from src.dbexception import DBNotFoundException
 from src.financial_calc import FinancialCalc
-from src.types import Direction
+from src.repositories.line_trigger_state_repository import (
+    InMemoryLineTriggerStateRepository,
+    LineTriggerStateRepository,
+)
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
-from src.repositories.line_trigger_state_repository import LineTriggerStateRepository, InMemoryLineTriggerStateRepository
 from src.services.trade_manager import TradeManager
-from zoneinfo import ZoneInfo
-from src.utils.app_logger import ILogger
-
 from src.strategies.entry_context import (
     EntryContext,
     EntryFilter,
     EntryTrigger,
 )
+from src.types import Direction
+from src.utils.app_logger import ILogger
 
 # Re-export for backward compatibility - use FinancialCalc.DEFAULT_BE_THRESHOLD_POINTS
 BE_TRESHOLD_POINTS = FinancialCalc.DEFAULT_BE_THRESHOLD_POINTS
@@ -42,10 +45,10 @@ class BreakevenConfig:
 @dataclass
 class StrategyOptions:
     line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE
-    entry_filters: Optional[List[EntryFilter]] = None
-    triggers: Optional[List[EntryTrigger]] = None
-    breakeven: Optional[BreakevenConfig] = None
-    reentry_breakeven: Optional[BreakevenConfig] = None  # breakeven config applied only to re-entry trades
+    entry_filters: list[EntryFilter] | None = None
+    triggers: list[EntryTrigger] | None = None
+    breakeven: BreakevenConfig | None = None
+    reentry_breakeven: BreakevenConfig | None = None  # breakeven config applied only to re-entry trades
     reentry_after_sl: bool = False        # re-enter if price comes back after a SL hit
     reentry_threshold: float = 60.0       # cancel re-entry if price goes this many pts past the line
     reentry_only: bool = False            # skip initial trade, only take re-entry trades
@@ -75,14 +78,14 @@ class BaseLiquidityStrategy:
         extra_sl_space: float,
         point_value: float,
         account_balance: float,
-        risk_per_trade: Optional[float] = None,
-        risk_pct_per_trade: Optional[float] = None,
-        fixed_stop_loss: Optional[float] = None,
-        max_stop_loss: Optional[float] = None,
+        risk_per_trade: float | None = None,
+        risk_pct_per_trade: float | None = None,
+        fixed_stop_loss: float | None = None,
+        max_stop_loss: float | None = None,
         strategy_tf: str = "5m",
-        options: Optional[StrategyOptions] = None,
-        htf_fetcher: Optional[Callable[..., Optional[dict]]] = None,
-        sl_levels: Optional[List[float]] = None,
+        options: StrategyOptions | None = None,
+        htf_fetcher: Callable[..., dict | None] | None = None,
+        sl_levels: list[float] | None = None,
         sl_level_tolerance: float = 5.0,
         min_cross_depth: float = 0.0,
         rr_ratio: float = 5.0,
@@ -121,25 +124,27 @@ class BaseLiquidityStrategy:
         self.trigger_state_repo: LineTriggerStateRepository = trigger_state_repo or InMemoryLineTriggerStateRepository()
         self.decision_log_repository = decision_log_repository
 
-        self.strategy_lines: Dict[Any, Dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
-        self.open_trades: List[Dict[str, Any]] = []
+        self.strategy_lines: dict[Any, dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
+        self.open_trades: list[dict[str, Any]] = []
         self.total_pnl = 0.0
         self.lock = RLock()
 
         # parse TF like "5m" or "1h"
+        if not strategy_tf or len(strategy_tf) < 2 or strategy_tf[-1] not in ('m', 'h'):
+            raise ValueError(f"Invalid strategy_tf: {strategy_tf!r}")
         num, unit = int(strategy_tf[:-1]), strategy_tf[-1]
         self.strategy_window = num * (60 if unit == "m" else 3600)
-        self._buf: List[Dict[str, Any]] = []
-        self._group_start: Optional[int] = None
+        self._buf: list[dict[str, Any]] = []
+        self._group_start: int | None = None
 
         self.options = options or StrategyOptions()
         # Let subclasses decide the triggers (they may depend on attrs set after super().__init__)
-        self.triggers: List[EntryTrigger] = list(self.options.triggers) if self.options.triggers else []
+        self.triggers: list[EntryTrigger] = list(self.options.triggers) if self.options.triggers else []
         # Filters can be taken straight from options
-        self.entry_filters: List[EntryFilter] = list(self.options.entry_filters or [])
+        self.entry_filters: list[EntryFilter] = list(self.options.entry_filters or [])
 
         # Pending re-entry opportunities created when a SL is hit
-        self._reentry_opportunities: List[Dict[str, Any]] = []
+        self._reentry_opportunities: list[dict[str, Any]] = []
 
         # Optional dependency for multi-TF checks
         self.htf_fetcher = htf_fetcher
@@ -155,11 +160,11 @@ class BaseLiquidityStrategy:
 
     # ----- Public small API for runtime tweaks -----
 
-    def set_entry_filters(self, filters: List[EntryFilter]):
+    def set_entry_filters(self, filters: list[EntryFilter]):
         with self.lock:
             self.entry_filters = list(filters)
 
-    def set_triggers(self, triggers: List[EntryTrigger]):
+    def set_triggers(self, triggers: list[EntryTrigger]):
         with self.lock:
             self.triggers = list(triggers)
 
@@ -193,10 +198,8 @@ class BaseLiquidityStrategy:
                 self.trigger_state_repo.delete(str(id))
             except Exception as e:
                 self.logger.warning(f"[RemoveLine] Failed to delete trigger state for {id}: {e}")
-        try:
+        with contextlib.suppress(DBNotFoundException):
             self.line_repository.delete_line(id)
-        except DBNotFoundException:
-            pass
         self.socketio.emit("line_removed", {"id": id})
 
     def update_strategy_line(self, id: Any, level: float):
@@ -287,17 +290,17 @@ class BaseLiquidityStrategy:
         if restored:
             self.logger.info(f"[Strategy] Restored {restored} re-entry opportunity(ies) from DB")
 
-    def _reset_line_state(self, line_state: Dict[str, Any]):
+    def _reset_line_state(self, line_state: dict[str, Any]):
         """If we keep the line, reset so it can trigger again in the future."""
         line_state["extreme"] = 0.0
 
     # ----- Aggregation -----
 
-    def _aggregate_bars(self, bars: List[Dict[str, Any]], window_start: int, window_secs: int) -> Dict[str, Any]:
+    def _aggregate_bars(self, bars: list[dict[str, Any]], window_start: int, window_secs: int) -> dict[str, Any]:
         from src.utils.bar_aggregator import BarAggregator
         return BarAggregator.aggregate_with_window(bars, window_start, window_secs)
 
-    def on_raw_bar(self, bar: Dict[str, Any]):
+    def on_raw_bar(self, bar: dict[str, Any]):
         """
         Feed raw stream bars (assumed 1s or tick granularity).
         We aggregate to the configured TF and then process strategy logic on each completed bar.
@@ -321,7 +324,7 @@ class BaseLiquidityStrategy:
             self._buf, self._group_start = [bar], win
             self._on_strategy_bar(agg)
 
-    def _check_breakeven(self, bar: Dict[str, Any]):
+    def _check_breakeven(self, bar: dict[str, Any]):
         if self.is_warmup:
             return
         for trade in self.open_trades:
@@ -368,7 +371,7 @@ class BaseLiquidityStrategy:
             if should_update and new_sl is not None:
                 self._update_trade_sl(trade, new_sl)
 
-    def _check_session_end_close(self, bar: Dict[str, Any]):
+    def _check_session_end_close(self, bar: dict[str, Any]):
         """Close any open trades if the bar is at or past the NY session end (15:00 NY)."""
         if self.is_warmup:
             return
@@ -429,7 +432,7 @@ class BaseLiquidityStrategy:
 
         self.open_trades = remaining
 
-    def _check_reentry_opportunities(self, bar: Dict[str, Any]):
+    def _check_reentry_opportunities(self, bar: dict[str, Any]):
         """
         On every 1m bar: update adverse excursion tracking for pending re-entry
         opportunities and trigger a new trade if price closes back through the line.
@@ -504,7 +507,7 @@ class BaseLiquidityStrategy:
 
         self._reentry_opportunities = remaining
 
-    def _update_trade_sl(self, trade: Dict[str, Any], new_sl: float):
+    def _update_trade_sl(self, trade: dict[str, Any], new_sl: float):
         old_sl = trade['stop_loss']
         self.logger.info(f"[Strategy] Moving SL for {trade['trade_id']} to {new_sl}")
 
@@ -536,7 +539,7 @@ class BaseLiquidityStrategy:
 
     # ----- Core bar processing -----
 
-    def _on_strategy_bar(self, bar: Dict[str, Any]):
+    def _on_strategy_bar(self, bar: dict[str, Any]):
         """
         1) check exits on open trades
         2) for each strategy line, run triggers → may propose an EntryContext
@@ -549,7 +552,7 @@ class BaseLiquidityStrategy:
             # 2) evaluate lines via triggers
             for sid, line in list(self.strategy_lines.items()):
                 opened = False
-                proposed_ctx: Optional[EntryContext] = None
+                proposed_ctx: EntryContext | None = None
 
                 # run triggers in order until one proposes
                 for trig in self.triggers:
@@ -577,7 +580,7 @@ class BaseLiquidityStrategy:
                 # line removal policy
                 self._maybe_remove_line(sid, opened)
 
-    def _filters_allow_entry(self, ctx: EntryContext) -> Tuple[bool, str, bool]:
+    def _filters_allow_entry(self, ctx: EntryContext) -> tuple[bool, str, bool]:
         """Run all pluggable entry filters.
         Returns (allowed, reason, hold) where hold=True means the line should stay alive
         and re-evaluate (used by filters that need more depth/time rather than a hard block)."""
@@ -588,10 +591,9 @@ class BaseLiquidityStrategy:
                 return False, f"{f.__name__}: {reason}", hold
         return True, "ok", False
 
-    def _reset_trigger_state(self, line_state: Dict[str, Any]):
+    def _reset_trigger_state(self, line_state: dict[str, Any]):
         """Reset only trigger-specific state, keeping direction and extreme intact.
         Overridden by subclasses that manage additional trigger state (tsi_stage etc.)."""
-        pass
 
     def _maybe_remove_line(self, line_id: Any, opened: bool):
         """Remove the evaluated strategy line depending on removal mode."""
@@ -601,17 +603,15 @@ class BaseLiquidityStrategy:
             if line_id in self.strategy_lines:
                 self._reset_line_state(self.strategy_lines[line_id])
             return
-        if mode == LineRemovalMode.ON_EVALUATE:
-            self.remove_strategy_line(line_id)
-        elif mode == LineRemovalMode.ON_ENTER and opened:
+        if mode == LineRemovalMode.ON_EVALUATE or mode == LineRemovalMode.ON_ENTER and opened:
             self.remove_strategy_line(line_id)
 
     # ----- Exits -----
 
-    def _check_open_trades(self, bar: Dict[str, Any]):
+    def _check_open_trades(self, bar: dict[str, Any]):
         if self.is_warmup:
             return
-        remaining: List[Dict[str, Any]] = []
+        remaining: list[dict[str, Any]] = []
         for t in self.open_trades:
             if t["status"] != "open":
                 continue
@@ -620,10 +620,11 @@ class BaseLiquidityStrategy:
                 remaining.append(t)
                 continue
             low, high = bar["low"], bar["high"]
-            
+
             # Calculate R-multiple dynamically
             risk = t.get("risk", 1.0)
-            if risk == 0: risk = 1.0
+            if risk == 0:
+                risk = 1.0
 
             closed = False
             exit_price = 0.0
@@ -631,33 +632,27 @@ class BaseLiquidityStrategy:
             result_type = None
 
             exit_price = None
-            hit_sl = False
-            hit_tp = False
 
             if t["type"] == "long":
                 if low <= t["stop_loss"]:
                     exit_price = t["stop_loss"]
-                    hit_sl = True
                     closed = True
                 elif high >= t["take_profit"]:
                     exit_price = t["take_profit"]
-                    hit_tp = True
                     closed = True
             else:  # short
                 if high >= t["stop_loss"]:
                     exit_price = t["stop_loss"]
-                    hit_sl = True
                     closed = True
                 elif low <= t["take_profit"]:
                     exit_price = t["take_profit"]
-                    hit_tp = True
                     closed = True
 
             if closed and exit_price is not None:
                 # Use unified FinancialCalc for ALL close metrics (single source of truth)
                 contracts = t.get("contracts") or 1
                 risk_pts = t.get("risk", 0) or 1.0
-                
+
                 r_result, t_fees, t_pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
                     direction=Direction.from_string(t["type"]),
                     entry_price=t["entry"],
@@ -783,7 +778,7 @@ class BaseLiquidityStrategy:
                 return level
         return self.sl_levels[-1]
 
-    def _build_trade_from_context(self, ctx: EntryContext) -> Dict[str, Any]:
+    def _build_trade_from_context(self, ctx: EntryContext) -> dict[str, Any]:
         entry = ctx.close
 
         if self.sl_levels:
@@ -814,8 +809,7 @@ class BaseLiquidityStrategy:
             eff_risk = raw_risk + extra
 
         # Apply Max Cap (if configured and not using tiered levels)
-        if not self.sl_levels and self.max_stop_loss and self.max_stop_loss > 0:
-            if eff_risk > self.max_stop_loss:
+        if not self.sl_levels and self.max_stop_loss and self.max_stop_loss > 0 and eff_risk > self.max_stop_loss:
                 self.logger.warning(f"[Strategy] Risk {eff_risk:.2f} exceeds Max {self.max_stop_loss}. Capping it.")
                 eff_risk = self.max_stop_loss
 
@@ -849,13 +843,13 @@ class BaseLiquidityStrategy:
 
     def _make_trade_dict(
         self,
-        bar: Dict[str, Any],
+        bar: dict[str, Any],
         trade_type: str,
         entry: float,
         stop_loss: float,
         take_profit: float,
         risk: float,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         risk_per_contract = risk * self.point_value
         contracts = self._calc_contracts(risk_per_contract)
         risk_dollars = risk_per_contract * contracts
@@ -880,7 +874,7 @@ class BaseLiquidityStrategy:
             "entry_time":   bar["time"],
         }
 
-    def _store_and_emit_open(self, trade: Dict[str, Any]):
+    def _store_and_emit_open(self, trade: dict[str, Any]):
         if self.is_warmup:
             return
         if trade.get("is_phantom"):
@@ -933,7 +927,7 @@ class BaseLiquidityStrategy:
         if self.trade_logger:
             self.trade_logger.log(trade["trade_id"], "CMD_SENT", "place_order → NinjaTrader")
 
-    def _store_and_emit_close(self, trade: Dict[str, Any]):
+    def _store_and_emit_close(self, trade: dict[str, Any]):
         contracts = trade.get("contracts") or 1
         risk_pts = trade.get("risk", 0) or 1.0
         _, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(

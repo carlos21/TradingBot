@@ -1,22 +1,29 @@
 """Tests for src/services/trade_manager.py — SL/TP hit detection, session close, trade lifecycle."""
 
-from datetime import datetime, timezone
+from datetime import datetime
+
 from tests.conftest import make_bar
-from tests.fakes import DummySocketIO, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter, FakeLogger
+from tests.fakes import (
+    DummySocketIO,
+    FakeAnalyticsReporter,
+    FakeLogger,
+    FakeTradeExecutor,
+    FakeTradeRepository,
+)
 
 
 def _make_manager(**overrides):
     from src.services.trade_manager import TradeManager
-    defaults = dict(
-        trade_repository=FakeTradeRepository(),
-        socketio=DummySocketIO(),
-        pair="MNQ",
-        trade_executor=FakeTradeExecutor(),
-        analytics=FakeAnalyticsReporter(),
-        point_value=2.0,
-        account_balance=100000.0,
-        logger=FakeLogger(),
-    )
+    defaults = {
+        "trade_repository": FakeTradeRepository(),
+        "socketio": DummySocketIO(),
+        "pair": "MNQ",
+        "trade_executor": FakeTradeExecutor(),
+        "analytics": FakeAnalyticsReporter(),
+        "point_value": 2.0,
+        "account_balance": 100000.0,
+        "logger": FakeLogger(),
+    }
     defaults.update(overrides)
     return TradeManager(**defaults)
 

@@ -1,20 +1,27 @@
 """Tests for src/strategies/base_liquidity_strategy.py — line management, trade building, SL selection, exits."""
 
-import pytest
-from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+import pytest
+
+from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import (
     BaseLiquidityStrategy,
-    StrategyOptions,
     BreakevenConfig,
     LineRemovalMode,
+    StrategyOptions,
 )
 from src.strategies.entry_context import EntryContext
 from src.types import Direction
-from tests.conftest import make_bar, make_strategy
-from tests.fakes import DummySocketIO, FakeLineRepository, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter, FakeLogger
-from src.services.trade_manager import TradeManager
+from tests.conftest import make_bar
+from tests.fakes import (
+    DummySocketIO,
+    FakeAnalyticsReporter,
+    FakeLineRepository,
+    FakeLogger,
+    FakeTradeExecutor,
+    FakeTradeRepository,
+)
 
 
 def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=None,
@@ -189,14 +196,14 @@ class TestFiltersAllowEntry:
 
     def test_all_pass(self):
         strat = _make_base()
-        strat.entry_filters = [lambda ctx: (True, "ok")]
+        strat.entry_filters = [lambda _ctx: (True, "ok")]
         ctx = MagicMock()
         allow, reason, hold = strat._filters_allow_entry(ctx)
         assert allow is True
         assert hold is False
 
     def test_one_blocks(self):
-        def blocker(ctx):
+        def blocker(_ctx):
             return False, "blocked"
         blocker.__name__ = "blocker"
         strat = _make_base()
@@ -207,7 +214,7 @@ class TestFiltersAllowEntry:
         assert "blocker" in reason
 
     def test_hold_on_block(self):
-        def holder(ctx):
+        def holder(_ctx):
             return False, "hold"
         holder.__name__ = "holder"
         holder._hold_on_block = True

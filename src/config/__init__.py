@@ -13,14 +13,14 @@ Example::
     from src.config import AppBuilder
     wiring, ds = AppBuilder(config).build()
 """
-from src.config.models import AppConfig
+from src.config.builder import AppBuilder
 from src.config.loaders import (
-    ConfigLoader,
-    EnvConfigLoader,
     CliConfigLoader,
     CompositeConfigLoader,
+    ConfigLoader,
+    EnvConfigLoader,
 )
-from src.config.builder import AppBuilder
+from src.config.models import AppConfig
 
 __all__ = [
     "AppConfig",

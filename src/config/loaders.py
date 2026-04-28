@@ -13,10 +13,11 @@ Usage::
     config = loader.load()   # CLI overrides env vars
 """
 from __future__ import annotations
+
 import argparse
 import os
 import sys
-from typing import Protocol, List
+from typing import Protocol
 
 from src.config.models import AppConfig
 
@@ -52,7 +53,7 @@ def _int_or_none(val: str | None) -> int | None:
     return int(val) if val else None
 
 
-def _csv_to_floats(val: str | None) -> List[float] | None:
+def _csv_to_floats(val: str | None) -> list[float] | None:
     if not val:
         return None
     return [float(x.strip()) for x in val.split(",")]
@@ -84,19 +85,19 @@ class EnvConfigLoader:
         "EXTRA_SL_SPACE": ("extra_sl_space", float),
         "SL_LEVEL_TOLERANCE": ("sl_level_tolerance", float),
         "MIN_CROSS_DEPTH": ("min_cross_depth", float),
-        "TIMEFRAMES": ("timeframes", lambda v: [x.strip() for x in v.split(",")] if v else None),
+        "TIMEFRAMES": ("timeframes", lambda _v: [x.strip() for x in _v.split(",")] if _v else None),
         "LINE_REMOVAL_MODE": ("line_removal_mode", str),
         "SESSION_START": ("session_start", str),
         "SESSION_END": ("session_end", str),
         "DAILY_TRADES_LIMIT": ("daily_trades_limit", int),
         "MAX_OPEN_TRADES": ("max_open_trades", int),
-        "REENTRY_AFTER_SL": ("reentry_after_sl", lambda v: _bool_env("REENTRY_AFTER_SL", True)),
+        "REENTRY_AFTER_SL": ("reentry_after_sl", lambda _v: _bool_env("REENTRY_AFTER_SL", True)),
         "REENTRY_THRESHOLD": ("reentry_threshold", float),
-        "REENTRY_ONLY": ("reentry_only", lambda v: _bool_env("REENTRY_ONLY", False)),
-        "SKIP_ROLLOVER_DAYS": ("skip_rollover_days", lambda v: _bool_env("SKIP_ROLLOVER_DAYS", False)),
-        "NO_BREAKEVEN": ("no_breakeven", lambda v: _bool_env("NO_BREAKEVEN", False)),
-        "NO_REENTRY_BREAKEVEN": ("no_reentry_breakeven", lambda v: _bool_env("NO_REENTRY_BREAKEVEN", False)),
-        "NT_ACCOUNT": ("nt_account", lambda v: v or None),
+        "REENTRY_ONLY": ("reentry_only", lambda _v: _bool_env("REENTRY_ONLY", False)),
+        "SKIP_ROLLOVER_DAYS": ("skip_rollover_days", lambda _v: _bool_env("SKIP_ROLLOVER_DAYS", False)),
+        "NO_BREAKEVEN": ("no_breakeven", lambda _v: _bool_env("NO_BREAKEVEN", False)),
+        "NO_REENTRY_BREAKEVEN": ("no_reentry_breakeven", lambda _v: _bool_env("NO_REENTRY_BREAKEVEN", False)),
+        "NT_ACCOUNT": ("nt_account", lambda _v: _v or None),
         "ZMQ_HOST": ("zmq_host", str),
         "ZMQ_MARKET_PORT": ("zmq_market_port", int),
         "ZMQ_COMMAND_PORT": ("zmq_command_port", int),
@@ -108,10 +109,10 @@ class EnvConfigLoader:
         "INSTANCE_NAME": ("instance_name", str),
         "BROKER_MODE": ("broker_mode", str),
         "BROKER_SPREAD": ("broker_spread", float),
-        "BOOTSTRAP_EXISTING_LINES": ("bootstrap_existing_lines", lambda v: _bool_env("BOOTSTRAP_EXISTING_LINES", True)),
-        "SENTRY_DSN": ("sentry_dsn", lambda v: v or None),
-        "TELEGRAM_BOT_TOKEN": ("telegram_token", lambda v: v or None),
-        "TELEGRAM_CHAT_ID": ("telegram_chat_id", lambda v: v or None),
+        "BOOTSTRAP_EXISTING_LINES": ("bootstrap_existing_lines", lambda _v: _bool_env("BOOTSTRAP_EXISTING_LINES", True)),
+        "SENTRY_DSN": ("sentry_dsn", lambda _v: _v or None),
+        "TELEGRAM_BOT_TOKEN": ("telegram_token", lambda _v: _v or None),
+        "TELEGRAM_CHAT_ID": ("telegram_chat_id", lambda _v: _v or None),
     }
 
     def load(self) -> AppConfig:
@@ -131,7 +132,7 @@ class EnvConfigLoader:
 class CliConfigLoader:
     """Build ``AppConfig`` from ``argparse``."""
 
-    def __init__(self, args: List[str] | None = None):
+    def __init__(self, args: list[str] | None = None):
         self._args = args if args is not None else sys.argv[1:]
 
     def load(self) -> AppConfig:
@@ -162,7 +163,7 @@ class CliConfigLoader:
         p.add_argument("--session-end", dest="session_end", help="Session end HH:MM")
         p.add_argument("--daily-trades-limit", dest="daily_trades_limit", type=int, help="Max trades per day")
         p.add_argument("--max-open-trades", dest="max_open_trades", type=int, help="Max open trades")
-        p.add_argument("--reentry-after-sl", dest="reentry_after_sl", type=lambda x: x.lower() in ("true", "1", "yes"), help="Re-entry after SL")
+        p.add_argument("--reentry-after-sl", dest="reentry_after_sl", type=lambda _x: _x.lower() in ("true", "1", "yes"), help="Re-entry after SL")
         p.add_argument("--reentry-threshold", dest="reentry_threshold", type=float, help="Re-entry threshold")
         p.add_argument("--reentry-only", dest="reentry_only", action="store_true", help="Only re-entry trades")
         p.add_argument("--skip-rollover-days", dest="skip_rollover_days", action="store_true", help="Skip rollover days")

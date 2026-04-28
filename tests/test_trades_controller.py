@@ -1,12 +1,15 @@
 """Tests for TradesController — especially close_all_trades reuse of close_trade path."""
 
-from datetime import datetime, timezone
-from src.controllers.trades_controller import TradesController
-from tests.fakes import FakeTradeRepository, FakeTradeExecutor, FakeLogger, DummySocketIO
-
-
 import pytest
 from flask import Flask
+
+from src.controllers.trades_controller import TradesController
+from tests.fakes import (
+    DummySocketIO,
+    FakeLogger,
+    FakeTradeExecutor,
+    FakeTradeRepository,
+)
 
 
 class FakeBarsLoader:
@@ -19,7 +22,7 @@ class FakeBarsLoader:
         self.current_1m_index = {"MNQ": 0}
         self.data_source = self  # self-serve for load_historical_bars
 
-    def load_historical_bars(self, tf):
+    def load_historical_bars(self, _tf):
         return [{"close": self._last_bar_close, "time": 1000}]
 
 
@@ -54,7 +57,7 @@ def _make_controller(close_price=100.0, **tm_overrides):
 
 class TestCloseAllTrades:
 
-    def test_closes_all_open_trades_and_notifies_executor(self, app_context):
+    def test_closes_all_open_trades_and_notifies_executor(self, app_context):  # noqa: ARG002
         controller, tm, executor, repo = _make_controller(close_price=105.0)
 
         # Seed two open trades
@@ -76,7 +79,7 @@ class TestCloseAllTrades:
         # Each close should have triggered the executor (ZMQ -> NinjaTrader)
         assert len(executor.closes) == 2
 
-    def test_returns_empty_when_no_open_trades(self, app_context):
+    def test_returns_empty_when_no_open_trades(self, app_context):  # noqa: ARG002
         controller, tm, executor, repo = _make_controller()
 
         resp, status = controller.close_all_trades("MNQ")
@@ -86,7 +89,7 @@ class TestCloseAllTrades:
         assert data["closed"] == []
         assert data["message"] == "No open trades to close"
 
-    def test_only_closes_trades_for_requested_pair(self, app_context):
+    def test_only_closes_trades_for_requested_pair(self, app_context):  # noqa: ARG002
         controller, tm, executor, repo = _make_controller(close_price=105.0)
 
         tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)

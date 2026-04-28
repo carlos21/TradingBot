@@ -1,29 +1,26 @@
 """Tests for src/strategies/triggers.py — TSI calculations, velocity, trigger functions."""
 
-import pytest
 from unittest.mock import MagicMock, patch
-from collections import deque
 
+from src.strategies.strategy_config import CandleConfig
 from src.strategies.triggers import (
+    DivergenceType,
+    TsiCrossCondition,
+    TsiDivergenceCondition,
+    VelocityTriggerConfig,
     _calculate_ema,
     _calculate_tsi_series,
     _calculate_velocity_score,
-    trigger_with_timeframes,
-    make_velocity_adaptive_tsi_trigger,
-    VelocityTriggerConfig,
-    TsiCrossCondition,
-    TsiDivergenceCondition,
-    DivergenceType,
-    _find_swing_lows,
-    _find_swing_highs,
     _detect_divergence,
-    wick_near_line_trigger,
-    three_candle_reversal_trigger,
+    _find_swing_highs,
+    _find_swing_lows,
     double_5m_cross_trigger,
+    make_velocity_adaptive_tsi_trigger,
+    three_candle_reversal_trigger,
+    trigger_with_timeframes,
+    wick_near_line_trigger,
 )
-from src.strategies.strategy_config import CandleConfig
 from src.types import Direction
-
 
 # ─── Helper to build bars ───────────────────────────────────────────
 
@@ -418,8 +415,8 @@ class TestTsiDivergenceCondition:
         # Last two price lows: 5 -> 4 (lower low)
         lows = [10, 9, 8, 9, 10, 9, 7, 8, 9, 10, 9, 8, 6, 7, 8,
                 9, 8, 7, 5, 6, 7, 8, 7, 6, 4, 5, 6, 7, 6, 5]
-        highs = [l + 1 for l in lows]
-        closes = [l + 0.5 for l in lows]
+        highs = [low + 1 for low in lows]
+        closes = [low + 0.5 for low in lows]
         bars = [_bar(time=i * 60, close=closes[i], high=highs[i], low=lows[i], tf="5m")
                 for i in range(30)]
         s = _make_strategy_mock({"5m": bars})
@@ -443,8 +440,8 @@ class TestTsiDivergenceCondition:
         # Last two price lows: 5 -> 6 (higher low)
         lows = [10, 9, 8, 9, 10, 9, 7, 8, 9, 10, 9, 8, 6, 7, 8,
                 9, 8, 7, 5, 6, 7, 8, 7.5, 7, 6, 7, 8, 9, 8, 7.5]
-        highs = [l + 1 for l in lows]
-        closes = [l + 0.5 for l in lows]
+        highs = [low + 1 for low in lows]
+        closes = [low + 0.5 for low in lows]
         bars = [_bar(time=i * 60, close=closes[i], high=highs[i], low=lows[i], tf="5m")
                 for i in range(30)]
         s = _make_strategy_mock({"5m": bars})
@@ -517,8 +514,8 @@ class TestTsiDivergenceCondition:
         # Same bars as bullish test, but TSI also makes lower lows
         lows = [10, 9, 8, 9, 10, 9, 7, 8, 9, 10, 9, 8, 6, 7, 8,
                 9, 8, 7, 5, 6, 7, 8, 7, 6, 4, 5, 6, 7, 6, 5]
-        highs = [l + 1 for l in lows]
-        closes = [l + 0.5 for l in lows]
+        highs = [low + 1 for low in lows]
+        closes = [low + 0.5 for low in lows]
         bars = [_bar(time=i * 60, close=closes[i], high=highs[i], low=lows[i], tf="5m")
                 for i in range(30)]
         s = _make_strategy_mock({"5m": bars})

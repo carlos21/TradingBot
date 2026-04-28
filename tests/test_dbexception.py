@@ -1,5 +1,7 @@
 """Tests for src/dbexception.py."""
 
+import pytest
+
 from src.dbexception import DBException, DBNotFoundException
 
 
@@ -17,6 +19,3 @@ class TestDBExceptions:
     def test_message_preserved(self):
         ex = DBException("hello")
         assert str(ex) == "hello"
-
-
-import pytest

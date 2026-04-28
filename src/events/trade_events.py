@@ -6,7 +6,7 @@ but provide factory methods to convert to DomainEvent.
 """
 
 from dataclasses import dataclass
-from typing import Dict, Any, Optional
+from typing import Any
 
 from .event_bus import DomainEvent, EventType
 
@@ -14,7 +14,7 @@ from .event_bus import DomainEvent, EventType
 @dataclass(frozen=True)
 class TradeOpenedEvent:
     """Event fired when a new trade is opened."""
-    
+
     trade_id: str
     pair: str
     trade_type: str  # 'long' or 'short'
@@ -24,7 +24,7 @@ class TradeOpenedEvent:
     risk: float
     contracts: float
     timestamp_unix: float
-    
+
     def to_domain_event(self) -> DomainEvent:
         """Convert to DomainEvent for EventBus."""
         return DomainEvent(
@@ -47,7 +47,7 @@ class TradeOpenedEvent:
 @dataclass(frozen=True)
 class TradeClosedEvent:
     """Event fired when a trade is closed."""
-    
+
     trade_id: str
     pair: str
     trade_type: str
@@ -57,7 +57,7 @@ class TradeClosedEvent:
     result_type: str  # 'SL', 'TP', 'BE', 'SP'
     fees: float = 0.0
     pnl_usd: float = 0.0
-    
+
     def to_domain_event(self) -> DomainEvent:
         """Convert to DomainEvent for EventBus."""
         return DomainEvent(
@@ -79,11 +79,11 @@ class TradeClosedEvent:
 @dataclass(frozen=True)
 class TradeUpdatedEvent:
     """Event fired when a trade is updated (e.g., SL moved to breakeven)."""
-    
+
     trade_id: str
-    updates: Dict[str, Any]  # Fields that changed
+    updates: dict[str, Any]  # Fields that changed
     reason: str = ""  # Human-readable reason for update
-    
+
     def to_domain_event(self) -> DomainEvent:
         """Convert to DomainEvent for EventBus."""
         return DomainEvent(
@@ -98,12 +98,12 @@ class TradeUpdatedEvent:
 @dataclass(frozen=True)
 class LineAddedEvent:
     """Event fired when a line is added."""
-    
+
     line_id: str
     pair: str
     price: float
     creation_timestamp: float
-    
+
     def to_domain_event(self) -> DomainEvent:
         """Convert to DomainEvent for EventBus."""
         return DomainEvent(
@@ -120,10 +120,10 @@ class LineAddedEvent:
 @dataclass(frozen=True)
 class LineRemovedEvent:
     """Event fired when a line is removed."""
-    
+
     line_id: str
     reason: str = "manual"  # Why the line was removed
-    
+
     def to_domain_event(self) -> DomainEvent:
         """Convert to DomainEvent for EventBus."""
         return DomainEvent(
@@ -138,11 +138,11 @@ class LineRemovedEvent:
 @dataclass(frozen=True)
 class LineUpdatedEvent:
     """Event fired when a line is updated."""
-    
+
     line_id: str
     new_price: float
-    old_price: Optional[float] = None
-    
+    old_price: float | None = None
+
     def to_domain_event(self) -> DomainEvent:
         """Convert to DomainEvent for EventBus."""
         payload = {
@@ -159,12 +159,12 @@ class LineUpdatedEvent:
 
 # Factory functions for creating events
 
-def create_trade_opened_event(trade_data: Dict[str, Any]) -> DomainEvent:
+def create_trade_opened_event(trade_data: dict[str, Any]) -> DomainEvent:
     """Create a TradeOpenedEvent from trade dictionary.
-    
+
     Args:
         trade_data: Trade dictionary from strategy
-        
+
     Returns:
         DomainEvent for TRADE_OPENED
     """
@@ -186,7 +186,7 @@ def create_trade_closed_event(
     pnl_usd: float = 0.0,
 ) -> DomainEvent:
     """Create a TradeClosedEvent.
-    
+
     Args:
         trade_id: ID of the closed trade
         pair: Trading pair
@@ -197,7 +197,7 @@ def create_trade_closed_event(
         result_type: 'SL', 'TP', 'BE', or 'SP'
         fees: Trading fees
         pnl_usd: PnL in USD
-        
+
     Returns:
         DomainEvent for TRADE_CLOSED
     """

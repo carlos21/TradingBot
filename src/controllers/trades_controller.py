@@ -1,8 +1,10 @@
+from datetime import datetime, timezone
+
 from flask import abort, jsonify
+
 from src.bars_loader import BarsLoader
 from src.services.trade_manager import TradeManager
 from src.utils.app_logger import ILogger
-from datetime import datetime, timezone
 
 
 class TradesController:
@@ -23,20 +25,20 @@ class TradesController:
         # 1. Active Replay Time
         if self.bars_loader._last_played_ts > 0:
             return self.bars_loader._last_played_ts
-        
+
         # 2. Data Source History End (if we are just viewing a static chart)
         ds = self.bars_loader.data_source
         bars = ds.load_historical_bars('1m')
         if bars:
             return bars[-1]['time']
-            
+
         # 3. System Time (Fallback)
         return datetime.now(timezone.utc).timestamp()
 
     def list_trades(self, pair: str):
         """Return all trades (open and closed) for the pair."""
         trades = self.trade_manager.trade_repository.list_trades(pair)
-        
+
         # --- DEBUG LOG ---
         self.logger.info(f"[TradesController] list_trades('{pair}') found {len(trades)} trades.")
         for i, t in enumerate(trades):
@@ -66,8 +68,8 @@ class TradesController:
 
     def open_trade(self, pair, stop_loss, trade_type):
         # compute entry & risk based on last 1m
-        idx = self.bars_loader.current_1m_index.get(pair, 0)
-        
+        self.bars_loader.current_1m_index.get(pair, 0)
+
         # Resolve entry price from the loader's buffer or datasource
         entry_price = 0.0
         if self.bars_loader._1m_buffer:
@@ -84,23 +86,23 @@ class TradesController:
         risk = abs(entry_price - stop_loss)
         if risk <= 0:
             abort(400, 'Invalid stop loss; must be different from entry')
-        
+
         take_profit = (
             entry_price + (self.rr_ratio * risk) if trade_type == 'long'
             else entry_price - (self.rr_ratio * risk)
         )
-        
+
         # FIX: Use virtual time so the trade appears on the chart
         entry_time = self._get_virtual_now()
         self.logger.info(f"[TradesController] Opening Trade at Virtual Time: {entry_time}")
-        
+
         trade = self.trade_manager.open_trade(
             pair, trade_type, entry_price,
             stop_loss, take_profit, risk, entry_time, self.rr_ratio,
             source="manual"
         )
         return jsonify(trade), 201
-    
+
     def open_test_trade(self, pair: str, direction: str):
         # Resolve latest close price
         entry_price = 0.0
@@ -145,10 +147,10 @@ class TradesController:
     def close_trade(self, trade_id):
         if not any(t['trade_id'] == trade_id for t in self.trade_manager.open_trades):
             abort(404, f"Trade id={trade_id} not found or already closed")
-        
+
         trade = next(t for t in self.trade_manager.open_trades if t['trade_id'] == trade_id)
         pair = trade['pair']
-        
+
         # Resolve exit price
         exit_price = 0.0
         if self.bars_loader._1m_buffer:
