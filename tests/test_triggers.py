@@ -2,20 +2,19 @@
 
 from unittest.mock import MagicMock
 
+from src.strategies.strategy_config import CandleConfig
 from src.strategies.triggers import (
+    TsiCrossCondition,
+    VelocityTriggerConfig,
     _calculate_ema,
     _calculate_tsi_series,
     _calculate_velocity_score,
-    trigger_with_timeframes,
-    make_velocity_adaptive_tsi_trigger,
-    VelocityTriggerConfig,
-    TsiCrossCondition,
-    wick_near_line_trigger,
-    three_candle_reversal_trigger,
     double_5m_cross_trigger,
+    make_velocity_adaptive_tsi_trigger,
+    three_candle_reversal_trigger,
+    trigger_with_timeframes,
+    wick_near_line_trigger,
 )
-from src.strategies.strategy_config import CandleConfig
-
 
 # ─── Helper to build bars ───────────────────────────────────────────
 

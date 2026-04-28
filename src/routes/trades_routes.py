@@ -1,6 +1,7 @@
 """Trade management HTTP routes."""
 
-from flask import Flask, jsonify, request, abort
+from flask import Flask, abort, jsonify, request
+
 from src.controllers.trades_controller import TradesController
 from src.repositories.trades_repository import TradeRepository
 from src.services.trade_logger import TradeLogger
@@ -12,11 +13,11 @@ def register_trades_routes(
     trades_controller: TradesController,
     trades_repo: TradeRepository,
     pair: str,
-    trade_logger: TradeLogger,
-    logger: ILogger,
+    _trade_logger: TradeLogger,
+    _logger: ILogger,
 ):
     """Register trade management routes.
-    
+
     Args:
         app: Flask application instance
         trades_controller: Controller for trade operations
@@ -24,7 +25,7 @@ def register_trades_routes(
         pair: Trading pair for filtering trades
         trade_logger: Logger for trade lifecycle events
     """
-    
+
     @app.route('/api/trades', methods=['GET'])
     def list_trades():
         request_pair = request.args.get('pair')

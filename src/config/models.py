@@ -6,8 +6,8 @@ configurable from any source (env vars, CLI args, YAML, etc.) without
 touching business logic.
 """
 from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import List, Optional
 
 
 @dataclass
@@ -57,11 +57,11 @@ class AppConfig:
     """Risk:Reward ratio used to calculate the Take-Profit distance.
     E.g. ``5.0`` means TP is 5× the risk distance from entry."""
 
-    risk_per_trade: Optional[float] = None
+    risk_per_trade: float | None = None
     """Fixed dollar amount to risk per trade (e.g. ``50`` = $50).
     Overrides ``risk_pct_per_trade`` when set."""
 
-    risk_pct_per_trade: Optional[float] = None
+    risk_pct_per_trade: float | None = None
     """Percentage of ``account_balance`` to risk per trade (e.g. ``1.0`` = 1%%).
     Only used when ``risk_per_trade`` is ``None``."""
 
@@ -94,7 +94,7 @@ class AppConfig:
     # ------------------------------------------------------------------
     # Strategy options
     # ------------------------------------------------------------------
-    timeframes: List[str] = field(default_factory=lambda: ["3m", "5m", "15m", "30m", "1h"])
+    timeframes: list[str] = field(default_factory=lambda: ["3m", "5m", "15m", "30m", "1h"])
     """Candle timeframes used for multi-timeframe analysis and aggregation.
     Affects trigger evaluation and chart emission."""
 
@@ -143,7 +143,7 @@ class AppConfig:
     # ------------------------------------------------------------------
     # Live mode (ZeroMQ / NinjaTrader)
     # ------------------------------------------------------------------
-    nt_account: Optional[str] = None
+    nt_account: str | None = None
     """NinjaTrader account name. Sent to NT during live mode initialization."""
 
     zmq_host: str = "127.0.0.1"
@@ -197,15 +197,15 @@ class AppConfig:
     # ------------------------------------------------------------------
     # Integrations
     # ------------------------------------------------------------------
-    sentry_dsn: Optional[str] = None
+    sentry_dsn: str | None = None
     """Sentry DSN for error tracking and performance monitoring.
     If ``None``, Sentry is disabled."""
 
-    telegram_token: Optional[str] = None
+    telegram_token: str | None = None
     """Telegram Bot API token for trade notifications.
     Both token and ``telegram_chat_id`` must be set to enable notifications."""
 
-    telegram_chat_id: Optional[str] = None
+    telegram_chat_id: str | None = None
     """Telegram chat / channel ID to send notifications to."""
 
     # ------------------------------------------------------------------

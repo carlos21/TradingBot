@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 @dataclass
@@ -34,19 +34,19 @@ class TradeData:
     stop_loss: float
     take_profit: float
     risk: float
-    risk_dollars: Optional[float]
-    risk_pct: Optional[float]
-    contracts: Optional[float]
+    risk_dollars: float | None
+    risk_pct: float | None
+    contracts: float | None
     entry_time: datetime
-    exit_price: Optional[float]
-    exit_time: Optional[datetime]
-    result: Optional[float]       # e.g. PnL or +1/–1 flag
-    result_type: Optional[str]    # "TP", "SL", "BE", or "SP"
-    fees: Optional[float]
-    pnl_usd: Optional[float]
-    params: Optional[Dict[str, Any]]
-    logs: Optional[List[Dict[str, str]]] = field(default=None)
-    source: Optional[str] = field(default=None)
+    exit_price: float | None
+    exit_time: datetime | None
+    result: float | None       # e.g. PnL or +1/–1 flag
+    result_type: str | None    # "TP", "SL", "BE", or "SP"
+    fees: float | None
+    pnl_usd: float | None
+    params: dict[str, Any] | None
+    logs: list[dict[str, str]] | None = field(default=None)
+    source: str | None = field(default=None)
     created_at: datetime = field(default=None)
 
     def __hash__(self):

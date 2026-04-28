@@ -1,10 +1,10 @@
 """Tests for src.config.builder — application assembly from AppConfig."""
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.config.models import AppConfig
 from src.config.builder import AppBuilder
+from src.config.models import AppConfig
 
 
 class TestAppBuilderBacktest:

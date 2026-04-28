@@ -1,10 +1,10 @@
 # src/services/position_sizing package
 from .position_sizer import (
-    PositionSizer,
-    PositionSize,
     FixedRiskPositionSizer,
-    TieredSLPositionSizer,
     PercentageRiskPositionSizer,
+    PositionSize,
+    PositionSizer,
+    TieredSLPositionSizer,
 )
 
 __all__ = [

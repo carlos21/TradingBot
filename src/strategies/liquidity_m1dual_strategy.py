@@ -1,5 +1,6 @@
-from threading import RLock
+import contextlib
 from datetime import datetime, timezone
+from threading import RLock
 
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
@@ -56,10 +57,8 @@ class LiquidityDualM1Strategy:
     def remove_strategy_line(self, id: str):
         with self.lock:
             self.strategy_lines.pop(id, None)
-        try:
+        with contextlib.suppress(DBNotFoundException):
             self.line_repository.delete_line(id)
-        except DBNotFoundException:
-            pass
         self.socketio.emit('line_removed', {'id': id})
 
     def on_raw_bar(self, bar: dict):
@@ -78,22 +77,22 @@ class LiquidityDualM1Strategy:
             for sid, s in list(self.strategy_lines.items()):
                 lvl = s['level']
                 dir_ = s['direction']
-                o, h, l, c = bar['open'], bar['high'], bar['low'], bar['close']
+                o, h, low, c = bar['open'], bar['high'], bar['low'], bar['close']
 
                 # LONG logic
                 if dir_ == 'long':
                     # initial downward body cross
                     if s['crosses'] == 0 and o > lvl and c < lvl:
                         s['crosses'] = 1
-                        s['extreme'] = l
-                        self.logger.info(f"[DualM1][{sid}] first cross: low={l}, extreme set to={l}")
+                        s['extreme'] = low
+                        self.logger.info(f"[DualM1][{sid}] first cross: low={low}, extreme set to={low}")
                     # after first cross, track bounce lows and check entry cross
                     elif s['crosses'] == 1:
                         # update bounce extreme
-                        if l < s['extreme']:
+                        if low < s['extreme']:
                             old_extreme = s['extreme']
-                            s['extreme'] = l
-                            self.logger.info(f"[DualM1][{sid}] bounce update: low={l}, extreme updated from {old_extreme} to {l}")
+                            s['extreme'] = low
+                            self.logger.info(f"[DualM1][{sid}] bounce update: low={low}, extreme updated from {old_extreme} to {low}")
                         # entry cross condition
                         if o < lvl and c > lvl:
                             s['crosses'] = 2

@@ -1,17 +1,20 @@
 from __future__ import annotations
+
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Optional, Tuple, Dict, Any
+from typing import TYPE_CHECKING, Any, Optional
 from zoneinfo import ZoneInfo
+
+if TYPE_CHECKING:
+    from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy
 
 from src.types import Direction
 
-
 # Map pairs to their primary trading timezone.
-# This allows the filter to automatically convert UTC timestamps to the 
+# This allows the filter to automatically convert UTC timestamps to the
 # correct local time (e.g. NY time for Indices) without manual config.
 PAIR_TIMEZONES = {
-    "MNQ": "America/New_York",
     "MNQ": "America/New_York",
     "ES": "America/New_York",
     "MES": "America/New_York",
@@ -23,40 +26,40 @@ PAIR_TIMEZONES = {
 
 @dataclass
 class EntryContext:
-    strategy: 'LiquidityStrategy'
+    strategy: BaseLiquidityStrategy
     line_id: Any
     direction: Direction      # Direction enum (LONG or SHORT)
     level: float
-    bar: Dict[str, Any]       # aggregated bar dict
+    bar: dict[str, Any]       # aggregated bar dict
     close: float
     low: float
     high: float
     extreme: float            # lowest (long) / highest (short) seen during cross
     cross_depth: float        # bounce depth used by filters like max_bounce
-    
+
     @property
     def is_long(self) -> bool:
         """Check if entry is long direction."""
         return self.direction.is_long
-    
+
     @property
     def is_short(self) -> bool:
         """Check if entry is short direction."""
         return self.direction.is_short
-    
+
 # A function that receives the entry "context" and decides if we should open.
-EntryFilter = Callable[['EntryContext'], Tuple[bool, str]]
+EntryFilter = Callable[['EntryContext'], tuple[bool, str]]
 
 EntryTrigger = Callable[
-    ['LiquidityStrategy', Any, Dict[str, Any], Dict[str, Any]],
+    ['BaseLiquidityStrategy', Any, dict[str, Any], dict[str, Any]],
     Optional['EntryContext']
 ]
 
 # ---------- Filters you can plug/unplug ----------
 
-def open_trades_limit_filter(limit: Optional[int] = 1) -> EntryFilter:
+def open_trades_limit_filter(limit: int | None = 1) -> EntryFilter:
     """Blocks entries when total 'open' trades >= limit. None = unlimited."""
-    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+    def _f(ctx: EntryContext) -> tuple[bool, str]:
         if limit is None:
             return True, "limit: unlimited"
         count = sum(1 for t in ctx.strategy.open_trades if t['status'] == 'open')
@@ -68,7 +71,7 @@ def open_trades_limit_filter(limit: Optional[int] = 1) -> EntryFilter:
 def min_cross_depth_filter(min_depth: float) -> EntryFilter:
     """Blocks entries where price has not crossed the line by at least min_depth points.
     Marked as a hold filter: the line is kept alive so it can re-trigger once depth is sufficient."""
-    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+    def _f(ctx: EntryContext) -> tuple[bool, str]:
         ok = ctx.cross_depth >= min_depth
         return ok, f"level={ctx.level}, extreme={ctx.extreme:.2f}, depth={ctx.cross_depth:.2f} < min_depth={min_depth}"
     _f.__name__ = "min_cross_depth"
@@ -78,17 +81,17 @@ def min_cross_depth_filter(min_depth: float) -> EntryFilter:
 
 def max_bounce_filter(max_bounce: float) -> EntryFilter:
     """Blocks entries if the cross depth exceeded a maximum bounce."""
-    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+    def _f(ctx: EntryContext) -> tuple[bool, str]:
         ok = ctx.cross_depth <= max_bounce
         return ok, f"level={ctx.level}, extreme={ctx.extreme:.2f}, depth={ctx.cross_depth:.2f} > max_bounce={max_bounce}"
     _f.__name__ = "max_bounce"
     return _f
 
 
-def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: Optional[str] = None) -> EntryFilter:
+def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: str | None = None) -> EntryFilter:
     """
     Blocks entries outside the specific time range (inclusive).
-    
+
     :param start_time_str: "HH:MM" (24-hour format), e.g., "09:30"
     :param end_time_str: "HH:MM" (24-hour format), e.g., "17:00"
     :param timezone_str: Optional. If None, it is automatically resolved from the pair (e.g. MNQ -> NY Time).
@@ -96,14 +99,14 @@ def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: Opti
     t_start = datetime.strptime(start_time_str, "%H:%M").time()
     t_end = datetime.strptime(end_time_str, "%H:%M").time()
 
-    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+    def _f(ctx: EntryContext) -> tuple[bool, str]:
         # 1. Determine Timezone
         tz_name = timezone_str
         if not tz_name:
             pair = ctx.bar.get('pair', '')
             # Default to UTC if pair not found in map
             tz_name = PAIR_TIMEZONES.get(pair, "UTC")
-        
+
         tz = ZoneInfo(tz_name)
 
         # 2. Convert bar timestamp (epoch) to target timezone
@@ -112,7 +115,7 @@ def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: Opti
 
         if t_start <= bar_time <= t_end:
             return True, "ok"
-        
+
         msg = f"Time {bar_time} ({tz_name}) outside {t_start}-{t_end}"
         # Uncomment the next line to debug blocked trades in console
         # print(f"[Filter] ⛔ BLOCKED: {msg} | UTC Epoch: {ctx.bar['time']}")
@@ -121,7 +124,7 @@ def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: Opti
     return _f
 
 
-def rollover_filter(enabled: bool = False, timezone_str: Optional[str] = None) -> EntryFilter:
+def rollover_filter(enabled: bool = False, timezone_str: str | None = None) -> EntryFilter:
     """
     Blocks entries on CME futures rollover days (2nd Thursday before quarterly expiration).
     Rollover months: March, June, September, December.
@@ -147,9 +150,9 @@ def rollover_filter(enabled: bool = False, timezone_str: Optional[str] = None) -
             dates.add((rollover.month, rollover.day))
         return dates
 
-    _cache: Dict[int, set] = {}
+    _cache: dict[int, set] = {}
 
-    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+    def _f(ctx: EntryContext) -> tuple[bool, str]:
         if not enabled:
             return True, "rollover filter disabled"
 
@@ -179,7 +182,7 @@ def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str = "Amer
     """
     tz = ZoneInfo(timezone_str)
 
-    def _f(ctx: EntryContext) -> Tuple[bool, str]:
+    def _f(ctx: EntryContext) -> tuple[bool, str]:
         # 1. Determine the "current day" of the bar being processed
         current_bar_dt = datetime.fromtimestamp(ctx.bar['time'], tz=tz)
         current_day_date = current_bar_dt.date()
@@ -202,7 +205,7 @@ def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str = "Amer
 
         if daily_count < max_trades_per_day:
             return True, f"daily_count {daily_count} < {max_trades_per_day}"
-        
+
         return False, f"Daily limit reached: {daily_count} >= {max_trades_per_day}"
     _f.__name__ = "daily_trades_limit"
     return _f

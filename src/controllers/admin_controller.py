@@ -1,10 +1,10 @@
 """Admin controller for dashboard API endpoints."""
-from flask import jsonify, abort
-from typing import Optional, List
 
-from src.services.analytics_service import AnalyticsService
-from src.repositories.lines_repository import LineRepository
+from flask import abort, jsonify
+
 from src.repositories.decision_log_repository import DecisionLogRepository
+from src.repositories.lines_repository import LineRepository
+from src.services.analytics_service import AnalyticsService
 from src.utils.app_logger import ILogger
 
 
@@ -25,7 +25,7 @@ class AdminController:
         analytics_service: AnalyticsService,
         line_repository: LineRepository,
         logger: ILogger,
-        decision_log_repository: Optional[DecisionLogRepository] = None,
+        decision_log_repository: DecisionLogRepository | None = None,
     ):
         self._analytics = analytics_service
         self._lines_repo = line_repository
@@ -72,19 +72,19 @@ class AdminController:
         lines = self._lines_repo.list_lines(pair)
         return jsonify([
             {
-                "id": l.line_id,
-                "pair": l.pair,
-                "price": l.price,
-                "creation_date": l.creation_date.isoformat(),
+                "id": line.line_id,
+                "pair": line.pair,
+                "price": line.price,
+                "creation_date": line.creation_date.isoformat(),
             }
-            for l in lines
+            for line in lines
         ]), 200
 
     def get_decision_logs(
         self,
         pair: str,
-        event: Optional[str] = None,
-        line_id: Optional[str] = None,
+        event: str | None = None,
+        line_id: str | None = None,
         limit: int = 500,
     ):
         """Get recent decision logs with optional filters."""
@@ -95,6 +95,6 @@ class AdminController:
         )
         return jsonify({"logs": logs, "events": self.DECISION_EVENTS}), 200
 
-    def get_decision_events(self) -> List[str]:
+    def get_decision_events(self) -> list[str]:
         """Get list of known decision event types."""
         return jsonify({"events": self.DECISION_EVENTS}), 200

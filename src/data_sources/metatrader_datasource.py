@@ -1,7 +1,7 @@
 import socket
-from datetime import datetime, timedelta
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Dict, List
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import MetaTrader5 as mt5
@@ -23,7 +23,7 @@ class MetaTraderConfig:
     password:         str
     server:           str
     history_days:     int
-    host:             str = "0.0.0.0"
+    host:             str = "0.0.0.0"  # nosec B104
     port:             int = 8888
     server_timezone:   str = 'Etc/GMT-3'
     exchange_timezone: str = 'America/Chicago'
@@ -32,7 +32,7 @@ class MetaTraderDataSource(CombinedDataSource):
     def __init__(self, symbol: str, cfg: MetaTraderConfig):
         self.symbol       = symbol
         self.pair         = symbol
-        self.creds        = dict(login=cfg.login, password=cfg.password, server=cfg.server)
+        self.creds        = {'login': cfg.login, 'password': cfg.password, 'server': cfg.server}
         self._history_days = cfg.history_days
         self._host        = cfg.host
         self._port        = cfg.port
@@ -49,7 +49,7 @@ class MetaTraderDataSource(CombinedDataSource):
         if not mt5.initialize(**self.creds):
             raise RuntimeError(f"MT5 init failed: {mt5.last_error()}")
 
-    def load_historical_bars(self, timeframe: str = '1m') -> List[Dict]:
+    def load_historical_bars(self, timeframe: str = '1m') -> list[dict]:
         tf_const = TF_MAP.get(timeframe)
         if tf_const is None:
             raise ValueError(f"Unsupported timeframe: {timeframe}")
@@ -67,7 +67,7 @@ class MetaTraderDataSource(CombinedDataSource):
             print(f"⚠️ no history for {self.symbol}@{timeframe}, error={mt5.last_error()}")
             return []
 
-        bars: List[Dict] = []
+        bars: list[dict] = []
         for r in rates:
             t_server = int(r["time"])
             dt_srv   = datetime.fromtimestamp(t_server, tz=self._tz_server)
@@ -89,10 +89,9 @@ class MetaTraderDataSource(CombinedDataSource):
 
     def pause(self) -> None:
         """MetaTrader streams over TCP; pausing is handled by the caller."""
-        pass
 
     def subscribe(self,
-                  callback: Callable[[Dict], None],
+                  callback: Callable[[dict], None],
                   from_time: int = 0) -> None:
         """
         1) Replay all historical 1m bars whose 'time' > from_time via callback(bar).

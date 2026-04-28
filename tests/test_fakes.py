@@ -1,8 +1,15 @@
 """Tests for tests/fakes.py — ensure fake repositories behave correctly for test use."""
 
 from datetime import datetime, timezone
-from tests.fakes import FakeLineRepository, FakeTradeRepository, FakeTradeExecutor, FakeAnalyticsReporter, DummySocketIO
-from src.models import TradeData, LineData
+
+from src.models import LineData, TradeData
+from tests.fakes import (
+    DummySocketIO,
+    FakeAnalyticsReporter,
+    FakeLineRepository,
+    FakeTradeExecutor,
+    FakeTradeRepository,
+)
 
 
 class TestFakeLineRepository:

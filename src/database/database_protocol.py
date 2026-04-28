@@ -1,13 +1,12 @@
 from abc import ABC, abstractmethod
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-
-
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 Base = declarative_base()
 
 class DatabaseProtocol(ABC):
-    
+
     @abstractmethod
     def get_engine(self):
         pass
@@ -22,12 +21,12 @@ class DatabaseProtocol(ABC):
 
 
 class SQLiteDatabase(DatabaseProtocol):
-    
+
     def __init__(self, db_url="sqlite:///./database.db"):
         self.db_url = db_url
         # Enable connection pooling and WAL mode for better concurrent performance
         self.engine = create_engine(
-            self.db_url, 
+            self.db_url,
             connect_args={"check_same_thread": False},
             poolclass=None,  # Use NullPool for SQLite (connections can't be shared across threads)
             # SQLite optimizations for concurrent access
@@ -36,7 +35,7 @@ class SQLiteDatabase(DatabaseProtocol):
         # Apply WAL mode pragma on connect
         from sqlalchemy import event
         @event.listens_for(self.engine, "connect")
-        def set_sqlite_pragma(dbapi_conn, connection_record):
+        def set_sqlite_pragma(dbapi_conn, _connection_record):
             cursor = dbapi_conn.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")
             cursor.execute("PRAGMA synchronous=NORMAL")

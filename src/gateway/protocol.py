@@ -8,45 +8,46 @@ All messages are JSON-serializable with a consistent envelope format.
 """
 
 from __future__ import annotations
-from enum import Enum
-from dataclasses import dataclass
-from typing import Dict, Any, Optional, Literal
-import time
+
 import json
+import time
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any, Literal
 
 
 class MessageType(str, Enum):
     """Message types for the trading protocol."""
-    
+
     # Market Data (Platform → Python)
     TICK = "tick"           # Single price tick
     BAR = "bar"             # Completed OHLCV bar
     PARTIAL_BAR = "partial" # In-progress bar (for UI)
     HISTORY_BATCH = "history_batch"  # Batch of historical bars
     HISTORY_END = "history_end"      # End of historical data
-    
+
     # Trade Commands (Python → Platform)
     ORDER_OPEN = "order_open"
     ORDER_CLOSE = "order_close"
     ORDER_MODIFY = "order_modify"
-    
+
     # Trade Events (Platform → Python)
     ENTRY_FILL = "entry_fill"   # Position opened
     EXIT_FILL = "exit_fill"     # Position closed (SL/TP/Manual)
     ORDER_REJECTED = "order_rejected"
-    
+
     # Logging (Platform → Python)
     TRADE_LOG = "trade_log"     # Generic trade lifecycle log
     ERROR = "error"             # Error from platform
     WARNING = "warning"         # Warning from platform
-    
+
     # Control
     HEARTBEAT = "heartbeat"
     CONNECT = "connect"
     DISCONNECT = "disconnect"
     REFRESH_REQUEST = "refresh_request"
     REFRESH_START = "refresh_start"
-    
+
     # Queries (Bidirectional)
     POSITION_QUERY = "position_query"
     POSITION_RESPONSE = "position_response"
@@ -54,13 +55,13 @@ class MessageType(str, Enum):
     ACCOUNT_RESPONSE = "account_response"
     CONFIG_QUERY = "config_query"
     CONFIG_RESPONSE = "config_response"
-    
+
     # Position Sync (Platform → Python, broker is source of truth)
     POSITION_SYNC = "position_sync"
-    
+
     # Command Acknowledgment (Platform → Python)
     COMMAND_ACK = "command_ack"
-    
+
     # Testing (Bidirectional)
     TEST_PING = "test_ping"           # Connection test request
     TEST_PONG = "test_pong"           # Connection test response
@@ -73,7 +74,7 @@ class MessageType(str, Enum):
 class MessageEnvelope:
     """
     Standard message envelope for all protocol messages.
-    
+
     Every message has this structure:
     {
         "msg_type": "tick",
@@ -85,8 +86,8 @@ class MessageEnvelope:
     msg_type: MessageType
     timestamp: float
     seq_num: int
-    payload: Dict[str, Any]
-    
+    payload: dict[str, Any]
+
     def to_json(self) -> str:
         """Serialize to JSON string."""
         return json.dumps({
@@ -95,7 +96,7 @@ class MessageEnvelope:
             "seq_num": self.seq_num,
             "payload": self.payload,
         })
-    
+
     @classmethod
     def from_json(cls, json_str: str) -> MessageEnvelope:
         """Deserialize from JSON string."""
@@ -106,12 +107,12 @@ class MessageEnvelope:
             seq_num=data["seq_num"],
             payload=data["payload"],
         )
-    
+
     @classmethod
     def create(
         cls,
         msg_type: MessageType,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         seq_num: int = 0,
     ) -> MessageEnvelope:
         """Create a new message envelope with current timestamp."""
@@ -134,9 +135,9 @@ class TickMessage:
     price: float
     volume: int
     time: int  # Unix timestamp (seconds)
-    bid: Optional[float] = None
-    ask: Optional[float] = None
-    
+    bid: float | None = None
+    ask: float | None = None
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.TICK,
@@ -163,7 +164,7 @@ class BarMessage:
     close: float
     volume: int
     is_partial: bool = False  # True for in-progress bar
-    
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         msg_type = MessageType.PARTIAL_BAR if self.is_partial else MessageType.BAR
         return MessageEnvelope.create(
@@ -185,9 +186,9 @@ class BarMessage:
 class HistoryBatchMessage:
     """Batch of historical bars."""
     pair: str
-    bars: list[Dict[str, Any]]  # List of OHLCV dicts
+    bars: list[dict[str, Any]]  # List of OHLCV dicts
     days: int  # How many days of history
-    
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.HISTORY_BATCH,
@@ -215,9 +216,9 @@ class OpenOrderCommand:
     take_profit: float
     risk_points: float  # Distance from entry to SL in points
     rr_ratio: float     # Risk:Reward ratio
-    risk_usd: Optional[float] = None   # For position sizing
-    risk_pct: Optional[float] = None   # Alternative: % of account
-    
+    risk_usd: float | None = None   # For position sizing
+    risk_pct: float | None = None   # Alternative: % of account
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
             "trade_id": self.trade_id,
@@ -233,7 +234,7 @@ class OpenOrderCommand:
             payload["risk_usd"] = self.risk_usd
         if self.risk_pct is not None:
             payload["risk_pct"] = self.risk_pct
-            
+
         return MessageEnvelope.create(
             msg_type=MessageType.ORDER_OPEN,
             payload=payload,
@@ -245,8 +246,8 @@ class OpenOrderCommand:
 class CloseOrderCommand:
     """Command to close a position."""
     trade_id: str
-    reason: Optional[str] = None  # "session_end", "manual", "strategy"
-    
+    reason: str | None = None  # "session_end", "manual", "strategy"
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.ORDER_CLOSE,
@@ -262,16 +263,16 @@ class CloseOrderCommand:
 class ModifyOrderCommand:
     """Command to modify an existing order (e.g., move SL to breakeven)."""
     trade_id: str
-    stop_loss: Optional[float] = None
-    take_profit: Optional[float] = None
-    
+    stop_loss: float | None = None
+    take_profit: float | None = None
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {"trade_id": self.trade_id}
         if self.stop_loss is not None:
             payload["stop_loss"] = self.stop_loss
         if self.take_profit is not None:
             payload["take_profit"] = self.take_profit
-            
+
         return MessageEnvelope.create(
             msg_type=MessageType.ORDER_MODIFY,
             payload=payload,
@@ -288,11 +289,11 @@ class EntryFillMessage:
     """Position entry fill notification."""
     trade_id: str
     entry_price: float          # Actual fill price
-    stop_loss: Optional[float] = None   # Broker-calculated SL
-    take_profit: Optional[float] = None # Broker-calculated TP
-    slippage: Optional[float] = None    # Difference from requested entry
-    contracts: Optional[int] = None
-    
+    stop_loss: float | None = None   # Broker-calculated SL
+    take_profit: float | None = None # Broker-calculated TP
+    slippage: float | None = None    # Difference from requested entry
+    contracts: int | None = None
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
             "trade_id": self.trade_id,
@@ -306,7 +307,7 @@ class EntryFillMessage:
             payload["slippage"] = self.slippage
         if self.contracts is not None:
             payload["contracts"] = self.contracts
-            
+
         return MessageEnvelope.create(
             msg_type=MessageType.ENTRY_FILL,
             payload=payload,
@@ -320,8 +321,8 @@ class ExitFillMessage:
     trade_id: str
     exit_price: float
     result_type: Literal["SL", "TP", "SP", "CLOSE"]  # SL=Stop Loss, TP=Take Profit, SP=Session End, CLOSE=Manual
-    exit_time: Optional[int] = None  # Unix timestamp
-    
+    exit_time: int | None = None  # Unix timestamp
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
             "trade_id": self.trade_id,
@@ -330,7 +331,7 @@ class ExitFillMessage:
         }
         if self.exit_time is not None:
             payload["exit_time"] = self.exit_time
-            
+
         return MessageEnvelope.create(
             msg_type=MessageType.EXIT_FILL,
             payload=payload,
@@ -343,7 +344,7 @@ class OrderRejectedMessage:
     """Order rejected by broker/platform."""
     trade_id: str
     reason: str
-    
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.ORDER_REJECTED,
@@ -365,7 +366,7 @@ class TradeLogMessage:
     trade_id: str
     event: str      # "NT:ORDER", "NT:FILL", "NT:MODIFY", etc.
     message: str
-    
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.TRADE_LOG,
@@ -387,7 +388,7 @@ class HeartbeatMessage:
     """Keep-alive message."""
     source: str  # "python" or platform name
     status: str  # "ok", "busy", "error"
-    
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.HEARTBEAT,
@@ -404,9 +405,9 @@ class ConnectMessage:
     """Initial connection handshake."""
     platform: str           # "ninjatrader", "metatrader5", etc.
     version: str            # Protocol version
-    account: Optional[str] = None
-    pair: Optional[str] = None
-    
+    account: str | None = None
+    pair: str | None = None
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
             "platform": self.platform,
@@ -416,7 +417,7 @@ class ConnectMessage:
             payload["account"] = self.account
         if self.pair is not None:
             payload["pair"] = self.pair
-            
+
         return MessageEnvelope.create(
             msg_type=MessageType.CONNECT,
             payload=payload,
@@ -428,7 +429,7 @@ class ConnectMessage:
 class RefreshRequestMessage:
     """Request historical data refresh."""
     days: int = 1
-    
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.REFRESH_REQUEST,
@@ -445,7 +446,7 @@ class RefreshRequestMessage:
 class TestPingMessage:
     """Connection test ping."""
     timestamp: float
-    
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.TEST_PING,
@@ -458,7 +459,7 @@ class TestPingMessage:
 class TestPongMessage:
     """Connection test response."""
     timestamp: float
-    
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.TEST_PONG,
@@ -474,7 +475,7 @@ class TestStartMessage:
     entry_price: float = 21000.0
     risk_points: float = 80.0
     rr_ratio: float = 1.0
-    
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.TEST_START,
@@ -493,9 +494,9 @@ class TestResultMessage:
     """E2E test result."""
     scenario: str
     passed: bool
-    trade_id: Optional[str] = None
+    trade_id: str | None = None
     message: str = ""
-    
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
             "scenario": self.scenario,
@@ -518,8 +519,8 @@ class TestResultMessage:
 @dataclass
 class PositionQueryMessage:
     """Query for current open positions (used for crash recovery sync)."""
-    pair: Optional[str] = None  # Filter by pair, or None for all
-    
+    pair: str | None = None  # Filter by pair, or None for all
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {}
         if self.pair is not None:
@@ -534,9 +535,9 @@ class PositionQueryMessage:
 @dataclass
 class PositionResponseMessage:
     """Response to position query with current open trades."""
-    positions: list[Dict[str, Any]]  # List of position dicts with trade_id, entry, sl, tp, etc.
+    positions: list[dict[str, Any]]  # List of position dicts with trade_id, entry, sl, tp, etc.
     count: int
-    
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.POSITION_RESPONSE,
@@ -551,16 +552,16 @@ class PositionResponseMessage:
 @dataclass
 class PositionSyncMessage:
     """Position sync from broker (broker is source of truth).
-    
+
     Sent by platform after reconnect to report actual broker positions.
     Python should reconcile its state to match.
     """
-    positions: list[Dict[str, Any]]  # Actual broker positions
+    positions: list[dict[str, Any]]  # Actual broker positions
     count: int
     source: str  # Platform name (e.g., "ninjatrader")
     is_source_of_truth: bool = True
-    untracked_orders: Optional[list[Dict[str, Any]]] = None
-    
+    untracked_orders: list[dict[str, Any]] | None = None
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
             "positions": self.positions,
@@ -570,7 +571,7 @@ class PositionSyncMessage:
         }
         if self.untracked_orders:
             payload["untracked_orders"] = self.untracked_orders
-            
+
         return MessageEnvelope.create(
             msg_type=MessageType.POSITION_SYNC,
             payload=payload,
@@ -581,16 +582,16 @@ class PositionSyncMessage:
 @dataclass
 class CommandAckMessage:
     """Command acknowledgment from platform.
-    
+
     Sent by platform after processing a command to confirm receipt.
     """
     command_type: str  # e.g., "order_open", "order_modify"
     seq_num: int
     success: bool
-    trade_id: Optional[str] = None
-    message: Optional[str] = None
-    timestamp: Optional[float] = None
-    
+    trade_id: str | None = None
+    message: str | None = None
+    timestamp: float | None = None
+
     def to_envelope(self, seq_num_out: int = 0) -> MessageEnvelope:
         payload = {
             "command_type": self.command_type,
@@ -603,15 +604,15 @@ class CommandAckMessage:
             payload["message"] = self.message
         if self.timestamp is not None:
             payload["timestamp"] = self.timestamp
-            
+
         return MessageEnvelope.create(
             msg_type=MessageType.COMMAND_ACK,
             payload=payload,
             seq_num=seq_num_out,
         )
-    
+
     @classmethod
-    def from_payload(cls, payload: Dict[str, Any]) -> "CommandAckMessage":
+    def from_payload(cls, payload: dict[str, Any]) -> CommandAckMessage:
         """Create from received payload."""
         return cls(
             command_type=payload.get("command_type", ""),
@@ -626,8 +627,8 @@ class CommandAckMessage:
 @dataclass
 class ConfigResponseMessage:
     """Response to config query with settings like account name."""
-    config: Dict[str, Any]
-    
+    config: dict[str, Any]
+
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.CONFIG_RESPONSE,

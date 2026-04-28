@@ -1,6 +1,7 @@
 """Admin dashboard HTTP routes."""
 
-from flask import Flask, request, abort, render_template
+from flask import Flask, abort, render_template, request
+
 from src.controllers.admin_controller import AdminController
 from src.utils.app_logger import ILogger
 
@@ -8,15 +9,15 @@ from src.utils.app_logger import ILogger
 def register_admin_routes(
     app: Flask,
     admin_controller: AdminController,
-    logger: ILogger,
+    _logger: ILogger,
 ):
     """Register admin dashboard routes.
-    
+
     Args:
         app: Flask application instance
         admin_controller: Controller for admin operations
     """
-    
+
     @app.route('/admin')
     def admin_dashboard():
         return render_template('admin.html')

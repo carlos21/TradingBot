@@ -1,6 +1,6 @@
 """DTOs for trade analytics data."""
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -20,7 +20,7 @@ class TradeStatistics:
     profit_factor: float
     avg_r_multiple: float
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "total_trades": self.total_trades,
             "open_trades": self.open_trades,
@@ -48,20 +48,20 @@ class TimeSeriesPoint:
 @dataclass
 class TimeSeriesData:
     """Time series data for charts."""
-    labels: List[str]
-    values: List[float]
+    labels: list[str]
+    values: list[float]
 
-    def to_dict(self) -> Dict[str, List]:
+    def to_dict(self) -> dict[str, list]:
         return {"labels": self.labels, "data": self.values}
 
 
 @dataclass
 class DistributionData:
     """Distribution data for bar/pie charts."""
-    labels: List[str]
-    values: List[int]
+    labels: list[str]
+    values: list[int]
 
-    def to_dict(self) -> Dict[str, List]:
+    def to_dict(self) -> dict[str, list]:
         return {"labels": self.labels, "data": self.values}
 
 
@@ -75,20 +75,20 @@ class TradeDetail:
     stop_loss: float
     take_profit: float
     risk: float
-    risk_dollars: Optional[float]
-    risk_pct: Optional[float]
-    contracts: Optional[float]
+    risk_dollars: float | None
+    risk_pct: float | None
+    contracts: float | None
     entry_time: float  # timestamp
-    exit_price: Optional[float]
-    exit_time: Optional[float]  # timestamp
-    result: Optional[float]
-    result_type: Optional[str]
-    fees: Optional[float]
-    pnl_usd: Optional[float]
+    exit_price: float | None
+    exit_time: float | None  # timestamp
+    result: float | None
+    result_type: str | None
+    fees: float | None
+    pnl_usd: float | None
     status: str
-    logs: List[Dict[str, str]]
+    logs: list[dict[str, str]]
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "trade_id": self.trade_id,
             "pair": self.pair,

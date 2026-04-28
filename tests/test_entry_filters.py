@@ -3,16 +3,16 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
+from src.models import TradeData
 from src.strategies.entry_context import (
     EntryContext,
-    open_trades_limit_filter,
-    min_cross_depth_filter,
-    max_bounce_filter,
-    time_range_filter,
     daily_trades_limit_filter,
+    max_bounce_filter,
+    min_cross_depth_filter,
+    open_trades_limit_filter,
     rollover_filter,
+    time_range_filter,
 )
-from src.models import TradeData
 
 
 def _make_ctx(strategy=None, bar_time=None, pair="MNQ", cross_depth=10.0, level=100.0, extreme=90.0):

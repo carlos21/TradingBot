@@ -2,8 +2,7 @@
 import os
 from unittest.mock import patch
 
-
-from src.config.loaders import EnvConfigLoader, CliConfigLoader, CompositeConfigLoader
+from src.config.loaders import CliConfigLoader, CompositeConfigLoader, EnvConfigLoader
 
 
 class TestEnvConfigLoader:

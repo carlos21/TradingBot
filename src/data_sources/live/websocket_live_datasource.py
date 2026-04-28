@@ -1,8 +1,10 @@
+import json
+import threading
+
+import websocket
+
 from src.data_sources.live.live_datasource import LiveDataSource
 
-import threading
-import json
-import websocket
 
 class WebsocketLiveDataSource(LiveDataSource):
     def __init__(self, pair: str, ws_url: str):

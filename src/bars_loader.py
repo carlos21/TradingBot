@@ -1,11 +1,14 @@
-from typing import Callable, List
-from dataclasses import dataclass
-from flask_socketio import SocketIO
+import contextlib
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from flask_socketio import SocketIO
 
 from src.data_sources.combined_datasource import CombinedDataSource
 from src.utils.app_logger import ILogger
+
 
 @dataclass
 class LoaderConfig:
@@ -48,7 +51,7 @@ class BarsLoader:
         self._last_bar_close  = 0
         self._step_mode       = False
         self.live_mode        = False
-        
+
         # Gap detection for live chart stream
         self._last_processed_bar_time: int = 0
 
@@ -70,9 +73,12 @@ class BarsLoader:
 
         unit = tf[-1]
         num  = int(tf[:-1])
-        if unit == 'm': self.group_size = max(1, num)
-        elif unit == 'h': self.group_size = max(1, num * 60)
-        else: raise ValueError(f"Unsupported timeframe '{tf}'")
+        if unit == 'm':
+            self.group_size = max(1, num)
+        elif unit == 'h':
+            self.group_size = max(1, num * 60)
+        else:
+            raise ValueError(f"Unsupported timeframe '{tf}'")
 
         self.current_tf = tf
         window_secs = self.group_size * 60
@@ -90,8 +96,8 @@ class BarsLoader:
 
     def start(self, from_time: int = None, stop_at: int = None):
         self._stop_event.set()
-        time.sleep(0.05) 
-        
+        time.sleep(0.05)
+
         if from_time is not None:
             self._from_time = from_time
             self._1m_buffer = []
@@ -161,7 +167,8 @@ class BarsLoader:
             self.socketio.emit('stream_end', {'ok': True})
             return
 
-        if not self.live_mode and self._stop_event.is_set(): return
+        if not self.live_mode and self._stop_event.is_set():
+            return
 
         is_partial = msg.get('partial', False)
 
@@ -186,7 +193,8 @@ class BarsLoader:
             self.socketio.emit('bar', bar_for_emit)
             return
 
-        if self.bar_callback: self.bar_callback(msg)
+        if self.bar_callback:
+            self.bar_callback(msg)
 
         if 'open' in msg and 'high' in msg:
             self._last_played_ts = msg['time']
@@ -199,8 +207,8 @@ class BarsLoader:
         if self._stop_at is not None and 'time' in msg and msg['time'] >= self._stop_at:
             self._reached_stop_at = True
             self._stop_event.set()
-            try: self.data_source.pause()
-            except Exception: pass
+            with contextlib.suppress(Exception):
+                self.data_source.pause()
 
             self.streaming = False
             self.logger.info(f"[BarsLoader] STOP_AT reached! msg_time={msg['time']}, stop_at={self._stop_at}")
@@ -233,7 +241,7 @@ class BarsLoader:
                     f"({gap // 60}m {gap % 60}s)"
                 )
         self._last_processed_bar_time = bar['time']
-        
+
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
             self.socketio.emit('bar', bar)
             time.sleep(self._emit_delay)
@@ -248,7 +256,8 @@ class BarsLoader:
             self._current_group_start = window_start
 
         if window_start == self._current_group_start:
-            if self._1m_buffer and self._1m_buffer[-1]['time'] == bar['time']: return
+            if self._1m_buffer and self._1m_buffer[-1]['time'] == bar['time']:
+                return
             self._1m_buffer.append(bar)
         else:
             if self._1m_buffer:
@@ -264,7 +273,7 @@ class BarsLoader:
         self.socketio.emit('tick', tick)
 
     @staticmethod
-    def _aggregate_time_window(bars: List[dict], window_start: int, window_secs: int) -> dict:
+    def _aggregate_time_window(bars: list[dict], window_start: int, _window_secs: int) -> dict:
         open_  = bars[0]['open']
         close_ = bars[-1]['close']
         high   = max(b['high'] for b in bars)
@@ -276,7 +285,7 @@ class BarsLoader:
             'open':   open_, 'high': high, 'low': low, 'close': close_,
             'volume': volume, 'pair': pair
         }
-    
+
     def _run_subscription(self, from_time: int):
         try:
             self.data_source.subscribe(self._handle_message, from_time)
@@ -286,8 +295,7 @@ class BarsLoader:
 
             if should_flush:
                 try:
-                    if not (self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1):
-                        if self._1m_buffer:
+                    if not (self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1) and self._1m_buffer:
                             window_secs = self.group_size * 60
                             agg = self._aggregate_time_window(self._1m_buffer, self._current_group_start, window_secs)
                             self.socketio.emit('bar', agg)
@@ -312,28 +320,34 @@ class BarsLoader:
 
     def _find_next_same_time_next_day(self, current_ts: int, days: int) -> int:
         bars = self._get_all_bars()
-        if not bars: return current_ts + days * 86400
+        if not bars:
+            return current_ts + days * 86400
         target = current_ts + days * 86400
         if days > 0:
             for b in bars:
-                if b["time"] >= target: return b["time"]
+                if b["time"] >= target:
+                    return b["time"]
             return bars[-1]["time"]
         else:
             prev = bars[0]["time"]
             for b in bars:
-                if b["time"] > target: return prev
+                if b["time"] > target:
+                    return prev
                 prev = b["time"]
             return prev
-        
+
     def jump_day(self, direction: int = 1, fast: bool = True) -> int:
         if self.live_mode:
             return self._last_played_ts or self._from_time
 
         base_ts = 0
         bars = self.data_source.load_historical_bars('1m')
-        if bars: base_ts = bars[-1]["time"]
-        elif self._last_played_ts: base_ts = self._last_played_ts
-        else: base_ts = self._from_time
+        if bars:
+            base_ts = bars[-1]["time"]
+        elif self._last_played_ts:
+            base_ts = self._last_played_ts
+        else:
+            base_ts = self._from_time
 
         target_ts = self._find_next_same_time_next_day(base_ts, direction)
 

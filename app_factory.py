@@ -481,14 +481,14 @@ def create_app(
 
     # Register routes
     register_core_routes(app, pair, data_source, logger=logger)
-    register_lines_routes(app, lines_controller, logger=logger)
-    register_trades_routes(app, trades_controller, repos.trades, pair, trade_logger, logger=logger)
-    register_admin_routes(app, admin_controller, logger=logger)
+    register_lines_routes(app, lines_controller, logger)
+    register_trades_routes(app, trades_controller, repos.trades, pair, trade_logger, logger)
+    register_admin_routes(app, admin_controller, logger)
     register_debug_routes(
         app, tstrategy, loader, trade_manager, repos.lines, repos.trades,
         data_source, pair, notifier, analytics, logger=logger
     )
-    register_socketio_handlers(socketio, loader, data_source, live_mode, logger=logger)
+    register_socketio_handlers(socketio, loader, data_source, live_mode, logger)
     
     from werkzeug.exceptions import HTTPException
 

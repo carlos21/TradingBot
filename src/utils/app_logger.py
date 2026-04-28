@@ -9,7 +9,6 @@ import threading
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
 
 class ILogger(ABC):
@@ -18,27 +17,22 @@ class ILogger(ABC):
     @abstractmethod
     def debug(self, message: str) -> None:
         """Log a debug message."""
-        pass
 
     @abstractmethod
     def info(self, message: str) -> None:
         """Log an info message."""
-        pass
 
     @abstractmethod
     def warning(self, message: str) -> None:
         """Log a warning message."""
-        pass
 
     @abstractmethod
     def error(self, message: str) -> None:
         """Log an error message."""
-        pass
 
     @abstractmethod
     def close(self) -> None:
         """Close any open resources."""
-        pass
 
 
 class ConsoleLogger(ILogger):
@@ -66,7 +60,7 @@ class FileAndConsoleLogger(ILogger):
     def __init__(self, log_dir: str = "logs", instance_name: str = ""):
         self.log_dir = Path(log_dir)
         self.instance_name = instance_name
-        self._file_handle: Optional[object] = None
+        self._file_handle: object | None = None
         self._lock = threading.Lock()
         self._setup_file_logging()
 
@@ -75,7 +69,7 @@ class FileAndConsoleLogger(ILogger):
         self.log_dir.mkdir(exist_ok=True)
         date_str = datetime.now().strftime("%Y-%m-%d")
         log_file = self.log_dir / f"app_{date_str}.log"
-        self._file_handle = open(log_file, "a", buffering=1)  # line-buffered
+        self._file_handle = open(log_file, "a", buffering=1)  # line-buffered  # noqa: SIM115
 
     def _write(self, level: str, message: str) -> None:
         """Write to both console and file."""

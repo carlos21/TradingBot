@@ -4,10 +4,10 @@ import pytest
 from flask import Flask
 
 from src.controllers.admin_controller import AdminController
-from src.services.analytics_service import AnalyticsService
-from tests.fakes import FakeLineRepository, FakeLogger, FakeTradeRepository
 from src.database.database import setup_database
 from src.repositories.decision_log_repository import DecisionLogRepository
+from src.services.analytics_service import AnalyticsService
+from tests.fakes import FakeLineRepository, FakeLogger, FakeTradeRepository
 
 
 @pytest.fixture
@@ -32,7 +32,7 @@ def app_context():
 
 class TestDecisionLogs:
 
-    def test_get_decision_logs_empty(self, admin_ctrl, app_context):
+    def test_get_decision_logs_empty(self, admin_ctrl, app_context):  # noqa: ARG002
         ctrl, _ = admin_ctrl
         resp, status = ctrl.get_decision_logs("MNQ")
         assert status == 200
@@ -40,7 +40,7 @@ class TestDecisionLogs:
         assert data["logs"] == []
         assert "events" in data
 
-    def test_get_decision_logs_with_filters(self, admin_ctrl, app_context):
+    def test_get_decision_logs_with_filters(self, admin_ctrl, app_context):  # noqa: ARG002
         ctrl, repo = admin_ctrl
         repo.add_log(bar_time=1000.0, pair="MNQ", event="LATCH", line_id="L1")
         repo.add_log(bar_time=2000.0, pair="MNQ", event="FILTER_BLOCK", line_id="L1", filter_name="min_cross_depth")
@@ -62,7 +62,7 @@ class TestDecisionLogs:
         data = resp.get_json()
         assert len(data["logs"]) == 2
 
-    def test_get_decision_events(self, admin_ctrl, app_context):
+    def test_get_decision_events(self, admin_ctrl, app_context):  # noqa: ARG002
         ctrl, _ = admin_ctrl
         resp, status = ctrl.get_decision_events()
         assert status == 200

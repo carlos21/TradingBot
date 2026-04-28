@@ -1,10 +1,10 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional, List
-from src.models import LineData, TradeData
-from src.services.trade_executor import TradeExecutor
-from src.notifier import Notifier
+
 from src.analytics import AnalyticsReporter
+from src.models import LineData, TradeData
+from src.notifier import Notifier
+from src.services.trade_executor import TradeExecutor
 from src.utils.app_logger import ILogger
 
 
@@ -51,7 +51,7 @@ class FakeLineRepository:
         self._seq = 0
         self._store = {}
 
-    def list_lines(self, pair: str) -> List[LineData]:
+    def list_lines(self, pair: str) -> list[LineData]:
         results = []
         for obj in self._store.values():
             if obj.pair == pair:
@@ -69,7 +69,7 @@ class FakeLineRepository:
         c_date = creation_date if creation_date else datetime.utcnow()
         obj = _Line(lid, pair, price, c_date)
         self._store[lid] = obj
-        
+
         return LineData(
             line_id=obj.line_id,
             pair=obj.pair,
@@ -77,7 +77,7 @@ class FakeLineRepository:
             creation_date=obj.creation_date
         )
 
-    def get_line(self, line_id: str) -> Optional[LineData]:
+    def get_line(self, line_id: str) -> LineData | None:
         obj = self._store.get(line_id)
         if not obj:
             return None
@@ -107,8 +107,8 @@ class FakeLineRepository:
 class FakeTradeRepository:
     def __init__(self):
         self._seq = 0
-        self.inserted = [] 
-        self.closed   = [] 
+        self.inserted = []
+        self.closed   = []
 
     def clear(self):
         """Wipe all data for a fresh scenario."""
@@ -186,7 +186,7 @@ class FakeTradeRepository:
                 t['risk_dollars'] = risk_dollars
                 t['risk_pct'] = risk_pct
                 return
-    
+
     def close_trade(self, trade_id, exit_price, exit_time, result, result_type=None, fees=None, pnl_usd=None):
         self.closed.append({
             "trade_id": trade_id,
@@ -211,7 +211,7 @@ class FakeTradeRepository:
                 return t.get('logs', [])
         return []
 
-    def get_trade(self, trade_id: str) -> Optional[TradeData]:
+    def get_trade(self, trade_id: str) -> TradeData | None:
         for t in self.inserted:
             if t['trade_id'] == trade_id:
                 closed_info = next((c for c in self.closed if c['trade_id'] == trade_id), None)
@@ -239,15 +239,15 @@ class FakeTradeRepository:
                 )
         return None
 
-    def get_all_trades(self, pair: str) -> List[TradeData]:
+    def get_all_trades(self, pair: str) -> list[TradeData]:
         return self.list_trades(pair)
 
-    def list_trades(self, pair: str) -> List[TradeData]:
+    def list_trades(self, pair: str) -> list[TradeData]:
         results = []
         for t in self.inserted:
             if t['pair'] != pair:
                 continue
-            
+
             closed_info = next((c for c in self.closed if c['trade_id'] == t['trade_id']), None)
 
             exit_price = closed_info['exit_price'] if closed_info else None

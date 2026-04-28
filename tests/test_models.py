@@ -1,6 +1,7 @@
 """Tests for src/models.py — LineData and TradeData dataclasses."""
 
 from datetime import datetime, timezone
+
 from src.models import LineData, TradeData
 
 
@@ -33,26 +34,26 @@ class TestLineData:
 class TestTradeData:
 
     def _make(self, **overrides):
-        defaults = dict(
-            trade_id="T1",
-            pair="MNQ",
-            trade_type="long",
-            entry_price=100.0,
-            stop_loss=90.0,
-            take_profit=130.0,
-            risk=10.0,
-            risk_dollars=None,
-            risk_pct=None,
-            contracts=None,
-            entry_time=datetime(2025, 1, 1, tzinfo=timezone.utc),
-            exit_price=None,
-            exit_time=None,
-            result=None,
-            result_type=None,
-            fees=None,
-            pnl_usd=None,
-            params=None,
-        )
+        defaults = {
+            "trade_id": "T1",
+            "pair": "MNQ",
+            "trade_type": "long",
+            "entry_price": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 130.0,
+            "risk": 10.0,
+            "risk_dollars": None,
+            "risk_pct": None,
+            "contracts": None,
+            "entry_time": datetime(2025, 1, 1, tzinfo=timezone.utc),
+            "exit_price": None,
+            "exit_time": None,
+            "result": None,
+            "result_type": None,
+            "fees": None,
+            "pnl_usd": None,
+            "params": None,
+        }
         defaults.update(overrides)
         return TradeData(**defaults)
 

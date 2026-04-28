@@ -1,15 +1,16 @@
 """Debug and test helper HTTP routes."""
 
 from flask import Flask, jsonify, request
+
+from src.analytics import AnalyticsReporter
 from src.bars_loader import BarsLoader
+from src.data_sources.combined_datasource import CombinedDataSource
+from src.data_sources.csv_datasource import CSVDataSource
+from src.notifier import Notifier
 from src.repositories.lines_repository import LineRepository
 from src.repositories.trades_repository import TradeRepository
 from src.services.trade_manager import TradeManager
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
-from src.data_sources.combined_datasource import CombinedDataSource
-from src.data_sources.csv_datasource import CSVDataSource
-from src.notifier import Notifier
-from src.analytics import AnalyticsReporter
 from src.utils.app_logger import ILogger
 
 
@@ -27,7 +28,7 @@ def register_debug_routes(
     logger: ILogger,
 ):
     """Register debug and test helper routes.
-    
+
     Args:
         app: Flask application instance
         strategy: Trading strategy instance
@@ -40,27 +41,27 @@ def register_debug_routes(
         notifier: Notification service
         analytics: Analytics service
     """
-    
+
     @app.route('/api/debug/logs', methods=['GET'])
     def get_debug_logs():
         """Return the decision logs from the strategy."""
         return jsonify(strategy.decision_logs)
-    
+
     @app.route('/__reset_all', methods=['POST'])
     def reset_all():
         """Clears all state, resets DataSource range, AND warms up strategy."""
         try:
             # 1. Clear in-memory strategy state (Deep Reset)
             strategy.reset()
-            
+
             # 2. Reset Loader State (so _last_played_ts goes back to 0)
             loader.reset()
 
             # 3. Clear DB lines
             try:
                 all_lines = lines_repo.list_lines(pair)
-                for l in all_lines:
-                    lines_repo.delete_line(l.line_id)
+                for line in all_lines:
+                    lines_repo.delete_line(line.line_id)
             except Exception as e:
                 return jsonify({"error": str(e)}), 500
 
@@ -101,6 +102,6 @@ def register_debug_routes(
     @app.route('/__shutdown', methods=['POST'])
     def shutdown():
         func = request.environ.get('werkzeug.server.shutdown')
-        if func: 
+        if func:
             func()
         return "OK"

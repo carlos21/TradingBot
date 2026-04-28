@@ -1,13 +1,13 @@
 """Tests for ExitStrategy implementations."""
 
-from src.types import Direction
 from src.strategies.exits import (
-    ExitType,
-    SLTPExitStrategy,
-    SessionEndExitStrategy,
-    NoExitStrategy,
     CompositeExitStrategy,
+    ExitType,
+    NoExitStrategy,
+    SessionEndExitStrategy,
+    SLTPExitStrategy,
 )
+from src.types import Direction
 
 
 class TestSLTPExitStrategy:

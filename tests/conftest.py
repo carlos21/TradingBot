@@ -1,21 +1,23 @@
 import os
+
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "dummy")
 os.environ.setdefault("TELEGRAM_CHAT_ID", "dummy")
 
 import pytest
-from tests.fakes import (
-    DummySocketIO,
-    FakeLineRepository,
-    FakeTradeRepository,
-    FakeTradeExecutor,
-    FakeAnalyticsReporter,
-    FakeLogger,
-)
-from src.services.trade_manager import TradeManager
+
 from src.services.trade_logger import TradeLogger
-from src.strategies.strategy_config import CandleConfig, StrategyNumbers
+from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import StrategyOptions
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
+from src.strategies.strategy_config import CandleConfig, StrategyNumbers
+from tests.fakes import (
+    DummySocketIO,
+    FakeAnalyticsReporter,
+    FakeLineRepository,
+    FakeLogger,
+    FakeTradeExecutor,
+    FakeTradeRepository,
+)
 
 
 @pytest.fixture

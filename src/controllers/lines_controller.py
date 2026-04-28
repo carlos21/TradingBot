@@ -1,11 +1,13 @@
 from datetime import datetime, timezone
-from flask import jsonify, abort
+
+from flask import abort, jsonify
 
 from src.bars_loader import BarsLoader
 from src.dbexception import DBNotFoundException
 from src.repositories.lines_repository import LineRepository
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 from src.utils.app_logger import ILogger
+
 
 class LinesController:
 
@@ -18,12 +20,12 @@ class LinesController:
     def list_lines(self, pair: str):
         lines = self.line_repository.list_lines(pair)
         return jsonify([{
-            'id':            l.line_id,
-            'pair':          l.pair,
-            'price':         l.price,
-            'creation_date': l.creation_date.isoformat()
-        } for l in lines])
-    
+            'id':            line.line_id,
+            'pair':          line.pair,
+            'price':         line.price,
+            'creation_date': line.creation_date.isoformat()
+        } for line in lines])
+
     def add_line(self, pair: str, price: float, creation_timestamp: float = None):
         ds = self.bars_loader.data_source
         if pair != ds.pair:

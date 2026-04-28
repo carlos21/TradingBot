@@ -2,44 +2,44 @@
 Universal Trading Gateway using ZeroMQ.
 
 This module provides a fast, cross-platform communication layer between
-Python trading strategies and various trading platforms (NinjaTrader, 
+Python trading strategies and various trading platforms (NinjaTrader,
 MetaTrader, cTrader, etc.).
 
 Usage:
     from src.gateway import TradingGateway, create_zmq_executor
-    
-    gateway = TradingGateway(pair="MNQ")
+
+    gateway = TradingGateway(logger, pair="MNQ")
     gateway.start()
-    
+
     # Use with trade manager
     executor = create_zmq_executor(gateway)
     trade_manager = TradeManager(..., trade_executor=executor)
 """
 
+from .datasource import ZMQDataSource
+from .executor import ZMQTradeExecutor, create_zmq_executor
+from .gateway import GatewayConfig, TradingGateway
+from .integration import (
+    create_gateway_only,
+    create_live_components,
+    get_platform_addresses,
+)
 from .protocol import (
-    MessageType,
-    TradeCommand,
-    MarketDataMessage,
     FillMessage,
     HeartbeatMessage,
+    MarketDataMessage,
+    MessageType,
     TestPingMessage,
     TestPongMessage,
-    TestStartMessage,
     TestResultMessage,
-)
-from .gateway import TradingGateway, GatewayConfig
-from .executor import ZMQTradeExecutor, create_zmq_executor
-from .datasource import ZMQDataSource
-from .integration import (
-    create_live_components,
-    create_gateway_only,
-    get_platform_addresses,
+    TestStartMessage,
+    TradeCommand,
 )
 
 __all__ = [
     # Protocol types
     "MessageType",
-    "TradeCommand", 
+    "TradeCommand",
     "MarketDataMessage",
     "FillMessage",
     "HeartbeatMessage",
