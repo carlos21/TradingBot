@@ -474,7 +474,7 @@ class BaseLiquidityStrategy:
                     ctx = EntryContext(
                         strategy=self, line_id=None, direction=Direction.LONG, level=level,
                         bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
-                        extreme=min(level, bar["low"]), cross_depth=0.0,
+                        extreme=opp["extreme_excursion"], cross_depth=0.0,
                     )
                     trade = self._build_trade_from_context(ctx)
                     trade["is_reentry"] = True
@@ -496,7 +496,7 @@ class BaseLiquidityStrategy:
                     ctx = EntryContext(
                         strategy=self, line_id=None, direction=Direction.SHORT, level=level,
                         bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
-                        extreme=max(level, bar["high"]), cross_depth=0.0,
+                        extreme=opp["extreme_excursion"], cross_depth=0.0,
                     )
                     trade = self._build_trade_from_context(ctx)
                     trade["is_reentry"] = True

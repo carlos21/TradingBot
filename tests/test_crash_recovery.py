@@ -146,7 +146,7 @@ def _utc_dt(epoch):
 # Scenario: MNQ 2025-05-01
 # Lines: 20046.00, 20198.25 (at 01:00Z)
 # Trade 1: short entry=20041.50, sl=20056.50, tp=19966.50 → SL hit
-# Trade 2 (reentry): short entry=20038.00, sl=20053.00, tp=19963.00 → TP hit
+# Trade 2 (reentry): short entry=20038.00, sl=20078.00, tp=19838.00 (40 pt SL from full adverse excursion)
 MAY01_BARS = None
 
 def _may01_bars():
@@ -219,8 +219,8 @@ class TestCrashRecoveryReentry:
         reentry = trade_repo.inserted[-1]
         assert reentry["params"]["is_reentry"] is True
         assert reentry["entry"] == 20038.00
-        assert reentry["stop_loss"] == 20053.00
-        assert reentry["take_profit"] == 19963.00
+        assert reentry["stop_loss"] == 20078.00
+        assert reentry["take_profit"] == 19838.00
 
     def test_crash_after_sl_long_reentry(self):
         """MNQ 2025-05-08: long trade SL'd, crash → long re-entry fires."""
@@ -263,8 +263,8 @@ class TestCrashRecoveryReentry:
         assert reentry["stop_loss"] == 20099.25
         assert reentry["take_profit"] == 20279.25
 
-    def test_reentry_trade_reaches_tp_after_crash(self):
-        """MNQ 2025-05-01: crash after initial SL, re-entry fires AND reaches TP."""
+    def test_reentry_trade_opens_with_extreme_based_sl_after_crash(self):
+        """MNQ 2025-05-01: crash after initial SL, re-entry fires with SL based on full adverse excursion."""
         trade_repo = FakeTradeRepository()
         tsr = InMemoryLineTriggerStateRepository()
         all_bars = _may01_bars()
@@ -284,16 +284,19 @@ class TestCrashRecoveryReentry:
         strat2.restore_open_trades()
         strat2.restore_reentry_opportunities("MNQ", reference_time=_utc_dt(all_bars[crash_idx]["time"]))
 
-        # PHASE 3: Feed all remaining bars — re-entry should fire AND reach TP
+        # PHASE 3: Feed all remaining bars — re-entry should fire with correct SL
+        pre = len(trade_repo.inserted)
         for bar in all_bars[crash_idx + 1:]:
             strat2.on_raw_bar(bar)
+            if len(trade_repo.inserted) > pre:
+                reentry = trade_repo.inserted[-1]
+                break
 
         assert len(trade_repo.inserted) == 2
-        assert len(trade_repo.closed) == 2
-        # Re-entry trade reached TP (positive result)
-        reentry_close = trade_repo.closed[-1]
-        assert reentry_close["result"] > 0
-        assert reentry_close["exit_price"] == 19963.00
+        assert reentry["params"]["is_reentry"] is True
+        # SL must be based on the full adverse excursion (40 pt tier), not just the trigger bar
+        assert reentry["stop_loss"] == 20078.00
+        assert reentry["take_profit"] == 19838.00
 
 
 class TestCrashRecoveryOpenTrade:
