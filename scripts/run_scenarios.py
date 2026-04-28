@@ -843,7 +843,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         def _new_bucket():
             return {"usd": 0.0, "pct": 0.0, "commission": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0,
                     "reentry_win": 0, "reentry_loss": 0, "reentry_be": 0, "all_passed": True,
-                    "velocity": None, "start_balance": None, "trades": 0}
+                    "velocity": None, "start_balance": None, "trades": 0,
+                    "entry_sl_sum": 0.0, "entry_sl_count": 0,
+                    "entry_risk_sum": 0.0, "entry_risk_count": 0,
+                    "reentry_sl_sum": 0.0, "reentry_sl_count": 0,
+                    "reentry_risk_sum": 0.0, "reentry_risk_count": 0}
 
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
@@ -875,6 +879,24 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
                     if bucket[key]["start_balance"] is None:
                         bucket[key]["start_balance"] = running_balance
+
+                # Track SL points and exact risk dollars for entry/reentry
+                if trade:
+                    sl_pts = trade.get("risk")
+                    risk_dollars = trade.get("risk_dollars")
+                    is_reentry_trade = trade.get("is_reentry", False)
+                    if sl_pts is not None and risk_dollars is not None:
+                        for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                            if is_reentry_trade:
+                                bucket[key]["reentry_sl_sum"] += sl_pts
+                                bucket[key]["reentry_sl_count"] += 1
+                                bucket[key]["reentry_risk_sum"] += risk_dollars
+                                bucket[key]["reentry_risk_count"] += 1
+                            else:
+                                bucket[key]["entry_sl_sum"] += sl_pts
+                                bucket[key]["entry_sl_count"] += 1
+                                bucket[key]["entry_risk_sum"] += risk_dollars
+                                bucket[key]["entry_risk_count"] += 1
 
                 if close is None:
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
@@ -925,7 +947,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         CHECKMARK = "\u2713"
         CROSSMARK = "\u2717"
 
-        def _print_agg(title, data, show_passed=False, show_velocity=False):
+        def _print_agg(title, data, show_passed=False, show_velocity=False, show_sl_risk=False):
             if not data:
                 return
             has_reentry = any(v["reentry_win"] + v["reentry_loss"] + v["reentry_be"] > 0 for v in data.values())
@@ -936,14 +958,16 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             RE_W  = 12
             PAS_W = 8
             VEL_W = 12
+            SL_RISK_W = 20
             lbl_w = max(len(k) for k in data) + 2
-            sep   = "-" * (lbl_w + 3 + WL_W + 54 + 3 + COMM_W + 3 + TRADES_W + (3 + RE_W if has_reentry else 0) + (3 + PAS_W if show_passed else 0) + (3 + VEL_W if has_velocity else 0))
+            sep   = "-" * (lbl_w + 3 + WL_W + 54 + 3 + COMM_W + 3 + TRADES_W + (3 + SL_RISK_W if show_sl_risk else 0) + (3 + RE_W if has_reentry else 0) + (3 + PAS_W if show_passed else 0) + (3 + VEL_W if has_velocity else 0))
             hdr_re = f" | {'RE-ENTRY':^{RE_W}}" if has_reentry else ""
             hdr_pas = f" | {'PASSED':^{PAS_W}}" if show_passed else ""
             hdr_vel = f" | {'VELOCITY':^{VEL_W}}" if has_velocity else ""
             hdr_trades = f" | {'TRADES':^{TRADES_W}}"
+            hdr_sl_risk = f" | {'SL/RISK':^{SL_RISK_W}}" if show_sl_risk else ""
             print(f"\n{BOLD}{CYAN}{title}{RST}")
-            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11} | {'COMMISSION':>{COMM_W}}{hdr_trades}{hdr_re}{hdr_pas}{hdr_vel}")
+            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11} | {'COMMISSION':>{COMM_W}}{hdr_trades}{hdr_sl_risk}{hdr_re}{hdr_pas}{hdr_vel}")
             print(f"  {sep}")
             balance = ACCT
             for key in sorted(data):
@@ -960,6 +984,23 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 pct_str = _col(v["pct"], f"{v['pct']:>+8.2f}%")
                 usd_str = _col(v["usd"], f"${v['usd']:>+9,.0f}")
                 bal_str = _col(balance - ACCT, f"${balance:>10,.0f}")
+                sl_risk_str = ""
+                if show_sl_risk:
+                    def _fmt_sl_risk(sl_sum, sl_count, risk_sum, risk_count):
+                        if sl_count == 0:
+                            return ""
+                        sl_avg = sl_sum / sl_count
+                        risk_avg = risk_sum / risk_count if risk_count > 0 else 0
+                        return f"{sl_avg:.0f}/${risk_avg:.0f}"
+                    entry_str = _fmt_sl_risk(v["entry_sl_sum"], v["entry_sl_count"], v["entry_risk_sum"], v["entry_risk_count"])
+                    reentry_str = _fmt_sl_risk(v["reentry_sl_sum"], v["reentry_sl_count"], v["reentry_risk_sum"], v["reentry_risk_count"])
+                    sl_parts = []
+                    if entry_str:
+                        sl_parts.append(f"E:{entry_str}")
+                    if reentry_str:
+                        sl_parts.append(f"R:{reentry_str}")
+                    sl_risk_val = " ".join(sl_parts) if sl_parts else f"{GRAY}-{RST}"
+                    sl_risk_str = f" | {_center(sl_risk_val, SL_RISK_W)}"
                 re_str = ""
                 if has_reentry:
                     rw, rl, rb = v["reentry_win"], v["reentry_loss"], v["reentry_be"]
@@ -988,7 +1029,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 comm_str = f"${comm_val:>10,.2f}" if comm_val > 0 else f"{'--':>{COMM_W}}"
                 trades_val = v["wins"] + v["losses"] + v["be"] + v["sp"] + v["open"]
                 trades_str = f"{trades_val:^{TRADES_W}}"
-                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str} | {comm_str} | {trades_str}{re_str}{pas_str}{vel_str}")
+                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str} | {comm_str} | {trades_str}{sl_risk_str}{re_str}{pas_str}{vel_str}")
             total_usd = sum(v["usd"]    for v in data.values())
             total_pct = total_usd / ACCT * 100
             total_w   = sum(v["wins"]   for v in data.values())
@@ -1027,9 +1068,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 else:
                     failed = sum(1 for v in data.values() if not v.get("all_passed", True))
                     tot_pas = f" | {_center(f'{RED}{failed}{CROSSMARK}{RST}', PAS_W)}"
-            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal} | {tot_comm} | {tot_trades}{tot_re}{tot_pas}")
+            tot_sl_risk = f" | {'':^{SL_RISK_W}}" if show_sl_risk else ""
+            tot_vel = f" | {'':^{VEL_W}}" if has_velocity else ""
+            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal} | {tot_comm} | {tot_trades}{tot_sl_risk}{tot_re}{tot_pas}{tot_vel}")
 
-        _print_agg(f"DAILY PnL   — {mode_label}", daily, show_passed=True, show_velocity=True)
+        _print_agg(f"DAILY PnL   — {mode_label}", daily, show_passed=True, show_velocity=True, show_sl_risk=True)
         _print_agg(f"WEEKLY PnL  — {mode_label}", weekly)
         _print_agg(f"MONTHLY PnL — {mode_label}", monthly)
 
