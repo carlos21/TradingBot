@@ -927,7 +927,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     continue
 
                 # Use unified BE threshold from FinancialCalc
-                is_be = actual_r > 0 and FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD)
+                is_be = FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD)
                 is_win = actual_r >= BE_THRESHOLD
                 for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
                     if t_usd is not None:
@@ -1089,8 +1089,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     outcomes.append("be")
                 else:
                     actual_r = close.get("result", 0.0)
-                    is_be    = actual_r > 0 and actual_r < BE_THRESHOLD
-                    if is_be:
+                    if FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD):
                         outcomes.append("be")
                     elif actual_r >= BE_THRESHOLD:
                         outcomes.append(True)

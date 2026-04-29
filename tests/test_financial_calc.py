@@ -183,14 +183,14 @@ class TestIsBreakevenByR:
 
     def test_is_breakeven_by_r_at_threshold(self):
         """R at threshold should NOT be breakeven (strict inequality)."""
-        # DEFAULT_BE_THRESHOLD_R = 0.001
-        assert FinancialCalc.is_breakeven_by_r(result_r=0.001) is False
-        assert FinancialCalc.is_breakeven_by_r(result_r=-0.001) is False
+        # DEFAULT_BE_THRESHOLD_R = 0.1
+        assert FinancialCalc.is_breakeven_by_r(result_r=0.1) is False
+        assert FinancialCalc.is_breakeven_by_r(result_r=-0.1) is False
 
     def test_is_breakeven_by_r_beyond_threshold(self):
         """R beyond threshold should not be breakeven."""
-        assert FinancialCalc.is_breakeven_by_r(result_r=0.01) is False
-        assert FinancialCalc.is_breakeven_by_r(result_r=-0.01) is False
+        assert FinancialCalc.is_breakeven_by_r(result_r=0.2) is False
+        assert FinancialCalc.is_breakeven_by_r(result_r=-0.2) is False
 
     def test_is_breakeven_by_r_custom_threshold(self):
         """Should accept custom threshold."""
@@ -663,8 +663,8 @@ class TestConstants:
         assert FinancialCalc.DEFAULT_BE_THRESHOLD_POINTS == 2.0
 
     def test_default_be_threshold_r(self):
-        """Default BE threshold in R should be 0.001."""
-        assert FinancialCalc.DEFAULT_BE_THRESHOLD_R == 0.001
+        """Default BE threshold in R should be 0.1."""
+        assert FinancialCalc.DEFAULT_BE_THRESHOLD_R == 0.1
 
 
 class TestEdgeCases:

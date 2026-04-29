@@ -10,7 +10,7 @@ from src.types import Direction
 class FinancialCalc:
     DEFAULT_FEE_PER_RT = 1.50  # $ round-trip per contract (Tradovate MNQ)
     DEFAULT_BE_THRESHOLD_POINTS = 2.0  # Exit within this many points of entry is BE
-    DEFAULT_BE_THRESHOLD_R = 0.001  # Exit with R result below this is BE
+    DEFAULT_BE_THRESHOLD_R = 0.1  # Exit with R result below this is BE
 
     # =========================================================================
     # Basic Financial Calculations
