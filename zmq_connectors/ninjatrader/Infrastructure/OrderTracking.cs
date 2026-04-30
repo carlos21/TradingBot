@@ -158,7 +158,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _closeOrders.Remove(tradeId);
                 _pendingEntries.Remove(tradeId);
                 _pendingModifies.Remove(tradeId);
-                _atmStrategies.Remove(tradeId);
             }
         }
 
@@ -172,7 +171,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _closeOrders.Clear();
                 _pendingEntries.Clear();
                 _pendingModifies.Clear();
-                _atmStrategies.Clear();
                 _expectedCancellations.Clear();
             }
         }

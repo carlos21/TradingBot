@@ -257,12 +257,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // Restore order tracking from broker after potential crash
                 _orderTracker.RestoreFromBrokerOrders(_account, _logger);
 
-                // Start ATM strategies for any restored working orders
-                foreach (var tradeId in _orderTracker.GetActiveTradeIds())
-                {
-                    TryStartAtmForEntryOrder(tradeId);
-                }
-                
                 // Report actual broker positions to Python (broker is source of truth)
                 ReportPositionsToPython();
                 
@@ -935,7 +929,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                     {
                         _orderTracker.TrackEntry(tradeIdFromName, order);
                         _logger.Info($"TRACKING entry order for {tradeIdFromName} (from name)");
-                        TryStartAtmForEntryOrder(tradeIdFromName);
                     }
                     else
                     {

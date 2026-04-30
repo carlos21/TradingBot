@@ -162,10 +162,7 @@ def _setup_live_mode_callbacks(
             start = __import__('time').monotonic()
             for i, bar in enumerate(bars):
                 strategy.on_raw_bar(bar)
-                # Log progress every 5000 bars
-                if (i + 1) % 5000 == 0:
-                    logger.info(f"[LiveMode] Warmup progress: {i+1}/{len(bars)} bars...")
-            
+
             strategy.is_warmup = False
             strategy.restore_trigger_states(pair)
             strategy.restore_open_trades()

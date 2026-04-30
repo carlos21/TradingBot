@@ -249,10 +249,6 @@ class ZMQDataSource(CombinedDataSource):
         """Handle incoming tick."""
         self._stats["ticks_received"] += 1
 
-        # Log every 100th tick to avoid spam
-        if self._stats["ticks_received"] % 100 == 0:
-            self.logger.debug(f"Ticks received: {self._stats['ticks_received']} (latest: {payload.get('price')})")
-
         # Build partial bar from tick
         tick_time = int(payload["time"])
         price = float(payload["price"])
