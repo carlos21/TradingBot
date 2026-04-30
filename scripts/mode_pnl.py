@@ -60,7 +60,7 @@ def per_trade_sim(
     actual_r = close.get("result", 0.0)
     usd = risk * actual_r if actual_r > 0 else -risk
     pct = usd / balance * 100 if balance else 0.0
-    if actual_r > 0 and actual_r < BE_THRESHOLD:
+    if FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD):
         outcome = "be"
     elif actual_r >= BE_THRESHOLD:
         outcome = "win"
@@ -141,7 +141,7 @@ def per_trade_futures(
         commission = fees
 
     pct = usd / balance * 100 if balance else 0.0
-    is_be = actual_r > 0 and FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD)
+    is_be = FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD)
     is_win = actual_r >= BE_THRESHOLD
     if is_be:
         outcome = "be"
@@ -241,7 +241,7 @@ def per_trade_cfd(
     commission = total_cost
 
     pct = usd / balance * 100 if balance else 0.0
-    is_be = actual_r > 0 and FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD)
+    is_be = FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD)
     is_win = actual_r >= BE_THRESHOLD
     if is_be:
         outcome = "be"
