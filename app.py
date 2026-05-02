@@ -44,6 +44,7 @@ def main():
                 port=config.flask_port,
                 debug=False,
                 use_reloader=False,
+                allow_unsafe_werkzeug=True,
             )
         finally:
             print(f"[{instance}] Stopping ZeroMQ gateway...")
