@@ -533,7 +533,7 @@ function New-ManagerShortcut {
     $Wsh = New-Object -ComObject WScript.Shell
     $Sc  = $Wsh.CreateShortcut($shortcutPath)
     $Sc.TargetPath       = "powershell.exe"
-    $Sc.Arguments        = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -Command `"try { & `'$launcher`' } catch { Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show(\$_.Exception.Message, 'TradingBot Manager Error') }`""
+    $Sc.Arguments        = "-ExecutionPolicy Bypass -NoProfile -File `"$launcher`""
     $Sc.WorkingDirectory = $script:ProjectDir
     $Sc.Description      = "TradingBot Manager - Start, configure and update the bot"
     $Sc.IconLocation     = "powershell.exe,0"
