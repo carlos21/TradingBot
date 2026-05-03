@@ -270,6 +270,52 @@ function Update-DashboardSummary {
     $script:lblConfigSummary.Text = "Mode: $mode  |  Pair: $pair  |  Instrument: $inst  |  Account: $acct  |  Risk: $risk"
 }
 
+function Test-SettingsValid {
+    $missing = @()
+
+    $required = @("MODE", "PAIR", "INSTRUMENT", "NT_ACCOUNT", "FLASK_PORT", "ZMQ_HOST", "ZMQ_MARKET_PORT", "ZMQ_COMMAND_PORT", "ZMQ_QUERY_PORT", "ZMQ_HEARTBEAT_PORT")
+    foreach ($key in $required) {
+        if ([string]::IsNullOrWhiteSpace($settingsControls[$key].Text)) {
+            $missing += ($key -replace '_', ' ')
+        }
+    }
+
+    $hasRisk = -not [string]::IsNullOrWhiteSpace($settingsControls["RISK"].Text)
+    $hasRiskPct = -not [string]::IsNullOrWhiteSpace($settingsControls["RISK_PCT"].Text)
+    if (-not $hasRisk -and -not $hasRiskPct) {
+        $missing += "Risk amount ($) or Risk %"
+    }
+
+    $vault = Get-Vault
+    $selectedUser = $cmbNtUser.Text
+    $hasCreds = $vault | Where-Object { $_.Username -eq $selectedUser } | Select-Object -First 1
+    if (-not $hasCreds) {
+        $missing += "NinjaTrader Credentials (save username + password)"
+    }
+
+    if ($missing.Count -gt 0) {
+        $msg = "The following required fields are missing:`n`n" + ($missing -join "`n")
+        [System.Windows.Forms.MessageBox]::Show($msg, "Missing Required Fields", "OK", "Warning") | Out-Null
+        return $false
+    }
+    return $true
+}
+
+function Save-ActiveCredentialForAutoLogin {
+    $vault = Get-Vault
+    $selectedUser = $cmbNtUser.Text
+    $acct = $vault | Where-Object { $_.Username -eq $selectedUser } | Select-Object -First 1
+    if ($acct) {
+        $store = [ordered]@{
+            Username       = $acct.Username
+            PasswordBase64 = $acct.PasswordBase64
+            Created        = if ($acct.Created) { $acct.Created } else { (Get-Date -Format "o") }
+            Version        = 1
+        } | ConvertTo-Json -Depth 3
+        $store | Set-Content -Path $script:CredentialFile -Encoding UTF8
+    }
+}
+
 # =============================================================================
 # Build UI
 # =============================================================================
@@ -724,6 +770,11 @@ $btnToggle.Add_Click({
         Update-ToggleButton
     } else {
         Write-DebugLog "EVENT: Start button clicked"
+
+        if (-not (Test-SettingsValid)) {
+            return
+        }
+
         $txtLog.AppendText("$(Get-Date -Format 'HH:mm:ss')  Starting bot...`n")
         try {
             Ensure-WslAvailable
@@ -732,6 +783,24 @@ $btnToggle.Add_Click({
             $txtLog.AppendText("ERROR: $_`n")
             $txtLog.SelectionColor = [System.Drawing.Color]::LightGreen
             return
+        }
+
+        # Detect WSL IP and update ZMQ configs so NinjaTrader can reach the bot
+        try {
+            $wslIp = (& wsl hostname -I 2>$null).Trim().Split()[0]
+            if ($wslIp -and $wslIp -match '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$') {
+                Write-DebugLog "START: WSL IP detected: $wslIp"
+                Save-EnvFile -Values @{ ZMQ_HOST = $wslIp }
+                Save-ZmqConfig -Values @{ host = $wslIp }
+                if ($settingsControls.ContainsKey("ZMQ_HOST")) {
+                    $settingsControls["ZMQ_HOST"].Text = $wslIp
+                }
+                $txtLog.AppendText("ZMQ host updated to WSL IP: $wslIp`n")
+            } else {
+                Write-DebugLog "START: Could not detect WSL IP, using configured ZMQ_HOST"
+            }
+        } catch {
+            Write-DebugLog "START: WSL IP detection failed: $_"
         }
 
         try {
@@ -762,6 +831,32 @@ $btnToggle.Add_Click({
             $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(0, 150, 0)
             $txtLog.AppendText("WSL process started (PID $($script:BotProcess.Id)). Tailing logs...`n")
             $script:StatusTimer.Start()
+
+            # Launch NinjaTrader auto-login
+            try {
+                $ntExe = Find-NinjaTraderExe
+                $ntRunning = Get-Process | Where-Object { $_.ProcessName -like "*NinjaTrader*" } | Select-Object -First 1
+                if ($ntExe -and -not $ntRunning) {
+                    Save-ActiveCredentialForAutoLogin
+                    $autoLoginScript = Join-Path $script:ProjectDir "bin\Start-NinjaTraderAutoLogin.ps1"
+                    if (Test-Path $autoLoginScript) {
+                        Start-Process -FilePath "powershell.exe" `
+                            -ArgumentList "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -File `"$autoLoginScript`" -NinjaTraderPath `"$ntExe`"" `
+                            -WindowStyle Hidden
+                        $txtLog.AppendText("NinjaTrader auto-login started.`n")
+                    } else {
+                        $txtLog.AppendText("Auto-login script not found.`n")
+                    }
+                } else {
+                    if ($ntRunning) {
+                        $txtLog.AppendText("NinjaTrader already running - skipping auto-login.`n")
+                    } else {
+                        $txtLog.AppendText("NinjaTrader not found - skipping auto-login.`n")
+                    }
+                }
+            } catch {
+                $txtLog.AppendText("Auto-login error: $_`n")
+            }
         } catch {
             Write-DebugLog "START: ERROR: $_"
             $txtLog.SelectionColor = [System.Drawing.Color]::Red
