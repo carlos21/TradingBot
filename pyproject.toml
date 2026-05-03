@@ -21,7 +21,6 @@ matplotlib = "^3.10.7"
 pyyaml = "^6.0.3"
 requests = "^2.32.5"
 python-dateutil = "^2.9.0.post0"
-playwright = "^1.57.0"
 databento = "^0.72.0"
 sentry-sdk = {version = "^2.0", extras = ["flask"]}
 pyzmq = "^26.0"
@@ -30,6 +29,7 @@ eventlet = "^0.39"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.2"
+playwright = "^1.57.0"
 
 [build-system]
 requires = ["poetry-core"]

@@ -1,19 +1,21 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Fully automated TradingBot setup - prompts for minimum info, configures everything else.
+    Fully automated TradingBot setup — Windows native + optional WSL.
 
 .DESCRIPTION
-    One script to configure the entire Windows + WSL stack:
-      1. Checks prerequisites (PowerShell, WSL, NinjaTrader)
-      2. Prompts for credentials, account, and instrument
-      3. Downloads & installs NetMQ DLLs into NinjaTrader
-      4. Copies C# AddOn source files to NinjaTrader AddOns folder
-      5. Creates TradingBotZmqConfig.json (autoConnectOnStartup = true)
-      6. Securely stores NinjaTrader credentials via Windows DPAPI
-      7. Installs the WSL systemd tradingbot service
-      8. Creates a "Start TradingBot" desktop shortcut
-      9. Shows a summary and offers to start the service
+    One script to configure the entire stack:
+      1. Checks prerequisites (PowerShell, Python 3.11+, Git, optional WSL)
+      2. Installs Poetry and Python dependencies natively on Windows
+      3. Prompts for credentials, account, and instrument
+      4. Downloads & installs NetMQ DLLs into NinjaTrader
+      5. Copies C# AddOn source files to NinjaTrader AddOns folder
+      6. Creates TradingBotZmqConfig.json
+      7. Saves trading settings to .env
+      8. Securely stores NinjaTrader credentials via Windows DPAPI
+      9. Optionally installs the WSL systemd tradingbot service
+     10. Creates desktop shortcuts for TradingBot Manager and WSL launcher
+     11. Shows a summary
 
     The only remaining manual step is compiling the NinjaScript inside
     NinjaTrader (Tools -> Edit NinjaScript -> press F5).
@@ -29,6 +31,9 @@
 
 .PARAMETER SkipWslService
     Skip WSL systemd service installation.
+
+.PARAMETER ResetVault
+    Delete all stored NinjaTrader credentials and exit.
 
 .EXAMPLE
     .\Setup-TradingBot.ps1
@@ -59,6 +64,7 @@ $script:ToolsDir     = "$env:LOCALAPPDATA\TradingBot\Tools"
 $script:OkCount      = 0
 $script:WarnCount    = 0
 $script:ErrCount     = 0
+$script:WslAvailable = $false
 
 # =============================================================================
 # Helpers
@@ -507,13 +513,84 @@ function New-DesktopShortcut {
     $Wsh = New-Object -ComObject WScript.Shell
     $Sc  = $Wsh.CreateShortcut($shortcutPath)
     $Sc.TargetPath       = "powershell.exe"
-    $Sc.Arguments        = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`""
+    $Sc.Arguments        = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -Command `"try { & `'$launcher`' } catch { Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show(\$_.Exception.Message, 'Start TradingBot Error') }`""
     $Sc.WorkingDirectory = $script:ProjectDir
     $Sc.Description      = "Launch TradingBot WSL service + NinjaTrader + ZMQ Connector"
     $Sc.IconLocation     = "powershell.exe,0"
     $Sc.Save()
 
     Write-Status "Desktop shortcut created: Start TradingBot.lnk" "Success"
+}
+
+function New-ManagerShortcut {
+    $launcher = Join-Path $script:ProjectDir "bin\TradingBot-Manager.ps1"
+    if (-not (Test-Path $launcher)) {
+        Write-Status "Manager script not found: $launcher" "Warn"
+        return
+    }
+
+    $shortcutPath = "$env:USERPROFILE\Desktop\TradingBot Manager.lnk"
+    $Wsh = New-Object -ComObject WScript.Shell
+    $Sc  = $Wsh.CreateShortcut($shortcutPath)
+    $Sc.TargetPath       = "powershell.exe"
+    $Sc.Arguments        = "-ExecutionPolicy Bypass -NoProfile -WindowStyle Hidden -Command `"try { & `'$launcher`' } catch { Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show(\$_.Exception.Message, 'TradingBot Manager Error') }`""
+    $Sc.WorkingDirectory = $script:ProjectDir
+    $Sc.Description      = "TradingBot Manager - Start, configure and update the bot"
+    $Sc.IconLocation     = "powershell.exe,0"
+    $Sc.Save()
+
+    Write-Status "Desktop shortcut created: TradingBot Manager.lnk" "Success"
+}
+
+function Test-PythonVersion {
+    try {
+        $verStr = python --version 2>&1
+        if ($verStr -match "Python (\d+)\.(\d+)") {
+            $major = [int]$Matches[1]
+            $minor = [int]$Matches[2]
+            if ($major -gt 3 -or ($major -eq 3 -and $minor -ge 11)) {
+                return $true
+            }
+        }
+    } catch {}
+    return $false
+}
+
+function Test-GitInstalled {
+    try {
+        $null = git --version 2>$null
+        return $LASTEXITCODE -eq 0
+    } catch { return $false }
+}
+
+function Install-Poetry {
+    if (Get-Command poetry -ErrorAction SilentlyContinue) {
+        Write-Status "Poetry already installed." "Success"
+        return
+    }
+    Write-Status "Installing Poetry..."
+    (Invoke-WebRequest -Uri https://install.python-poetry.org -UseBasicParsing).Content | python -
+    $poetryPath = "$env:APPDATA\Python\Scripts"
+    if (-not ($env:PATH -split ';' | Where-Object { $_ -eq $poetryPath })) {
+        [Environment]::SetEnvironmentVariable("Path", "$env:PATH;$poetryPath", "User")
+        $env:PATH += ";$poetryPath"
+    }
+    Write-Status "Poetry installed." "Success"
+}
+
+function Install-PythonDependencies {
+    Write-Status "Installing Python dependencies with Poetry..."
+    Push-Location $script:ProjectDir
+    try {
+        poetry install --no-root --no-interaction
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "poetry install failed (exit $LASTEXITCODE)." "Error"
+            throw "Dependency installation failed."
+        }
+        Write-Status "Python dependencies installed." "Success"
+    } finally {
+        Pop-Location
+    }
 }
 
 # =============================================================================
@@ -548,24 +625,47 @@ try {
     }
     Write-Status "PowerShell version OK." "Success"
 
+    if (-not (Test-PythonVersion)) {
+        throw "Python 3.11+ is required but not found. Install from https://python.org"
+    }
+    Write-Status "Python 3.11+ found." "Success"
+
+    if (-not (Test-GitInstalled)) {
+        throw "Git is required but not found. Install from https://git-scm.com"
+    }
+    Write-Status "Git found." "Success"
+
     $wslOutput = wsl -l -v 2>&1 | Out-String
     if ([string]::IsNullOrWhiteSpace($wslOutput)) {
-        throw "WSL is not installed or not available. Enable WSL first."
+        Write-Status "WSL is not installed. Skipping WSL service setup." "Warn"
+        $script:WslAvailable = $false
+    } else {
+        $distroList = wsl -l --quiet 2>$null
+        $distroNames = $distroList | ForEach-Object { $_.Trim() }
+        $found = $distroNames | Where-Object { $_ -eq $WslDistro }
+        if (-not $found) {
+            $found = $wslOutput -imatch [regex]::Escape($WslDistro)
+        }
+        if (-not $found) {
+            Write-Status "WSL distribution '$WslDistro' not found. Skipping WSL service setup." "Warn"
+            $script:WslAvailable = $false
+        } else {
+            Write-Status "WSL distribution '$WslDistro' is available." "Success"
+            $script:WslAvailable = $true
+        }
     }
-    # Use -Quiet list for reliable distro name matching (avoids header/formatting issues)
-    $distroList = wsl -l --quiet 2>$null
-    $distroNames = $distroList | ForEach-Object { $_.Trim() }
-    $found = $distroNames | Where-Object { $_ -eq $WslDistro }
-    if (-not $found) {
-        # Fallback: try case-insensitive match on the verbose output
-        $found = $wslOutput -imatch [regex]::Escape($WslDistro)
-    }
-    if (-not $found) {
-        throw "WSL distribution '$WslDistro' not found. Available distributions:`n$wslOutput"
-    }
-    Write-Status "WSL distribution '$WslDistro' is available." "Success"
 
-    # NinjaTrader path
+    Write-Divider
+
+    # -- Phase 2: Python environment (native Windows) --
+    Write-Status "Phase 2: Installing Python environment..." "Header"
+    Install-Poetry
+    Install-PythonDependencies
+    Write-Divider
+
+    # -- Phase 3: NinjaTrader --
+    Write-Status "Phase 3: Configuring NinjaTrader..." "Header"
+
     if (-not $NinjaTraderPath) {
         $NinjaTraderPath = Find-NinjaTraderExe
     }
@@ -589,17 +689,11 @@ try {
         if ($confirm -notmatch '^[Yy]') { exit 0 }
     }
 
-    Write-Divider
-
-    # -- Phase 2: Prompts --
-    Write-Status "Phase 2: Configuration prompts..." "Header"
-
-    # Credentials - vault selection
+    # Credentials
     $selectedAccount = Select-AccountFromVault
     if ($selectedAccount) {
         Write-Status "Selected account: $($selectedAccount.Username)" "Success"
     } else {
-        # Prompt for new account
         $newUser = Read-Host "Enter your NinjaTrader username"
         if ([string]::IsNullOrWhiteSpace($newUser)) { throw "Username is required." }
 
@@ -612,8 +706,28 @@ try {
         Add-AccountToVault -Username $newUser -Password $newPw
         $selectedAccount = Get-Vault | Where-Object { $_.Username -eq $newUser } | Select-Object -First 1
     }
+    Save-ActiveCredential -Account $selectedAccount -OutFile $script:CredentialFile
 
-    # Trading settings
+    # NetMQ
+    if (-not $SkipNetMQ) {
+        Install-NetMQDlls -CustomDir $ntCustomDir
+    } else {
+        Write-Status "Skipping NetMQ installation (--SkipNetMQ)." "Warn"
+    }
+
+    # AddOn files
+    Copy-AddOnFiles -AddOnsDir (Join-Path $ntCustomDir "AddOns")
+
+    # ZMQ JSON config
+    $instInput = Read-Host "Instrument [default: MNQ 06-26]"
+    $instrument = if ($instInput) { $instInput } else { "MNQ 06-26" }
+    New-ZmqConfig -CustomDir $ntCustomDir -Instrument $instrument
+
+    Write-Divider
+
+    # -- Phase 4: Trading settings --
+    Write-Status "Phase 4: Trading settings..." "Header"
+
     $defaultAccount = "FNFTCHCARLOSDUCLOS42006"
     $accountInput   = Read-Host "NinjaTrader account name [default: $defaultAccount]"
     $accountName    = if ($accountInput) { $accountInput } else { $defaultAccount }
@@ -624,49 +738,63 @@ try {
     $riskInput = Read-Host "Risk per trade (USD) [default: 160]"
     $risk      = if ($riskInput) { $riskInput } else { "160" }
 
-    $instInput = Read-Host "Instrument [default: MNQ 06-26]"
-    $instrument = if ($instInput) { $instInput } else { "MNQ 06-26" }
-
-    Write-Status "Configuration collected." "Success"
-    Write-Divider
-
-    # -- Phase 3: Windows-side setup --
-    Write-Status "Phase 3: Configuring Windows side..." "Header"
-
-    # 3a. Credentials
-    Save-ActiveCredential -Account $selectedAccount -OutFile $script:CredentialFile
-
-    # 3b. NetMQ
-    if (-not $SkipNetMQ) {
-        Install-NetMQDlls -CustomDir $ntCustomDir
-    } else {
-        Write-Status "Skipping NetMQ installation (--SkipNetMQ)." "Warn"
+    # Write settings to .env
+    $envPath = Join-Path $script:ProjectDir ".env"
+    $envLines = @()
+    if (Test-Path $envPath) {
+        $envLines = Get-Content $envPath
     }
 
-    # 3c. C# AddOn files
-    Copy-AddOnFiles -AddOnsDir (Join-Path $ntCustomDir "AddOns")
+    function Set-EnvLine {
+        param([string]$Key, [string]$Value)
+        $pattern = "^$Key=.*"
+        $line = "$Key=`"$Value`""
+        $found = $false
+        for ($i = 0; $i -lt $envLines.Count; $i++) {
+            if ($envLines[$i] -match $pattern) {
+                $envLines[$i] = $line
+                $found = $true
+                break
+            }
+        }
+        if (-not $found) { $envLines += $line }
+    }
 
-    # 3d. ZMQ JSON config
-    New-ZmqConfig -CustomDir $ntCustomDir -Instrument $instrument
+    Set-EnvLine -Key "MODE" -Value "live"
+    Set-EnvLine -Key "PAIR" -Value $pair
+    Set-EnvLine -Key "RISK" -Value $risk
+    Set-EnvLine -Key "NT_ACCOUNT" -Value $accountName
 
-    # 3e. Desktop shortcut
-    New-DesktopShortcut
+    $envLines | Set-Content -Path $envPath -Encoding UTF8
+    Write-Status "Settings saved to .env" "Success"
 
     Write-Divider
 
-    # -- Phase 4: WSL-side setup --
-    if (-not $SkipWslService) {
-        Write-Status "Phase 4: Configuring WSL side..." "Header"
+    # -- Phase 5: WSL service (optional) --
+    if ($script:WslAvailable -and -not $SkipWslService) {
+        Write-Status "Phase 5: Configuring WSL side..." "Header"
         $linuxPath = ConvertTo-WslPath -WindowsPath $script:ProjectDir
         Install-WslDependencies -Distro $WslDistro -LinuxProjectPath $linuxPath
         Install-WslService -Distro $WslDistro -LinuxProjectPath $linuxPath
     } else {
-        Write-Status "Skipping WSL service install (--SkipWslService)." "Warn"
+        if ($SkipWslService) {
+            Write-Status "Skipping WSL service install (--SkipWslService)." "Warn"
+        } else {
+            Write-Status "WSL not available. Skipping WSL service install." "Warn"
+        }
     }
 
     Write-Divider
 
-    # -- Phase 5: Summary --
+    # -- Phase 6: Shortcuts --
+    Write-Status "Phase 6: Creating shortcuts..." "Header"
+    New-ManagerShortcut
+    if ($script:WslAvailable -and -not $SkipWslService) {
+        New-DesktopShortcut
+    }
+    Write-Divider
+
+    # -- Summary --
     Write-Status "Setup Summary" "Header"
     Write-Status "OK     : $script:OkCount"   "Success"
     if ($script:WarnCount -gt 0) { Write-Status "Warnings: $script:WarnCount" "Warn" }
@@ -683,8 +811,10 @@ try {
     Write-Host "  5. Close NinjaTrader" -ForegroundColor White
     Write-Host ""
     Write-Host "After that, launch everything with:" -ForegroundColor Yellow
-    Write-Host "  * Double-click 'Start TradingBot' on your desktop" -ForegroundColor White
-    Write-Host "  * Or run: .\bin\Start-TradingBot.ps1" -ForegroundColor White
+    Write-Host "  * Double-click 'TradingBot Manager' on your desktop" -ForegroundColor White
+    if ($script:WslAvailable -and -not $SkipWslService) {
+        Write-Host "  * Or run: .\bin\Start-TradingBot.ps1  (starts WSL service)" -ForegroundColor White
+    }
     Write-Host ""
     Write-Host "Your settings:" -ForegroundColor Yellow
     Write-Host "  Account : $accountName" -ForegroundColor White
@@ -692,11 +822,10 @@ try {
     Write-Host "  Risk    : $risk" -ForegroundColor White
     Write-Host "  Instrument: $instrument" -ForegroundColor White
     Write-Host ""
-    Write-Host "To override these when starting manually:" -ForegroundColor DarkGray
-    Write-Host "  PAIR=$pair NT_ACCOUNT=$accountName RISK=$risk .\bin\start_live.sh" -ForegroundColor DarkGray
-    Write-Host ""
-
-    if (-not $SkipWslService) {
+    if ($script:WslAvailable -and -not $SkipWslService) {
+        Write-Host "To override these when starting manually:" -ForegroundColor DarkGray
+        Write-Host "  PAIR=$pair NT_ACCOUNT=$accountName RISK=$risk .\bin\start_live.sh" -ForegroundColor DarkGray
+        Write-Host ""
         $startNow = Read-Host "Start the WSL tradingbot service now? (y/N)"
         if ($startNow -match '^[Yy]') {
             wsl -d $WslDistro -u root systemctl start tradingbot
