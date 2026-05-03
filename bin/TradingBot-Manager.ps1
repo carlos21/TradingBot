@@ -185,6 +185,21 @@ function Add-AccountToVault {
     Save-Vault -Accounts $vault
 }
 
+function Get-VaultPassword {
+    param([string]$Username)
+    $vault = Get-Vault
+    $acct = $vault | Where-Object { $_.Username -eq $Username } | Select-Object -First 1
+    if (-not $acct) { return $null }
+    try {
+        $encBytes = [Convert]::FromBase64String($acct.PasswordBase64)
+        $decBytes = [System.Security.Cryptography.ProtectedData]::Unprotect(
+            $encBytes, $null,
+            [System.Security.Cryptography.DataProtectionScope]::CurrentUser
+        )
+        return [System.Text.Encoding]::UTF8.GetString($decBytes)
+    } catch { return $null }
+}
+
 function Find-NinjaTraderExe {
     $regPaths = @(
         "HKLM:\SOFTWARE\NinjaTrader, LLC\NinjaTrader 8",
@@ -399,48 +414,50 @@ $settingsControls = @{}
 $envValues = Read-EnvFile
 $zmqValues = Read-ZmqConfig
 
-# --- Mode (read-only, live by default) ---
+# --- Trading Settings Group ---
+$grpTrading = New-Object System.Windows.Forms.GroupBox
+$grpTrading.Text = "Trading Settings"
+$grpTrading.Location = New-Object System.Drawing.Point(20, 20)
+$grpTrading.Size = New-Object System.Drawing.Size(530, 222)
+$tabSettings.Controls.Add($grpTrading)
+
+$gy = 24
+
+# Mode
 $lblMode = New-Object System.Windows.Forms.Label
 $lblMode.Text = "Mode"
-$lblMode.Location = New-Object System.Drawing.Point(20, $y)
+$lblMode.Location = New-Object System.Drawing.Point(10, $gy)
 $lblMode.Size = New-Object System.Drawing.Size(180, 24)
-$tabSettings.Controls.Add($lblMode)
+$grpTrading.Controls.Add($lblMode)
 
 $txtMode = New-Object System.Windows.Forms.TextBox
 $txtMode.Text = "live"
-$txtMode.Location = New-Object System.Drawing.Point(210, $y)
+$txtMode.Location = New-Object System.Drawing.Point(200, $gy)
 $txtMode.Size = New-Object System.Drawing.Size(300, 24)
 $txtMode.ReadOnly = $true
 $txtMode.BackColor = [System.Drawing.Color]::LightGray
-$tabSettings.Controls.Add($txtMode)
+$grpTrading.Controls.Add($txtMode)
 $settingsControls["MODE"] = $txtMode
-$y += 32
+$gy += 28
 
-# --- Trading settings ---
-$settingsMap = @(
+# Trading settings
+$tradingMap = @(
     @{ Label = "Pair"; Key = "PAIR"; Default = "MNQ" },
     @{ Label = "Instrument"; Key = "INSTRUMENT"; Default = "MNQ 06-26"; IsZmq = $true },
-
     @{ Label = "Risk amount ($)"; Key = "RISK"; Default = "" },
     @{ Label = "Risk % of account"; Key = "RISK_PCT"; Default = "" },
-    @{ Label = "NT Account name"; Key = "NT_ACCOUNT"; Default = "" },
-    @{ Label = "Flask port"; Key = "FLASK_PORT"; Default = "5001" },
-    @{ Label = "ZMQ host"; Key = "ZMQ_HOST"; Default = "127.0.0.1" },
-    @{ Label = "ZMQ market port"; Key = "ZMQ_MARKET_PORT"; Default = "5555" },
-    @{ Label = "ZMQ command port"; Key = "ZMQ_COMMAND_PORT"; Default = "5556" },
-    @{ Label = "ZMQ query port"; Key = "ZMQ_QUERY_PORT"; Default = "5557" },
-    @{ Label = "ZMQ heartbeat port"; Key = "ZMQ_HEARTBEAT_PORT"; Default = "5558" }
+    @{ Label = "NT Account name"; Key = "NT_ACCOUNT"; Default = "" }
 )
 
-foreach ($item in $settingsMap) {
+foreach ($item in $tradingMap) {
     $lbl = New-Object System.Windows.Forms.Label
     $lbl.Text = $item.Label
-    $lbl.Location = New-Object System.Drawing.Point(20, $y)
+    $lbl.Location = New-Object System.Drawing.Point(10, $gy)
     $lbl.Size = New-Object System.Drawing.Size(180, 24)
-    $tabSettings.Controls.Add($lbl)
+    $grpTrading.Controls.Add($lbl)
 
     $txt = New-Object System.Windows.Forms.TextBox
-    $txt.Location = New-Object System.Drawing.Point(210, $y)
+    $txt.Location = New-Object System.Drawing.Point(200, $gy)
     $txt.Size = New-Object System.Drawing.Size(300, 24)
 
     if ($item.IsZmq) {
@@ -450,25 +467,61 @@ foreach ($item in $settingsMap) {
     }
     if (-not $val) { $val = $item.Default }
     $txt.Text = $val
-    $tabSettings.Controls.Add($txt)
+    $grpTrading.Controls.Add($txt)
     $settingsControls[$item.Key] = $txt
-    $y += 32
+    $gy += 28
 }
 
 # --- Risk hint ---
 $lblRiskHint = New-Object System.Windows.Forms.Label
 $lblRiskHint.Text = "Tip: Set Risk OR Risk %, not both. Risk amount takes precedence."
-$lblRiskHint.Location = New-Object System.Drawing.Point(210, $y)
+$lblRiskHint.Location = New-Object System.Drawing.Point(200, $gy)
 $lblRiskHint.Size = New-Object System.Drawing.Size(500, 20)
 $lblRiskHint.Font = New-Object System.Drawing.Font("Segoe UI", 8)
 $lblRiskHint.ForeColor = [System.Drawing.Color]::Gray
-$tabSettings.Controls.Add($lblRiskHint)
-$y += 28
+$grpTrading.Controls.Add($lblRiskHint)
+
+# --- Network / Ports Group ---
+$grpNetwork = New-Object System.Windows.Forms.GroupBox
+$grpNetwork.Text = "Network / Ports"
+$grpNetwork.Location = New-Object System.Drawing.Point(20, 252)
+$grpNetwork.Size = New-Object System.Drawing.Size(530, 198)
+$tabSettings.Controls.Add($grpNetwork)
+
+$ny = 24
+
+$networkMap = @(
+    @{ Label = "Flask port"; Key = "FLASK_PORT"; Default = "5001" },
+    @{ Label = "ZMQ host"; Key = "ZMQ_HOST"; Default = "127.0.0.1" },
+    @{ Label = "ZMQ market port"; Key = "ZMQ_MARKET_PORT"; Default = "5555" },
+    @{ Label = "ZMQ command port"; Key = "ZMQ_COMMAND_PORT"; Default = "5556" },
+    @{ Label = "ZMQ query port"; Key = "ZMQ_QUERY_PORT"; Default = "5557" },
+    @{ Label = "ZMQ heartbeat port"; Key = "ZMQ_HEARTBEAT_PORT"; Default = "5558" }
+)
+
+foreach ($item in $networkMap) {
+    $lbl = New-Object System.Windows.Forms.Label
+    $lbl.Text = $item.Label
+    $lbl.Location = New-Object System.Drawing.Point(10, $ny)
+    $lbl.Size = New-Object System.Drawing.Size(180, 24)
+    $grpNetwork.Controls.Add($lbl)
+
+    $txt = New-Object System.Windows.Forms.TextBox
+    $txt.Location = New-Object System.Drawing.Point(200, $ny)
+    $txt.Size = New-Object System.Drawing.Size(300, 24)
+
+    $val = $envValues[$item.Key]
+    if (-not $val) { $val = $item.Default }
+    $txt.Text = $val
+    $grpNetwork.Controls.Add($txt)
+    $settingsControls[$item.Key] = $txt
+    $ny += 28
+}
 
 # --- NinjaTrader Credentials ---
 $grpCreds = New-Object System.Windows.Forms.GroupBox
 $grpCreds.Text = "NinjaTrader Credentials"
-$grpCreds.Location = New-Object System.Drawing.Point(20, $y)
+$grpCreds.Location = New-Object System.Drawing.Point(20, 460)
 $grpCreds.Size = New-Object System.Drawing.Size(500, 110)
 $tabSettings.Controls.Add($grpCreds)
 
@@ -482,8 +535,6 @@ $cmbNtUser = New-Object System.Windows.Forms.ComboBox
 $cmbNtUser.Location = New-Object System.Drawing.Point(110, 22)
 $cmbNtUser.Size = New-Object System.Drawing.Size(300, 24)
 $cmbNtUser.DropDownStyle = "DropDown"
-$vault = Get-Vault
-foreach ($acct in $vault) { [void]$cmbNtUser.Items.Add($acct.Username) }
 $grpCreds.Controls.Add($cmbNtUser)
 
 $lblNtPass = New-Object System.Windows.Forms.Label
@@ -498,25 +549,36 @@ $txtNtPass.Size = New-Object System.Drawing.Size(300, 24)
 $txtNtPass.PasswordChar = '*'
 $grpCreds.Controls.Add($txtNtPass)
 
+$chkShowPass = New-Object System.Windows.Forms.CheckBox
+$chkShowPass.Text = "Show"
+$chkShowPass.Location = New-Object System.Drawing.Point(415, 54)
+$chkShowPass.Size = New-Object System.Drawing.Size(60, 24)
+$chkShowPass.Add_CheckedChanged({
+    if ($chkShowPass.Checked) {
+        $txtNtPass.PasswordChar = [char]0
+    } else {
+        $txtNtPass.PasswordChar = '*'
+    }
+})
+$grpCreds.Controls.Add($chkShowPass)
+
 $btnSaveCreds = New-Object System.Windows.Forms.Button
 $btnSaveCreds.Text = "Save Credentials"
 $btnSaveCreds.Location = New-Object System.Drawing.Point(110, 80)
 $btnSaveCreds.Size = New-Object System.Drawing.Size(140, 28)
 $grpCreds.Controls.Add($btnSaveCreds)
 
-$y += 125
-
 # --- Save settings ---
 $chkRestart = New-Object System.Windows.Forms.CheckBox
 $chkRestart.Text = "Restart bot after saving"
-$chkRestart.Location = New-Object System.Drawing.Point(20, $y)
+$chkRestart.Location = New-Object System.Drawing.Point(20, 585)
 $chkRestart.Size = New-Object System.Drawing.Size(300, 24)
 $chkRestart.Checked = $true
 $tabSettings.Controls.Add($chkRestart)
 
 $btnSaveSettings = New-Object System.Windows.Forms.Button
 $btnSaveSettings.Text = "Save Settings"
-$btnSaveSettings.Location = New-Object System.Drawing.Point(20, ($y + 30))
+$btnSaveSettings.Location = New-Object System.Drawing.Point(20, 615)
 $btnSaveSettings.Size = New-Object System.Drawing.Size(140, 36)
 $btnSaveSettings.BackColor = [System.Drawing.Color]::FromArgb(0, 120, 215)
 $btnSaveSettings.ForeColor = [System.Drawing.Color]::White
@@ -772,6 +834,11 @@ $btnSaveSettings.Add_Click({
     }
 })
 
+$cmbNtUser.Add_SelectedIndexChanged({
+    $pass = Get-VaultPassword -Username $cmbNtUser.Text
+    $txtNtPass.Text = if ($pass) { $pass } else { "" }
+})
+
 $btnSaveCreds.Add_Click({
     $user = $cmbNtUser.Text
     $pass = $txtNtPass.Text
@@ -941,11 +1008,16 @@ if ($portInUse) {
 
 Write-DebugLog "INIT: Loading vault..."
 $vault = Get-Vault
+$cmbNtUser.Items.Clear()
+$seen = @{}
 foreach ($acct in $vault) {
-    [void]$cmbNtUser.Items.Add($acct.Username)
+    if (-not $seen.ContainsKey($acct.Username)) {
+        $seen[$acct.Username] = $true
+        [void]$cmbNtUser.Items.Add($acct.Username)
+    }
 }
-if ($vault.Count -gt 0) {
-    $cmbNtUser.Text = $vault[0].Username
+if ($cmbNtUser.Items.Count -gt 0) {
+    $cmbNtUser.SelectedIndex = 0
 }
 
 # =============================================================================
