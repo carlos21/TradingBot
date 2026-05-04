@@ -21,7 +21,8 @@ from src.strategies.triggers import (
 
 def get_prod_strategy_numbers(rr_ratio: float,
                               risk_per_trade: float = None,
-                              risk_pct_per_trade: float = None) -> StrategyNumbers:
+                              risk_pct_per_trade: float = None,
+                              account_configs=None) -> StrategyNumbers:
     return StrategyNumbers(
         min_stop_loss=10.0,
         max_bounce=90.0,
@@ -34,6 +35,7 @@ def get_prod_strategy_numbers(rr_ratio: float,
         account_balance=100000.0,
         risk_per_trade=risk_per_trade,
         risk_pct_per_trade=risk_pct_per_trade,
+        account_configs=account_configs or [],
     )
 
 def get_prod_candle_config() -> CandleConfig:

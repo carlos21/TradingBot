@@ -102,6 +102,7 @@ class AppBuilder:
             rr_ratio=cfg.rr_ratio,
             risk_per_trade=cfg.risk_per_trade,
             risk_pct_per_trade=cfg.risk_pct_per_trade,
+            account_configs=cfg.nt_accounts,
         )
         candle_config = get_prod_candle_config()
         options = get_prod_strategy_options(
@@ -132,8 +133,6 @@ class AppBuilder:
     # Live
     # ------------------------------------------------------------------
     def _build_live(self) -> tuple[AppWiring, CombinedDataSource]:
-        from src.gateway import create_live_components
-
         cfg = self.config
         database.setup_database(db_url=cfg.db_path)
         repos = Repositories(
@@ -154,23 +153,40 @@ class AppBuilder:
             print("[tradingbot] Risk config: none (NinjaTrader will use 1 contract)")
 
         print("[tradingbot] Starting ZeroMQ gateway...")
-        ds, executor = create_live_components(
-            cfg.pair,
-            logger,
-            risk_usd=cfg.risk_per_trade,
-            risk_pct=cfg.risk_pct_per_trade,
-            account=cfg.nt_account,
-            host=cfg.zmq_host,
-            market_port=cfg.zmq_market_port,
-            command_port=cfg.zmq_command_port,
-            query_port=cfg.zmq_query_port,
-            heartbeat_port=cfg.zmq_heartbeat_port,
-        )
+        if cfg.nt_accounts:
+            from src.gateway import create_multi_account_live_components
+            ds, executor = create_multi_account_live_components(
+                cfg.pair,
+                logger,
+                account_configs=cfg.nt_accounts,
+                risk_usd=cfg.risk_per_trade,
+                risk_pct=cfg.risk_pct_per_trade,
+                host=cfg.zmq_host,
+                market_port=cfg.zmq_market_port,
+                command_port=cfg.zmq_command_port,
+                query_port=cfg.zmq_query_port,
+                heartbeat_port=cfg.zmq_heartbeat_port,
+            )
+        else:
+            from src.gateway import create_live_components
+            ds, executor = create_live_components(
+                cfg.pair,
+                logger,
+                risk_usd=cfg.risk_per_trade,
+                risk_pct=cfg.risk_pct_per_trade,
+                account_names=[],
+                host=cfg.zmq_host,
+                market_port=cfg.zmq_market_port,
+                command_port=cfg.zmq_command_port,
+                query_port=cfg.zmq_query_port,
+                heartbeat_port=cfg.zmq_heartbeat_port,
+            )
 
         numbers = get_prod_strategy_numbers(
             rr_ratio=cfg.rr_ratio,
             risk_per_trade=cfg.risk_per_trade,
             risk_pct_per_trade=cfg.risk_pct_per_trade,
+            account_configs=cfg.nt_accounts,
         )
         candle_config = get_prod_candle_config()
         options = get_prod_strategy_options(

@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using NinjaTrader.Cbi;
@@ -12,6 +13,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 {
     /// <summary>
     /// Handles ORDER_CLOSE commands.
+    /// Supports multi-account routing via "account" field in payload.
     /// </summary>
     internal sealed class OrderCloseHandler : ICommandHandler
     {
@@ -19,16 +21,16 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private readonly ZmqNetwork _network;
         private readonly ILogger _logger;
-        private readonly Account _account;
+        private readonly Dictionary<string, Account> _accounts;
         private readonly string _instrument;
         private readonly IOrderTracker _orderTracker;
 
-        public OrderCloseHandler(ZmqNetwork network, ILogger logger, Account account, 
+        public OrderCloseHandler(ZmqNetwork network, ILogger logger, Dictionary<string, Account> accounts, 
             string instrument, IOrderTracker orderTracker)
         {
             _network = network ?? throw new ArgumentNullException(nameof(network));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _account = account;
+            _accounts = accounts ?? throw new ArgumentNullException(nameof(accounts));
             _instrument = instrument;
             _orderTracker = orderTracker ?? throw new ArgumentNullException(nameof(orderTracker));
         }
@@ -41,8 +43,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (string.IsNullOrEmpty(tradeId))
                     throw new ArgumentException("trade_id is required");
 
-                if (_account == null)
-                    throw new InvalidOperationException("No account available");
+                var accountName = payload?["account"]?.ToString();
+                var account = ResolveAccount(accountName);
+
+                if (account == null)
+                    throw new InvalidOperationException($"No account available (requested: {accountName ?? "(default)"})");
 
                 // Guard: if trade is not tracked, it may already be closed
                 bool hasTrackedEntry = _orderTracker.TryGetEntry(tradeId, out _);
@@ -56,7 +61,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
 
                 // Guard: prevent duplicate close orders
-                var existingClose = FindOrderByName($"Close_{tradeId}");
+                var existingClose = FindOrderByName(account, $"Close_{tradeId}");
                 if (existingClose != null && IsWorking(existingClose))
                 {
                     _logger.Warning($"[Close:{tradeId}] Close order already working. Ignoring duplicate.");
@@ -64,16 +69,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                     return;
                 }
 
-                _logger.Info($">>> CLOSE ORDER START: {tradeId}");
+                _logger.Info($">>> CLOSE ORDER START: {tradeId} account={account.Name}");
 
                 var instrument = Instrument.GetInstrument(_instrument);
                 if (instrument == null)
                     throw new InvalidOperationException($"Instrument '{_instrument}' not found");
 
                 // Get tracked orders for this trade
-                var entryOrder = FindOrderByName($"Entry_{tradeId}");
-                var stopOrder = FindOrderByName($"Stop_{tradeId}");
-                var targetOrder = FindOrderByName($"Target_{tradeId}");
+                var entryOrder = FindOrderByName(account, $"Entry_{tradeId}");
+                var stopOrder = FindOrderByName(account, $"Stop_{tradeId}");
+                var targetOrder = FindOrderByName(account, $"Target_{tradeId}");
 
                 _logger.Info($"[Close:{tradeId}] Entry found={entryOrder != null} state={(entryOrder?.OrderState.ToString() ?? "null")} filledQty={entryOrder?.Filled ?? 0} totalQty={entryOrder?.Quantity ?? 0}");
                 _logger.Info($"[Close:{tradeId}] Stop found={stopOrder != null} state={(stopOrder?.OrderState.ToString() ?? "null")}");
@@ -84,7 +89,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 
                 if (entryOrder != null && IsWorking(entryOrder))
                 {
-                    _account.Cancel(new[] { entryOrder });
+                    account.Cancel(new[] { entryOrder });
                     _logger.Info($"[Close:{tradeId}] Cancelled entry order");
                     cancelledCount++;
                 }
@@ -92,7 +97,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (stopOrder != null && IsWorking(stopOrder))
                 {
                     _orderTracker.ExpectCancellation(stopOrder.Name);
-                    _account.Cancel(new[] { stopOrder });
+                    account.Cancel(new[] { stopOrder });
                     _logger.Info($"[Close:{tradeId}] Cancelled stop order");
                     cancelledCount++;
                 }
@@ -100,7 +105,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (targetOrder != null && IsWorking(targetOrder))
                 {
                     _orderTracker.ExpectCancellation(targetOrder.Name);
-                    _account.Cancel(new[] { targetOrder });
+                    account.Cancel(new[] { targetOrder });
                     _logger.Info($"[Close:{tradeId}] Cancelled target order");
                     cancelledCount++;
                 }
@@ -118,7 +123,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                     _logger.Info($"[Close:{tradeId}] Creating close order: action={closeAction} qty={closeQty} instrument={instrument.MasterInstrument.Name}");
 
-                    var closeOrder = _account.CreateOrder(
+                    var closeOrder = account.CreateOrder(
                         instrument,
                         closeAction,
                         OrderType.Market,
@@ -137,7 +142,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                         try
                         {
-                            _account.Submit(new[] { closeOrder });
+                            account.Submit(new[] { closeOrder });
                             _logger.Success($"[Close:{tradeId}] SUBMITTED close order to broker ({closeAction} {closeQty} contracts)");
                         }
                         catch (Exception submitEx)
@@ -174,12 +179,26 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        private Order FindOrderByName(string orderName)
+        private Account ResolveAccount(string accountName)
         {
-            if (_account == null || string.IsNullOrEmpty(orderName)) return null;
+            if (string.IsNullOrEmpty(accountName))
+            {
+                if (_accounts.Count == 1)
+                {
+                    foreach (var kvp in _accounts) return kvp.Value;
+                }
+                return null;
+            }
+            _accounts.TryGetValue(accountName, out var account);
+            return account;
+        }
+
+        private Order FindOrderByName(Account account, string orderName)
+        {
+            if (account == null || string.IsNullOrEmpty(orderName)) return null;
             
             // Snapshot to avoid collection-modified-during-enumeration
-            var orders = _account.Orders.ToArray();
+            var orders = account.Orders.ToArray();
             foreach (var order in orders)
             {
                 if (order.Name == orderName)

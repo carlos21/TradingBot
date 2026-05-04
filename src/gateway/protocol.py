@@ -218,6 +218,7 @@ class OpenOrderCommand:
     rr_ratio: float     # Risk:Reward ratio
     risk_usd: float | None = None   # For position sizing
     risk_pct: float | None = None   # Alternative: % of account
+    account: str | None = None      # Target NT account name
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
@@ -234,6 +235,8 @@ class OpenOrderCommand:
             payload["risk_usd"] = self.risk_usd
         if self.risk_pct is not None:
             payload["risk_pct"] = self.risk_pct
+        if self.account is not None:
+            payload["account"] = self.account
 
         return MessageEnvelope.create(
             msg_type=MessageType.ORDER_OPEN,
@@ -247,14 +250,17 @@ class CloseOrderCommand:
     """Command to close a position."""
     trade_id: str
     reason: str | None = None  # "session_end", "manual", "strategy"
+    account: str | None = None  # Target NT account name
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        payload = {"trade_id": self.trade_id}
+        if self.reason is not None:
+            payload["reason"] = self.reason
+        if self.account is not None:
+            payload["account"] = self.account
         return MessageEnvelope.create(
             msg_type=MessageType.ORDER_CLOSE,
-            payload={
-                "trade_id": self.trade_id,
-                **({"reason": self.reason} if self.reason else {}),
-            },
+            payload=payload,
             seq_num=seq_num,
         )
 
@@ -265,6 +271,7 @@ class ModifyOrderCommand:
     trade_id: str
     stop_loss: float | None = None
     take_profit: float | None = None
+    account: str | None = None  # Target NT account name
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {"trade_id": self.trade_id}
@@ -272,6 +279,8 @@ class ModifyOrderCommand:
             payload["stop_loss"] = self.stop_loss
         if self.take_profit is not None:
             payload["take_profit"] = self.take_profit
+        if self.account is not None:
+            payload["account"] = self.account
 
         return MessageEnvelope.create(
             msg_type=MessageType.ORDER_MODIFY,
@@ -293,6 +302,7 @@ class EntryFillMessage:
     take_profit: float | None = None # Broker-calculated TP
     slippage: float | None = None    # Difference from requested entry
     contracts: int | None = None
+    account: str | None = None       # NT account that reported the fill
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
@@ -307,6 +317,8 @@ class EntryFillMessage:
             payload["slippage"] = self.slippage
         if self.contracts is not None:
             payload["contracts"] = self.contracts
+        if self.account is not None:
+            payload["account"] = self.account
 
         return MessageEnvelope.create(
             msg_type=MessageType.ENTRY_FILL,
@@ -322,6 +334,7 @@ class ExitFillMessage:
     exit_price: float
     result_type: Literal["SL", "TP", "SP", "CLOSE"]  # SL=Stop Loss, TP=Take Profit, SP=Session End, CLOSE=Manual
     exit_time: int | None = None  # Unix timestamp
+    account: str | None = None    # NT account that reported the fill
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
@@ -331,6 +344,8 @@ class ExitFillMessage:
         }
         if self.exit_time is not None:
             payload["exit_time"] = self.exit_time
+        if self.account is not None:
+            payload["account"] = self.account
 
         return MessageEnvelope.create(
             msg_type=MessageType.EXIT_FILL,

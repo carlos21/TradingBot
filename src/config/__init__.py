@@ -18,6 +18,7 @@ from src.config.loaders import (
     CliConfigLoader,
     CompositeConfigLoader,
     ConfigLoader,
+    DbConfigLoader,
     EnvConfigLoader,
 )
 from src.config.models import AppConfig

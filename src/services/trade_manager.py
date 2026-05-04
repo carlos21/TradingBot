@@ -72,12 +72,16 @@ class TradeManager:
         # RESUME: Load any open trades from the DB so we can manage them
         self._load_open_trades_from_db()
 
-    def _calc_contracts(self, risk_per_contract: float) -> float:
+    def _calc_contracts(self, risk_per_contract: float,
+                        risk_per_trade_override: float | None = None,
+                        risk_pct_per_trade_override: float | None = None) -> float:
         """Calculate number of contracts/lots, matching NinjaTrader's logic."""
         if risk_per_contract <= 0:
             return 1.0 if not self.use_fractional_lots else 0.01
         risk_budget = FinancialCalc.risk_budget(
-            self.account_balance, self.risk_per_trade, self.risk_pct_per_trade
+            self.account_balance,
+            risk_per_trade_override if risk_per_trade_override is not None else self.risk_per_trade,
+            risk_pct_per_trade_override if risk_pct_per_trade_override is not None else self.risk_pct_per_trade,
         )
         if risk_budget <= 0:
             return 1.0 if not self.use_fractional_lots else 0.01
@@ -106,8 +110,9 @@ class TradeManager:
             closed_count = 0
 
             for t in all_trades:
-                if t.exit_time is None:
+                if t.exit_time is None and t.source != "signal":
                     # Map TradeData back to the dict structure TradeManager expects
+                    # Skip signal trades — they are not executable.
                     trade_dict = {
                         'trade_id':    t.trade_id,
                         'pair':        t.pair,
@@ -120,7 +125,9 @@ class TradeManager:
                         'risk_pct':    t.risk_pct,
                         'contracts':   t.contracts,
                         'status':      'open',
-                        'entry_time':  t.entry_time.timestamp()
+                        'entry_time':  t.entry_time.timestamp(),
+                        'account':     t.account,
+                        'signal_id':   t.signal_id,
                     }
                     self.open_trades.append(trade_dict)
                     open_count += 1
@@ -346,12 +353,16 @@ class TradeManager:
     def open_trade(self, pair: str, trade_type: str, entry_price: float,
                    stop_loss: float, take_profit: float,
                    risk: float, entry_time: float, rr_ratio: float = 5.0,
-                   source: str | None = None):
+                   source: str | None = None,
+                   account: str | None = None,
+                   signal_id: str | None = None,
+                   risk_per_trade_override: float | None = None,
+                   risk_pct_per_trade_override: float | None = None):
         """
         Open a new trade with precomputed parameters.
         """
         risk_per_contract = risk * self.point_value
-        contracts = self._calc_contracts(risk_per_contract)
+        contracts = self._calc_contracts(risk_per_contract, risk_per_trade_override, risk_pct_per_trade_override)
         risk_dollars = risk_per_contract * contracts
         risk_pct = (risk_dollars / self.account_balance * 100) if self.account_balance > 0 else None
 
@@ -369,6 +380,8 @@ class TradeManager:
             risk_pct=risk_pct,
             contracts=contracts,
             source=source,
+            account=account,
+            signal_id=signal_id,
         )
         trade = {
             'trade_id':   td.trade_id,
@@ -383,6 +396,8 @@ class TradeManager:
             'contracts':  contracts,
             'entry_time': entry_time,
             'rr_ratio':   rr_ratio,
+            'account':    account,
+            'signal_id':  signal_id,
         }
         # track in-memory
         self.open_trades.append(trade)

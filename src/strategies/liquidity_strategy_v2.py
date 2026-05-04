@@ -49,6 +49,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         trigger_state_repo=None,
         logger: ILogger = None,
         decision_log_repository=None,
+        account_configs=None,
     ):
         self.timeframes = list(timeframes) if timeframes else ["5m"]
 
@@ -89,6 +90,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             trigger_state_repo=trigger_state_repo,
             logger=logger,
             decision_log_repository=decision_log_repository,
+            account_configs=account_configs,
         )
 
         self.candle_config = candle_config

@@ -33,6 +33,8 @@
 param(
     [string]$CredentialFile = "$env:LOCALAPPDATA\TradingBot\NTCredential.dat",
     [string]$NinjaTraderPath = "C:\Program Files\NinjaTrader 8\bin\NinjaTrader.exe",
+    [string]$Username = "",
+    [string]$Password = "",
     [switch]$WaitForExit,
     [int]$MaxWaitSeconds = 60
 )
@@ -387,12 +389,18 @@ try {
     }
 
     # -- Load credentials --
-    $store = Get-CredentialStore -Path $CredentialFile
-    $username = $store.Username
-    $password = Decrypt-Password -Base64Encrypted $store.PasswordBase64
+    if (-not [string]::IsNullOrWhiteSpace($Username) -and -not [string]::IsNullOrWhiteSpace($Password)) {
+        $username = $Username
+        $password = $Password
+        Write-Host "Using credentials provided via parameters." -ForegroundColor Cyan
+    } else {
+        $store = Get-CredentialStore -Path $CredentialFile
+        $username = $store.Username
+        $password = Decrypt-Password -Base64Encrypted $store.PasswordBase64
+    }
 
     if ([string]::IsNullOrWhiteSpace($username)) {
-        throw "Username is empty in credential store."
+        throw "Username is empty. Provide -Username/-Password or set up a credential store."
     }
 
     Write-Host ""

@@ -55,6 +55,8 @@ class SQLTradeRepository(ITradeRepository):
             params=t.params,
             logs=t.logs or [],
             source=t.source,
+            account=t.account,
+            signal_id=t.signal_id,
             created_at=self._ensure_utc(t.created_at),
         )
 
@@ -72,6 +74,8 @@ class SQLTradeRepository(ITradeRepository):
         risk_pct: float | None = None,
         contracts: float | None = None,
         source: str | None = None,
+        account: str | None = None,
+        signal_id: str | None = None,
     ) -> TradeData:
         with get_db_session() as db:
             t = Trade(
@@ -88,6 +92,8 @@ class SQLTradeRepository(ITradeRepository):
                 entry_time=entry_time,
                 params=params or {},
                 source=source,
+                account=account,
+                signal_id=signal_id,
             )
             db.add(t)
             try:

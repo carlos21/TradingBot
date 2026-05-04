@@ -70,6 +70,36 @@ export class ApiClient {
     return response.status === 204 ? null : response.json();
   }
 
+  // Settings API Methods
+  async getSettings() {
+    return this.get('/api/settings');
+  }
+
+  async saveSettings(payload) {
+    return this.post('/api/settings', payload);
+  }
+
+  async getAccounts() {
+    return this.get('/api/accounts');
+  }
+
+  async saveAccount(data) {
+    return this.post('/api/accounts', data);
+  }
+
+  async deleteAccount(name) {
+    return this.delete(`/api/accounts/${encodeURIComponent(name)}`);
+  }
+
+  // NT API Methods
+  async installNtNetmq() {
+    return this.post('/api/nt/install-netmq', {});
+  }
+
+  async openNt(username, password) {
+    return this.post('/api/nt/open', { username, password });
+  }
+
   // Admin API Methods
   async getStats() {
     return this.get(`/api/admin/stats?pair=${this.pair}`);

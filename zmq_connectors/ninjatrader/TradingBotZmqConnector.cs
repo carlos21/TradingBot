@@ -16,6 +16,10 @@
 //   - Facade: ZmqNetwork (hides ZMQ complexity)
 //   - Value Object: ZmqConfiguration, MessageEnvelope, PendingEntryInfo, TickEventArgs
 //
+// Multi-Account Support:
+//   One ZMQ connector manages multiple NinjaTrader accounts. Python sends "account"
+//   in command payloads; the connector routes to the correct Account object.
+//
 // Installation:
 //   1. Download NetMQ.dll and Newtonsoft.Json.dll
 //   2. Copy DLLs to: Documents\NinjaTrader 8\bin\Custom\
@@ -46,6 +50,7 @@ namespace NinjaTrader.NinjaScript.AddOns
     /// <summary>
     /// Main AddOn class - orchestrates all components using dependency injection.
     /// Thin controller that delegates to specialized services.
+    /// Supports multi-account trading via a single ZMQ connection.
     /// </summary>
     public class TradingBotZmqConnector : AddOnBase
     {
@@ -67,7 +72,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         // State
         private volatile bool _connected;
-        private Account _account;
+        private Dictionary<string, Account> _accounts;
         private Instrument _subscribedInstrument;
 
         // Stats
@@ -230,21 +235,24 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // This ensures Python's SUB sockets are ready before we send messages
                 Thread.Sleep(300);
 
-                // Query config from Python (account name, etc.)
-                string configuredAccount = _network.QueryConfig("account");
-                if (!string.IsNullOrEmpty(configuredAccount))
+                // Query config from Python (comma-separated account names)
+                string configuredAccounts = _network.QueryConfig("accounts");
+                List<string> accountNames = null;
+                if (!string.IsNullOrEmpty(configuredAccounts))
                 {
-                    _logger.Info($"Python specified account: {configuredAccount}");
+                    accountNames = configuredAccounts.Split(',').Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s)).ToList();
+                    _logger.Info($"Python specified accounts: {string.Join(", ", accountNames)}");
                 }
 
-                // Initialize NinjaTrader integrations BEFORE creating command handlers that capture _account
-                InitializeAccount(configuredAccount);
+                // Initialize NinjaTrader integrations BEFORE creating command handlers that capture _accounts
+                InitializeAccounts(accountNames);
 
-                // Create dispatcher AFTER account is initialized so handlers get a valid reference
+                // Create dispatcher AFTER accounts are initialized so handlers get a valid reference
                 _dispatcher = CreateCommandDispatcher();
 
-                // Send connect handshake (reporting what account we'll use)
-                _network.SendConnect("ninjatrader", _config.PlatformVersion, account: configuredAccount, pair: _config.Instrument.Split(' ')[0]);
+                // Send connect handshake (reporting what accounts we'll use)
+                string primaryAccount = _accounts?.Count > 0 ? _accounts.Keys.First() : null;
+                _network.SendConnect("ninjatrader", _config.PlatformVersion, account: primaryAccount, pair: _config.Instrument.Split(' ')[0]);
                 _logger.Success("Connected to Python TradingBot via ZeroMQ");
 
                 // Start background threads
@@ -254,8 +262,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _heartbeatThread = new Thread(HeartbeatLoop) { IsBackground = true, Name = "ZMQ-Heartbeat" };
                 _heartbeatThread.Start();
                 
-                // Restore order tracking from broker after potential crash
-                _orderTracker.RestoreFromBrokerOrders(_account, _logger);
+                // Restore order tracking from broker after potential crash (for each account)
+                if (_accounts != null)
+                {
+                    foreach (var kvp in _accounts)
+                    {
+                        _orderTracker.RestoreFromBrokerOrders(kvp.Value, _logger);
+                    }
+                }
 
                 // Report actual broker positions to Python (broker is source of truth)
                 ReportPositionsToPython();
@@ -294,7 +308,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // Stop market-data thread BEFORE tearing down ZMQ sockets
                 UnsubscribeFromLiveBars();
                 UnsubscribeFromMarketData();
-                UninitializeAccount();
+                UninitializeAccounts();
 
                 // Allow in-flight background sends to drain before disposing sockets
                 Thread.Sleep(100);
@@ -373,22 +387,29 @@ namespace NinjaTrader.NinjaScript.AddOns
                     positions.Add(position);
                 }
 
-                // Also report any untracked working orders (orphan detection)
+                // Also report any untracked working orders (orphan detection) across all accounts
                 var untrackedOrders = new JArray();
-                foreach (var order in _account?.Orders ?? System.Linq.Enumerable.Empty<Order>())
+                if (_accounts != null)
                 {
-                    if (order.OrderState != OrderState.Working && order.OrderState != OrderState.Accepted)
-                        continue;
-
-                    string tradeIdFromName = ExtractTradeIdFromOrderName(order.Name);
-                    if (!string.IsNullOrEmpty(tradeIdFromName) && !trackedTradeIds.Contains(tradeIdFromName))
+                    foreach (var kvp in _accounts)
                     {
-                        untrackedOrders.Add(new JObject
+                        foreach (var order in kvp.Value.Orders ?? System.Linq.Enumerable.Empty<Order>())
                         {
-                            ["order_name"] = order.Name,
-                            ["trade_id"] = tradeIdFromName,
-                            ["order_type"] = order.OrderType.ToString(),
-                        });
+                            if (order.OrderState != OrderState.Working && order.OrderState != OrderState.Accepted)
+                                continue;
+
+                            string tradeIdFromName = ExtractTradeIdFromOrderName(order.Name);
+                            if (!string.IsNullOrEmpty(tradeIdFromName) && !trackedTradeIds.Contains(tradeIdFromName))
+                            {
+                                untrackedOrders.Add(new JObject
+                                {
+                                    ["order_name"] = order.Name,
+                                    ["trade_id"] = tradeIdFromName,
+                                    ["order_type"] = order.OrderType.ToString(),
+                                    ["account"] = kvp.Key,
+                                });
+                            }
+                        }
                     }
                 }
 
@@ -416,9 +437,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             var dispatcher = new CommandDispatcher(_logger);
             // Register command handlers - Chain of Responsibility pattern
-            dispatcher.Register(new OrderOpenHandler(_network, _logger, _account, _config.Instrument, _orderTracker));
-            dispatcher.Register(new OrderCloseHandler(_network, _logger, _account, _config.Instrument, _orderTracker));
-            dispatcher.Register(new OrderModifyHandler(_network, _logger, _account, _orderTracker));
+            dispatcher.Register(new OrderOpenHandler(_network, _logger, _accounts, _config.Instrument, _orderTracker));
+            dispatcher.Register(new OrderCloseHandler(_network, _logger, _accounts, _config.Instrument, _orderTracker));
+            dispatcher.Register(new OrderModifyHandler(_network, _logger, _accounts, _orderTracker));
             dispatcher.Register(new RefreshRequestHandler(_network, _logger, SendHistoryAsync));
             dispatcher.Register(new TestStartHandler(_network, _logger));
             return dispatcher;
@@ -828,10 +849,12 @@ namespace NinjaTrader.NinjaScript.AddOns
         // Account / Order Management
         // ═══════════════════════════════════════════════════════════════════
 
-        private void InitializeAccount(string preferredAccount = null)
+        private void InitializeAccounts(List<string> preferredAccountNames)
         {
             try
             {
+                _accounts = new Dictionary<string, Account>();
+
                 if (Account.All.Count == 0)
                 {
                     _logger.Warning("No trading accounts found");
@@ -839,28 +862,39 @@ namespace NinjaTrader.NinjaScript.AddOns
                     return;
                 }
 
-                // Use preferred account name if specified (from Python), otherwise use first available
-                if (!string.IsNullOrEmpty(preferredAccount))
+                if (preferredAccountNames != null && preferredAccountNames.Count > 0)
                 {
-                    _account = Account.All.FirstOrDefault(a => a.Name == preferredAccount);
-                    if (_account == null)
+                    foreach (var name in preferredAccountNames)
                     {
-                        _logger.Warning($"Python-specified account '{preferredAccount}' not found, using first available");
-                        _account = Account.All[0];
-                    }
-                    else
-                    {
-                        _logger.Info($"Using Python-specified account: {_account.Name}");
+                        var acct = Account.All.FirstOrDefault(a => a.Name == name);
+                        if (acct != null)
+                        {
+                            _accounts[name] = acct;
+                            _logger.Info($"Using Python-specified account: {acct.Name}");
+                        }
+                        else
+                        {
+                            _logger.Warning($"Python-specified account '{name}' not found, skipping");
+                        }
                     }
                 }
-                else
+
+                // Fallback: if no preferred accounts matched, use all available accounts
+                if (_accounts.Count == 0)
                 {
-                    _account = Account.All[0];
-                    _logger.Info($"Using account: {_account.Name}");
+                    foreach (var acct in Account.All)
+                    {
+                        _accounts[acct.Name] = acct;
+                        _logger.Info($"Using account: {acct.Name}");
+                    }
                 }
-                
-                _account.ExecutionUpdate += OnExecutionUpdate;
-                _account.OrderUpdate += OnOrderUpdate;
+
+                // Subscribe to execution and order updates for all accounts
+                foreach (var kvp in _accounts)
+                {
+                    kvp.Value.ExecutionUpdate += OnExecutionUpdate;
+                    kvp.Value.OrderUpdate += OnOrderUpdate;
+                }
             }
             catch (Exception ex)
             {
@@ -869,14 +903,30 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        private void UninitializeAccount()
+        private void UninitializeAccounts()
         {
-            if (_account != null)
+            if (_accounts != null)
             {
-                _account.ExecutionUpdate -= OnExecutionUpdate;
-                _account.OrderUpdate -= OnOrderUpdate;
-                _account = null;
+                foreach (var kvp in _accounts)
+                {
+                    try
+                    {
+                        kvp.Value.ExecutionUpdate -= OnExecutionUpdate;
+                        kvp.Value.OrderUpdate -= OnOrderUpdate;
+                    }
+                    catch { /* ignore */ }
+                }
+                _accounts = null;
             }
+        }
+
+        private Account ResolveAccountForOrder(Order order)
+        {
+            if (order?.Account == null) return null;
+            string name = order.Account.Name;
+            if (_accounts != null && _accounts.TryGetValue(name, out var acct))
+                return acct;
+            return null;
         }
 
         private void OnOrderUpdate(object sender, OrderEventArgs e)
@@ -889,7 +939,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     _logger.Warning("Order update with no associated order");
                     return;
                 }
-                _logger.Info($"ORDER UPDATE: {order.Name} state={order.OrderState}");
+                _logger.Info($"ORDER UPDATE: {order.Name} state={order.OrderState} account={order.Account?.Name}");
 
                 // Extract trade_id from order name (e.g., "Stop_trade-123" -> "trade-123")
                 string tradeIdFromName = ExtractTradeIdFromOrderName(order.Name);
@@ -976,7 +1026,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                             _orderTracker.RemovePendingModify(tid);
                             try
                             {
-                                var newStopOrder = _account.CreateOrder(
+                                var account = ResolveAccountForOrder(order);
+                                if (account == null)
+                                {
+                                    _logger.Error($"Cannot create replacement stop for {tid}: account not found");
+                                    return;
+                                }
+
+                                var newStopOrder = account.CreateOrder(
                                     modInfo.Instrument,
                                     modInfo.OrderAction,
                                     OrderType.StopMarket,
@@ -1074,7 +1131,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 var fillPrice = execution.Price;
 
                 string execTradeId = ExtractTradeIdFromOrderName(order.Name) ?? order.Name;
-                _logger.Info($"EXECUTION: {order.Name} @ {fillPrice} qty={execution.Quantity}");
+                _logger.Info($"EXECUTION: {order.Name} @ {fillPrice} qty={execution.Quantity} account={order.Account?.Name}");
                 _network?.SendTradeLog(execTradeId, "NT:EXECUTION", $"Execution: {execution.Quantity} @ {fillPrice}");
 
                 if (IsEntryOrder(order))
@@ -1128,10 +1185,19 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return;
             }
 
+            var account = ResolveAccountForOrder(order);
+            if (account == null)
+            {
+                _logger.Error($"CRITICAL: Entry fill for {tradeId} — account not found!");
+                _network?.SendError("ninjatrader", "fill_tracking_failed",
+                    $"Entry fill for {tradeId}: account not found");
+                return;
+            }
+
             var (sl, tp) = CalculateSlTp(fillPrice, entry.Direction, entry.SlPoints, entry.RrRatio);
 
             // Create bracket orders manually (ATM strategies don't work reliably from AddOn context)
-            if (_account != null && order.Instrument != null && !_orderTracker.TryGetStopLoss(tradeId, out _))
+            if (order.Instrument != null && !_orderTracker.TryGetStopLoss(tradeId, out _))
             {
                 try
                 {
@@ -1141,20 +1207,20 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                     string ocoId = $"OCO_{tradeId}";
 
-                    var stopOrder = _account.CreateOrder(
+                    var stopOrder = account.CreateOrder(
                         order.Instrument, closeAction, OrderType.StopMarket, OrderEntry.Automated, TimeInForce.Gtc,
                         qty, 0, sl, ocoId, $"Stop_{tradeId}", DateTime.MinValue, null);
 
-                    var targetOrder = _account.CreateOrder(
+                    var targetOrder = account.CreateOrder(
                         order.Instrument, closeAction, OrderType.Limit, OrderEntry.Automated, TimeInForce.Gtc,
                         qty, tp, 0, ocoId, $"Target_{tradeId}", DateTime.MinValue, null);
 
-                    if (stopOrder != null) _account.Submit(new[] { stopOrder });
-                    if (targetOrder != null) _account.Submit(new[] { targetOrder });
+                    if (stopOrder != null) account.Submit(new[] { stopOrder });
+                    if (targetOrder != null) account.Submit(new[] { targetOrder });
 
                     if (stopOrder != null && targetOrder != null)
                     {
-                        _logger.Success($"BRACKET CREATED: {tradeId} SL={sl} TP={tp} qty={qty}");
+                        _logger.Success($"BRACKET CREATED: {tradeId} SL={sl} TP={tp} qty={qty} account={account.Name}");
                         _network?.SendTradeLog(tradeId, "NT:ORDER", $"Bracket created: SL={sl} TP={tp} qty={qty}");
                     }
                     else
@@ -1169,8 +1235,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
             }
 
-            _logger.Success($"ENTRY FILL: {tradeId} @ {fillPrice} SL={sl} TP={tp}");
-            _network?.SendEntryFill(tradeId, fillPrice, sl, tp);
+            string accountName = account?.Name;
+            _logger.Success($"ENTRY FILL: {tradeId} @ {fillPrice} SL={sl} TP={tp} account={accountName}");
+            _network?.SendEntryFill(tradeId, fillPrice, sl, tp, account: accountName);
             _network?.SendTradeLog(tradeId, "NT:FILL", $"Entry filled @ {fillPrice}");
         }
 
@@ -1189,10 +1256,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return;
             }
 
-            _logger.Warning($"EXIT FILL (SL): {tradeId} @ {fillPrice}");
-            _network?.SendExitFill(tradeId, fillPrice, "SL");
+            string accountName = order.Account?.Name;
+            _logger.Warning($"EXIT FILL (SL): {tradeId} @ {fillPrice} account={accountName}");
+            _network?.SendExitFill(tradeId, fillPrice, "SL", account: accountName);
             _network?.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice}");
-            CancelWorkingBracketOrders(tradeId);
+            CancelWorkingBracketOrders(tradeId, order.Account);
             _orderTracker.RemoveTrade(tradeId);
         }
 
@@ -1211,10 +1279,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return;
             }
 
-            _logger.Success($"EXIT FILL (TP): {tradeId} @ {fillPrice}");
-            _network?.SendExitFill(tradeId, fillPrice, "TP");
+            string accountName = order.Account?.Name;
+            _logger.Success($"EXIT FILL (TP): {tradeId} @ {fillPrice} account={accountName}");
+            _network?.SendExitFill(tradeId, fillPrice, "TP", account: accountName);
             _network?.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice}");
-            CancelWorkingBracketOrders(tradeId);
+            CancelWorkingBracketOrders(tradeId, order.Account);
             _orderTracker.RemoveTrade(tradeId);
         }
 
@@ -1233,10 +1302,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return;
             }
 
-            _logger.Success($"POSITION CLOSED: {tradeId} @ {fillPrice}");
-            _network?.SendExitFill(tradeId, fillPrice, "CLOSE");
+            string accountName = order.Account?.Name;
+            _logger.Success($"POSITION CLOSED: {tradeId} @ {fillPrice} account={accountName}");
+            _network?.SendExitFill(tradeId, fillPrice, "CLOSE", account: accountName);
             _network?.SendTradeLog(tradeId, "NT:FILL", $"Position closed @ {fillPrice}");
-            CancelWorkingBracketOrders(tradeId);
+            CancelWorkingBracketOrders(tradeId, order.Account);
             _orderTracker.RemoveTrade(tradeId);
         }
 
@@ -1258,10 +1328,11 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 if (isOpposing)
                 {
-                    _logger.Success($"MANUAL CLOSE DETECTED: {tradeId} @ {fillPrice} via {closeOrder.Name}");
-                    _network?.SendExitFill(tradeId, fillPrice, "CLOSE");
+                    string accountName = closeOrder.Account?.Name;
+                    _logger.Success($"MANUAL CLOSE DETECTED: {tradeId} @ {fillPrice} via {closeOrder.Name} account={accountName}");
+                    _network?.SendExitFill(tradeId, fillPrice, "CLOSE", account: accountName);
                     _network?.SendTradeLog(tradeId, "NT:FILL", $"Manual position closed @ {fillPrice}");
-                    CancelWorkingBracketOrders(tradeId);
+                    CancelWorkingBracketOrders(tradeId, closeOrder.Account);
                     _orderTracker.RemoveTrade(tradeId);
                     return;
                 }
@@ -1284,15 +1355,23 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// Cancels any working stop-loss or take-profit orders for the given trade.
         /// Called when one side of the bracket fills or the position is closed externally.
         /// </summary>
-        private void CancelWorkingBracketOrders(string tradeId)
+        private void CancelWorkingBracketOrders(string tradeId, Account account)
         {
-            if (_account == null) return;
+            if (account == null)
+            {
+                // Fallback: try to find account from tracked entry order
+                if (_orderTracker.TryGetEntry(tradeId, out var entryOrder))
+                {
+                    account = ResolveAccountForOrder(entryOrder);
+                }
+            }
+            if (account == null) return;
 
             if (_orderTracker.TryGetStopLoss(tradeId, out var stopOrder) && IsWorking(stopOrder))
             {
                 try
                 {
-                    _account.Cancel(new[] { stopOrder });
+                    account.Cancel(new[] { stopOrder });
                     _logger.Info($"Cancelled working stop order for {tradeId}");
                 }
                 catch (Exception ex)
@@ -1305,7 +1384,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 try
                 {
-                    _account.Cancel(new[] { targetOrder });
+                    account.Cancel(new[] { targetOrder });
                     _logger.Info($"Cancelled working target order for {tradeId}");
                 }
                 catch (Exception ex)

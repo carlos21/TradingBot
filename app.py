@@ -10,8 +10,11 @@ All heavy lifting lives in ``src.config`` and ``app_factory``.
 from dotenv import load_dotenv
 load_dotenv()
 
+import os
+
 from src.config import (
     CompositeConfigLoader,
+    DbConfigLoader,
     EnvConfigLoader,
     CliConfigLoader,
     AppBuilder,
@@ -22,6 +25,7 @@ def main():
     loader = CompositeConfigLoader(
         EnvConfigLoader(),
         CliConfigLoader(),
+        DbConfigLoader(db_path=os.environ.get("DB_PATH", "sqlite:///./database.db")),
     )
     config = loader.load()
 

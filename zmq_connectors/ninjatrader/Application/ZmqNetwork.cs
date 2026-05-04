@@ -153,24 +153,27 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         public void SendHistoryEnd() => Send(MessageType.HistoryEnd, new JObject());
 
-        public void SendEntryFill(string tradeId, double entryPrice, double? stopLoss = null, double? takeProfit = null, double? slippage = null)
+        public void SendEntryFill(string tradeId, double entryPrice, double? stopLoss = null, double? takeProfit = null, double? slippage = null, string account = null)
         {
             var payload = new JObject { ["trade_id"] = tradeId, ["entry_price"] = entryPrice };
             if (stopLoss.HasValue) payload["stop_loss"] = stopLoss.Value;
             if (takeProfit.HasValue) payload["take_profit"] = takeProfit.Value;
             if (slippage.HasValue) payload["slippage"] = slippage.Value;
+            if (account != null) payload["account"] = account;
             Send(MessageType.EntryFill, payload);
         }
 
-        public void SendExitFill(string tradeId, double exitPrice, string resultType)
+        public void SendExitFill(string tradeId, double exitPrice, string resultType, string account = null)
         {
-            Send(MessageType.ExitFill, new JObject
+            var payload = new JObject
             {
                 ["trade_id"] = tradeId,
                 ["exit_price"] = exitPrice,
                 ["result_type"] = resultType,
                 ["exit_time"] = ToUnixSeconds(DateTime.UtcNow)
-            });
+            };
+            if (account != null) payload["account"] = account;
+            Send(MessageType.ExitFill, payload);
         }
 
         public void SendTradeLog(string tradeId, string evt, string msg)

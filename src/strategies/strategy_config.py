@@ -1,4 +1,9 @@
-from dataclasses import dataclass
+from __future__ import annotations
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.config.models import AccountConfig
 
 
 @dataclass
@@ -22,6 +27,7 @@ class StrategyNumbers:
     account_balance: float = 50000.0  # account balance for risk % calculation
     risk_per_trade: float | None = None  # fixed $ risk per trade (from RISK env var)
     risk_pct_per_trade: float | None = None  # % of account to risk per trade (from RISK_PCT env var)
+    account_configs: list = field(default_factory=list)  # list[AccountConfig]
 
 @dataclass
 class CandleConfig:

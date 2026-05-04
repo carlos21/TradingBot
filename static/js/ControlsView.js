@@ -144,12 +144,11 @@ export class ControlsView {
   _applyLiveMode() {
     document.querySelectorAll('.replay-control').forEach(el => el.style.display = 'none');
     if (this.stepBtn) this.stepBtn.style.display = 'none';
+    if (this.toggleBtn) this.toggleBtn.style.display = 'none';
 
     const liveIndicator = document.getElementById('liveIndicator');
     if (liveIndicator) liveIndicator.classList.remove('hidden');
 
     if (this.testTradeControls) this.testTradeControls.classList.remove('hidden');
-
-    this.toggleBtn.textContent = 'Start';
   }
 }

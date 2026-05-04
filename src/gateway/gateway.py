@@ -404,8 +404,9 @@ to be:
 
                     from .protocol import ConfigResponseMessage
                     config = {}
-                    if key == "account" or key == "all":
-                        config["account"] = getattr(self, '_account_name', None)
+                    if key == "accounts" or key == "all":
+                        account_names = getattr(self, '_account_names', [])
+                        config["accounts"] = ",".join(account_names) if account_names else ""
                     else:
                         config[key] = None
 
@@ -867,6 +868,7 @@ to be:
         pair: str | None = None,
         risk_usd: float | None = None,
         risk_pct: float | None = None,
+        account: str | None = None,
     ) -> None:
         """Send open order command to platform."""
         cmd = OpenOrderCommand(
@@ -880,29 +882,31 @@ to be:
             rr_ratio=rr_ratio,
             risk_usd=risk_usd,
             risk_pct=risk_pct,
+            account=account,
         )
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
-        self.logger.info(f"Queued OPEN order: {trade_id} {direction} @ {entry_price}")
+        self.logger.info(f"Queued OPEN order: {trade_id} {direction} @ {entry_price} account={account}")
 
-    def send_close_order(self, trade_id: str, reason: str | None = None) -> None:
+    def send_close_order(self, trade_id: str, reason: str | None = None, account: str | None = None) -> None:
         """Send close order command to platform."""
-        cmd = CloseOrderCommand(trade_id=trade_id, reason=reason)
+        cmd = CloseOrderCommand(trade_id=trade_id, reason=reason, account=account)
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
-        self.logger.info(f"Queued CLOSE order: {trade_id} (reason: {reason})")
+        self.logger.info(f"Queued CLOSE order: {trade_id} (reason: {reason}) account={account}")
 
     def send_modify_order(
         self,
         trade_id: str,
         stop_loss: float | None = None,
         take_profit: float | None = None,
+        account: str | None = None,
     ) -> None:
         """Send modify order command to platform."""
-        cmd = ModifyOrderCommand(trade_id=trade_id, stop_loss=stop_loss, take_profit=take_profit)
+        cmd = ModifyOrderCommand(trade_id=trade_id, stop_loss=stop_loss, take_profit=take_profit, account=account)
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
-        self.logger.info(f"Queued MODIFY order: {trade_id} SL={stop_loss} TP={take_profit}")
+        self.logger.info(f"Queued MODIFY order: {trade_id} SL={stop_loss} TP={take_profit} account={account}")
 
     def send_refresh_request(self, days: int = 1) -> None:
         """Request historical data refresh."""

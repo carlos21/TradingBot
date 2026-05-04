@@ -729,7 +729,7 @@ try {
     Write-Status "Phase 4: Trading settings..." "Header"
 
     $defaultAccount = "FNFTCHCARLOSDUCLOS42006"
-    $accountInput   = Read-Host "NinjaTrader account name [default: $defaultAccount]"
+    $accountInput   = Read-Host "NinjaTrader account(s) [default: $defaultAccount] (comma-separated, optional :risk= or :risk_pct= suffixes)"
     $accountName    = if ($accountInput) { $accountInput } else { $defaultAccount }
 
     $pairInput = Read-Host "Trading pair [default: MNQ]"
@@ -763,7 +763,7 @@ try {
     Set-EnvLine -Key "MODE" -Value "live"
     Set-EnvLine -Key "PAIR" -Value $pair
     Set-EnvLine -Key "RISK" -Value $risk
-    Set-EnvLine -Key "NT_ACCOUNT" -Value $accountName
+    Set-EnvLine -Key "NT_ACCOUNTS" -Value $accountName
 
     $envLines | Set-Content -Path $envPath -Encoding UTF8
     Write-Status "Settings saved to .env" "Success"
@@ -824,7 +824,7 @@ try {
     Write-Host ""
     if ($script:WslAvailable -and -not $SkipWslService) {
         Write-Host "To override these when starting manually:" -ForegroundColor DarkGray
-        Write-Host "  PAIR=$pair NT_ACCOUNT=$accountName RISK=$risk .\bin\start_live.sh" -ForegroundColor DarkGray
+        Write-Host "  PAIR=$pair NT_ACCOUNTS=$accountName RISK=$risk .\bin\start_live.sh" -ForegroundColor DarkGray
         Write-Host ""
         $startNow = Read-Host "Start the WSL tradingbot service now? (y/N)"
         if ($startNow -match '^[Yy]') {

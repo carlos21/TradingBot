@@ -1,5 +1,8 @@
 # One-Click TradingBot Launcher
 
+> **DEPRECATED** — The PowerShell-based manager (`bin/TradingBot-Manager.ps1`) is no longer maintained.  
+> All configuration, bot lifecycle, and NinjaTrader management is now handled through the **web admin** at `http://localhost:5001/admin`.
+
 Launch everything — WSL Python service + NinjaTrader + ZMQ Connector — with a single double-click.
 
 ---

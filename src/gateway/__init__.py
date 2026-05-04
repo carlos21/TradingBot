@@ -17,11 +17,12 @@ Usage:
 """
 
 from .datasource import ZMQDataSource
-from .executor import ZMQTradeExecutor, create_zmq_executor
+from .executor import MultiAccountExecutor, ZMQTradeExecutor, create_zmq_executor
 from .gateway import GatewayConfig, TradingGateway
 from .integration import (
     create_gateway_only,
     create_live_components,
+    create_multi_account_live_components,
     get_platform_addresses,
 )
 from .protocol import (
@@ -57,6 +58,7 @@ __all__ = [
     "ZMQDataSource",
     # Integration helpers
     "create_live_components",
+    "create_multi_account_live_components",
     "create_gateway_only",
     "get_platform_addresses",
 ]

@@ -97,6 +97,7 @@ class BaseLiquidityStrategy:
         trigger_state_repo: LineTriggerStateRepository = None,
         logger: ILogger = None,
         decision_log_repository=None,
+        account_configs: list | None = None,
     ):
         self.min_stop_loss = float(min_stop_loss)
         self.logger = logger
@@ -123,6 +124,7 @@ class BaseLiquidityStrategy:
         self.sl_level_tolerance = float(sl_level_tolerance)
         self.trigger_state_repo: LineTriggerStateRepository = trigger_state_repo or InMemoryLineTriggerStateRepository()
         self.decision_log_repository = decision_log_repository
+        self._account_configs: list = list(account_configs) if account_configs else []
 
         self.strategy_lines: dict[Any, dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
         self.open_trades: list[dict[str, Any]] = []
@@ -245,7 +247,39 @@ class BaseLiquidityStrategy:
     def restore_open_trades(self):
         """Sync open trades from TradeManager into strategy's in-memory list."""
         with self.lock:
-            if not self.open_trades and self.trade_manager.open_trades:
+            if self.open_trades:
+                return
+            if self._account_configs and self.trade_manager.open_trades:
+                # Multi-account: reconstruct Signals from AccountTrades
+                from collections import defaultdict
+                by_signal: dict[str, list[dict]] = defaultdict(list)
+                for t in self.trade_manager.open_trades:
+                    if t.get('status') == 'open' and t.get('signal_id'):
+                        by_signal[t['signal_id']].append(t)
+                for signal_id, account_trades in by_signal.items():
+                    if not account_trades:
+                        continue
+                    prototype = account_trades[0]
+                    signal = {
+                        'trade_id': signal_id,
+                        'pair': prototype['pair'],
+                        'type': prototype['type'],
+                        'entry': prototype['entry'],
+                        'stop_loss': prototype['stop_loss'],
+                        'take_profit': prototype['take_profit'],
+                        'risk': prototype['risk'],
+                        'risk_dollars': prototype.get('risk_dollars'),
+                        'risk_pct': prototype.get('risk_pct'),
+                        'contracts': prototype.get('contracts'),
+                        'entry_time': prototype['entry_time'],
+                        'rr_ratio': prototype.get('rr_ratio', 5.0),
+                        'status': 'open',
+                        'is_signal': True,
+                    }
+                    self.open_trades.append(signal)
+                if self.open_trades:
+                    print(f"[Strategy] Restored {len(self.open_trades)} signal(s) from {len(self.trade_manager.open_trades)} account trades")
+            elif self.trade_manager.open_trades:
                 for t in self.trade_manager.open_trades:
                     if t.get('status') == 'open':
                         self.open_trades.append(dict(t))
@@ -883,6 +917,36 @@ class BaseLiquidityStrategy:
             self.logger.info(f"[Strategy] Phantom trade opened @ {trade['entry']:.2f} (reentry_only mode)")
             return
 
+        # Multi-account mode: create a Signal trade (account=NULL) and let the
+        # MultiAccountExecutor expand it into per-account trades.
+        if self._account_configs:
+            td = self.trade_repository.insert_trade(
+                pair=trade["pair"],
+                trade_type=trade["type"],
+                entry_price=trade["entry"],
+                stop_loss=trade["stop_loss"],
+                take_profit=trade["take_profit"],
+                risk=trade["risk"],
+                entry_time=self._ts_to_dt(trade["entry_time"]),
+                params={
+                    "line_level": trade.get("line_level"),
+                    "is_reentry": trade.get("is_reentry", False),
+                },
+                source="signal",
+                risk_dollars=trade.get("risk_dollars"),
+                risk_pct=trade.get("risk_pct"),
+                contracts=trade.get("contracts"),
+            )
+            trade["trade_id"] = td.trade_id
+            trade["is_signal"] = True
+            self.open_trades.append(trade)
+            self.socketio.emit("trade_open", {**trade})
+            self.trade_manager.trade_executor.on_trade_open(trade)
+            if self.trade_logger:
+                self.trade_logger.log(trade["trade_id"], "CMD_SENT", "expand_signal → MultiAccountExecutor")
+            return
+
+        # Single-account mode: existing behavior
         td = self.trade_repository.insert_trade(
             pair=trade["pair"],
             trade_type=trade["type"],

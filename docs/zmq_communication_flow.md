@@ -63,33 +63,39 @@ sequenceDiagram
 
     %% ===== TRADE ENTRY =====
     rect rgb(255, 245, 230)
-        Note over PY,MK: Phase 1: Trade Entry Signal
+        Note over PY,MK: Phase 1: Trade Entry Signal (Multi-Account)
         PY->>PY: Strategy generates entry signal
-        PY->>GW: send_open_order()
-        GW->>GW: Queue ORDER_OPEN command
         
-        GW->>ZMQ: ORDER_OPEN seq=42<br/>{trade_id, direction, entry_price,<br/>stop_loss, take_profit, risk_points}
-        ZMQ->>NT: Receive command
+        PY->>PY: MultiAccountExecutor expands signal<br/>per configured account (each with own rr_ratio, risk)
         
-        NT->>NT: Validate order parameters
-        NT->>NT: Check duplicate (seq_num tracking)
-        NT->>ATM: Create market order + Start ATM Strategy
-        
-        ATM->>NT: Order created
-        NT->>ZMQ: COMMAND_ACK<br/>{command_type: "order_open",<br/>seq_num: 42, success: true}
-        ATM->>MK: Submit entry order
-        MK->>ATM: Fill at entry price
-        
-        ATM->>ATM: Auto-create Stop Loss order
-        ATM->>ATM: Auto-create Take Profit order
-        
-        ATM->>NT: Entry filled notification
-        NT->>NT: Track SL order in _stopLossOrders[trade_id]
-        NT->>ZMQ: ENTRY_FILL<br/>{trade_id, entry_price, stop_loss, take_profit}
-        ZMQ->>GW: Entry fill received
-        GW->>PY: on_entry_fill callback
-        
-        PY->>PY: Update trade in database<br/>Status: OPEN<br/>entry_price, sl, tp stored
+        loop For each account (e.g. Sim101, Sim102)
+            PY->>GW: send_open_order(account=Sim101)
+            GW->>GW: Queue ORDER_OPEN command
+            
+            GW->>ZMQ: ORDER_OPEN seq=42<br/>{trade_id, direction, entry_price,<br/>stop_loss, take_profit, risk_points,<br/>rr_ratio, account, risk_usd, risk_pct}
+            ZMQ->>NT: Receive command
+            
+            NT->>NT: Resolve account by name
+            NT->>NT: Validate order parameters
+            NT->>NT: Check duplicate (seq_num tracking)
+            NT->>ATM: Create market order + Start ATM Strategy
+            
+            ATM->>NT: Order created
+            NT->>ZMQ: COMMAND_ACK<br/>{command_type: "order_open",<br/>seq_num: 42, success: true}
+            ATM->>MK: Submit entry order
+            MK->>ATM: Fill at entry price
+            
+            ATM->>ATM: Auto-create Stop Loss order
+            ATM->>ATM: Auto-create Take Profit order
+            
+            ATM->>NT: Entry filled notification
+            NT->>NT: Track SL order in _stopLossOrders[trade_id]
+            NT->>ZMQ: ENTRY_FILL<br/>{trade_id, entry_price, stop_loss, take_profit, account}
+            ZMQ->>GW: Entry fill received
+            GW->>PY: on_entry_fill callback
+            
+            PY->>PY: Update trade in database<br/>Status: OPEN<br/>entry_price, sl, tp stored<br/>account=Sim101
+        end
     end
 
     %% ===== STOP LOSS UPDATE =====
@@ -191,6 +197,83 @@ sequenceDiagram
     end
 ```
 
+## Multi-Account Trade Expansion
+
+When multiple accounts are configured, a single strategy signal is expanded into **one trade per account** by `MultiAccountExecutor`. Each account trade gets its own `trade_id`, `rr_ratio`, `risk_usd`, and `risk_pct`.
+
+### Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant STR as Strategy
+    participant MAE as MultiAccountExecutor
+    participant TM as TradeManager
+    participant ZE as ZMQTradeExecutor
+    participant GW as TradingGateway
+    participant ZMQ as ZeroMQ
+    participant NT as NinjaTrader
+
+    rect rgb(255, 245, 230)
+        Note over STR,NT: Signal Expansion for 2 Accounts
+        
+        STR->>MAE: Signal {entry, sl, risk, rr=5.0}
+        
+        MAE->>MAE: Account Sim101 (rr=3.0, risk_usd=100)
+        MAE->>MAE: Calculate TP = entry + (3.0 * risk)
+        
+        MAE->>TM: open_trade(account=Sim101, rr_ratio=3.0)
+        TM->>MAE: trade_id=abc101
+        MAE->>ZE: on_trade_open({trade_id=abc101, account=Sim101, rr_ratio=3.0, risk_usd=100})
+        ZE->>GW: send_open_order(account=Sim101)
+        GW->>ZMQ: ORDER_OPEN {trade_id=abc101, account=Sim101, rr_ratio=3.0, risk_usd=100}
+        ZMQ->>NT: Route to Sim101
+        
+        MAE->>MAE: Account Sim102 (rr=5.0, risk_usd=200)
+        MAE->>MAE: Calculate TP = entry + (5.0 * risk)
+        
+        MAE->>TM: open_trade(account=Sim102, rr_ratio=5.0)
+        TM->>MAE: trade_id=abc102
+        MAE->>ZE: on_trade_open({trade_id=abc102, account=Sim102, rr_ratio=5.0, risk_usd=200})
+        ZE->>GW: send_open_order(account=Sim102)
+        GW->>ZMQ: ORDER_OPEN {trade_id=abc102, account=Sim102, rr_ratio=5.0, risk_usd=200}
+        ZMQ->>NT: Route to Sim102
+        
+        NT->>NT: Sim101 filled → ENTRY_FILL {trade_id=abc101, account=Sim101}
+        NT->>NT: Sim102 filled → ENTRY_FILL {trade_id=abc102, account=Sim102}
+    end
+```
+
+### Key Points
+
+1. **One Signal → N Trades**: The strategy generates one signal; `MultiAccountExecutor` fans it out to every configured account
+2. **Per-Account RR Ratio**: Each account's `rr_ratio` overrides the signal's default. TP is recalculated per account: `TP = entry ± (rr * risk)`
+3. **Per-Account Risk**: `risk_usd` and `risk_pct` from `NtAccount` are passed through to the C# position sizing logic
+4. **Independent Trade IDs**: Each account trade has its own UUID. `signal_to_accounts` and `account_to_signal` maps maintain the relationship
+5. **Close/Modify Fan-Out**: When the strategy closes a signal trade, `MultiAccountExecutor` resolves it to all account trades and sends a close/modify command for each
+
+### Python Usage
+
+```python
+from src.gateway.executor import MultiAccountExecutor
+from src.config.models import AccountConfig
+
+accounts = [
+    AccountConfig(name="Sim101", risk_usd=100, rr_ratio=3.0),
+    AccountConfig(name="Sim102", risk_usd=200, rr_ratio=5.0),
+]
+
+executor = MultiAccountExecutor(
+    trade_manager=trade_manager,
+    account_configs=accounts,
+    gateway_executor=zmq_executor,
+    logger=logger,
+)
+
+# Strategy calls executor.on_trade_open(signal_trade)
+# → 2 ORDER_OPEN commands sent, one per account
+```
+
 ## Stop Loss Modification Implementation
 
 ### How It Works
@@ -206,11 +289,14 @@ gateway.send_modify_order(trade_id="abc123", stop_loss=21050)
 // 3. Find the tracked stop order
 Order stopOrder = _stopLossOrders[trade_id];
 
-// 4. Cancel the existing order
-_account.Cancel(stopOrder);
+// 4. Resolve the account for this trade
+var account = ResolveAccountForOrder(stopOrder);
 
-// 5. Create new stop order at new price
-Order newStopOrder = _account.CreateOrder(
+// 5. Cancel the existing order
+account.Cancel(stopOrder);
+
+// 6. Create new stop order at new price
+Order newStopOrder = account.CreateOrder(
     instrument: stopOrder.Instrument,
     orderAction: stopOrder.OrderAction,
     orderType: OrderType.StopMarket,
@@ -280,7 +366,7 @@ internal void HandleModifyOrder(string body)
         return error;
     
     // Modify via NinjaTrader API
-    _account.ChangeOrder(stopOrder, qty, limitPrice, newSl, atmStrategyId);
+    account.ChangeOrder(stopOrder, qty, limitPrice, newSl, atmStrategyId);
 }
 ```
 
@@ -361,12 +447,18 @@ private void HandleOpenOrder(JObject payload)
     var tradeId = payload["trade_id"]?.ToString();
     var direction = payload["direction"]?.ToString();  // "long" or "short"
     var slPoints = payload["risk_points"]?.Value<double>() ?? 0;
+    // Multi-account routing
+    var accountName = payload["account"]?.ToString();
+    var account = ResolveAccount(accountName);
+    if (account == null)
+        throw new InvalidOperationException($"No account available (requested: {accountName ?? "(default)"})");
+
     var rrRatio = payload["rr_ratio"]?.Value<double>() ?? 2.0;
     
-    // Position sizing based on risk
+    // Position sizing based on risk (per-account overrides)
     double riskUsd = payload["risk_usd"]?.Value<double>() ?? 0;
     double riskPct = payload["risk_pct"]?.Value<double>() ?? 0;
-    int qty = CalculatePositionSize(riskUsd, riskPct, slPoints);
+    int qty = CalculatePositionSize(instrument, payload, slPoints, account);
     
     // Get ATM strategy based on SL points
     string atmStrategyName = GetAtmStrategyName(slPoints);
@@ -376,7 +468,7 @@ private void HandleOpenOrder(JObject payload)
     // else -> "TA_MNQ_40pt"
     
     // Create market order (name MUST be "Entry" for ATM)
-    var entryOrder = _account.CreateOrder(
+    var entryOrder = account.CreateOrder(
         instrument,
         isLong ? OrderAction.Buy : OrderAction.SellShort,
         OrderType.Market,
@@ -415,8 +507,9 @@ private void HandleCloseOrder(JObject payload)
     // Store pending close info
     _pendingCloseTradeId = tradeId;
     
-    // Flatten the position - ATM strategy closes automatically
-    _account.Flatten(new[] { instrument });
+    // Resolve account and flatten the position
+    var account = ResolveAccount(accountName);
+    account.Flatten(new[] { instrument });
     
     // Clean up tracking
     _stopLossOrders.Remove(tradeId);
@@ -545,7 +638,7 @@ sequenceDiagram
 
 ## Account Configuration Flow
 
-NinjaTrader queries the account name from Python during connection initialization. This allows the account to be specified in `start_live.sh` (via `NT_ACCOUNT`) rather than hardcoded in the NinjaTrader code.
+NinjaTrader queries the account list from Python during connection initialization. Accounts are configured in the web admin (Settings tab) and stored in the `nt_accounts` SQLite table. `DbConfigLoader` reads them at startup and `MultiAccountExecutor` expands each signal into per-account trades.
 
 ### Flow
 
@@ -565,29 +658,43 @@ sequenceDiagram
         
         Note over NT: Wait 300ms for slow joiner protection
         
-        NT->>ZMQ: CONFIG_QUERY {key: "account"}
+        NT->>ZMQ: CONFIG_QUERY {key: "accounts"}
         ZMQ->>GW: Query received
-        GW->>GW: Look up _account_name
-        GW->>ZMQ: CONFIG_RESPONSE {account: "FNFTCHCARLOSDUCLOS42006"}
-        ZMQ->>NT: Receive account name
+        GW->>GW: Look up _account_names
+        GW->>ZMQ: CONFIG_RESPONSE {accounts: "FNFTCHCARLOSDUCLOS42006"}
+        ZMQ->>NT: Receive account list
         
-        NT->>NT: InitializeAccount("FNFTCHCARLOSDUCLOS42006")
-        NT->>NT: Find account by name, or fallback to first available
+        NT->>NT: InitializeAccounts(["FNFTCHCARLOSDUCLOS42006"])
+        NT->>NT: Find each account by name, or fallback to all available
         
         NT->>ZMQ: CONNECT {platform: "ninjatrader", version: "2.0.0", account: "FNFTCHCARLOSDUCLOS42006", pair: "MNQ"}
         ZMQ->>GW: Connection established
-        GW->>PY: Log: "Platform connected: ninjatrader | Pair: MNQ | Account: FNFTCHCARLOSDUCLOS42006"
+        GW->>PY: Log: "Platform connected: ninjatrader | Pair: MNQ | Accounts: [FNFTCHCARLOSDUCLOS42006]"
     end
 ```
 
 ### Python Side
 
 ```python
-# In app.py or start_live.sh
-export NT_ACCOUNT="FNFTCHCARLOSDUCLOS42006"
+# Accounts are loaded from SQLite (nt_accounts table) via DbConfigLoader
+# and passed to MultiAccountExecutor at startup.
 
-# In create_live_components()
-gateway._account_name = account  # Stored for config queries
+from src.config.loaders import DbConfigLoader
+from src.gateway.executor import MultiAccountExecutor
+
+cfg = DbConfigLoader().load()  # Reads AppSetting + NtAccount from DB
+account_configs = cfg.nt_accounts  # List[AccountConfig]
+
+# Stored on gateway for config queries from NinjaTrader
+gateway._account_names = [a.name for a in account_configs]
+
+# MultiAccountExecutor expands one signal into N per-account trades
+trade_executor = MultiAccountExecutor(
+    trade_manager=trade_manager,
+    account_configs=account_configs,
+    gateway_executor=zmq_executor,
+    logger=logger,
+)
 ```
 
 ### NinjaTrader Side
@@ -597,19 +704,22 @@ gateway._account_name = account  # Stored for config queries
 _network.Start();
 Thread.Sleep(300);  // Slow joiner protection
 
-// Query account from Python
-string configuredAccount = _network.QueryConfig("account");
-if (!string.IsNullOrEmpty(configuredAccount))
+// Query accounts from Python
+string configuredAccounts = _network.QueryConfig("accounts");
+List<string> accountNames = null;
+if (!string.IsNullOrEmpty(configuredAccounts))
 {
-    _logger.Info($"Python specified account: {configuredAccount}");
+    accountNames = configuredAccounts.Split(',').Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s)).ToList();
+    _logger.Info($"Python specified accounts: {string.Join(", ", accountNames)}");
 }
 
-// Send connect with account info
+// Send connect with primary account info
+string primaryAccount = accountNames?.Count > 0 ? accountNames[0] : null;
 _network.SendConnect("ninjatrader", _config.PlatformVersion, 
-    account: configuredAccount, pair: "MNQ");
+    account: primaryAccount, pair: "MNQ");
 
-// Initialize using specified account
-InitializeAccount(configuredAccount);
+// Initialize using specified accounts
+InitializeAccounts(accountNames);
 ```
 
 ### Fallback Behavior
@@ -628,7 +738,7 @@ If specified account is not found:
 
 | Message Type | Payload Fields | Description |
 |-------------|----------------|-------------|
-| `order_open` | trade_id, direction, entry_price, stop_loss, take_profit, risk_points, rr_ratio | Open new position with ATM strategy |
+| `order_open` | trade_id, direction, entry_price, stop_loss, take_profit, risk_points, rr_ratio, **account**, **risk_usd**, **risk_pct** | Open new position with ATM strategy on specified account |
 | `order_close` | trade_id, reason | Close position (flatten) |
 | `order_modify` | trade_id, stop_loss, take_profit | Modify SL via Cancel+Replace (⚠️ brief gap risk) |
 | `refresh_request` | days | Request historical data refresh |
@@ -641,11 +751,11 @@ If specified account is not found:
 | `bar` | pair, time, open, high, low, close, volume | Completed bar |
 | `history_batch` | pair, bars[], days | Historical bars batch |
 | `history_end` | - | End of history transmission |
-| `entry_fill` | trade_id, entry_price, stop_loss, take_profit | Entry execution |
-| `exit_fill` | trade_id, exit_price, result_type | Exit execution (TP/SL/CLOSE/SP) |
+| `entry_fill` | trade_id, entry_price, stop_loss, take_profit, **account** | Entry execution |
+| `exit_fill` | trade_id, exit_price, result_type, **account** | Exit execution (TP/SL/CLOSE/SP) |
 | `trade_log` | trade_id, event, message | Trading events log |
 | `heartbeat` | source, status | Health check (every 5s) |
-| `connect` | platform, version, account, pair | Initial handshake |
+| `connect` | platform, version, **account** (primary), pair | Initial handshake |
 | `error` | source, error_type, message, details | Error notification |
 | `command_ack` | command_type, seq_num, success, trade_id, message | Command acknowledgment |
 | `position_sync` | positions[], count, source, is_source_of_truth | Crash recovery sync |
@@ -786,7 +896,16 @@ sequenceDiagram
 
 ```python
 # Commands are tracked until acknowledged or timeout
-gateway.send_open_order(trade_id="abc123", ...)
+gateway.send_open_order(
+    trade_id="abc123",
+    direction="long",
+    entry_price=21000,
+    stop_loss=20950,
+    take_profit=21250,
+    risk_points=50,
+    rr_ratio=5.0,
+    account="Sim101",  // Required for multi-account routing
+)
 # Logs: "Queued OPEN order: abc123"
 
 # When ack received:

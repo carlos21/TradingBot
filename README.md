@@ -59,7 +59,7 @@ All settings are stored in `.env` at the project root. Key variables:
 | `PAIR` | `MNQ` | Trading instrument |
 | `RISK` | `160` | Fixed dollar risk per trade |
 | `ACCOUNT_BALANCE` | `100000` | Account balance for position sizing |
-| `NT_ACCOUNT` | — | NinjaTrader account name |
+| `NT_ACCOUNTS` | — | NinjaTrader account(s). Comma-separated list with optional per-account risk overrides. Example: `Account1:risk=100,Account2:risk_pct=1.5` |
 | `FLASK_PORT` | `5001` | Web UI port |
 | `ZMQ_HOST` | `127.0.0.1` | ZeroMQ broker host |
 | `ZMQ_MARKET_PORT` | `5555` | Market data port |

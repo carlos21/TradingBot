@@ -47,6 +47,8 @@ class TradeData:
     params: dict[str, Any] | None
     logs: list[dict[str, str]] | None = field(default=None)
     source: str | None = field(default=None)
+    account: str | None = field(default=None)
+    signal_id: str | None = field(default=None)
     created_at: datetime = field(default=None)
 
     def __hash__(self):
@@ -70,6 +72,8 @@ class TradeData:
             self.pnl_usd,
             self.params,
             self.source,
+            self.account,
+            self.signal_id,
             self.created_at,
         ))
 
@@ -96,5 +100,7 @@ class TradeData:
             self.pnl_usd     == other.pnl_usd and
             self.params       == other.params and
             self.source       == other.source and
+            self.account      == other.account and
+            self.signal_id    == other.signal_id and
             self.created_at   == other.created_at
         )

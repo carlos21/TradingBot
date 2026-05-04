@@ -120,7 +120,7 @@ class TestAppBuilderLive:
             assert mock_live.call_args.kwargs["market_port"] == 6000
             assert mock_live.call_args.kwargs["command_port"] == 6001
 
-    def test_nt_account_passed(self):
+    def test_nt_accounts_passed(self):
         with patch("src.config.builder.database.setup_database"), \
              patch("src.config.builder.SQLLineRepository"), \
              patch("src.config.builder.SQLTradeRepository"), \
@@ -129,11 +129,12 @@ class TestAppBuilderLive:
              patch("src.config.builder._build_notifier"), \
              patch("src.config.builder._build_analytics"), \
              patch("src.config.builder.FileAndConsoleLogger"), \
-             patch("src.gateway.create_live_components") as mock_live:
+             patch("src.gateway.create_multi_account_live_components") as mock_multi:
 
-            mock_live.return_value = (MagicMock(), MagicMock())
-            cfg = AppConfig(mode="live", nt_account="TestAccount")
+            mock_multi.return_value = (MagicMock(), MagicMock())
+            from src.config.models import AccountConfig
+            cfg = AppConfig(mode="live", nt_accounts=[AccountConfig(name="TestAccount")])
             builder = AppBuilder(cfg)
             builder.build()
 
-            assert mock_live.call_args.kwargs["account"] == "TestAccount"
+            assert mock_multi.call_args.kwargs["account_configs"][0].name == "TestAccount"

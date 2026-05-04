@@ -4,6 +4,9 @@
     TradingBot Manager - Windows GUI for starting, configuring and updating the bot.
 
 .DESCRIPTION
+    DEPRECATED — This file is no longer maintained.
+    All manager functionality has moved to the web admin at http://localhost:<FLASK_PORT>/admin
+
     A PowerShell Windows Forms app that provides:
       - Dashboard: start/stop the bot and view live logs with current config summary
       - Settings: edit .env values (pair, instrument, risk, account, ports, etc.)
@@ -51,6 +54,16 @@ function Get-LatestLogFile {
     $logDir = Join-Path $script:ProjectDir "logs"
     if (-not (Test-Path $logDir)) { return $null }
     return Get-ChildItem -Path $logDir -Filter "app_*.log" | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+}
+
+function Find-WslBotProcess {
+    $cimProcs = Get-CimInstance Win32_Process -Filter "Name = 'wsl.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -like "*start_live*" -or $_.CommandLine -like "*TradingBot*" }
+    foreach ($p in $cimProcs) {
+        $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
+        if ($proc) { return $proc }
+    }
+    return $null
 }
 
 function Read-EnvFile {
@@ -265,25 +278,22 @@ function Update-DashboardSummary {
     $mode = if ($EnvVals["MODE"]) { $EnvVals["MODE"] } else { "live" }
     $pair = if ($EnvVals["PAIR"]) { $EnvVals["PAIR"] } else { "MNQ" }
     $inst = if ($ZmqVals["instrument"]) { $ZmqVals["instrument"] } else { "MNQ 06-26" }
-    $acct = if ($EnvVals["NT_ACCOUNT"]) { $EnvVals["NT_ACCOUNT"] } else { "-" }
-    $risk = if ($EnvVals["RISK"]) { ('$' + $EnvVals["RISK"]) } elseif ($EnvVals["RISK_PCT"]) { ($EnvVals["RISK_PCT"] + '%') } else { '-' }
-    $script:lblConfigSummary.Text = "Mode: $mode  |  Pair: $pair  |  Instrument: $inst  |  Account: $acct  |  Risk: $risk"
+    $acct = if ($EnvVals["NT_ACCOUNTS"]) { $EnvVals["NT_ACCOUNTS"] } else { "-" }
+    $script:lblConfigSummary.Text = "Mode: $mode  |  Pair: $pair  |  Instrument: $inst  |  Accounts: $acct"
 }
 
 function Test-SettingsValid {
     $missing = @()
 
-    $required = @("MODE", "PAIR", "INSTRUMENT", "NT_ACCOUNT", "FLASK_PORT", "ZMQ_HOST", "ZMQ_MARKET_PORT", "ZMQ_COMMAND_PORT", "ZMQ_QUERY_PORT", "ZMQ_HEARTBEAT_PORT")
+    $required = @("MODE", "PAIR", "INSTRUMENT", "FLASK_PORT", "ZMQ_HOST", "ZMQ_MARKET_PORT", "ZMQ_COMMAND_PORT", "ZMQ_QUERY_PORT", "ZMQ_HEARTBEAT_PORT")
     foreach ($key in $required) {
         if ([string]::IsNullOrWhiteSpace($settingsControls[$key].Text)) {
             $missing += ($key -replace '_', ' ')
         }
     }
 
-    $hasRisk = -not [string]::IsNullOrWhiteSpace($settingsControls["RISK"].Text)
-    $hasRiskPct = -not [string]::IsNullOrWhiteSpace($settingsControls["RISK_PCT"].Text)
-    if (-not $hasRisk -and -not $hasRiskPct) {
-        $missing += "Risk amount ($) or Risk %"
+    if ($lstAccounts.Items.Count -eq 0) {
+        $missing += "NT Accounts"
     }
 
     $vault = Get-Vault
@@ -489,10 +499,7 @@ $gy += 28
 # Trading settings
 $tradingMap = @(
     @{ Label = "Pair"; Key = "PAIR"; Default = "MNQ" },
-    @{ Label = "Instrument"; Key = "INSTRUMENT"; Default = "MNQ 06-26"; IsZmq = $true },
-    @{ Label = "Risk amount ($)"; Key = "RISK"; Default = "" },
-    @{ Label = "Risk % of account"; Key = "RISK_PCT"; Default = "" },
-    @{ Label = "NT Account name"; Key = "NT_ACCOUNT"; Default = "" }
+    @{ Label = "Instrument"; Key = "INSTRUMENT"; Default = "MNQ 06-26"; IsZmq = $true }
 )
 
 foreach ($item in $tradingMap) {
@@ -518,14 +525,151 @@ foreach ($item in $tradingMap) {
     $gy += 28
 }
 
-# --- Risk hint ---
-$lblRiskHint = New-Object System.Windows.Forms.Label
-$lblRiskHint.Text = "Tip: Set Risk OR Risk %, not both. Risk amount takes precedence."
-$lblRiskHint.Location = New-Object System.Drawing.Point(200, $gy)
-$lblRiskHint.Size = New-Object System.Drawing.Size(500, 20)
-$lblRiskHint.Font = New-Object System.Drawing.Font("Segoe UI", 8)
-$lblRiskHint.ForeColor = [System.Drawing.Color]::Gray
-$grpTrading.Controls.Add($lblRiskHint)
+# --- NT Accounts (multi-account) ---
+$grpNtAccounts = New-Object System.Windows.Forms.GroupBox
+$grpNtAccounts.Text = "NT Accounts"
+$grpNtAccounts.Location = New-Object System.Drawing.Point(560, 20)
+$grpNtAccounts.Size = New-Object System.Drawing.Size(300, 220)
+$tabSettings.Controls.Add($grpNtAccounts)
+
+$lstAccounts = New-Object System.Windows.Forms.ListBox
+$lstAccounts.Location = New-Object System.Drawing.Point(10, 20)
+$lstAccounts.Size = New-Object System.Drawing.Size(170, 100)
+$lstAccounts.DisplayMember = "DisplayText"
+$grpNtAccounts.Controls.Add($lstAccounts)
+
+$btnAcctAdd = New-Object System.Windows.Forms.Button
+$btnAcctAdd.Text = "Add"
+$btnAcctAdd.Location = New-Object System.Drawing.Point(190, 20)
+$btnAcctAdd.Size = New-Object System.Drawing.Size(90, 28)
+$grpNtAccounts.Controls.Add($btnAcctAdd)
+
+$btnAcctRemove = New-Object System.Windows.Forms.Button
+$btnAcctRemove.Text = "Remove"
+$btnAcctRemove.Location = New-Object System.Drawing.Point(190, 52)
+$btnAcctRemove.Size = New-Object System.Drawing.Size(90, 28)
+$grpNtAccounts.Controls.Add($btnAcctRemove)
+
+$lblAcctName = New-Object System.Windows.Forms.Label
+$lblAcctName.Text = "Name:"
+$lblAcctName.Location = New-Object System.Drawing.Point(10, 128)
+$lblAcctName.Size = New-Object System.Drawing.Size(45, 20)
+$grpNtAccounts.Controls.Add($lblAcctName)
+
+$txtAcctName = New-Object System.Windows.Forms.TextBox
+$txtAcctName.Location = New-Object System.Drawing.Point(55, 126)
+$txtAcctName.Size = New-Object System.Drawing.Size(225, 22)
+$grpNtAccounts.Controls.Add($txtAcctName)
+
+$lblAcctRisk = New-Object System.Windows.Forms.Label
+$lblAcctRisk.Text = 'Risk $:'
+$lblAcctRisk.Location = New-Object System.Drawing.Point(10, 153)
+$lblAcctRisk.Size = New-Object System.Drawing.Size(45, 20)
+$grpNtAccounts.Controls.Add($lblAcctRisk)
+
+$txtAcctRisk = New-Object System.Windows.Forms.TextBox
+$txtAcctRisk.Location = New-Object System.Drawing.Point(55, 151)
+$txtAcctRisk.Size = New-Object System.Drawing.Size(70, 22)
+$grpNtAccounts.Controls.Add($txtAcctRisk)
+
+$lblAcctRiskPct = New-Object System.Windows.Forms.Label
+$lblAcctRiskPct.Text = 'Risk %:'
+$lblAcctRiskPct.Location = New-Object System.Drawing.Point(130, 153)
+$lblAcctRiskPct.Size = New-Object System.Drawing.Size(50, 20)
+$grpNtAccounts.Controls.Add($lblAcctRiskPct)
+
+$txtAcctRiskPct = New-Object System.Windows.Forms.TextBox
+$txtAcctRiskPct.Location = New-Object System.Drawing.Point(185, 151)
+$txtAcctRiskPct.Size = New-Object System.Drawing.Size(95, 22)
+$grpNtAccounts.Controls.Add($txtAcctRiskPct)
+
+$lblAcctHint = New-Object System.Windows.Forms.Label
+$lblAcctHint.Text = 'Per-account risk overrides the global default. Leave blank to use global RISK/RISK_PCT.'
+$lblAcctHint.Location = New-Object System.Drawing.Point(10, 178)
+$lblAcctHint.Size = New-Object System.Drawing.Size(280, 18)
+$lblAcctHint.Font = New-Object System.Drawing.Font("Segoe UI", 8)
+$lblAcctHint.ForeColor = [System.Drawing.Color]::Gray
+$grpNtAccounts.Controls.Add($lblAcctHint)
+
+# Helper to build a display-friendly account item
+function New-AccountItem($raw) {
+    $display = $raw
+    if ($raw -match '^(.+?):risk=(.+)$') {
+        $display = "$($matches[1].Trim())  |  Risk: `$$($matches[2].Trim())"
+    } elseif ($raw -match '^(.+?):risk_pct=(.+)$') {
+        $display = "$($matches[1].Trim())  |  Risk: $($matches[2].Trim())%"
+    }
+    return [PSCustomObject]@{ Raw = $raw; DisplayText = $display }
+}
+
+# Load existing NT_ACCOUNTS into list
+$ntAccountsValue = $envValues["NT_ACCOUNTS"]
+if ($ntAccountsValue) {
+    foreach ($part in $ntAccountsValue -split ',') {
+        $part = $part.Trim()
+        if ($part) { [void]$lstAccounts.Items.Add((New-AccountItem $part)) }
+    }
+}
+
+# Populate input fields when an account is selected
+$lstAccounts.Add_SelectedIndexChanged({
+    $selected = $lstAccounts.SelectedItem
+    if (-not $selected) { return }
+    $raw = $selected.Raw
+    if ($raw -match '^(.+?):risk=(.+)$') {
+        $txtAcctName.Text = $matches[1].Trim()
+        $txtAcctRisk.Text = $matches[2].Trim()
+        $txtAcctRiskPct.Text = ""
+    } elseif ($raw -match '^(.+?):risk_pct=(.+)$') {
+        $txtAcctName.Text = $matches[1].Trim()
+        $txtAcctRisk.Text = ""
+        $txtAcctRiskPct.Text = $matches[2].Trim()
+    } else {
+        $txtAcctName.Text = $raw
+        $txtAcctRisk.Text = ""
+        $txtAcctRiskPct.Text = ""
+    }
+})
+
+$btnAcctAdd.Add_Click({
+    $name = $txtAcctName.Text.Trim()
+    $risk = $txtAcctRisk.Text.Trim()
+    $riskPct = $txtAcctRiskPct.Text.Trim()
+    if (-not $name) {
+        [System.Windows.Forms.MessageBox]::Show("Enter an account name.", "Missing Name", "OK", "Warning")
+        return
+    }
+    $raw = if ($risk) { "$name`:risk=$risk" } elseif ($riskPct) { "$name`:risk_pct=$riskPct" } else { $name }
+    # Prevent duplicates (compare raw values)
+    foreach ($existing in $lstAccounts.Items) {
+        if ($existing.Raw -eq $raw) {
+            [System.Windows.Forms.MessageBox]::Show("Account already exists.", "Duplicate", "OK", "Warning")
+            return
+        }
+    }
+    [void]$lstAccounts.Items.Add((New-AccountItem $raw))
+    $txtAcctName.Text = ""
+    $txtAcctRisk.Text = ""
+    $txtAcctRiskPct.Text = ""
+})
+
+$btnAcctRemove.Add_Click({
+    if ($lstAccounts.SelectedIndex -ge 0) {
+        $lstAccounts.Items.RemoveAt($lstAccounts.SelectedIndex)
+        $txtAcctName.Text = ""
+        $txtAcctRisk.Text = ""
+        $txtAcctRiskPct.Text = ""
+    }
+})
+
+# --- Accounts hint ---
+$lblAccountsHint = New-Object System.Windows.Forms.Label
+$lblAccountsHint.Text = "Tip: Add accounts in the NT Accounts panel (right). Global RISK/RISK_PCT in .env are used as defaults."
+$lblAccountsHint.Location = New-Object System.Drawing.Point(200, $gy)
+$lblAccountsHint.Size = New-Object System.Drawing.Size(500, 20)
+$lblAccountsHint.Font = New-Object System.Drawing.Font("Segoe UI", 8)
+$lblAccountsHint.ForeColor = [System.Drawing.Color]::Gray
+$grpTrading.Controls.Add($lblAccountsHint)
 
 # --- Network / Ports Group ---
 $grpNetwork = New-Object System.Windows.Forms.GroupBox
@@ -754,10 +898,25 @@ $btnToggle.Add_Click({
                 try { $wslProcs.Kill() } catch {}
             }
 
+            # Stop systemd services if running
+            try {
+                & wsl -- systemctl is-active tradingbot 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    & wsl -- systemctl stop tradingbot 2>$null
+                    $txtLog.AppendText("Stopped tradingbot systemd service.`n")
+                }
+                & wsl -- systemctl is-active tradingbot-mt 2>$null
+                if ($LASTEXITCODE -eq 0) {
+                    & wsl -- systemctl stop tradingbot-mt 2>$null
+                    $txtLog.AppendText("Stopped tradingbot-mt systemd service.`n")
+                }
+            } catch {}
+
             # Nuclear fallback: pkill inside WSL
             try {
                 & wsl -- pkill -f "app.py" 2>$null
                 & wsl -- pkill -f "start_live" 2>$null
+                & wsl -- pkill -f "poetry run python" 2>$null
             } catch {}
 
             $txtLog.AppendText("Bot stopped.`n")
@@ -885,7 +1044,13 @@ function Load-RecentLogLines {
     param([int]$Lines = 50)
     $logFile = Get-LatestLogFile
     if (-not $logFile) { return }
-    $sr = [System.IO.StreamReader]::new($logFile.FullName)
+    $fs = [System.IO.FileStream]::new(
+        $logFile.FullName,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Read,
+        [System.IO.FileShare]::ReadWrite
+    )
+    $sr = [System.IO.StreamReader]::new($fs)
     try {
         $buf = New-Object System.Collections.Generic.Queue[string] $Lines
         while ($null -ne ($line = $sr.ReadLine())) {
@@ -913,6 +1078,9 @@ $btnSaveSettings.Add_Click({
             $newEnvValues[$key] = $val
         }
     }
+    # Serialize NT accounts from the list box
+    $ntAccounts = ($lstAccounts.Items | ForEach-Object { $_.Raw }) -join ','
+    $newEnvValues["NT_ACCOUNTS"] = $ntAccounts
     Save-EnvFile -Values $newEnvValues
     Save-ZmqConfig -Values $newZmqValues
 
@@ -1093,6 +1261,12 @@ if ($portInUse) {
     $lblStatus.ForeColor = [System.Drawing.Color]::FromArgb(0, 150, 0)
     $btnToggle.Text = "Stop Bot"
     $btnToggle.BackColor = [System.Drawing.Color]::FromArgb(180, 0, 0)
+    $script:BotProcess = Find-WslBotProcess
+    if ($script:BotProcess) {
+        Write-DebugLog "INIT: Linked to existing WSL process PID $($script:BotProcess.Id)"
+    } else {
+        Write-DebugLog "INIT: No WSL process found; bot may be running via systemd"
+    }
     $script:StatusTimer.Start()
     Write-DebugLog "INIT: Loading recent logs..."
     Load-RecentLogLines -Lines 50

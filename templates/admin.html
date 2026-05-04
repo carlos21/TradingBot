@@ -48,6 +48,12 @@
       <button data-tab="decisions" class="nav-btn w-full text-left px-4 py-3 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors">
         📋 Decision Logs
       </button>
+      <button data-tab="settings" class="nav-btn w-full text-left px-4 py-3 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors">
+        ⚙️ Settings
+      </button>
+      <button data-tab="ninjatrader" class="nav-btn w-full text-left px-4 py-3 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors">
+        📡 NinjaTrader
+      </button>
     </nav>
     
     <div class="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-700">
@@ -287,6 +293,204 @@
           <h3 class="text-lg font-semibold mb-4">P&L Distribution</h3>
           <canvas id="analytics-pnl-dist-chart"></canvas>
         </div>
+      </div>
+    </div>
+
+    <!-- Settings Tab -->
+    <div id="settings-tab" class="tab-content hidden">
+      <div class="flex items-center justify-between mb-6">
+        <h2 class="text-2xl font-bold">Settings</h2>
+        <button id="settings-save-btn" class="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium text-white transition-colors shadow-lg shadow-blue-900/30 flex items-center gap-2">
+          <span>💾</span> Save Settings
+        </button>
+      </div>
+      <span id="settings-save-status" class="text-sm"></span>
+
+      <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <!-- Trading Settings -->
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-sm">
+          <div class="flex items-center gap-2 mb-5">
+            <span class="text-xl">📈</span>
+            <h3 class="text-lg font-semibold">Trading</h3>
+          </div>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Pair</label>
+              <input type="text" id="settings-pair" class="w-full px-3 py-2.5 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Instrument</label>
+              <input type="text" id="settings-instrument" class="w-full px-3 py-2.5 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+            </div>
+            <div class="bg-gray-700/40 rounded-lg p-3 text-sm text-gray-400">
+              <p class="mb-1">💡 <span class="text-gray-300 font-medium">Risk &amp; RR Ratio</span> are configured per NT Account below.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Network Settings -->
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-sm">
+          <div class="flex items-center gap-2 mb-5">
+            <span class="text-xl">🌐</span>
+            <h3 class="text-lg font-semibold">Network</h3>
+          </div>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Flask Port</label>
+              <input type="number" id="settings-flask-port" class="w-full px-3 py-2.5 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">ZMQ Host</label>
+              <input type="text" id="settings-zmq-host" class="w-full px-3 py-2.5 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Market</label>
+                <input type="number" id="settings-zmq-market" class="w-full px-3 py-2.5 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Command</label>
+                <input type="number" id="settings-zmq-cmd" class="w-full px-3 py-2.5 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Query</label>
+                <input type="number" id="settings-zmq-query" class="w-full px-3 py-2.5 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Heartbeat</label>
+                <input type="number" id="settings-zmq-hb" class="w-full px-3 py-2.5 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Credentials -->
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700 shadow-sm">
+          <div class="flex items-center gap-2 mb-5">
+            <span class="text-xl">🔐</span>
+            <h3 class="text-lg font-semibold">Credentials</h3>
+          </div>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Username</label>
+              <input type="text" id="settings-nt-user" list="settings-nt-user-list" placeholder="Type or pick username..." class="w-full px-3 py-2.5 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+              <datalist id="settings-nt-user-list"></datalist>
+            </div>
+            <div>
+              <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Password</label>
+              <div class="relative">
+                <input type="password" id="settings-nt-pass" class="w-full px-3 py-2.5 pr-10 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+                <button type="button" id="settings-nt-toggle-pass" class="absolute inset-y-0 right-0 px-3 text-gray-400 hover:text-white transition-colors" title="Show/Hide password">
+                  <svg id="eye-icon" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                  <svg id="eye-slash-icon" class="h-5 w-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a10.05 10.05 0 011.574-2.974m2.16-2.16A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.542 7a10.05 10.05 0 01-2.115 3.587m-2.16 2.16L4.93 4.93M19.07 19.07l-1.414-1.414"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- NT Accounts -->
+      <div class="mt-6 bg-gray-800 rounded-xl border border-gray-700 shadow-sm overflow-hidden">
+        <div class="p-6 border-b border-gray-700 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="text-xl">👥</span>
+            <h3 class="text-lg font-semibold">NT Accounts</h3>
+          </div>
+          <span id="settings-accounts-count" class="text-xs font-medium bg-gray-700 text-gray-300 px-2.5 py-1 rounded-full">0 accounts</span>
+        </div>
+
+        <div class="p-6">
+          <!-- Add Account Form -->
+          <div class="bg-gray-700/40 rounded-lg p-4 mb-4">
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+              <div>
+                <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Account Name</label>
+                <input type="text" id="settings-account-name" placeholder="e.g. Sim101" class="w-full px-3 py-2 bg-gray-700/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Risk ($)</label>
+                <input type="number" id="settings-account-risk" placeholder="Optional" class="w-full px-3 py-2 bg-gray-700/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Risk (%)</label>
+                <input type="number" id="settings-account-riskpct" placeholder="Optional" class="w-full px-3 py-2 bg-gray-700/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">RR Ratio</label>
+                <input type="number" id="settings-account-rr" step="0.1" placeholder="5.0" class="w-full px-3 py-2 bg-gray-700/60 border border-gray-600 rounded-lg text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+              </div>
+              <button id="settings-account-add" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium text-white transition-colors h-fit flex items-center justify-center gap-2">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                Add Account
+              </button>
+            </div>
+          </div>
+
+          <!-- Accounts Table -->
+          <div class="overflow-x-auto">
+            <table class="w-full text-left">
+              <thead>
+                <tr class="text-xs font-medium text-gray-400 uppercase tracking-wider border-b border-gray-700">
+                  <th class="px-4 py-3">Account</th>
+                  <th class="px-4 py-3">Risk ($)</th>
+                  <th class="px-4 py-3">Risk (%)</th>
+                  <th class="px-4 py-3">RR Ratio</th>
+                  <th class="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="settings-accounts-tbody" class="divide-y divide-gray-700/50">
+                <!-- Populated by JS -->
+              </tbody>
+            </table>
+            <div id="settings-accounts-empty" class="px-4 py-8 text-center text-gray-500 text-sm">No accounts configured. Add one above.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- NinjaTrader Tab -->
+    <div id="ninjatrader-tab" class="tab-content hidden">
+      <h2 class="text-2xl font-bold mb-6">NinjaTrader</h2>
+
+      <!-- Auto-login & Credentials -->
+      <div class="bg-gray-800 rounded-xl p-6 border border-gray-700 mb-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold">Auto-login</h3>
+          <span id="nt-creds-status" class="text-sm"></span>
+        </div>
+        <p class="text-gray-400 text-sm mb-4">Enter your NinjaTrader credentials below and click "Open & Auto-login" to launch NinjaTrader and sign in automatically.</p>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Username</label>
+            <input type="text" id="nt-creds-user" list="nt-creds-user-list" placeholder="NinjaTrader username..."
+                   class="w-full px-3 py-2.5 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+            <datalist id="nt-creds-user-list"></datalist>
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-400 uppercase tracking-wider mb-1.5">Password</label>
+            <div class="relative">
+              <input type="password" id="nt-creds-pass" placeholder="NinjaTrader password..."
+                     class="w-full px-3 py-2.5 pr-10 bg-gray-700/60 border border-gray-600 rounded-lg text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 transition-colors" />
+              <button type="button" id="nt-creds-toggle-pass" class="absolute inset-y-0 right-0 px-3 text-gray-400 hover:text-white transition-colors" title="Show/Hide password">
+                <svg id="nt-eye-icon" class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                <svg id="nt-eye-slash-icon" class="h-5 w-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.542-7a10.05 10.05 0 011.574-2.974m2.16-2.16A9.953 9.953 0 0112 5c4.478 0 8.268 2.943 9.542 7a10.05 10.05 0 01-2.115 3.587m-2.16 2.16L4.93 4.93M19.07 19.07l-1.414-1.414"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-wrap gap-3">
+          <button id="nt-save-creds-btn" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium text-white transition-colors">💾 Save Credentials</button>
+          <button id="nt-open-btn" class="px-4 py-2 bg-green-600 hover:bg-green-700 rounded-lg font-medium text-white transition-colors">🚀 Open NinjaTrader & Auto-login</button>
+        </div>
+        <div id="nt-open-result" class="mt-3 text-sm text-gray-300"></div>
+      </div>
+
+      <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+        <h3 class="text-lg font-semibold mb-4">NetMQ DLLs</h3>
+        <p class="text-gray-400 text-sm mb-4">Install or re-install NetMQ DLLs required by the connector.</p>
+        <button id="nt-install-netmq-btn" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium text-white transition-colors">Re-install NetMQ</button>
+        <div id="nt-install-netmq-result" class="mt-2 text-sm text-gray-300"></div>
       </div>
     </div>
   </main>

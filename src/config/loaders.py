@@ -19,7 +19,7 @@ import os
 import sys
 from typing import Protocol
 
-from src.config.models import AppConfig
+from src.config.models import AccountConfig, AppConfig
 
 
 # ---------------------------------------------------------------------------
@@ -57,6 +57,42 @@ def _csv_to_floats(val: str | None) -> list[float] | None:
     if not val:
         return None
     return [float(x.strip()) for x in val.split(",")]
+
+
+def _parse_account_part(part: str) -> tuple[str, float | None, float | None, float | None]:
+    """Parse one account entry like 'Account1:risk=100:rr=4' or 'Account2:risk_pct=1.5'."""
+    name = part
+    risk_usd: float | None = None
+    risk_pct: float | None = None
+    rr_ratio: float | None = None
+    if ":" in part:
+        name, opts = part.split(":", 1)
+        for opt in opts.split(":"):
+            opt = opt.strip()
+            if opt.startswith("risk="):
+                risk_usd = float(opt[len("risk="):])
+            elif opt.startswith("risk_pct="):
+                risk_pct = float(opt[len("risk_pct="):])
+            elif opt.startswith("rr="):
+                rr_ratio = float(opt[len("rr="):])
+    return name, risk_usd, risk_pct, rr_ratio
+
+
+def _parse_nt_accounts(val: str) -> list[AccountConfig]:
+    """Parse NT_ACCOUNTS env var.
+
+    Format:  Account1:risk=100:rr=4,Account2:risk_pct=1.5,Account3
+    """
+    if not val:
+        return []
+    accounts: list[AccountConfig] = []
+    for part in val.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        name, risk_usd, risk_pct, rr_ratio = _parse_account_part(part)
+        accounts.append(AccountConfig(name=name, risk_usd=risk_usd, risk_pct=risk_pct, rr_ratio=rr_ratio))
+    return accounts
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +133,7 @@ class EnvConfigLoader:
         "SKIP_ROLLOVER_DAYS": ("skip_rollover_days", lambda _v: _bool_env("SKIP_ROLLOVER_DAYS", False)),
         "NO_BREAKEVEN": ("no_breakeven", lambda _v: _bool_env("NO_BREAKEVEN", False)),
         "NO_REENTRY_BREAKEVEN": ("no_reentry_breakeven", lambda _v: _bool_env("NO_REENTRY_BREAKEVEN", False)),
-        "NT_ACCOUNT": ("nt_account", lambda _v: _v or None),
+        "NT_ACCOUNTS": ("nt_accounts", _parse_nt_accounts),
         "ZMQ_HOST": ("zmq_host", str),
         "ZMQ_MARKET_PORT": ("zmq_market_port", int),
         "ZMQ_COMMAND_PORT": ("zmq_command_port", int),
@@ -169,7 +205,7 @@ class CliConfigLoader:
         p.add_argument("--skip-rollover-days", dest="skip_rollover_days", action="store_true", help="Skip rollover days")
         p.add_argument("--no-breakeven", dest="no_breakeven", action="store_true", help="Disable breakeven")
         p.add_argument("--no-reentry-breakeven", dest="no_reentry_breakeven", action="store_true", help="Disable reentry BE")
-        p.add_argument("--nt-account", dest="nt_account", help="NinjaTrader account")
+        p.add_argument("--nt-accounts", dest="nt_accounts", type=_parse_nt_accounts, help='NT accounts (e.g. "Account1:risk=100,Account2:risk_pct=1.5")')
         p.add_argument("--zmq-host", dest="zmq_host", help="ZMQ host")
         p.add_argument("--zmq-market-port", dest="zmq_market_port", type=int, help="ZMQ market port")
         p.add_argument("--zmq-command-port", dest="zmq_command_port", type=int, help="ZMQ command port")
@@ -195,6 +231,8 @@ class CliConfigLoader:
                 # argparse lists come as strings when using nargs, but here we use simple types
                 if attr == "timeframes" and isinstance(val, str):
                     val = [x.strip() for x in val.split(",")]
+                if attr == "nt_accounts" and isinstance(val, str):
+                    val = _parse_nt_accounts(val)
                 setattr(cfg, attr, val)
         return cfg
 
@@ -223,3 +261,99 @@ class CompositeConfigLoader:
                 if override_val != default_val:
                     setattr(base, attr, override_val)
         return base
+
+
+# ---------------------------------------------------------------------------
+# Database loader (reads runtime settings from SQLite)
+# ---------------------------------------------------------------------------
+class DbConfigLoader:
+    """Override AppConfig with values stored in the SQLite database."""
+
+    def __init__(self, db_path: str = "sqlite:///./database.db"):
+        self._db_path = db_path
+
+    def load(self) -> AppConfig:
+        cfg = AppConfig()
+        try:
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+
+            engine = create_engine(self._db_path)
+            Session = sessionmaker(bind=engine)
+            session = Session()
+
+            from src.database.database import AppSetting, NtAccount
+
+            settings = session.query(AppSetting).all()
+            for row in settings:
+                if row.value is None or row.value == "":
+                    continue
+                attr = self._key_to_attr(row.key)
+                if attr and hasattr(cfg, attr):
+                    parsed = self._parse_attr(attr, row.value)
+                    if parsed is not None:
+                        setattr(cfg, attr, parsed)
+
+            accounts = session.query(NtAccount).all()
+            if accounts:
+                cfg.nt_accounts = [
+                    AccountConfig(name=a.name, risk_usd=a.risk_usd, risk_pct=a.risk_pct, rr_ratio=a.rr_ratio)
+                    for a in accounts
+                ]
+                # Derive global defaults from first account for backtest/strategy compatibility
+                first = cfg.nt_accounts[0]
+                if first.rr_ratio is not None:
+                    cfg.rr_ratio = first.rr_ratio
+                if first.risk_usd is not None:
+                    cfg.risk_per_trade = first.risk_usd
+                if first.risk_pct is not None:
+                    cfg.risk_pct_per_trade = first.risk_pct
+
+            session.close()
+        except Exception:
+            # If DB is unreachable or tables missing, silently fall back to env/CLI
+            pass
+        return cfg
+
+    @staticmethod
+    def _key_to_attr(key: str) -> str | None:
+        mapping = {
+            "pair": "pair",
+            "instrument": "instrument",
+            "risk_per_trade": "risk_per_trade",
+            "risk_pct_per_trade": "risk_pct_per_trade",
+            "rr_ratio": "rr_ratio",
+            "flask_port": "flask_port",
+            "zmq_host": "zmq_host",
+            "zmq_market_port": "zmq_market_port",
+            "zmq_command_port": "zmq_command_port",
+            "zmq_query_port": "zmq_query_port",
+            "zmq_heartbeat_port": "zmq_heartbeat_port",
+            "account_balance": "account_balance",
+            "point_value": "point_value",
+            "min_stop_loss": "min_stop_loss",
+            "max_bounce": "max_bounce",
+            "extra_sl_space": "extra_sl_space",
+            "sl_level_tolerance": "sl_level_tolerance",
+            "min_cross_depth": "min_cross_depth",
+            "line_removal_mode": "line_removal_mode",
+            "session_start": "session_start",
+            "session_end": "session_end",
+            "daily_trades_limit": "daily_trades_limit",
+            "max_open_trades": "max_open_trades",
+            "reentry_threshold": "reentry_threshold",
+            "broker_mode": "broker_mode",
+            "broker_spread": "broker_spread",
+        }
+        return mapping.get(key)
+
+    @staticmethod
+    def _parse_attr(attr: str, value: str):
+        if attr in ("risk_per_trade", "risk_pct_per_trade", "rr_ratio", "account_balance",
+                    "point_value", "min_stop_loss", "max_bounce", "extra_sl_space",
+                    "sl_level_tolerance", "min_cross_depth", "reentry_threshold", "broker_spread"):
+            return float(value)
+        if attr in ("flask_port", "zmq_market_port", "zmq_command_port", "zmq_query_port",
+                    "zmq_heartbeat_port", "daily_trades_limit", "max_open_trades"):
+            return int(value)
+        return value

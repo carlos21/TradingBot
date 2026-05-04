@@ -11,6 +11,15 @@ from dataclasses import dataclass, field
 
 
 @dataclass
+class AccountConfig:
+    """Configuration for a single NinjaTrader account."""
+    name: str
+    risk_usd: float | None = None
+    risk_pct: float | None = None
+    rr_ratio: float | None = None
+
+
+@dataclass
 class AppConfig:
     """Complete application configuration.
 
@@ -143,8 +152,9 @@ class AppConfig:
     # ------------------------------------------------------------------
     # Live mode (ZeroMQ / NinjaTrader)
     # ------------------------------------------------------------------
-    nt_account: str | None = None
-    """NinjaTrader account name. Sent to NT during live mode initialization."""
+    nt_accounts: list[AccountConfig] = field(default_factory=list)
+    """List of NinjaTrader accounts to trade, each with optional per-account risk.
+    Replaces the old single ``nt_account`` field."""
 
     zmq_host: str = "127.0.0.1"
     """ZeroMQ broker host (NinjaTrader runs on the same machine by default)."""

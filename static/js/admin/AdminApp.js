@@ -9,6 +9,8 @@ import { TradeCalendar } from './TradeCalendar.js';
 import { TradeLogs } from './TradeLogs.js';
 import { LineManager } from './LineManager.js';
 import { DecisionLogs } from './DecisionLogs.js';
+import { SettingsManager } from './SettingsManager.js';
+import { NtManager } from './NtManager.js';
 
 class AdminApp {
   constructor() {
@@ -19,7 +21,9 @@ class AdminApp {
     this.tradeLogs = new TradeLogs(this.api);
     this.lineManager = new LineManager(this.api);
     this.decisionLogs = new DecisionLogs(this.api);
-    
+    this.settingsManager = new SettingsManager(this.api);
+    this.ntManager = new NtManager(this.api);
+
     this.currentTab = 'overview';
     this.analyticsData = null;
     this.statsData = null;
@@ -78,10 +82,14 @@ class AdminApp {
       
       // Load initial data for overview
       await this.loadOverviewData();
-      
+
       // Load initial trade view
       this.switchTradeView('table');
-      
+
+      // Initialize new manager panels
+      this.settingsManager.init();
+      this.ntManager.init();
+
       console.log('[AdminApp] Initialized successfully');
     } catch (error) {
       console.error('[AdminApp] Initialization failed:', error);
@@ -161,6 +169,12 @@ class AdminApp {
         break;
       case 'decisions':
         this.decisionLogs.load();
+        break;
+      case 'settings':
+        this.settingsManager.loadSettings();
+        break;
+      case 'ninjatrader':
+        // NT panel is event-driven; no auto-load needed
         break;
     }
   }

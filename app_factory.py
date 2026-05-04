@@ -2,6 +2,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, List
+import os
 import time
 
 from flask import Flask, jsonify
@@ -16,6 +17,7 @@ from src.data_sources.combined_datasource import CombinedDataSource
 from src.gateway.datasource import ZMQDataSource
 from src.services.trade_manager import TradeManager
 from src.services.trade_executor import TradeExecutor
+from src.gateway.executor import MultiAccountExecutor
 from src.services.trade_logger import TradeLogger
 from src.services.analytics_service import AnalyticsService
 from src.financial_calc import FinancialCalc
@@ -38,6 +40,8 @@ from src.routes import (
     register_admin_routes,
     register_debug_routes,
     register_socketio_handlers,
+    register_settings_routes,
+    register_nt_routes,
 )
 
 
@@ -282,6 +286,10 @@ def create_app(
         risk_pct_per_trade=numbers.risk_pct_per_trade,
         logger=logger,
     )
+
+    # Inject trade_manager into MultiAccountExecutor (created before trade_manager existed)
+    if isinstance(trade_executor, MultiAccountExecutor):
+        trade_executor.trade_manager = trade_manager
     
     # Initialize strategy BEFORE registering ZMQ callbacks so closures can reference it safely
     tstrategy = LiquidityStrategyV2(
@@ -313,6 +321,7 @@ def create_app(
         trigger_state_repo = repos.trigger_state,
         logger          = logger,
         decision_log_repository = repos.decision_logs,
+        account_configs = numbers.account_configs,
     )
     
     # Wire up position sync handler for crash recovery (ZeroMQ only)
@@ -427,8 +436,17 @@ def create_app(
             result_type = payload.get('result_type', 'CLOSE')
             if trade_id and exit_price is not None:
                 trade_manager.handle_broker_fill(trade_id, exit_price, result_type)
-                tstrategy.handle_broker_exit_fill(trade_id, exit_price, result_type)
-                logger.info(f"[BrokerFill] Exit fill handled for {trade_id} @ {exit_price} ({result_type})")
+                # For multi-account: only notify strategy when ALL account trades closed
+                if isinstance(trade_executor, MultiAccountExecutor):
+                    signal_id = trade_executor.get_signal_id(trade_id)
+                    if signal_id and trade_executor.all_account_trades_closed(signal_id):
+                        tstrategy.handle_broker_exit_fill(signal_id, exit_price, result_type)
+                        logger.info(f"[BrokerFill] Exit fill handled for signal {signal_id} (all accounts closed)")
+                    else:
+                        logger.info(f"[BrokerFill] Exit fill handled for account trade {trade_id} @ {exit_price} ({result_type})")
+                else:
+                    tstrategy.handle_broker_exit_fill(trade_id, exit_price, result_type)
+                    logger.info(f"[BrokerFill] Exit fill handled for {trade_id} @ {exit_price} ({result_type})")
 
         data_source.gateway.on_entry_fill(_handle_entry_fill)
         data_source.gateway.on_exit_fill(_handle_exit_fill)
@@ -467,6 +485,22 @@ def create_app(
     analytics_service = AnalyticsService(repos.trades)
     admin_controller = AdminController(analytics_service, repos.lines, logger=logger, decision_log_repository=repos.decision_logs)
 
+    # Initialize settings/manager/NT services from DB
+    from src.repositories.settings_repository import SettingsRepository
+    from src.repositories.accounts_repository import NtAccountRepository
+    from src.repositories.credentials_repository import CredentialRepository
+    from src.services.settings_service import SettingsService
+    from src.services.nt_manager_service import NtManagerService
+    from src.controllers.settings_controller import SettingsController
+
+    secret_key = os.environ.get("SECRET_KEY")
+    settings_repo = SettingsRepository()
+    accounts_repo = NtAccountRepository()
+    creds_repo = CredentialRepository()
+    settings_service = SettingsService(settings_repo, accounts_repo, creds_repo, secret_key=secret_key)
+    settings_controller = SettingsController(settings_service)
+    nt_service = NtManagerService()
+
     # Optionally load any preexisting lines from repo into the in-memory strategy
     if bootstrap_existing_lines:
         for l in repos.lines.list_lines(pair):
@@ -481,6 +515,8 @@ def create_app(
     register_lines_routes(app, lines_controller, logger)
     register_trades_routes(app, trades_controller, repos.trades, pair, trade_logger, logger)
     register_admin_routes(app, admin_controller, logger)
+    register_settings_routes(app, settings_controller, logger)
+    register_nt_routes(app, nt_service, logger)
     register_debug_routes(
         app, tstrategy, loader, trade_manager, repos.lines, repos.trades,
         data_source, pair, notifier, analytics, logger=logger
