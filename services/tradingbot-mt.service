@@ -10,7 +10,6 @@ ExecStart=/home/%i/TradingBot/bin/start_mt.sh
 
 # Defaults are in bin/start_mt.sh — override here only if needed
 # Environment="PAIR=EURUSD"
-# Environment="RISK=50"
 # Environment="FLASK_PORT=5002"
 
 Restart=on-failure

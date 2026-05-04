@@ -145,9 +145,8 @@ The service uses these environment variables (with defaults):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PAIR` | `MNQ` | Trading pair (e.g., `MNQ`) |
-| `NT_ACCOUNTS` | `FNFTCHCARLOSDUCLOS74105` | NinjaTrader account(s). Comma-separated, with optional `:risk=` or `:risk_pct=` per-account overrides. Example: `Account1:risk=100,Account2:risk_pct=1.5` |
-| `RISK` | `50` | Fixed risk in USD per trade |
-| `RISK_PCT` | _(empty)_ | Risk as % of account balance (overrides RISK if set) |
+
+> **Note:** Account names, risk, and R:R ratio are now configured via the **Settings page** (`/admin`) and stored in the database. They are no longer set via environment variables.
 
 ### Changing defaults
 
@@ -164,7 +163,6 @@ This opens an override file. Add:
 ```ini
 [Service]
 Environment=PAIR=MNQ
-Environment=NT_ACCOUNTS=MyAccount
 ```
 
 Then reload:
@@ -180,7 +178,6 @@ Edit `bin/live.sh` and change the defaults:
 
 ```bash
 export PAIR="${PAIR:-MNQ}"
-export NT_ACCOUNTS="${NT_ACCOUNTS:-MyAccount}"
 ```
 
 Then restart:
@@ -213,7 +210,7 @@ For quick testing or debugging, run the launcher directly:
 ./bin/start_live.sh
 
 # With overrides
-PAIR=MNQ NT_ACCOUNTS=MyAccount RISK=100 ./bin/start_live.sh
+PAIR=MNQ ./bin/start_live.sh
 ```
 
 ---

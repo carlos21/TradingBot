@@ -1,6 +1,7 @@
 import { ChartViewer } from './ChartViewer.js';
 import { DataService } from './DataService.js';
 import { ControlsView } from './ControlsView.js';
+import { NtAccountsDisplay } from './NtAccountsDisplay.js';
 
 document.addEventListener("DOMContentLoaded", () => {
     const chartContainer = document.getElementById('chartContainer');
@@ -31,4 +32,7 @@ document.addEventListener("DOMContentLoaded", () => {
     window.chartViewer = chartViewer;
     const controlsView = new ControlsView(chartViewer, socket);
     controlsView.init();
+
+    const accountsDisplay = new NtAccountsDisplay(socket);
+    accountsDisplay.init();
 });

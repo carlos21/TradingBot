@@ -78,9 +78,8 @@ Each dashboard shows only its own trades, lines, and chart data.
 You can override any setting via environment variables before launching:
 
 ```bash
-# NinjaTrader instance with custom pair and risk
+# NinjaTrader instance with custom pair
 export PAIR=ES
-export RISK=100
 export DB_PATH="sqlite:///./es_ninja.db"
 export LOG_DIR="logs/es_ninja"
 export FLASK_PORT=5003
@@ -88,9 +87,8 @@ export FLASK_PORT=5003
 ```
 
 ```bash
-# MetaTrader instance with custom pair and risk
+# MetaTrader instance with custom pair
 export PAIR=GBPUSD
-export RISK=75
 export DB_PATH="sqlite:///./gbp_meta.db"
 export LOG_DIR="logs/gbp_meta"
 export FLASK_PORT=5004

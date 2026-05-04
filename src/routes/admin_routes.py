@@ -1,9 +1,14 @@
 """Admin dashboard HTTP routes."""
 
-from flask import Flask, abort, render_template, request
+from flask import Flask, abort, redirect, render_template, request, url_for
 
 from src.controllers.admin_controller import AdminController
 from src.utils.app_logger import ILogger
+
+ADMIN_PAGES = {
+    'overview', 'trades', 'lines', 'analytics',
+    'decisions', 'settings', 'ninjatrader',
+}
 
 
 def register_admin_routes(
@@ -20,7 +25,13 @@ def register_admin_routes(
 
     @app.route('/admin')
     def admin_dashboard():
-        return render_template('admin.html')
+        return redirect('/admin/overview')
+
+    @app.route('/admin/<string:page>')
+    def admin_page(page: str):
+        if page not in ADMIN_PAGES:
+            abort(404)
+        return render_template('admin.html', active_tab=page, active_page=page)
 
     @app.route('/api/admin/stats', methods=['GET'])
     def admin_stats():

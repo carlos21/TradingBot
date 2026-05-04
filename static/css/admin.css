@@ -35,6 +35,16 @@
   color: white;
 }
 
+/* Sidebar nav links */
+.nav-link {
+  text-decoration: none;
+}
+
+.nav-link.active {
+  background-color: #2563eb;
+  color: white;
+}
+
 /* Table row hover */
 #trades-table tbody tr:hover,
 #lines-table tbody tr:hover {
@@ -78,7 +88,12 @@
 }
 
 /* Chart containers */
-canvas {
+#overview-equity-chart,
+#overview-result-chart,
+#analytics-hour-chart,
+#analytics-day-chart,
+#analytics-monthly-chart,
+#analytics-pnl-dist-chart {
   max-height: 300px;
 }
 

@@ -14,6 +14,7 @@ def register_socketio_handlers(
     data_source: CombinedDataSource,
     live_mode: bool,
     _logger: ILogger,
+    nt_account_names: list[str] | None = None,
 ):
     """Register Socket.IO event handlers.
 
@@ -22,11 +23,20 @@ def register_socketio_handlers(
         loader: Bars loader for stream control
         data_source: Data source for bar history
         live_mode: Whether running in live trading mode
+        nt_account_names: List of configured NT account names
     """
+    account_names = nt_account_names or []
 
     @socketio.on('connect')
     def on_connect(_auth):
-        emit('stream_status', {'playing': loader.streaming, 'live_mode': live_mode})
+        emit('stream_status', {
+            'playing': loader.streaming,
+            'live_mode': live_mode,
+            'nt_accounts': account_names,
+            'streaming_disabled_reason': (
+                'No NT accounts configured' if live_mode and not account_names else None
+            ),
+        })
         if live_mode and isinstance(data_source, ZMQDataSource) and data_source._historical_bars:
             emit('history_ready', {'count': len(data_source._historical_bars)})
             # Request fresh bars from NinjaTrader (once per browser connect)

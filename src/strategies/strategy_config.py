@@ -26,7 +26,7 @@ class StrategyNumbers:
     point_value: float = 2.0         # dollar value per point (MNQ = $2)
     account_balance: float = 50000.0  # account balance for risk % calculation
     risk_per_trade: float | None = None  # fixed $ risk per trade (from RISK env var)
-    risk_pct_per_trade: float | None = None  # % of account to risk per trade (from RISK_PCT env var)
+    risk_pct_per_trade: float | None = None  # % of account to risk per trade
     account_configs: list = field(default_factory=list)  # list[AccountConfig]
 
 @dataclass

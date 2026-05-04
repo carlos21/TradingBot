@@ -36,9 +36,13 @@ def main():
     print(f"[{instance}] Starting TradingBot instance — pair={config.pair} mode={config.mode}")
 
     if config.mode == "live":
-        print(f"[{instance}] Starting ZeroMQ gateway...")
-        ds.start()
-        print(f"[{instance}] ZeroMQ gateway started")
+        if not getattr(config, "nt_accounts", None):
+            print(f"[{instance}] ERROR: No NT accounts configured. Live streaming DISABLED.")
+            print(f"[{instance}] HINT: Go to /admin → Settings → NT Accounts to add accounts, then restart.")
+        else:
+            print(f"[{instance}] Starting ZeroMQ gateway...")
+            ds.start()
+            print(f"[{instance}] ZeroMQ gateway started")
 
         print(f"[{instance}] Starting LIVE mode server on port {config.flask_port} (threaded, debug=False)")
         try:

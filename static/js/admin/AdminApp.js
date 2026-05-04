@@ -35,38 +35,38 @@ class AdminApp {
       // Mark JS as loaded
       const debugEl = document.getElementById('js-debug');
       if (debugEl) debugEl.textContent = 'JS Loaded ✓';
-      
+
       // Initialize API and get pair
       console.log('[AdminApp] Starting init...');
       const pair = await this.api.init();
       console.log(`[AdminApp] Got pair: ${pair}`);
-      
+
       // Set up pair selector
       this.setupPairSelector();
-      
+
       // Set up navigation
       this.setupNavigation();
-      
+
       // Set up trade logs modal callback
       this.tradeHistory.onTradeClick = (tradeId) => {
         this.tradeLogs.show(tradeId);
       };
-      
+
       this.tradeCalendar.onTradeClick = (tradeId) => {
         this.tradeLogs.show(tradeId);
       };
-      
+
       // Set up export button
       document.getElementById('export-trades-btn')?.addEventListener('click', () => {
         this.tradeHistory.exportToCSV();
       });
-      
+
       // Set up view toggle buttons
       this.setupViewToggle();
-      
+
       // Set up decision logs filters
       this.decisionLogs.bindFilters();
-      
+
       // Set up test button
       document.getElementById('test-load-btn')?.addEventListener('click', async () => {
         console.log('[Test] Manual trade load triggered');
@@ -79,16 +79,25 @@ class AdminApp {
           alert('Error: ' + e.message);
         }
       });
-      
-      // Load initial data for overview
-      await this.loadOverviewData();
-
-      // Load initial trade view
-      this.switchTradeView('table');
 
       // Initialize new manager panels
       this.settingsManager.init();
       this.ntManager.init();
+
+      // Determine initial tab from server-rendered attribute or URL
+      const rootEl = document.getElementById('admin-root');
+      const initialTab = rootEl?.dataset.activeTab || 'overview';
+      console.log(`[AdminApp] Initial tab: ${initialTab}`);
+      this.switchTab(initialTab, false);
+
+      // Set up browser back/forward handling
+      window.addEventListener('popstate', (e) => {
+        const path = window.location.pathname;
+        const match = path.match(/^\/admin\/(\w+)$/);
+        if (match) {
+          this.switchTab(match[1], false);
+        }
+      });
 
       console.log('[AdminApp] Initialized successfully');
     } catch (error) {
@@ -114,27 +123,30 @@ class AdminApp {
   }
 
   setupNavigation() {
-    const navButtons = document.querySelectorAll('.nav-btn');
-    console.log(`[AdminApp] Found ${navButtons.length} nav buttons`);
-    
-    navButtons.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const tab = btn.dataset.tab;
+    // Intercept sidebar nav links that point to /admin/* for client-side switching
+    const navLinks = document.querySelectorAll('aside nav a[href^="/admin/"]');
+    console.log(`[AdminApp] Found ${navLinks.length} admin nav links`);
+
+    navLinks.forEach(link => {
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const href = link.getAttribute('href');
+        const tab = href.replace('/admin/', '');
         console.log(`[AdminApp] Navigating to tab: ${tab}`);
-        this.switchTab(tab);
+        this.switchTab(tab, true);
       });
     });
   }
 
-  switchTab(tab) {
-    // Update active state on buttons
-    document.querySelectorAll('.nav-btn').forEach(btn => {
-      if (btn.dataset.tab === tab) {
-        btn.classList.remove('text-gray-300', 'hover:bg-gray-700');
-        btn.classList.add('bg-blue-600', 'text-white');
+  switchTab(tab, pushState = true) {
+    // Update active state on sidebar nav links
+    document.querySelectorAll('aside nav a').forEach(link => {
+      const href = link.getAttribute('href') || '';
+      const linkTab = href === '/' ? 'chart' : href.replace('/admin/', '');
+      if (linkTab === tab) {
+        link.classList.add('active');
       } else {
-        btn.classList.remove('bg-blue-600', 'text-white');
-        btn.classList.add('text-gray-300', 'hover:bg-gray-700');
+        link.classList.remove('active');
       }
     });
 
@@ -150,6 +162,11 @@ class AdminApp {
     }
 
     this.currentTab = tab;
+
+    // Update browser URL
+    if (pushState) {
+      history.pushState({ tab }, '', '/admin/' + tab);
+    }
 
     // Load tab-specific data
     console.log(`[AdminApp] Loading data for tab: ${tab}`);

@@ -57,15 +57,14 @@ All settings are stored in `.env` at the project root. Key variables:
 |----------|---------|-------------|
 | `MODE` | `live` | Run mode: `live` or `backtest` |
 | `PAIR` | `MNQ` | Trading instrument |
-| `RISK` | `160` | Fixed dollar risk per trade |
-| `ACCOUNT_BALANCE` | `100000` | Account balance for position sizing |
-| `NT_ACCOUNTS` | — | NinjaTrader account(s). Comma-separated list with optional per-account risk overrides. Example: `Account1:risk=100,Account2:risk_pct=1.5` |
 | `FLASK_PORT` | `5001` | Web UI port |
 | `ZMQ_HOST` | `127.0.0.1` | ZeroMQ broker host |
 | `ZMQ_MARKET_PORT` | `5555` | Market data port |
 | `ZMQ_COMMAND_PORT` | `5556` | Trade commands port |
 
-You can edit these in the **Settings** tab of the Manager or by editing `.env` directly.
+> **Note:** Account names, risk, and R:R ratio are configured via the **Settings page** (`/admin`) and stored in the database. They are no longer set via environment variables.
+
+You can edit the remaining variables in the **Settings** tab of the Manager or by editing `.env` directly.
 
 ## Updating
 

@@ -8,7 +8,7 @@ set -euo pipefail
 #   ./bin/start_nt.sh
 #
 # Or override any variable:
-#   PAIR=MNQ RISK=100 ./bin/start_nt.sh
+#   PAIR=MNQ ./bin/start_nt.sh
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -16,10 +16,6 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 export MODE="live"
 export INSTANCE_NAME="${INSTANCE_NAME:-ninja}"
 export PAIR="${PAIR:-MNQ}"
-export NT_ACCOUNTS="${NT_ACCOUNTS:-}"
-export RISK="${RISK:-50}"
-export RISK_PCT="${RISK_PCT:-}"
-export RR_RATIO="${RR_RATIO:-5.0}"
 
 # Isolation: separate DB, logs, and Flask port
 export DB_PATH="${DB_PATH:-sqlite:///./ninja.db}"
@@ -35,7 +31,7 @@ export ZMQ_HEARTBEAT_PORT="${ZMQ_HEARTBEAT_PORT:-5558}"
 
 cd "$PROJECT_DIR"
 
-echo "[${INSTANCE_NAME}] Starting live — pair=$PAIR accounts=${NT_ACCOUNTS:-<none>} rr=$RR_RATIO"
+echo "[${INSTANCE_NAME}] Starting live — pair=$PAIR"
 echo "[${INSTANCE_NAME}] DB: $DB_PATH | Logs: $LOG_DIR | Flask port: $FLASK_PORT"
 echo "[${INSTANCE_NAME}] ZMQ: $ZMQ_MARKET_PORT/$ZMQ_COMMAND_PORT/$ZMQ_QUERY_PORT/$ZMQ_HEARTBEAT_PORT"
 

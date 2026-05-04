@@ -22,7 +22,7 @@ def register_core_routes(
 
     @app.route('/')
     def index():
-        return render_template('chart.html')
+        return render_template('chart.html', active_page='chart')
 
     @app.route('/api/pair')
     def get_pair():

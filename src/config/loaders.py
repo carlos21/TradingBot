@@ -111,9 +111,7 @@ class EnvConfigLoader:
         "FILE_TZ": ("file_tz", str),
         "START_STR": ("start_str", str),
         "END_STR": ("end_str", str),
-        "RR_RATIO": ("rr_ratio", float),
-        "RISK": ("risk_per_trade", _float_or_none),
-        "RISK_PCT": ("risk_pct_per_trade", _float_or_none),
+        # Account/risk config removed from env — use Settings page only
         "ACCOUNT_BALANCE": ("account_balance", float),
         "POINT_VALUE": ("point_value", float),
         "MIN_STOP_LOSS": ("min_stop_loss", float),
@@ -133,7 +131,7 @@ class EnvConfigLoader:
         "SKIP_ROLLOVER_DAYS": ("skip_rollover_days", lambda _v: _bool_env("SKIP_ROLLOVER_DAYS", False)),
         "NO_BREAKEVEN": ("no_breakeven", lambda _v: _bool_env("NO_BREAKEVEN", False)),
         "NO_REENTRY_BREAKEVEN": ("no_reentry_breakeven", lambda _v: _bool_env("NO_REENTRY_BREAKEVEN", False)),
-        "NT_ACCOUNTS": ("nt_accounts", _parse_nt_accounts),
+        # NT_ACCOUNTS removed from env — use Settings page only
         "ZMQ_HOST": ("zmq_host", str),
         "ZMQ_MARKET_PORT": ("zmq_market_port", int),
         "ZMQ_COMMAND_PORT": ("zmq_command_port", int),

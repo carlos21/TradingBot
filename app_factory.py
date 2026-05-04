@@ -521,7 +521,8 @@ def create_app(
         app, tstrategy, loader, trade_manager, repos.lines, repos.trades,
         data_source, pair, notifier, analytics, logger=logger
     )
-    register_socketio_handlers(socketio, loader, data_source, live_mode, logger)
+    nt_account_names = [a.name for a in numbers.account_configs] if numbers.account_configs else []
+    register_socketio_handlers(socketio, loader, data_source, live_mode, logger, nt_account_names)
     
     from werkzeug.exceptions import HTTPException
 
