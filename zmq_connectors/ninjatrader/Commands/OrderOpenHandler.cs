@@ -24,25 +24,41 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly Dictionary<string, Account> _accounts;
         private readonly string _instrument;
         private readonly IOrderTracker _orderTracker;
+        private readonly bool _simulate;
 
         public OrderOpenHandler(ZmqNetwork network, ILogger logger, Dictionary<string, Account> accounts, 
-            string instrument, IOrderTracker orderTracker)
+            string instrument, IOrderTracker orderTracker, bool simulate = false)
         {
             _network = network ?? throw new ArgumentNullException(nameof(network));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _accounts = accounts ?? throw new ArgumentNullException(nameof(accounts));
             _instrument = instrument;
             _orderTracker = orderTracker ?? throw new ArgumentNullException(nameof(orderTracker));
+            _simulate = simulate;
         }
 
-        public void Handle(JObject payload)
+        public bool Handle(JObject payload)
         {
             try
             {
                 var (tradeId, direction, slPoints, rrRatio) = ParsePayload(payload);
                 var accountName = payload?["account"]?.ToString();
-                var account = ResolveAccount(accountName);
 
+                // ── SIMULATE MODE: Send fake fill instantly, NO account/broker lookup ──
+                if (_simulate || TradingBotZmqConnector.E2ETestRunning)
+                {
+                    double entryPrice = payload?["entry_price"]?.Value<double>() ?? 0;
+                    double stopLoss = payload?["stop_loss"]?.Value<double>() ?? 0;
+                    double takeProfit = payload?["take_profit"]?.Value<double>() ?? 0;
+                    int simQty = payload?["contracts"]?.Value<int>() ?? 1;
+
+                    _logger.Info($"🧪 SIMULATE OPEN: {tradeId} {direction} {_instrument} x{simQty} @ {entryPrice} SL={stopLoss} TP={takeProfit} account={accountName ?? "default"}");
+                    _network?.SendEntryFill(tradeId, entryPrice, stopLoss, takeProfit, account: accountName);
+                    _network?.SendTradeLog(tradeId, "NT:SIMULATE", $"Simulated entry fill {direction} x{simQty} @ {entryPrice}");
+                    return true;
+                }
+
+                var account = ResolveAccount(accountName);
                 if (account == null)
                     throw new InvalidOperationException($"No account available (requested: {accountName ?? "(default)"})");
 
@@ -50,7 +66,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     _logger.Warning($"Duplicate place_order for {tradeId}, ignoring");
                     _network?.SendTradeLog(tradeId, "NT:WARNING", "Duplicate place_order request ignored");
-                    return;
+                    return true;
                 }
 
                 var instrument = Instrument.GetInstrument(_instrument);
@@ -80,6 +96,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 _logger.Info($"OPEN ORDER SUBMITTED: {tradeId} {direction} {instrument.MasterInstrument.Name} x{qty} SL={slPoints}pt account={account.Name}");
                 _network?.SendTradeLog(tradeId, "NT:ORDER", $"Market {direction} x{qty} submitted, bracket pending");
+                return true;
             }
             catch (Exception ex)
             {
@@ -87,6 +104,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _logger.Error($"Order open failed for {tradeId}", ex);
                 _network?.SendError("ninjatrader", "order_open_failed", $"Failed to open order {tradeId}: {ex.Message}");
                 _orderTracker.RemoveTrade(tradeId);
+                return false;
             }
         }
 

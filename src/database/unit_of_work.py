@@ -67,7 +67,8 @@ class ITradeRepository(ABC):
                      entry_time: datetime, params: dict | None = None,
                      risk_dollars: float | None = None,
                      risk_pct: float | None = None,
-                     contracts: float | None = None) -> TradeData:
+                     contracts: float | None = None,
+                     trade_id: str | None = None) -> TradeData:
         pass
 
     @abstractmethod
@@ -89,6 +90,10 @@ class ITradeRepository(ABC):
     @abstractmethod
     def update_risk_fields(self, trade_id: str, risk: float, risk_dollars: float,
                           risk_pct: float) -> TradeData:
+        pass
+
+    @abstractmethod
+    def update_contracts(self, trade_id: str, contracts: float) -> TradeData:
         pass
 
     @abstractmethod
@@ -221,9 +226,10 @@ class UnitOfWorkTradeRepository(ITradeRepository):
                      entry_time: datetime, params: dict | None = None,
                      risk_dollars: float | None = None,
                      risk_pct: float | None = None,
-                     contracts: float | None = None) -> TradeData:
+                     contracts: float | None = None,
+                     trade_id: str | None = None) -> TradeData:
         t = Trade(
-            trade_id=str(uuid.uuid4()),
+            trade_id=trade_id if trade_id else str(uuid.uuid4()),
             pair=pair,
             trade_type=trade_type,
             entry_price=entry_price,
@@ -276,6 +282,14 @@ class UnitOfWorkTradeRepository(ITradeRepository):
         t.risk = risk
         t.risk_dollars = risk_dollars
         t.risk_pct = risk_pct
+        self._session.flush()
+        return self._make_trade_data(t)
+
+    def update_contracts(self, trade_id: str, contracts: float) -> TradeData:
+        t = self._session.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+        if not t:
+            raise DBNotFoundException(f"Trade {trade_id} not found")
+        t.contracts = contracts
         self._session.flush()
         return self._make_trade_data(t)
 
@@ -432,12 +446,12 @@ class UnitOfWork:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Exit context manager - auto-commit or rollback."""
-        if exc_type is None:
-            # No exception - commit
-            self.commit()
-        else:
-            # Exception occurred - rollback
-            self.rollback()
-        self.close()
+        try:
+            if exc_type is None:
+                self.commit()
+            else:
+                self.rollback()
+        finally:
+            self.close()
         # Don't suppress the exception
         return False

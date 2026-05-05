@@ -271,9 +271,10 @@ class DbConfigLoader:
                     cfg.risk_pct_per_trade = first.risk_pct
 
             session.close()
-        except Exception:
-            # If DB is unreachable or tables missing, silently fall back to env/CLI
-            pass
+        except Exception as e:
+            # If DB is unreachable or tables missing, log and fall back to env/CLI
+            import logging
+            logging.getLogger(__name__).warning(f"DB config load failed: {e}. Falling back to env/CLI defaults.")
         return cfg
 
     @staticmethod

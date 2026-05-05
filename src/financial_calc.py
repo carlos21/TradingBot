@@ -16,12 +16,16 @@ class FinancialCalc:
     # Basic Financial Calculations
     # =========================================================================
 
+    MAX_CONTRACTS = 100
+
     @staticmethod
     def contracts(risk_budget: float, risk_per_contract: float) -> int:
         """Number of contracts to trade, matching NinjaTrader's logic."""
+        if risk_budget <= 0:
+            return 0
         if risk_per_contract <= 0:
             return 1
-        return max(1, round(risk_budget / risk_per_contract))
+        return min(FinancialCalc.MAX_CONTRACTS, max(1, round(risk_budget / risk_per_contract)))
 
     @staticmethod
     def lots(risk_budget: float, risk_per_lot: float) -> float:

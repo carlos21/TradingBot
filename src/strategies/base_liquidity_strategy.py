@@ -440,6 +440,7 @@ class BaseLiquidityStrategy:
                 risk_points=risk,
                 contracts=contracts,
                 point_value=self.point_value,
+                fee_per_rt=self.fee_per_rt,
             )
             result_type = FinancialCalc.calculate_session_end_result_type(r_result)
             t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, result_type=result_type)
@@ -462,6 +463,15 @@ class BaseLiquidityStrategy:
 
             # Note: Logging is handled by TradeManager to avoid duplicates
 
+            self.trade_manager.notify_strategy_close(
+                trade_id=t['trade_id'],
+                exit_price=exit_price,
+                result=r_result,
+                pnl_usd=t_pnl_usd,
+                fees=t_fees,
+                result_type=result_type,
+                exit_time=bar['time'],
+            )
             self.socketio.emit("trade_close", t)
 
         self.open_trades = remaining
@@ -752,7 +762,15 @@ class BaseLiquidityStrategy:
 
                     # Note: SL_HIT/TP_HIT/CLOSE logging is handled by TradeManager to avoid duplicates
 
-                    self.trade_manager.trade_executor.on_trade_close(t['trade_id'], exit_price)
+                    self.trade_manager.notify_strategy_close(
+                        trade_id=t['trade_id'],
+                        exit_price=exit_price,
+                        result=r_result,
+                        pnl_usd=t_pnl_usd,
+                        fees=t_fees,
+                        result_type=result_type,
+                        exit_time=bar['time'],
+                    )
                     self.socketio.emit("trade_close", t)
             else:
                 remaining.append(t)

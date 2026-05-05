@@ -29,7 +29,11 @@ namespace NinjaTrader.NinjaScript.AddOns
     public interface ICommandHandler
     {
         string CommandType { get; }
-        void Handle(JObject payload);
+        /// <summary>
+        /// Handle the command. Returns true on success, false on failure.
+        /// The caller uses this to send accurate COMMAND_ACKs.
+        /// </summary>
+        bool Handle(JObject payload);
     }
 
     /// <summary>

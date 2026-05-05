@@ -108,6 +108,8 @@ db = None
 
 @contextmanager
 def get_db_session():
+    if db is None:
+        raise RuntimeError("Database not initialized. Call setup_database() first.")
     db_session = db.get_session()
     try:
         yield db_session

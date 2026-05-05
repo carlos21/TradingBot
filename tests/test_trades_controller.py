@@ -102,3 +102,45 @@ class TestCloseAllTrades:
         assert data["count"] == 1
         assert len(tm.open_trades) == 1
         assert tm.open_trades[0]["pair"] == "ES"
+
+
+class FakeStrategy:
+    """Minimal fake strategy to verify TradesController syncs state on manual close."""
+
+    def __init__(self):
+        self.exit_fills = []
+
+    def handle_broker_exit_fill(self, trade_id, exit_price, result_type):
+        self.exit_fills.append((trade_id, exit_price, result_type))
+
+
+class TestStrategySyncOnManualClose:
+
+    def test_close_trade_notifies_strategy(self, app_context):  # noqa: ARG002
+        controller, tm, executor, repo = _make_controller(close_price=105.0)
+        fake_strategy = FakeStrategy()
+        controller.strategy = fake_strategy
+
+        tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
+        trade_id = tm.open_trades[0]["trade_id"]
+
+        resp, status = controller.close_trade(trade_id)
+
+        assert status == 200
+        assert len(fake_strategy.exit_fills) == 1
+        assert fake_strategy.exit_fills[0][0] == trade_id
+        assert fake_strategy.exit_fills[0][2] == "CLOSE"
+
+    def test_close_all_trades_notifies_strategy(self, app_context):  # noqa: ARG002
+        controller, tm, executor, repo = _make_controller(close_price=105.0)
+        fake_strategy = FakeStrategy()
+        controller.strategy = fake_strategy
+
+        tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
+        tm.open_trade("MNQ", "short", 100.0, 110.0, 70.0, 10.0, 500.0, 5.0)
+
+        resp, status = controller.close_all_trades("MNQ")
+
+        assert status == 200
+        assert len(fake_strategy.exit_fills) == 2
+        assert all(f[2] == "CLOSE" for f in fake_strategy.exit_fills)

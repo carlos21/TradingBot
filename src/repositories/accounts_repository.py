@@ -18,24 +18,36 @@ class NtAccountRepository:
 
     def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None, rr_ratio: float | None = None) -> None:
         with get_db_session() as session:
-            row = session.query(NtAccount).filter_by(name=name).first()
-            if row:
-                row.risk_usd = risk_usd
-                row.risk_pct = risk_pct
-                row.rr_ratio = rr_ratio
-            else:
-                row = NtAccount(name=name, risk_usd=risk_usd, risk_pct=risk_pct, rr_ratio=rr_ratio)
-                session.add(row)
-            session.commit()
+            try:
+                row = session.query(NtAccount).filter_by(name=name).first()
+                if row:
+                    row.risk_usd = risk_usd
+                    row.risk_pct = risk_pct
+                    row.rr_ratio = rr_ratio
+                else:
+                    row = NtAccount(name=name, risk_usd=risk_usd, risk_pct=risk_pct, rr_ratio=rr_ratio)
+                    session.add(row)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
     def delete(self, name: str) -> None:
         with get_db_session() as session:
-            row = session.query(NtAccount).filter_by(name=name).first()
-            if row:
-                session.delete(row)
-                session.commit()
+            try:
+                row = session.query(NtAccount).filter_by(name=name).first()
+                if row:
+                    session.delete(row)
+                    session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
     def clear_all(self) -> None:
         with get_db_session() as session:
-            session.query(NtAccount).delete()
-            session.commit()
+            try:
+                session.query(NtAccount).delete()
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise

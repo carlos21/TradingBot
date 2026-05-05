@@ -75,6 +75,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         private Dictionary<string, Account> _accounts;
         private Instrument _subscribedInstrument;
 
+        // When true, ALL command handlers force simulate mode (no real orders)
+        internal static volatile bool E2ETestRunning = false;
+
         // Stats
         private long _commandsReceived = 0;
         private long _ticksSent = 0;
@@ -331,6 +334,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _orderTracker?.Clear();
                 _orderTracker = null;
 
+                // Clear duplicate-command tracking so reconnects with fresh seq_nums work
+                lock (_seqNumLock)
+                {
+                    _processedSeqNums.Clear();
+                    _processedSeqNumQueue.Clear();
+                }
+
                 _cts?.Dispose();
                 _cts = null;
 
@@ -438,9 +448,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             var dispatcher = new CommandDispatcher(_logger);
             // Register command handlers - Chain of Responsibility pattern
-            dispatcher.Register(new OrderOpenHandler(_network, _logger, _accounts, _config.Instrument, _orderTracker));
-            dispatcher.Register(new OrderCloseHandler(_network, _logger, _accounts, _config.Instrument, _orderTracker));
-            dispatcher.Register(new OrderModifyHandler(_network, _logger, _accounts, _orderTracker));
+            bool simulate = _ui?.IsSimulateTradesEnabled ?? false;
+            dispatcher.Register(new OrderOpenHandler(_network, _logger, _accounts, _config.Instrument, _orderTracker, simulate));
+            dispatcher.Register(new OrderCloseHandler(_network, _logger, _accounts, _config.Instrument, _orderTracker, simulate));
+            dispatcher.Register(new OrderModifyHandler(_network, _logger, _accounts, _orderTracker, simulate));
             dispatcher.Register(new RefreshRequestHandler(_network, _logger, SendHistoryAsync));
             dispatcher.Register(new TestStartHandler(_network, _logger));
             return dispatcher;
@@ -456,9 +467,11 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             while (_connected && !_cts.Token.IsCancellationRequested)
             {
+                MessageEnvelope envelope = null;
+                string tradeId = null;
                 try
                 {
-                    var envelope = _network?.ReceiveCommand(timeoutMs: 100);
+                    envelope = _network?.ReceiveCommand(timeoutMs: 100);
                     if (envelope == null) continue;
 
                     // Duplicate detection
@@ -473,22 +486,26 @@ namespace NinjaTrader.NinjaScript.AddOns
                     _commandsReceived++;
                     
                     // Extract trade_id from payload for ack
-                    string tradeId = null;
                     try { tradeId = envelope.Payload?["trade_id"]?.ToString(); }
                     catch (Exception ex) { _logger.Warning($"Failed to extract trade_id from envelope: {ex.Message}"); }
 
-                    try
+                    if (_dispatcher == null)
                     {
-                        _dispatcher.Dispatch(envelope);
-                        // Send success ack
+                        _logger.Error("Dispatcher is null, cannot process command");
+                        _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, false, tradeId, "dispatcher not available");
+                        continue;
+                    }
+
+                    bool dispatchSuccess = _dispatcher.Dispatch(envelope);
+                    if (dispatchSuccess)
+                    {
                         _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, true, tradeId);
                     }
-                    catch (Exception dispatchEx)
+                    else
                     {
-                        _logger.Error($"Command dispatch failed: {envelope.MsgType}", dispatchEx);
-                        // Send failure ack
-                        _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, false, tradeId, dispatchEx.Message);
-                        _network?.SendError("ninjatrader", "command_dispatch_failed", $"{envelope.MsgType}: {dispatchEx.Message}");
+                        _logger.Error($"Command dispatch failed: {envelope.MsgType}");
+                        _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, false, tradeId, "handler returned failure");
+                        _network?.SendError("ninjatrader", "command_dispatch_failed", $"{envelope.MsgType}: handler returned failure");
                     }
 
                     if (_commandsReceived % 10 == 0) UpdateStats();
@@ -496,6 +513,20 @@ namespace NinjaTrader.NinjaScript.AddOns
                 catch (Exception ex)
                 {
                     _logger.Error("Command loop error", ex);
+                    // Always send COMMAND_ACK so Python doesn't timeout waiting
+                    try
+                    {
+                        _network?.SendCommandAck(
+                            envelope?.MsgType ?? "unknown",
+                            envelope?.SeqNum ?? 0,
+                            false,
+                            tradeId,
+                            $"Command loop error: {ex.Message}");
+                    }
+                    catch (Exception ackEx)
+                    {
+                        _logger.Error("Failed to send error ack", ackEx);
+                    }
                     _network?.SendError("ninjatrader", "command_loop_error", ex.Message, FormatExceptionDetails(ex));
                 }
             }
@@ -1003,67 +1034,102 @@ namespace NinjaTrader.NinjaScript.AddOns
                     }
                 }
 
-                // Process pending modify when a stop order is successfully cancelled
-                if (order.OrderState == OrderState.Cancelled && IsStopOrder(order))
+                // Process pending modify when a stop/target order is successfully cancelled
+                if (order.OrderState == OrderState.Cancelled && (IsStopOrder(order) || IsTargetOrder(order)))
                 {
                     string tid = ExtractTradeIdFromOrderName(order.Name);
                     bool wasExpected = _orderTracker.IsExpectedCancellation(order.Name);
-                    _orderTracker.RemoveExpectedCancellation(order.Name);
+                    // NOTE: Do NOT remove expected-cancellation here.
+                    // The suppression check below handles it uniformly
+                    // for both modify and close workflows.
 
                     if (!string.IsNullOrEmpty(tid) && _orderTracker.TryGetPendingModify(tid, out var modInfo))
                     {
                         if (!wasExpected)
                         {
-                            _logger.Warning($"Stop order {order.Name} was cancelled unexpectedly (not by modify/close workflow). Discarding pending modify.");
+                            _logger.Warning($"Order {order.Name} was cancelled unexpectedly (not by modify/close workflow). Discarding pending modify.");
                             _orderTracker.RemovePendingModify(tid);
                         }
                         else if (!_orderTracker.TryGetEntry(tid, out _))
                         {
-                            _logger.Warning($"Stop order {order.Name} cancelled but trade {tid} no longer active. Discarding pending modify.");
+                            _logger.Warning($"Order {order.Name} cancelled but trade {tid} no longer active. Discarding pending modify.");
                             _orderTracker.RemovePendingModify(tid);
                         }
                         else
                         {
-                            _orderTracker.RemovePendingModify(tid);
                             try
                             {
                                 var account = ResolveAccountForOrder(order);
                                 if (account == null)
                                 {
-                                    _logger.Error($"Cannot create replacement stop for {tid}: account not found");
+                                    _logger.Error($"Cannot create replacement order for {tid}: account not found");
+                                    _orderTracker.RemovePendingModify(tid);
                                     return;
                                 }
 
-                                var newStopOrder = account.CreateOrder(
-                                    modInfo.Instrument,
-                                    modInfo.OrderAction,
-                                    OrderType.StopMarket,
-                                    OrderEntry.Automated,
-                                    TimeInForce.Gtc,
-                                    modInfo.Quantity,
-                                    0,
-                                    modInfo.NewStopLoss,
-                                    $"OCO_{tid}",
-                                    $"Stop_{tid}",
-                                    DateTime.MinValue,
-                                    null);
-
-                                if (newStopOrder != null)
+                                Order newOrder;
+                                if (modInfo.IsTarget)
                                 {
-                                    _orderTracker.TrackStopLoss(tid, newStopOrder);
-                                    _logger.Success($"Modified SL for {tid} to {modInfo.NewStopLoss}");
-                                    _network?.SendTradeLog(tid, "NT:MODIFY", $"Stop loss changed to {modInfo.NewStopLoss}");
+                                    newOrder = account.CreateOrder(
+                                        modInfo.Instrument,
+                                        modInfo.OrderAction,
+                                        OrderType.Limit,
+                                        OrderEntry.Automated,
+                                        TimeInForce.Gtc,
+                                        modInfo.Quantity,
+                                        modInfo.NewPrice,
+                                        0,
+                                        $"OCO_{tid}",
+                                        $"Target_{tid}",
+                                        DateTime.MinValue,
+                                        null);
                                 }
                                 else
                                 {
-                                    _logger.Error($"Failed to create replacement stop order for {tid}");
-                                    _network?.SendError("ninjatrader", "order_modify_failed", $"Failed to create replacement stop for {tid}");
+                                    newOrder = account.CreateOrder(
+                                        modInfo.Instrument,
+                                        modInfo.OrderAction,
+                                        OrderType.StopMarket,
+                                        OrderEntry.Automated,
+                                        TimeInForce.Gtc,
+                                        modInfo.Quantity,
+                                        0,
+                                        modInfo.NewPrice,
+                                        $"OCO_{tid}",
+                                        $"Stop_{tid}",
+                                        DateTime.MinValue,
+                                        null);
+                                }
+
+                                if (newOrder != null)
+                                {
+                                    account.Submit(new[] { newOrder });
+                                    _orderTracker.RemovePendingModify(tid);
+                                    if (modInfo.IsTarget)
+                                    {
+                                        _orderTracker.TrackTakeProfit(tid, newOrder);
+                                        _logger.Success($"Modified TP for {tid} to {modInfo.NewPrice}");
+                                        _network?.SendTradeLog(tid, "NT:MODIFY", $"Take profit changed to {modInfo.NewPrice}");
+                                    }
+                                    else
+                                    {
+                                        _orderTracker.TrackStopLoss(tid, newOrder);
+                                        _logger.Success($"Modified SL for {tid} to {modInfo.NewPrice}");
+                                        _network?.SendTradeLog(tid, "NT:MODIFY", $"Stop loss changed to {modInfo.NewPrice}");
+                                    }
+                                }
+                                else
+                                {
+                                    _orderTracker.RemovePendingModify(tid);
+                                    _logger.Error($"Failed to create replacement order for {tid}");
+                                    _network?.SendError("ninjatrader", "order_modify_failed", $"Failed to create replacement for {tid}");
                                 }
                             }
                             catch (Exception modEx)
                             {
-                                _logger.Error($"Error creating replacement stop order for {tid}", modEx);
-                                _network?.SendError("ninjatrader", "order_modify_failed", $"Replacement stop failed for {tid}: {modEx.Message}");
+                                _orderTracker.RemovePendingModify(tid);
+                                _logger.Error($"Error creating replacement order for {tid}", modEx);
+                                _network?.SendError("ninjatrader", "order_modify_failed", $"Replacement failed for {tid}: {modEx.Message}");
                             }
                         }
                     }
@@ -1452,14 +1518,19 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private async Task RunE2ETestsAsync()
         {
+            // E2E tests ALWAYS run in simulate mode — they never submit real orders
+            _logger.Info("🧪 E2E tests starting (simulate mode — no real orders will be submitted)");
+            E2ETestRunning = true;
+
             _ui?.SetE2EButtonEnabled(false);
             try
             {
-                var runner = new ZmqE2ETestRunner(_network, _logger);
+                var runner = new ZmqE2ETestRunner(_network, _logger, _accounts);
                 await runner.RunAllScenariosAsync();
             }
             finally
             {
+                E2ETestRunning = false;
                 _ui?.SetE2EButtonEnabled(true);
             }
         }
@@ -1489,7 +1560,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         private static double ToUnixSeconds(DateTime dt) =>
-            (dt.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds;
+            (dt.ToUniversalTime() - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
 
         private static MenuItem FindMenuItem(System.Collections.IEnumerable items, string header)
         {

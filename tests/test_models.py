@@ -64,7 +64,7 @@ class TestTradeData:
 
     def test_inequality(self):
         a = self._make(entry_price=100.0)
-        b = self._make(entry_price=200.0)
+        b = self._make(trade_id="T2", entry_price=200.0)
         assert a != b
 
     def test_hash_usable_in_set(self):

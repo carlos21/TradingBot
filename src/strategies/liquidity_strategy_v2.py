@@ -209,6 +209,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
     def on_raw_bar(self, bar: dict[str, Any]):
         with self.lock:
             self._check_open_trades(bar)
+            self._check_session_end_close(bar)
 
             if self.options.breakeven or self.options.reentry_breakeven:
                 self._check_breakeven(bar)

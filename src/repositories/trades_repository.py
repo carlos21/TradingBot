@@ -76,10 +76,11 @@ class SQLTradeRepository(ITradeRepository):
         source: str | None = None,
         account: str | None = None,
         signal_id: str | None = None,
+        trade_id: str | None = None,
     ) -> TradeData:
         with get_db_session() as db:
             t = Trade(
-                trade_id=str(uuid.uuid4()),
+                trade_id=trade_id if trade_id else str(uuid.uuid4()),
                 pair=pair,
                 trade_type=trade_type,
                 entry_price=entry_price,
@@ -190,6 +191,24 @@ class SQLTradeRepository(ITradeRepository):
 
         return self._make_trade_data(t)
 
+    def update_contracts(self, trade_id: str, contracts: float) -> TradeData:
+        with get_db_session() as db:
+            t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+            if not t:
+                db.close()
+                raise DBNotFoundException(f"Trade {trade_id} not found")
+            t.contracts = contracts
+            try:
+                db.commit()
+                db.refresh(t)
+            except Exception as e:
+                db.rollback()
+                raise DBException(str(e)) from e
+            finally:
+                db.close()
+
+        return self._make_trade_data(t)
+
     def close_trade(
         self,
         trade_id: str,
@@ -249,7 +268,7 @@ class SQLTradeRepository(ITradeRepository):
                         UPDATE trades
                         SET logs = CASE
                             WHEN logs IS NULL OR json_type(logs) IS NULL
-                            THEN json_array(:log_entry)
+                            THEN json_array(json(:log_entry))
                             ELSE json_insert(logs, '$[#]', json(:log_entry))
                         END
                         WHERE trade_id = :trade_id
@@ -259,8 +278,9 @@ class SQLTradeRepository(ITradeRepository):
                 conn.commit()
                 if result.rowcount > 0:
                     return
-        except Exception:
-            pass  # Fall through to ORM method
+        except Exception as sql_ex:
+            self.logger.warning(f"Fast-path trade log append failed for {trade_id}: {sql_ex}")
+            # Fall through to ORM method
 
         # Fallback: use ORM approach with minimal lock time
         with self._log_lock, get_db_session() as db_session:
@@ -274,6 +294,7 @@ class SQLTradeRepository(ITradeRepository):
                 db_session.commit()
             except Exception:
                 db_session.rollback()
+                raise
 
     def get_trade_logs(self, trade_id: str) -> list:
         with get_db_session() as db:

@@ -24,18 +24,20 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly Dictionary<string, Account> _accounts;
         private readonly string _instrument;
         private readonly IOrderTracker _orderTracker;
+        private readonly bool _simulate;
 
         public OrderCloseHandler(ZmqNetwork network, ILogger logger, Dictionary<string, Account> accounts, 
-            string instrument, IOrderTracker orderTracker)
+            string instrument, IOrderTracker orderTracker, bool simulate = false)
         {
             _network = network ?? throw new ArgumentNullException(nameof(network));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _accounts = accounts ?? throw new ArgumentNullException(nameof(accounts));
             _instrument = instrument;
             _orderTracker = orderTracker ?? throw new ArgumentNullException(nameof(orderTracker));
+            _simulate = simulate;
         }
 
-        public void Handle(JObject payload)
+        public bool Handle(JObject payload)
         {
             try
             {
@@ -44,8 +46,17 @@ namespace NinjaTrader.NinjaScript.AddOns
                     throw new ArgumentException("trade_id is required");
 
                 var accountName = payload?["account"]?.ToString();
-                var account = ResolveAccount(accountName);
 
+                // ── SIMULATE MODE: Send fake exit fill instantly, NO account/broker lookup ──
+                if (_simulate || TradingBotZmqConnector.E2ETestRunning)
+                {
+                    _logger.Info($"🧪 SIMULATE CLOSE: {tradeId} account={accountName ?? "default"}");
+                    _network?.SendExitFill(tradeId, 0, "CLOSE", account: accountName);
+                    _network?.SendTradeLog(tradeId, "NT:SIMULATE", "Simulated exit fill (close)");
+                    return true;
+                }
+
+                var account = ResolveAccount(accountName);
                 if (account == null)
                     throw new InvalidOperationException($"No account available (requested: {accountName ?? "(default)"})");
 
@@ -57,7 +68,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     _logger.Warning($"[Close:{tradeId}] Trade not tracked — already closed or never opened. Ignoring.");
                     _network?.SendTradeLog(tradeId, "NT:WARNING", "Close ignored: trade not tracked");
-                    return;
+                    return true;
                 }
 
                 // Guard: prevent duplicate close orders
@@ -66,7 +77,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     _logger.Warning($"[Close:{tradeId}] Close order already working. Ignoring duplicate.");
                     _network?.SendTradeLog(tradeId, "NT:WARNING", "Close ignored: already working");
-                    return;
+                    return true;
                 }
 
                 _logger.Info($">>> CLOSE ORDER START: {tradeId} account={account.Name}");
@@ -89,25 +100,46 @@ namespace NinjaTrader.NinjaScript.AddOns
                 
                 if (entryOrder != null && IsWorking(entryOrder))
                 {
-                    account.Cancel(new[] { entryOrder });
-                    _logger.Info($"[Close:{tradeId}] Cancelled entry order");
-                    cancelledCount++;
+                    try
+                    {
+                        account.Cancel(new[] { entryOrder });
+                        _logger.Info($"[Close:{tradeId}] Cancelled entry order");
+                        cancelledCount++;
+                    }
+                    catch (Exception cancelEx)
+                    {
+                        _logger.Warning($"[Close:{tradeId}] Entry cancel failed: {cancelEx.Message}");
+                    }
                 }
                 
                 if (stopOrder != null && IsWorking(stopOrder))
                 {
                     _orderTracker.ExpectCancellation(stopOrder.Name);
-                    account.Cancel(new[] { stopOrder });
-                    _logger.Info($"[Close:{tradeId}] Cancelled stop order");
-                    cancelledCount++;
+                    try
+                    {
+                        account.Cancel(new[] { stopOrder });
+                        _logger.Info($"[Close:{tradeId}] Cancelled stop order");
+                        cancelledCount++;
+                    }
+                    catch (Exception cancelEx)
+                    {
+                        _logger.Warning($"[Close:{tradeId}] Stop cancel failed: {cancelEx.Message}");
+                    }
                 }
                 
                 if (targetOrder != null && IsWorking(targetOrder))
                 {
                     _orderTracker.ExpectCancellation(targetOrder.Name);
-                    account.Cancel(new[] { targetOrder });
-                    _logger.Info($"[Close:{tradeId}] Cancelled target order");
-                    cancelledCount++;
+                    try
+                    {
+                        account.Cancel(new[] { targetOrder });
+                        _logger.Info($"[Close:{tradeId}] Cancelled target order");
+                        cancelledCount++;
+                    }
+                    catch (Exception cancelEx)
+                    {
+                        _logger.Warning($"[Close:{tradeId}] Target cancel failed: {cancelEx.Message}");
+                    }
                 }
 
                 // Check if we have a filled or partially filled position to close
@@ -170,12 +202,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                 
                 _logger.Info($">>> CLOSE ORDER END: {tradeId}");
                 _network?.SendTradeLog(tradeId, "NT:CLOSE", $"Close command executed ({cancelledCount} orders cancelled)");
+                return true;
             }
             catch (Exception ex)
             {
                 var tradeId = payload?["trade_id"]?.ToString() ?? "unknown";
                 _logger.Error($">>> CLOSE ORDER FAILED for {tradeId}: {ex.Message}", ex);
                 _network?.SendError("ninjatrader", "order_close_failed", $"Failed to close order {tradeId}: {ex.Message}");
+                return false;
             }
         }
 
@@ -209,9 +243,10 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private static bool IsWorking(Order order)
         {
-            return order.OrderState == OrderState.Working || 
+            return order.OrderState == OrderState.Working ||
                    order.OrderState == OrderState.Accepted ||
-                   order.OrderState == OrderState.Submitted;
+                   order.OrderState == OrderState.Submitted ||
+                   order.OrderState == OrderState.Initialized;
         }
     }
 }

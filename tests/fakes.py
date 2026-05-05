@@ -120,9 +120,9 @@ class FakeTradeRepository:
         """Alias used by __reset_all to clear only in-memory fakes between scenarios."""
         self.clear()
 
-    def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None, risk_dollars=None, risk_pct=None, contracts=None, source=None, account=None, signal_id=None):
+    def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None, risk_dollars=None, risk_pct=None, contracts=None, source=None, account=None, signal_id=None, trade_id=None):
         self._seq += 1
-        trade_id = f"T{self._seq}"
+        trade_id = trade_id if trade_id else f"T{self._seq}"
 
         self.inserted.append({
             "trade_id": trade_id,
@@ -189,6 +189,12 @@ class FakeTradeRepository:
                 t['risk'] = risk
                 t['risk_dollars'] = risk_dollars
                 t['risk_pct'] = risk_pct
+                return
+
+    def update_contracts(self, trade_id, contracts):
+        for t in self.inserted:
+            if t['trade_id'] == trade_id:
+                t['contracts'] = contracts
                 return
 
     def close_trade(self, trade_id, exit_price, exit_time, result, result_type=None, fees=None, pnl_usd=None):

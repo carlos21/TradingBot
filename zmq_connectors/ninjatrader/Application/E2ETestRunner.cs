@@ -3,6 +3,8 @@
 // Runs end-to-end tests via ZMQ
 // ═══════════════════════════════════════════════════════════════════════
 
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace NinjaTrader.NinjaScript.AddOns
@@ -14,15 +16,25 @@ namespace NinjaTrader.NinjaScript.AddOns
     {
         private readonly ZmqNetwork _network;
         private readonly ILogger _logger;
+        private readonly System.Collections.Generic.Dictionary<string, NinjaTrader.Cbi.Account> _accounts;
 
-        public ZmqE2ETestRunner(ZmqNetwork network, ILogger logger)
+        public ZmqE2ETestRunner(ZmqNetwork network, ILogger logger,
+            System.Collections.Generic.Dictionary<string, NinjaTrader.Cbi.Account> accounts)
         {
             _network = network ?? throw new System.ArgumentNullException(nameof(network));
             _logger = logger ?? throw new System.ArgumentNullException(nameof(logger));
+            _accounts = accounts ?? throw new System.ArgumentNullException(nameof(accounts));
         }
 
         public async Task<int> RunAllScenariosAsync()
         {
+            // Final safety validation inside the runner itself
+            if (!ValidateSimulationEnvironment())
+            {
+                _logger.Error("E2E TESTS ABORTED: Simulation environment validation failed.");
+                return 0;
+            }
+
             _logger.Info("=== E2E TESTS STARTING ===");
             int passed = 0;
             
@@ -30,7 +42,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             string[] basicScenarios = { "tp_hit", "sl_hit", "session_end" };
             
             // New feature scenarios
-            string[] featureScenarios = { "command_ack", "duplicate_detection", "position_sync", "order_modify" };
+            string[] featureScenarios = { "command_ack", "duplicate_detection", "position_sync", "order_modify", "multi_account" };
             
             // Run basic scenarios
             foreach (var scenario in basicScenarios)
@@ -56,8 +68,30 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _logger.Info($"--- Testing feature: {scenario} ---");
                 try
                 {
-                    _network?.SendTestStart(scenario, entryPrice: 21000.0, riskPoints: 80.0, rrRatio: 1.0);
-                    await Task.Delay(1500);
+                    if (scenario == "multi_account")
+                    {
+                        // Use actual connected accounts instead of hardcoded Sim101/Sim102
+                        var accountNames = _accounts?.Keys?.ToList() ?? new System.Collections.Generic.List<string>();
+                        if (accountNames.Count == 0)
+                        {
+                            _logger.Warning("[TEST] multi_account: No accounts connected — skipping");
+                            continue;
+                        }
+                        // If only 1 account, test it twice to verify multi-account routing logic
+                        var testAccounts = accountNames.Count >= 2
+                            ? accountNames.Take(2).ToList()
+                            : new System.Collections.Generic.List<string> { accountNames[0], accountNames[0] };
+
+                        var accounts = new Newtonsoft.Json.Linq.JArray(testAccounts);
+                        _logger.Info($"[TEST] multi_account: Using accounts {string.Join(", ", testAccounts)}");
+                        _network?.SendTestStart(scenario, entryPrice: 21000.0, riskPoints: 80.0, rrRatio: 1.0, accounts: accounts);
+                        await Task.Delay(3000); // Extra time for multi-order round-trip
+                    }
+                    else
+                    {
+                        _network?.SendTestStart(scenario, entryPrice: 21000.0, riskPoints: 80.0, rrRatio: 1.0);
+                        await Task.Delay(1500);
+                    }
                     _logger.Info($"[TEST] Feature {scenario}: Completed");
                     passed++;
                 }
@@ -69,8 +103,35 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
 
             int total = basicScenarios.Length + featureScenarios.Length;
-            _logger.Info($"=== E2E TESTS COMPLETE: {passed}/{total} passed ===");
+            _logger.Info($"=== E2E TESTS COMPLETE: {passed}/{total} scenarios completed ===");
+            _logger.Info("Note: Check logs above for any errors. 'Completed' means the scenario was orchestrated, not that all commands succeeded.");
             return passed;
+        }
+
+        /// <summary>
+        /// Validates that all connected accounts are simulation or demo accounts.
+        /// This is the last line of defense before tests send orders.
+        /// </summary>
+        private bool ValidateSimulationEnvironment()
+        {
+            if (_accounts == null || _accounts.Count == 0)
+            {
+                _logger.Error("No accounts available for E2E testing");
+                return false;
+            }
+
+            foreach (var kvp in _accounts)
+            {
+                string name = kvp.Key;
+                bool isSim = name.StartsWith("Sim", System.StringComparison.OrdinalIgnoreCase);
+                bool isDemo = name.StartsWith("DEMO", System.StringComparison.OrdinalIgnoreCase);
+                if (!isSim && !isDemo)
+                {
+                    _logger.Error($"E2E SAFETY BLOCK: Account '{name}' is not a simulation/demo account.");
+                    return false;
+                }
+            }
+            return true;
         }
     }
 }

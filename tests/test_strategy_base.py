@@ -13,6 +13,8 @@ from src.strategies.base_liquidity_strategy import (
 )
 from src.strategies.entry_context import EntryContext
 from src.types import Direction
+from datetime import datetime
+
 from tests.conftest import make_bar
 from tests.fakes import (
     DummySocketIO,
@@ -190,6 +192,71 @@ class TestCheckOpenTrades:
         bar = make_bar(time=1000, low=95, high=110, pair="MNQ")
         strat._check_open_trades(bar)
         assert len(strat.open_trades) == 1
+
+    def test_sl_hit_calls_notify_strategy_close_not_executor(self):
+        """Regression: _check_open_trades must call notify_strategy_close, not executor.on_trade_close."""
+        executor = FakeTradeExecutor()
+        tm = TradeManager(
+            FakeTradeRepository(), DummySocketIO(),
+            trade_executor=executor,
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+        )
+        strat = _make_base(trade_manager=tm)
+        strat.open_trades.append({
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open",
+        })
+        tm.open_trades.append({
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "entry_time": 500,
+        })
+        bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
+        strat._check_open_trades(bar)
+        assert len(strat.open_trades) == 0
+        assert len(tm.open_trades) == 0
+        # Executor should NOT have been called by the strategy
+        assert len(executor.closes) == 0
+        # But TradeManager balance should have been updated via notify_strategy_close
+        # SL hit is a loss, so balance should decrease
+        assert tm.account_balance < 100000.0
+
+    def test_session_end_calls_notify_strategy_close_not_executor(self):
+        """Regression: _check_session_end_close must call notify_strategy_close, not executor."""
+        from zoneinfo import ZoneInfo
+        executor = FakeTradeExecutor()
+        tm = TradeManager(
+            FakeTradeRepository(), DummySocketIO(),
+            trade_executor=executor,
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+            session_end_time="15:00",
+            session_tz="America/New_York",
+        )
+        strat = _make_base(trade_manager=tm)
+        strat.open_trades.append({
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open",
+        })
+        tm.open_trades.append({
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "entry_time": 500,
+        })
+        ny = ZoneInfo("America/New_York")
+        bar = make_bar(time=int(datetime(2025, 6, 15, 15, 1, tzinfo=ny).timestamp()), close=105, pair="MNQ")
+        strat._check_session_end_close(bar)
+        assert len(strat.open_trades) == 0
+        assert len(tm.open_trades) == 0
+        assert len(executor.closes) == 0
+        assert tm.account_balance != 100000.0
 
 
 class TestFiltersAllowEntry:

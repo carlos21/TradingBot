@@ -147,25 +147,59 @@ class LiquidityDualM1Strategy:
             if t['status'] != 'open':
                 continue
             low, high = bar['low'], bar['high']
+            closed = False
+            exit_price = None
+            result_type = None
 
             if t['type'] == 'long':
                 if low <= t['stop_loss']:
-                    t.update(status='closed', result=-1, exit_time=bar['time'], exit_price=low)
-                    self.socketio.emit('trade_close', t)
+                    exit_price = low
+                    result_type = 'SL'
+                    closed = True
                 elif high >= t['take_profit']:
-                    t.update(status='closed', result=4, exit_time=bar['time'], exit_price=high)
-                    self.socketio.emit('trade_close', t)
-                else:
-                    remaining.append(t)
+                    exit_price = high
+                    result_type = 'TP'
+                    closed = True
             else:
                 if high >= t['stop_loss']:
-                    t.update(status='closed', result=-1, exit_time=bar['time'], exit_price=high)
-                    self.socketio.emit('trade_close', t)
+                    exit_price = high
+                    result_type = 'SL'
+                    closed = True
                 elif low <= t['take_profit']:
-                    t.update(status='closed', result=4, exit_time=bar['time'], exit_price=low)
-                    self.socketio.emit('trade_close', t)
-                else:
-                    remaining.append(t)
+                    exit_price = low
+                    result_type = 'TP'
+                    closed = True
+
+            if closed:
+                from src.financial_calc import FinancialCalc
+                from src.types import Direction
+                r_result, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
+                    direction=Direction.from_string(t['type']),
+                    entry_price=t['entry'],
+                    exit_price=exit_price,
+                    stop_loss=t['stop_loss'],
+                    take_profit=t['take_profit'],
+                    risk_points=t.get('risk', 1.0),
+                    contracts=t.get('contracts', 1),
+                    point_value=self.point_value,
+                    fee_per_rt=self.fee_per_rt,
+                )
+                t.update(status='closed', result=r_result, exit_time=bar['time'], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, result_type=result_type)
+                self.socketio.emit('trade_close', t)
+                try:
+                    self.trade_repository.close_trade(
+                        trade_id=t['trade_id'],
+                        exit_price=exit_price,
+                        exit_time=datetime.fromtimestamp(bar['time'], tz=timezone.utc),
+                        result=r_result,
+                        result_type=result_type,
+                        fees=t_fees,
+                        pnl_usd=t_pnl_usd,
+                    )
+                except Exception as e:
+                    self.logger.error(f"[DualM1] Failed to persist close for {t['trade_id']}: {e}")
+            else:
+                remaining.append(t)
         self.open_trades = remaining
 
     def _make_trade_dict(

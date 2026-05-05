@@ -25,7 +25,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         }
 
-        public void Handle(JObject payload)
+        public bool Handle(JObject payload)
         {
             try
             {
@@ -40,30 +40,31 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     case "command_ack":
                         RunCommandAckTest();
-                        break;
+                        return true;
                     case "duplicate_detection":
                         RunDuplicateDetectionTest();
-                        break;
+                        return true;
                     case "position_sync":
                         RunPositionSyncTest(entryPrice, riskPoints, rrRatio);
-                        break;
+                        return true;
                     case "order_modify":
                         RunOrderModifyTest(entryPrice, riskPoints, rrRatio);
-                        break;
+                        return true;
                     case "tp_hit":
                     case "sl_hit":
                     case "session_end":
                         RunBasicScenario(scenario, entryPrice, riskPoints, rrRatio);
-                        break;
+                        return true;
                     default:
                         _network?.SendTestResult(scenario, false, null, $"Unknown scenario: {scenario}");
-                        break;
+                        return false;
                 }
             }
             catch (Exception ex)
             {
                 _logger.Error("Test start failed", ex);
                 _network?.SendError("ninjatrader", "test_failed", $"Test start failed: {ex.Message}");
+                return false;
             }
         }
 

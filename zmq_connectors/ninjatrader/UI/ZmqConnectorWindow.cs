@@ -24,10 +24,14 @@ namespace NinjaTrader.NinjaScript.AddOns
         private Button _connectBtn;
         private Button _testConnBtn;
         private Button _e2eTestBtn;
+        private CheckBox _simulateChk;
 
         private Action _onConnect;
         private Action _onTestConnection;
         private Action _onE2ETests;
+        private bool _isConnected;
+
+        internal bool IsSimulateTradesEnabled => _simulateChk?.IsChecked ?? false;
 
         internal ZmqConnectorWindow(Action<string> log)
         {
@@ -91,6 +95,19 @@ namespace NinjaTrader.NinjaScript.AddOns
             btnPanel.Children.Add(_connectBtn);
             btnPanel.Children.Add(_testConnBtn);
             btnPanel.Children.Add(_e2eTestBtn);
+
+            // Simulate trades checkbox - when checked, no real orders are submitted
+            _simulateChk = new CheckBox
+            {
+                Content = "Simulate Trades (No Orders)",
+                Foreground = Brushes.LightBlue,
+                FontWeight = FontWeights.Bold,
+                Margin = new Thickness(12, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                IsChecked = false,
+            };
+            btnPanel.Children.Add(_simulateChk);
+
             Grid.SetRow(btnPanel, 2);
             grid.Children.Add(btnPanel);
 
@@ -140,10 +157,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             _connectBtn = null;
             _testConnBtn = null;
             _e2eTestBtn = null;
+            _simulateChk = null;
+        }
+
+        private void UpdateE2EButtonState(bool connected)
+        {
+            if (_e2eTestBtn != null)
+                _e2eTestBtn.IsEnabled = connected;
         }
 
         internal void UpdateStatus(bool connected, string statsText)
         {
+            _isConnected = connected;
             if (_window == null) return;
             _window.Dispatcher.BeginInvoke(new Action(() =>
             {

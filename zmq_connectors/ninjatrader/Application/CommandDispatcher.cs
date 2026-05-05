@@ -29,24 +29,26 @@ namespace NinjaTrader.NinjaScript.AddOns
             _handlers[handler.CommandType] = handler;
         }
 
-        public void Dispatch(MessageEnvelope envelope)
+        public bool Dispatch(MessageEnvelope envelope)
         {
-            if (envelope == null) return;
+            if (envelope == null) return false;
 
             if (_handlers.TryGetValue(envelope.MsgType, out var handler))
             {
                 try
                 {
-                    handler.Handle(envelope.Payload);
+                    return handler.Handle(envelope.Payload);
                 }
                 catch (Exception ex)
                 {
                     _logger.Error($"Command handler failed for {envelope.MsgType}", ex);
+                    return false;
                 }
             }
             else
             {
                 _logger.Warning($"Unknown command: {envelope.MsgType}");
+                return false;
             }
         }
     }

@@ -24,14 +24,18 @@ class CredentialRepository:
 
     def save_credential(self, service: str, username: str, password_encrypted: str) -> None:
         with get_db_session() as session:
-            row = session.query(AppCredential).filter_by(service=service, username=username).first()
-            if row:
-                row.password_encrypted = password_encrypted
-            else:
-                row = AppCredential(
-                    service=service,
-                    username=username,
-                    password_encrypted=password_encrypted,
-                )
-                session.add(row)
-            session.commit()
+            try:
+                row = session.query(AppCredential).filter_by(service=service, username=username).first()
+                if row:
+                    row.password_encrypted = password_encrypted
+                else:
+                    row = AppCredential(
+                        service=service,
+                        username=username,
+                        password_encrypted=password_encrypted,
+                    )
+                    session.add(row)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise

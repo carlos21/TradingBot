@@ -68,8 +68,8 @@ class CSVDataSource(CombinedDataSource):
         self.file               = filename or self.PAIR_FILES[pair]
         self._fileobj           = fileobj
         self.utc                = ZoneInfo("UTC")
-        self.bars_per_second    = bars_per_second
-        self._emit_delay        = 1.0 / bars_per_second
+        self.bars_per_second    = bars_per_second if bars_per_second > 0 else 1.0
+        self._emit_delay        = 1.0 / self.bars_per_second
 
         # 1) Load all raw 1m bars
         self._bars = self._load_historical_bars()

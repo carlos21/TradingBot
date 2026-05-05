@@ -14,14 +14,18 @@ class SettingsRepository:
 
     def set(self, key: str, value: str, is_sensitive: bool = False) -> None:
         with get_db_session() as session:
-            row = session.query(AppSetting).filter_by(key=key).first()
-            if row:
-                row.value = value
-                row.is_sensitive = 1 if is_sensitive else 0
-            else:
-                row = AppSetting(key=key, value=value, is_sensitive=1 if is_sensitive else 0)
-                session.add(row)
-            session.commit()
+            try:
+                row = session.query(AppSetting).filter_by(key=key).first()
+                if row:
+                    row.value = value
+                    row.is_sensitive = 1 if is_sensitive else 0
+                else:
+                    row = AppSetting(key=key, value=value, is_sensitive=1 if is_sensitive else 0)
+                    session.add(row)
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
 
     def get_all(self) -> dict[str, str]:
         with get_db_session() as session:
@@ -30,7 +34,11 @@ class SettingsRepository:
 
     def delete(self, key: str) -> None:
         with get_db_session() as session:
-            row = session.query(AppSetting).filter_by(key=key).first()
-            if row:
-                session.delete(row)
-                session.commit()
+            try:
+                row = session.query(AppSetting).filter_by(key=key).first()
+                if row:
+                    session.delete(row)
+                    session.commit()
+            except Exception:
+                session.rollback()
+                raise

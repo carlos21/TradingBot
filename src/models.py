@@ -52,55 +52,11 @@ class TradeData:
     created_at: datetime = field(default=None)
 
     def __hash__(self):
-        return hash((
-            self.trade_id,
-            self.pair,
-            self.trade_type,
-            self.entry_price,
-            self.stop_loss,
-            self.take_profit,
-            self.risk,
-            self.risk_dollars,
-            self.risk_pct,
-            self.contracts,
-            self.entry_time,
-            self.exit_price,
-            self.exit_time,
-            self.result,
-            self.result_type,
-            self.fees,
-            self.pnl_usd,
-            self.params,
-            self.source,
-            self.account,
-            self.signal_id,
-            self.created_at,
-        ))
+        # Hash only on immutable, hashable fields.  params/logs are dict/list
+        # and must not participate in hashing.
+        return hash(self.trade_id)
 
     def __eq__(self, other):
         if not isinstance(other, TradeData):
             return NotImplemented
-        return (
-            self.trade_id     == other.trade_id and
-            self.pair         == other.pair and
-            self.trade_type   == other.trade_type and
-            self.entry_price  == other.entry_price and
-            self.stop_loss    == other.stop_loss and
-            self.take_profit  == other.take_profit and
-            self.risk         == other.risk and
-            self.risk_dollars == other.risk_dollars and
-            self.risk_pct     == other.risk_pct and
-            self.contracts    == other.contracts and
-            self.entry_time   == other.entry_time and
-            self.exit_price   == other.exit_price and
-            self.exit_time    == other.exit_time and
-            self.result       == other.result and
-            self.result_type  == other.result_type and
-            self.fees         == other.fees and
-            self.pnl_usd     == other.pnl_usd and
-            self.params       == other.params and
-            self.source       == other.source and
-            self.account      == other.account and
-            self.signal_id    == other.signal_id and
-            self.created_at   == other.created_at
-        )
+        return self.trade_id == other.trade_id

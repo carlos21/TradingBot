@@ -30,8 +30,8 @@ class BarsLoader:
         self.logger          = logger
         self.bar_callback    = bar_callback
         self.stream_end_callback = stream_end_callback
-        self.bars_per_second = bars_per_second
-        self._emit_delay     = 1.0 / bars_per_second
+        self.bars_per_second = bars_per_second if bars_per_second > 0 else 1.0
+        self._emit_delay     = 1.0 / self.bars_per_second
 
         self._from_time    = 0
         self.streaming     = False

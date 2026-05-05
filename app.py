@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import os
+import signal
+import sys
 
 from src.config import (
     CompositeConfigLoader,
@@ -34,6 +36,23 @@ def main():
 
     instance = config.instance_name
     print(f"[{instance}] Starting Liquid instance — pair={config.pair} mode={config.mode}")
+
+    # Register signal handlers for graceful shutdown
+    _shutdown_triggered = False
+
+    def _signal_handler(signum, frame):
+        nonlocal _shutdown_triggered
+        if _shutdown_triggered:
+            return
+        _shutdown_triggered = True
+        sig_name = signal.Signals(signum).name
+        print(f"\n[{instance}] Received {sig_name}, shutting down gracefully...")
+        if config.mode == "live" and ds is not None:
+            ds.stop()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _signal_handler)
+    signal.signal(signal.SIGTERM, _signal_handler)
 
     if config.mode == "live":
         if not getattr(config, "nt_accounts", None):

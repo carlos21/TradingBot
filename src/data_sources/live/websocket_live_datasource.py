@@ -16,19 +16,30 @@ class WebsocketLiveDataSource(LiveDataSource):
 
     def subscribe(self, callback):
         def _run():
-            ws = websocket.create_connection(self.ws_url)
-            # send any subscription message your feed needs
-            ws.send(json.dumps({"op":"subscribe", "pair":self.pair}))
-            while True:
-                raw = ws.recv()
-                msg = json.loads(raw)
-                tick = {
-                    "time":   int(msg["time"]),
-                    "price":  float(msg["price"]),
-                    "volume": int(msg.get("volume", 0)),
-                    "pair":   self.pair
-                }
-                callback(tick)
+            ws = None
+            try:
+                ws = websocket.create_connection(self.ws_url)
+                ws.send(json.dumps({"op":"subscribe", "pair":self.pair}))
+                while True:
+                    raw = ws.recv()
+                    if not raw:
+                        break
+                    msg = json.loads(raw)
+                    tick = {
+                        "time":   int(msg["time"]),
+                        "price":  float(msg["price"]),
+                        "volume": int(msg.get("volume", 0)),
+                        "pair":   self.pair
+                    }
+                    callback(tick)
+            except Exception:
+                pass  # Connection dropped or thread killed
+            finally:
+                if ws is not None:
+                    try:
+                        ws.close()
+                    except Exception:
+                        pass
 
         t = threading.Thread(target=_run, daemon=True)
         t.start()

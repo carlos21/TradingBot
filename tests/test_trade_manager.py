@@ -249,10 +249,112 @@ class TestCloseTrade:
         assert len(tm.open_trades) == 0
         assert payload["result"] == 1.0  # (110-100)/10
 
+    def test_close_known_trade_updates_account_balance(self):
+        tm = _make_manager(account_balance=100000.0)
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
+        tm.close_trade("T1", 110, 2000.0)
+        # 1R win: result=1.0, pnl = 1 * 10 * 2 = 20, fees = 1.50
+        # account_balance should increase by pnl_usd (fees already deducted from pnl)
+        assert tm.account_balance > 100000.0
+
     def test_close_unknown_trade_fallback(self):
         tm = _make_manager()
         payload = tm.close_trade("T_UNKNOWN", 110, 2000.0)
         assert payload["result"] == 0.0
+
+    def test_close_already_closed_trade_in_db_does_not_call_executor(self):
+        """Regression: close_trade() must NOT call executor for already-closed trades."""
+        executor = FakeTradeExecutor()
+        repo = FakeTradeRepository()
+        tm = _make_manager(trade_executor=executor, trade_repository=repo)
+
+        # Seed a trade that is already closed in the repository
+        trade = tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
+        repo.close_trade(
+            trade_id=trade["trade_id"],
+            exit_price=95.0,
+            exit_time=datetime.now(),
+            result=-0.5,
+            result_type="SL",
+            fees=1.5,
+            pnl_usd=-11.5,
+        )
+        # Remove from open_trades so close_trade falls back to DB
+        tm.open_trades.clear()
+
+        payload = tm.close_trade(trade["trade_id"], 95.0, 2000.0)
+        # Should return the existing result, NOT call executor
+        assert payload["result"] == -0.5
+        assert payload["result_type"] == "SL"
+        assert len(executor.closes) == 0
+
+
+class TestBrokerFill:
+
+    def test_updates_account_balance(self):
+        """Regression: handle_broker_fill() must update account_balance."""
+        tm = _make_manager(account_balance=100000.0)
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
+        tm.handle_broker_fill("T1", 110.0, "TP")
+        # 1R win on TP: result=1.0, pnl = 1 * 10 * 2 = 20, fees = 1.50
+        assert tm.account_balance > 100000.0
+
+    def test_removes_trade_from_open_trades(self):
+        tm = _make_manager()
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
+        tm.handle_broker_fill("T1", 110.0, "TP")
+        assert len(tm.open_trades) == 0
+
+    def test_persists_close_to_db(self):
+        tm = _make_manager()
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
+        tm.handle_broker_fill("T1", 110.0, "TP")
+        assert len(tm.trade_repository.closed) == 1
+
+
+class TestNotifyStrategyClose:
+
+    def test_removes_trade_and_updates_balance(self):
+        """Regression: notify_strategy_close() must sync TradeManager state."""
+        executor = FakeTradeExecutor()
+        tm = _make_manager(trade_executor=executor, account_balance=100000.0)
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
+
+        tm.notify_strategy_close(
+            trade_id="T1",
+            exit_price=110.0,
+            result=1.0,
+            pnl_usd=18.5,
+            fees=1.5,
+            result_type="TP",
+            exit_time=2000.0,
+        )
+
+        assert len(tm.open_trades) == 0
+        assert tm.account_balance == 100018.5
+        # Should NOT call executor
+        assert len(executor.closes) == 0
+
+    def test_noop_when_trade_already_removed(self):
+        """notify_strategy_close() must be safe to call twice."""
+        tm = _make_manager(account_balance=100000.0)
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
+
+        tm.notify_strategy_close("T1", 110.0, 1.0, 18.5, 1.5, "TP", 2000.0)
+        # Second call should not crash or double-count balance
+        tm.notify_strategy_close("T1", 110.0, 1.0, 18.5, 1.5, "TP", 2000.0)
+
+        assert tm.account_balance == 100018.5
+
+    def test_captures_analytics(self):
+        analytics = FakeAnalyticsReporter()
+        tm = _make_manager(analytics=analytics)
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
+
+        tm.notify_strategy_close("T1", 110.0, 1.0, 18.5, 1.5, "TP", 2000.0)
+
+        events = [e for e, _ in analytics.trade_events]
+        assert "TP_HIT" in events
 
 
 class TestStreamEndClose:

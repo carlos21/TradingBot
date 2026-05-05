@@ -190,6 +190,10 @@ class TieredSLPositionSizer(PositionSizer):
         else:  # SHORT
             distance = extreme_price - entry_price
 
+        # Guard against negative distance (price moved against trade before trigger)
+        if distance <= 0:
+            distance = self.min_stop_loss if self.min_stop_loss > 0 else 1.0
+
         # Select appropriate tier
         eff_risk = self._select_sl_level(distance)
 

@@ -27,7 +27,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             _sendHistoryFunc = sendHistoryFunc ?? throw new ArgumentNullException(nameof(sendHistoryFunc));
         }
 
-        public void Handle(JObject payload)
+        public bool Handle(JObject payload)
         {
             try
             {
@@ -37,11 +37,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     if (t.IsFaulted) _logger.Error("Refresh history send failed", t.Exception?.GetBaseException());
                 }, TaskContinuationOptions.OnlyOnFaulted);
+                return true;
             }
             catch (Exception ex)
             {
                 _logger.Error("Refresh request failed", ex);
                 _network?.SendError("ninjatrader", "refresh_failed", ex.Message);
+                return false;
             }
         }
     }

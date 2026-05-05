@@ -142,8 +142,12 @@ def _create_bar_callbacks(
             _close_commands_sent.clear()
     else:
         def combined_bar_callback(bar):
-            trade_manager.handle_new_1m_bar(bar)
+            # Strategy runs first so it can detect SL/TP and notify TradeManager
+            # before TradeManager runs its own bar-based checks. This eliminates
+            # duplicate executor calls and (for strategies that check every bar)
+            # duplicate DB writes/emissions.
             strategy.on_raw_bar(bar)
+            trade_manager.handle_new_1m_bar(bar)
         
         def stream_end_callback(close_price: float, final_time: float):
             trade_manager.close_remaining_trades_at_stream_end(close_price, final_time)
@@ -401,6 +405,7 @@ def create_app(
                         rr_ratio=rr_ratio,
                         source="broker_sync",
                         account=account_name,
+                        trade_id=trade_id,  # Preserve broker trade_id so future fills match
                     )
                     # Override contracts to match broker quantity
                     for ot in trade_manager.open_trades:

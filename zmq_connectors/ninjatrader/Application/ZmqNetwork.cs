@@ -219,15 +219,18 @@ namespace NinjaTrader.NinjaScript.AddOns
             Send(MessageType.Connect, payload);
         }
 
-        public void SendTestStart(string scenario, double entryPrice = 21000.0, double riskPoints = 80.0, double rrRatio = 1.0)
+        public void SendTestStart(string scenario, double entryPrice = 21000.0, double riskPoints = 80.0, double rrRatio = 1.0, JArray accounts = null)
         {
-            Send(MessageType.TestStart, new JObject
+            var payload = new JObject
             {
                 ["scenario"] = scenario,
                 ["entry_price"] = entryPrice,
                 ["risk_points"] = riskPoints,
                 ["rr_ratio"] = rrRatio
-            });
+            };
+            if (accounts != null)
+                payload["accounts"] = accounts;
+            Send(MessageType.TestStart, payload);
         }
 
         public void SendTestResult(string scenario, bool passed, string tradeId = null, string message = "")
@@ -372,6 +375,6 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         private static double ToUnixSeconds(DateTime dt) =>
-            (dt.ToUniversalTime() - new DateTime(1970, 1, 1)).TotalSeconds;
+            (dt.ToUniversalTime() - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
     }
 }

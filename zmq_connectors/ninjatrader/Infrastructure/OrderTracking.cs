@@ -220,7 +220,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 // First pass: identify trades that still have at least one active order
                 var activeTradeIds = new HashSet<string>();
-                foreach (var order in account.Orders)
+                // Snapshot to avoid collection-modified-during-enumeration
+                var ordersSnapshot = account.Orders.ToArray();
+                foreach (var order in ordersSnapshot)
                 {
                     string tradeId = ExtractTradeIdFromOrderName(order.Name);
                     if (string.IsNullOrEmpty(tradeId)) continue;

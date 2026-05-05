@@ -122,17 +122,19 @@ namespace NinjaTrader.NinjaScript.AddOns
     /// </summary>
     public sealed class PendingModifyInfo
     {
-        public double NewStopLoss { get; }
+        public double NewPrice { get; }
         public NinjaTrader.Cbi.Instrument Instrument { get; }
         public NinjaTrader.Cbi.OrderAction OrderAction { get; }
         public int Quantity { get; }
+        public bool IsTarget { get; }
 
-        public PendingModifyInfo(double newStopLoss, NinjaTrader.Cbi.Instrument instrument, NinjaTrader.Cbi.OrderAction orderAction, int quantity)
+        public PendingModifyInfo(double newPrice, NinjaTrader.Cbi.Instrument instrument, NinjaTrader.Cbi.OrderAction orderAction, int quantity, bool isTarget = false)
         {
-            NewStopLoss = newStopLoss;
+            NewPrice = newPrice;
             Instrument = instrument ?? throw new ArgumentNullException(nameof(instrument));
             OrderAction = orderAction;
             Quantity = quantity;
+            IsTarget = isTarget;
         }
     }
 

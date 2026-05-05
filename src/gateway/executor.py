@@ -5,6 +5,7 @@ This module provides a TradeExecutor implementation that uses the
 ZeroMQ gateway to send trade commands to the platform.
 """
 
+import threading
 import time
 
 from src.services.trade_executor import TradeExecutor
@@ -158,6 +159,10 @@ class MultiAccountExecutor(TradeExecutor):
         self.logger = logger
         self.signal_to_accounts: dict[str, list[str]] = {}
         self.account_to_signal: dict[str, str] = {}
+        self._lock = threading.RLock()
+        # Dedup recent close commands (same account trade closed twice within window)
+        self._last_close_time: dict[str, float] = {}
+        self._close_dedup_seconds = 5.0
 
     def on_trade_open(self, signal_trade: dict) -> None:
         signal_id = signal_trade["trade_id"]
@@ -195,14 +200,27 @@ class MultiAccountExecutor(TradeExecutor):
             except Exception as e:
                 self.logger.error(f"MultiAccount: failed to open trade for account {acct.name} (signal {signal_id}): {e}")
 
-        self.signal_to_accounts[signal_id] = account_trade_ids
-        for aid in account_trade_ids:
-            self.account_to_signal[aid] = signal_id
+        with self._lock:
+            self.signal_to_accounts[signal_id] = account_trade_ids
+            for aid in account_trade_ids:
+                self.account_to_signal[aid] = signal_id
 
         self.logger.info(f"MultiAccount: expanded signal {signal_id} into {len(account_trade_ids)} account trades")
 
     def on_trade_close(self, trade_id: str, exit_price: float) -> None:
-        for aid in self._resolve_ids(trade_id):
+        resolved = self._resolve_ids(trade_id)
+        if not resolved:
+            self.logger.warning(f"MultiAccount: close for {trade_id} resolved to empty list — nothing to close")
+            return
+        now = time.time()
+        for aid in resolved:
+            # Dedup: skip if we already sent a close for this account trade very recently
+            last_close = self._last_close_time.get(aid, 0)
+            if now - last_close < self._close_dedup_seconds:
+                self.logger.info(f"MultiAccount: skipping duplicate close for {aid} (last close {now - last_close:.2f}s ago)")
+                continue
+            self._last_close_time[aid] = now
+
             acct_name = self._account_for_trade(aid)
             # Send close command to NT (tagged with account)
             self.gateway_executor._gateway.send_close_order(
@@ -219,17 +237,41 @@ class MultiAccountExecutor(TradeExecutor):
             self.logger.info(f"MultiAccount: updated SL for account trade {aid} account={acct_name}")
 
     def get_signal_id(self, account_trade_id: str) -> str | None:
-        return self.account_to_signal.get(account_trade_id)
+        with self._lock:
+            return self.account_to_signal.get(account_trade_id)
 
     def all_account_trades_closed(self, signal_id: str) -> bool:
-        account_ids = self.signal_to_accounts.get(signal_id, [])
+        with self._lock:
+            account_ids = self.signal_to_accounts.get(signal_id, [])
         open_ids = {t["trade_id"] for t in self.trade_manager.open_trades}
         return all(aid not in open_ids for aid in account_ids)
 
     def _resolve_ids(self, trade_id: str) -> list[str]:
-        """Return account trade IDs. If trade_id is a signal, expand it."""
-        if trade_id in self.signal_to_accounts:
-            return list(self.signal_to_accounts[trade_id])
+        """Return account trade IDs. If trade_id is a signal, expand it.
+        Falls back to open_trades lookup if in-memory mapping is stale."""
+        with self._lock:
+            if trade_id in self.signal_to_accounts:
+                return list(self.signal_to_accounts[trade_id])
+
+        # Fallback: scan open_trades for account trades with this signal_id
+        # This recovers from lost in-memory state (e.g. restart, reconnect)
+        fallback_ids = [
+            t["trade_id"]
+            for t in self.trade_manager.open_trades
+            if t.get("signal_id") == trade_id
+        ]
+        if fallback_ids:
+            self.logger.warning(
+                f"MultiAccount: recovered {len(fallback_ids)} account trade(s) from open_trades "
+                f"for signal {trade_id} (in-memory mapping was stale). Rebuilding cache."
+            )
+            with self._lock:
+                self.signal_to_accounts[trade_id] = fallback_ids
+                for aid in fallback_ids:
+                    self.account_to_signal[aid] = trade_id
+            return fallback_ids
+
+        # Not a known signal — treat as raw account trade id
         return [trade_id]
 
     def _account_for_trade(self, account_trade_id: str) -> str:
