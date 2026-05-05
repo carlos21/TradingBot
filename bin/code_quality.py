@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TradingBot Code Quality Checker
+Liquid Code Quality Checker
 
 Runs static analysis and tests, then prints a summary.
 
@@ -65,7 +65,7 @@ def filter_pyflakes(output: str) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="TradingBot code quality checker")
+    parser = argparse.ArgumentParser(description="Liquid code quality checker")
     parser.add_argument("--fast", action="store_true", help="Skip pytest (lint only)")
     parser.add_argument("--fix", action="store_true", help="Auto-fix ruff issues")
     args = parser.parse_args()

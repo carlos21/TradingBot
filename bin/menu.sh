@@ -42,7 +42,7 @@ total=${#options[@]}
 
 draw_menu() {
   clear
-  echo -e "${BOLD}${CYAN}  TradingBot — Main Menu${RST}"
+  echo -e "${BOLD}${CYAN}  Liquid — Main Menu${RST}"
   echo -e "${GRAY}  Use ↑ ↓ to navigate, Enter to select${RST}"
   echo ""
   for i in "${!options[@]}"; do

@@ -430,6 +430,14 @@ class TradeManager:
             self.logger.warning(f"[TradeManager] Trade {trade_id} not in memory, fetching from DB.")
             trade_data = self.trade_repository.get_trade(trade_id)
             if trade_data:
+                if trade_data.exit_time is not None:
+                    self.logger.warning(f"[TradeManager] Trade {trade_id} already closed in DB (exit_time={trade_data.exit_time}). Skipping close command.")
+                    return {
+                        'trade_id': trade_id,
+                        'exit_price': exit_price,
+                        'result': trade_data.result,
+                        'result_type': trade_data.result_type,
+                    }
                 trade = {
                     'trade_id': trade_data.trade_id,
                     'type': trade_data.trade_type,
@@ -494,6 +502,9 @@ class TradeManager:
         if self.trade_logger:
             self.trade_logger.log(trade_id, "CLOSE", f"Exit={exit_price:.2f} Result={result:.2f}R")
             self.trade_logger.log(trade_id, "CMD_SENT", "close_order → NinjaTrader")
+
+        # Update account balance with realized P&L for percentage-based risk compounding
+        self.account_balance += pnl_usd
 
         # remove from in-memory
         if trade in self.open_trades:
@@ -753,6 +764,9 @@ class TradeManager:
 
         if self.trade_logger:
             self.trade_logger.log(trade_id, "CLOSE", "Persisted to DB")
+
+        # Update account balance with realized P&L for percentage-based risk compounding
+        self.account_balance += pnl_usd
 
         # Remove from in-memory lists
         with contextlib.suppress(ValueError):

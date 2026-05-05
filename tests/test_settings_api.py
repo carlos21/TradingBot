@@ -53,7 +53,8 @@ class TestSettingsApi:
             "credentials": {"username": "ntuser", "password": "ntpass"},
         }
         resp = client.post("/api/settings", json=payload)
-        assert resp.status_code == 204
+        assert resp.status_code == 200
+        assert resp.get_json()["success"] is True
 
         resp = client.get("/api/settings")
         assert resp.status_code == 200

@@ -164,33 +164,36 @@ class MultiAccountExecutor(TradeExecutor):
         account_trade_ids: list[str] = []
 
         for acct in self.account_configs:
-            # Recalculate take_profit per account using account-specific rr_ratio
-            entry = signal_trade["entry"]
-            sl = signal_trade["stop_loss"]
-            risk = signal_trade["risk"]
-            rr = acct.rr_ratio if acct.rr_ratio is not None else signal_trade.get("rr_ratio", 5.0)
-            if signal_trade["type"] == "long":
-                tp = entry + (rr * risk)
-            else:
-                tp = entry - (rr * risk)
+            try:
+                # Recalculate take_profit per account using account-specific rr_ratio
+                entry = signal_trade["entry"]
+                sl = signal_trade["stop_loss"]
+                risk = signal_trade["risk"]
+                rr = acct.rr_ratio if acct.rr_ratio is not None else signal_trade.get("rr_ratio", 5.0)
+                if signal_trade["type"] == "long":
+                    tp = entry + (rr * risk)
+                else:
+                    tp = entry - (rr * risk)
 
-            account_trade = self.trade_manager.open_trade(
-                pair=signal_trade.get("pair", signal_trade.get("pair")),
-                trade_type=signal_trade["type"],
-                entry_price=entry,
-                stop_loss=sl,
-                take_profit=tp,
-                risk=risk,
-                entry_time=signal_trade["entry_time"],
-                rr_ratio=rr,
-                source=signal_trade.get("source"),
-                account=acct.name,
-                signal_id=signal_id,
-                risk_per_trade_override=acct.risk_usd,
-                risk_pct_per_trade_override=acct.risk_pct,
-            )
-            account_trade_ids.append(account_trade["trade_id"])
-            self.gateway_executor.on_trade_open(account_trade)
+                account_trade = self.trade_manager.open_trade(
+                    pair=signal_trade.get("pair", signal_trade.get("pair")),
+                    trade_type=signal_trade["type"],
+                    entry_price=entry,
+                    stop_loss=sl,
+                    take_profit=tp,
+                    risk=risk,
+                    entry_time=signal_trade["entry_time"],
+                    rr_ratio=rr,
+                    source=signal_trade.get("source"),
+                    account=acct.name,
+                    signal_id=signal_id,
+                    risk_per_trade_override=acct.risk_usd,
+                    risk_pct_per_trade_override=acct.risk_pct,
+                )
+                account_trade_ids.append(account_trade["trade_id"])
+                self.gateway_executor.on_trade_open(account_trade)
+            except Exception as e:
+                self.logger.error(f"MultiAccount: failed to open trade for account {acct.name} (signal {signal_id}): {e}")
 
         self.signal_to_accounts[signal_id] = account_trade_ids
         for aid in account_trade_ids:
@@ -205,9 +208,7 @@ class MultiAccountExecutor(TradeExecutor):
             self.gateway_executor._gateway.send_close_order(
                 trade_id=aid, reason="strategy", account=acct_name
             )
-            # For backtest: also close in TradeManager directly
-            self.trade_manager.close_trade(aid, exit_price, time.time())
-            self.logger.info(f"MultiAccount: closed account trade {aid} for signal {trade_id}")
+            self.logger.info(f"MultiAccount: sent close order for account trade {aid} (signal {trade_id})")
 
     def on_sl_update(self, trade_id: str, new_sl: float) -> None:
         for aid in self._resolve_ids(trade_id):

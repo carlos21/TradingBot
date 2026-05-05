@@ -9,26 +9,29 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+PIDFILE="${PROJECT_DIR}/.tradingbot_live.pid"
 
 export MODE="live"
 export PAIR="${PAIR:-MNQ}"
 
 cd "$PROJECT_DIR"
 
-# Kill any existing TradingBot process to free ZMQ ports
-echo "[tradingbot] Checking for existing processes..."
-EXISTING_PIDS=$(pgrep -f "python app.py" || true)
-if [ -n "$EXISTING_PIDS" ]; then
-    echo "[tradingbot] Killing existing process(es): $EXISTING_PIDS"
-    kill $EXISTING_PIDS 2>/dev/null || true
-    sleep 2
-    # Force kill if still running
-    for pid in $EXISTING_PIDS; do
-        if kill -0 "$pid" 2>/dev/null; then
-            kill -9 "$pid" 2>/dev/null || true
+# Kill any existing Liquid process to free ZMQ ports
+echo "[liquid] Checking for existing processes..."
+if [ -f "$PIDFILE" ]; then
+    OLD_PID=$(cat "$PIDFILE" 2>/dev/null || true)
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "[liquid] Killing existing process: $OLD_PID"
+        kill "$OLD_PID" 2>/dev/null || true
+        sleep 2
+        if kill -0 "$OLD_PID" 2>/dev/null; then
+            kill -9 "$OLD_PID" 2>/dev/null || true
         fi
-    done
+    fi
+    rm -f "$PIDFILE"
 fi
 
-echo "[tradingbot] Starting live — pair=$PAIR"
+echo "[liquid] Starting live — pair=$PAIR"
+# Write our PID before exec (exec keeps the same PID)
+echo $$ > "$PIDFILE"
 exec poetry run python app.py

@@ -26,7 +26,7 @@
 //   3. In NinjaTrader: Tools > Edit NinjaScript > right-click References > Add...
 //   4. Add references to: NetMQ.dll, Newtonsoft.Json.dll
 //   5. Right-click AddOns > New > AddOn, paste this code, compile (F5)
-//   6. Click New > TradingBot ZMQ Connector in the Control Center
+//   6. Click New > Liquid ZMQ Connector in the Control Center
 
 #region Using declarations
 using System;
@@ -125,7 +125,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             _existingNewMenu = FindMenuItem(cc.MainMenu, "New");
             if (_existingNewMenu == null) return;
 
-            _menuItem = new MenuItem { Header = "TradingBot ZMQ Connector" };
+            _menuItem = new MenuItem { Header = "Liquid ZMQ Connector" };
             _menuItem.Click += OnMenuItemClick;
             _existingNewMenu.Items.Add(_menuItem);
 
@@ -377,6 +377,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         ["entry_price"] = entryOrder.AverageFillPrice,
                         ["quantity"] = entryOrder.Filled > 0 ? entryOrder.Filled : entryOrder.Quantity,
                         ["order_state"] = entryOrder.OrderState.ToString(),
+                        ["account"] = entryOrder.Account?.Name,
                     };
 
                     if (stopOrder != null)
@@ -1215,8 +1216,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                         order.Instrument, closeAction, OrderType.Limit, OrderEntry.Automated, TimeInForce.Gtc,
                         qty, tp, 0, ocoId, $"Target_{tradeId}", DateTime.MinValue, null);
 
-                    if (stopOrder != null) account.Submit(new[] { stopOrder });
-                    if (targetOrder != null) account.Submit(new[] { targetOrder });
+                    if (stopOrder != null)
+                    {
+                        account.Submit(new[] { stopOrder });
+                        _orderTracker.TrackStopLoss(tradeId, stopOrder);
+                    }
+                    if (targetOrder != null)
+                    {
+                        account.Submit(new[] { targetOrder });
+                        _orderTracker.TrackTakeProfit(tradeId, targetOrder);
+                    }
 
                     if (stopOrder != null && targetOrder != null)
                     {

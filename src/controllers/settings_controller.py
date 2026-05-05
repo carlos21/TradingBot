@@ -18,7 +18,7 @@ class SettingsController:
     def save_settings(self):
         payload = request.get_json(silent=True) or {}
         self._svc.save_full_settings(payload)
-        return "", 204
+        return jsonify({"success": True}), 200
 
     def get_accounts(self):
         data = self._svc.get_full_settings()

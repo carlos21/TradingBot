@@ -149,7 +149,7 @@ int OnInit()
    g_dialog.SetHandlers(OnConnectClick, OnTestClick, OnE2EClick);
    g_dialog.Log("Window opened. Click Connect to start ZMQ connection.");
 
-   _logger.Info("TradingBot ZMQ Connector UI ready");
+   _logger.Info("Liquid ZMQ Connector UI ready");
    UpdatePanel();
    return INIT_SUCCEEDED;
 }

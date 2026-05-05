@@ -763,7 +763,7 @@ try {
     Set-EnvLine -Key "MODE" -Value "live"
     Set-EnvLine -Key "PAIR" -Value $pair
     Set-EnvLine -Key "RISK" -Value $risk
-    Set-EnvLine -Key "NT_ACCOUNTS" -Value $accountName
+    # NT accounts are managed via the web admin Settings page (DB is source of truth)
 
     $envLines | Set-Content -Path $envPath -Encoding UTF8
     Write-Status "Settings saved to .env" "Success"
@@ -824,7 +824,7 @@ try {
     Write-Host ""
     if ($script:WslAvailable -and -not $SkipWslService) {
         Write-Host "To override these when starting manually:" -ForegroundColor DarkGray
-        Write-Host "  PAIR=$pair NT_ACCOUNTS=$accountName RISK=$risk .\bin\start_live.sh" -ForegroundColor DarkGray
+        Write-Host "  PAIR=$pair RISK=$risk .\bin\start_live.sh" -ForegroundColor DarkGray
         Write-Host ""
         $startNow = Read-Host "Start the WSL tradingbot service now? (y/N)"
         if ($startNow -match '^[Yy]') {

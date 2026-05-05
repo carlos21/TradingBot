@@ -33,7 +33,7 @@ def main():
     wiring, ds = builder.build()
 
     instance = config.instance_name
-    print(f"[{instance}] Starting TradingBot instance — pair={config.pair} mode={config.mode}")
+    print(f"[{instance}] Starting Liquid instance — pair={config.pair} mode={config.mode}")
 
     if config.mode == "live":
         if not getattr(config, "nt_accounts", None):

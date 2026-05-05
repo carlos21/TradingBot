@@ -59,42 +59,6 @@ def _csv_to_floats(val: str | None) -> list[float] | None:
     return [float(x.strip()) for x in val.split(",")]
 
 
-def _parse_account_part(part: str) -> tuple[str, float | None, float | None, float | None]:
-    """Parse one account entry like 'Account1:risk=100:rr=4' or 'Account2:risk_pct=1.5'."""
-    name = part
-    risk_usd: float | None = None
-    risk_pct: float | None = None
-    rr_ratio: float | None = None
-    if ":" in part:
-        name, opts = part.split(":", 1)
-        for opt in opts.split(":"):
-            opt = opt.strip()
-            if opt.startswith("risk="):
-                risk_usd = float(opt[len("risk="):])
-            elif opt.startswith("risk_pct="):
-                risk_pct = float(opt[len("risk_pct="):])
-            elif opt.startswith("rr="):
-                rr_ratio = float(opt[len("rr="):])
-    return name, risk_usd, risk_pct, rr_ratio
-
-
-def _parse_nt_accounts(val: str) -> list[AccountConfig]:
-    """Parse NT_ACCOUNTS env var.
-
-    Format:  Account1:risk=100:rr=4,Account2:risk_pct=1.5,Account3
-    """
-    if not val:
-        return []
-    accounts: list[AccountConfig] = []
-    for part in val.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        name, risk_usd, risk_pct, rr_ratio = _parse_account_part(part)
-        accounts.append(AccountConfig(name=name, risk_usd=risk_usd, risk_pct=risk_pct, rr_ratio=rr_ratio))
-    return accounts
-
-
 # ---------------------------------------------------------------------------
 # Env var loader
 # ---------------------------------------------------------------------------
@@ -171,7 +135,7 @@ class CliConfigLoader:
 
     def load(self) -> AppConfig:
         p = argparse.ArgumentParser(
-            description="TradingBot — Live & Backtest Mode",
+            description="Liquid — Live & Backtest Mode",
         )
         p.add_argument("--mode", choices=["live", "backtest"], help="Run mode")
         p.add_argument("--pair", help="Trading pair (e.g. MNQ)")
@@ -203,7 +167,7 @@ class CliConfigLoader:
         p.add_argument("--skip-rollover-days", dest="skip_rollover_days", action="store_true", help="Skip rollover days")
         p.add_argument("--no-breakeven", dest="no_breakeven", action="store_true", help="Disable breakeven")
         p.add_argument("--no-reentry-breakeven", dest="no_reentry_breakeven", action="store_true", help="Disable reentry BE")
-        p.add_argument("--nt-accounts", dest="nt_accounts", type=_parse_nt_accounts, help='NT accounts (e.g. "Account1:risk=100,Account2:risk_pct=1.5")')
+        # NT accounts are managed via the Settings page / DB only
         p.add_argument("--zmq-host", dest="zmq_host", help="ZMQ host")
         p.add_argument("--zmq-market-port", dest="zmq_market_port", type=int, help="ZMQ market port")
         p.add_argument("--zmq-command-port", dest="zmq_command_port", type=int, help="ZMQ command port")
@@ -229,8 +193,7 @@ class CliConfigLoader:
                 # argparse lists come as strings when using nargs, but here we use simple types
                 if attr == "timeframes" and isinstance(val, str):
                     val = [x.strip() for x in val.split(",")]
-                if attr == "nt_accounts" and isinstance(val, str):
-                    val = _parse_nt_accounts(val)
+
                 setattr(cfg, attr, val)
         return cfg
 

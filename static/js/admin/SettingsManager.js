@@ -6,6 +6,7 @@ export class SettingsManager {
   constructor(api) {
     this.api = api;
     this.accounts = [];
+    this.editingAccountName = null;
   }
 
   init() {
@@ -41,6 +42,7 @@ export class SettingsManager {
       saveBtn: document.getElementById('settings-save-btn'),
       saveStatus: document.getElementById('settings-save-status'),
       addAccountBtn: document.getElementById('settings-account-add'),
+      addAccountBtnWrapper: document.getElementById('settings-account-add').parentElement,
     };
   }
 
@@ -109,12 +111,17 @@ export class SettingsManager {
         <td class="px-4 py-3 text-gray-300">${riskPct}</td>
         <td class="px-4 py-3 text-gray-300">${rr}</td>
         <td class="px-4 py-3 text-right">
+          <button class="text-amber-400 hover:text-amber-300 transition-colors p-1 mr-1" title="Edit account">
+            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+          </button>
           <button class="text-red-400 hover:text-red-300 transition-colors p-1" title="Remove account">
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
           </button>
         </td>
       `;
-      tr.querySelector('button').addEventListener('click', () => this.removeAccount(acct.name));
+      const buttons = tr.querySelectorAll('button');
+      buttons[0].addEventListener('click', () => this.editAccount(acct.name));
+      buttons[1].addEventListener('click', () => this.removeAccount(acct.name));
       this.el.accountsTbody.appendChild(tr);
     }
   }
@@ -131,15 +138,64 @@ export class SettingsManager {
     const existing = this.accounts.findIndex(a => a.name === name);
     if (existing >= 0) {
       this.accounts[existing] = { name, risk_usd: risk, risk_pct: riskPct, rr_ratio: rr };
+      this.showStatus('Account updated', 'success');
     } else {
       this.accounts.push({ name, risk_usd: risk, risk_pct: riskPct, rr_ratio: rr });
+      this.showStatus('Account added', 'success');
     }
     this.renderAccounts();
+    this.clearAccountForm();
+  }
+
+  clearAccountForm() {
     this.el.accountName.value = '';
     this.el.accountRisk.value = '';
     this.el.accountRiskPct.value = '';
     this.el.accountRr.value = '';
-    this.showStatus('Account added', 'success');
+    this.editingAccountName = null;
+    this.resetAddAccountBtn();
+  }
+
+  resetAddAccountBtn() {
+    this.el.addAccountBtn.innerHTML = `
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+      Add Account
+    `;
+    this.el.addAccountBtn.className = 'px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium text-white transition-colors h-fit flex items-center justify-center gap-2';
+    const cancelBtn = this.el.addAccountBtnWrapper.querySelector('#settings-account-cancel');
+    if (cancelBtn) cancelBtn.remove();
+  }
+
+  setEditAccountBtn() {
+    this.el.addAccountBtn.innerHTML = `
+      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+      Update Account
+    `;
+    this.el.addAccountBtn.className = 'px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg font-medium text-white transition-colors h-fit flex items-center justify-center gap-2';
+    if (!this.el.addAccountBtnWrapper.querySelector('#settings-account-cancel')) {
+      const cancelBtn = document.createElement('button');
+      cancelBtn.id = 'settings-account-cancel';
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'mt-2 w-full px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-600 rounded transition-colors';
+      cancelBtn.textContent = 'Cancel';
+      cancelBtn.addEventListener('click', () => this.cancelEditAccount());
+      this.el.addAccountBtnWrapper.appendChild(cancelBtn);
+    }
+  }
+
+  editAccount(name) {
+    const acct = this.accounts.find(a => a.name === name);
+    if (!acct) return;
+    this.editingAccountName = name;
+    this.el.accountName.value = acct.name;
+    this.el.accountRisk.value = acct.risk_usd ?? '';
+    this.el.accountRiskPct.value = acct.risk_pct ?? '';
+    this.el.accountRr.value = acct.rr_ratio ?? '';
+    this.setEditAccountBtn();
+  }
+
+  cancelEditAccount() {
+    this.clearAccountForm();
   }
 
   removeAccount(name) {

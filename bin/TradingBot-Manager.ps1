@@ -278,8 +278,7 @@ function Update-DashboardSummary {
     $mode = if ($EnvVals["MODE"]) { $EnvVals["MODE"] } else { "live" }
     $pair = if ($EnvVals["PAIR"]) { $EnvVals["PAIR"] } else { "MNQ" }
     $inst = if ($ZmqVals["instrument"]) { $ZmqVals["instrument"] } else { "MNQ 06-26" }
-    $acct = if ($EnvVals["NT_ACCOUNTS"]) { $EnvVals["NT_ACCOUNTS"] } else { "-" }
-    $script:lblConfigSummary.Text = "Mode: $mode  |  Pair: $pair  |  Instrument: $inst  |  Accounts: $acct"
+    $script:lblConfigSummary.Text = "Mode: $mode  |  Pair: $pair  |  Instrument: $inst  |  Accounts: see Admin Settings"
 }
 
 function Test-SettingsValid {
@@ -602,14 +601,7 @@ function New-AccountItem($raw) {
     return [PSCustomObject]@{ Raw = $raw; DisplayText = $display }
 }
 
-# Load existing NT_ACCOUNTS into list
-$ntAccountsValue = $envValues["NT_ACCOUNTS"]
-if ($ntAccountsValue) {
-    foreach ($part in $ntAccountsValue -split ',') {
-        $part = $part.Trim()
-        if ($part) { [void]$lstAccounts.Items.Add((New-AccountItem $part)) }
-    }
-}
+# NT accounts are no longer stored in .env — manage them via the web admin Settings page
 
 # Populate input fields when an account is selected
 $lstAccounts.Add_SelectedIndexChanged({
@@ -664,7 +656,7 @@ $btnAcctRemove.Add_Click({
 
 # --- Accounts hint ---
 $lblAccountsHint = New-Object System.Windows.Forms.Label
-$lblAccountsHint.Text = "Tip: Add accounts in the NT Accounts panel (right). Global RISK/RISK_PCT in .env are used as defaults."
+$lblAccountsHint.Text = "Tip: NT Accounts are managed via the web admin Settings page. DB is the source of truth."
 $lblAccountsHint.Location = New-Object System.Drawing.Point(200, $gy)
 $lblAccountsHint.Size = New-Object System.Drawing.Size(500, 20)
 $lblAccountsHint.Font = New-Object System.Drawing.Font("Segoe UI", 8)
@@ -1078,9 +1070,6 @@ $btnSaveSettings.Add_Click({
             $newEnvValues[$key] = $val
         }
     }
-    # Serialize NT accounts from the list box
-    $ntAccounts = ($lstAccounts.Items | ForEach-Object { $_.Raw }) -join ','
-    $newEnvValues["NT_ACCOUNTS"] = $ntAccounts
     Save-EnvFile -Values $newEnvValues
     Save-ZmqConfig -Values $newZmqValues
 

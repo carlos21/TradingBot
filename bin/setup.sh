@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "=== TradingBot Setup ==="
+echo "=== Liquid Setup ==="
 
 # Detect OS
 if [[ "$OSTYPE" == "darwin"* ]]; then

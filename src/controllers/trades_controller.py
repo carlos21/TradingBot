@@ -9,11 +9,12 @@ from src.utils.app_logger import ILogger
 
 class TradesController:
 
-    def __init__(self, bars_loader: BarsLoader, trade_manager: TradeManager, logger: ILogger, rr_ratio: float = 5.0):
+    def __init__(self, bars_loader: BarsLoader, trade_manager: TradeManager, logger: ILogger, rr_ratio: float = 5.0, strategy=None):
         self.bars_loader = bars_loader
         self.trade_manager = trade_manager
         self.logger = logger
         self.rr_ratio = rr_ratio
+        self.strategy = strategy
 
     def _get_virtual_now(self) -> float:
         """
@@ -170,6 +171,10 @@ class TradesController:
 
         payload = self.trade_manager.close_trade(trade_id, exit_price, exit_time)
 
+        # Sync strategy state so it knows the trade is closed
+        if self.strategy:
+            self.strategy.handle_broker_exit_fill(trade_id, exit_price, "CLOSE")
+
         return jsonify(payload), 200
 
     def close_all_trades(self, pair: str):
@@ -201,6 +206,9 @@ class TradesController:
             try:
                 payload = self.trade_manager.close_trade(trade_id, exit_price, exit_time)
                 closed.append({'trade_id': trade_id, 'exit_price': exit_price, 'result': payload.get('result')})
+                # Sync strategy state so it knows the trade is closed
+                if self.strategy:
+                    self.strategy.handle_broker_exit_fill(trade_id, exit_price, "CLOSE")
             except Exception as e:
                 self.logger.error(f"[TradesController] Failed to close trade {trade_id}: {e}")
                 failed.append({'trade_id': trade_id, 'error': str(e)})

@@ -138,6 +138,8 @@ def _create_bar_callbacks(
                     trade_manager.trade_logger.log(tid, "CMD_SENT", "close_order → NinjaTrader")
                     trade_manager.trade_executor.on_trade_close(tid, close_price)
                     _close_commands_sent.add(tid)
+            # Clear the set so it doesn't grow unbounded across reconnects
+            _close_commands_sent.clear()
     else:
         def combined_bar_callback(bar):
             trade_manager.handle_new_1m_bar(bar)
@@ -375,6 +377,7 @@ def create_app(
                 stop_loss = pos.get('stop_loss')
                 take_profit = pos.get('take_profit')
                 quantity = float(pos.get('quantity', 1))
+                account_name = pos.get('account')
 
                 # Use broker SL/TP if available, otherwise sensible defaults
                 if stop_loss is None:
@@ -397,6 +400,7 @@ def create_app(
                         entry_time=entry_time,
                         rr_ratio=rr_ratio,
                         source="broker_sync",
+                        account=account_name,
                     )
                     # Override contracts to match broker quantity
                     for ot in trade_manager.open_trades:
@@ -479,7 +483,7 @@ def create_app(
 
     # Create controllers
     lines_controller = LinesController(repos.lines, loader, tstrategy, logger=logger)
-    trades_controller = TradesController(loader, trade_manager, logger=logger, rr_ratio=numbers.rr_ratio)
+    trades_controller = TradesController(loader, trade_manager, logger=logger, rr_ratio=numbers.rr_ratio, strategy=tstrategy)
     
     # Initialize analytics service and admin controller
     analytics_service = AnalyticsService(repos.trades)

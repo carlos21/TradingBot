@@ -24,7 +24,7 @@ print(f"URL: {url}")
 
 resp = requests.post(url, json={
     "chat_id": chat_id,
-    "text": "Test notification from TradingBot",
+    "text": "Test notification from Liquid",
 }, timeout=10)
 
 print(f"Status: {resp.status_code}")

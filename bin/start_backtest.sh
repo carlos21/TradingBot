@@ -17,5 +17,5 @@ export BARS_PER_SECOND="${BARS_PER_SECOND:-10.0}"
 
 cd "$PROJECT_DIR"
 
-echo "[tradingbot] Starting simulation — pair=$PAIR csv=$CSV_FILE"
+echo "[liquid] Starting simulation — pair=$PAIR csv=$CSV_FILE"
 exec poetry run python app.py

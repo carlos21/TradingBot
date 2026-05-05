@@ -66,7 +66,7 @@ export class NtAccountsDisplay {
     if (this.el.warning) {
       if (disabledReason) {
         this.el.warning.classList.remove('hidden');
-        this.el.warning.querySelector('a')?.setAttribute('href', '/admin');
+        this.el.warning.querySelector('a')?.setAttribute('href', '/admin/settings');
       } else {
         this.el.warning.classList.add('hidden');
       }

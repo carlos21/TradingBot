@@ -146,13 +146,13 @@ class AppBuilder:
         logger = FileAndConsoleLogger(log_dir=cfg.log_dir, instance_name=cfg.instance_name)
 
         if cfg.risk_per_trade is not None:
-            print(f"[tradingbot] Risk config: fixed ${cfg.risk_per_trade:.0f} per trade")
+            print(f"[liquid] Risk config: fixed ${cfg.risk_per_trade:.0f} per trade")
         elif cfg.risk_pct_per_trade is not None:
-            print(f"[tradingbot] Risk config: {cfg.risk_pct_per_trade}% of account balance")
+            print(f"[liquid] Risk config: {cfg.risk_pct_per_trade}% of account balance")
         else:
-            print("[tradingbot] Risk config: none (NinjaTrader will use 1 contract)")
+            print("[liquid] Risk config: none (NinjaTrader will use 1 contract)")
 
-        print("[tradingbot] Starting ZeroMQ gateway...")
+        print("[liquid] Starting ZeroMQ gateway...")
         if cfg.nt_accounts:
             from src.gateway import create_multi_account_live_components
             ds, executor = create_multi_account_live_components(

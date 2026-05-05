@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Installs the TradingBot systemd service on WSL.
+# Installs the Liquid systemd service on WSL.
 # Run once:  sudo ./bin/install_service.sh
 #
 # After install:
@@ -29,13 +29,13 @@ SERVICE_SRC="$PROJECT_DIR/services/tradingbot.service"
 WSL_USER="${SUDO_USER:-$(logname 2>/dev/null || echo $USER)}"
 WSL_HOME=$(eval echo "~$WSL_USER")
 
-echo -e "${BOLD}Installing TradingBot service for user: $WSL_USER${RST}"
+echo -e "${BOLD}Installing Liquid service for user: $WSL_USER${RST}"
 echo ""
 
 # Generate the actual service file with resolved paths
 cat > /etc/systemd/system/tradingbot.service <<EOF
 [Unit]
-Description=TradingBot Live Server
+Description=Liquid Live Server
 After=network.target
 
 [Service]

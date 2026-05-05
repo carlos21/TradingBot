@@ -47,7 +47,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             _window = new Window
             {
-                Title = "TradingBot ZMQ Connector",
+                Title = "Liquid ZMQ Connector",
                 Width = 550,
                 Height = 450,
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
