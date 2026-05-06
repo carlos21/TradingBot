@@ -41,12 +41,7 @@ class TradesController:
         """Return all trades (open and closed) for the pair."""
         trades = self.trade_manager.trade_repository.list_trades(pair)
 
-        # --- DEBUG LOG ---
         self.logger.info(f"[TradesController] list_trades('{pair}') found {len(trades)} trades.")
-        for i, t in enumerate(trades):
-            self.logger.info(f"  [{i}] ID={t.trade_id} EntryTime={t.entry_time.timestamp()} ExitTime={t.exit_time.timestamp() if t.exit_time else 'None'}")
-        # -----------------
-
         data = []
         for t in trades:
             data.append({

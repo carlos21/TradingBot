@@ -1,6 +1,7 @@
 /**
  * Displays configured NT accounts in the chart header.
- * Shows warning banner when no accounts are configured.
+ * Renders the first few accounts as inline pills, with a +N overflow
+ * indicator that expands to show all accounts on click.
  */
 export class NtAccountsDisplay {
   constructor(socket) {
@@ -12,6 +13,8 @@ export class NtAccountsDisplay {
       liveIndicator: document.getElementById('liveIndicator'),
       testTradeControls: document.getElementById('testTradeControls'),
     };
+    this._popover = null;
+    this._outsideClickHandler = null;
   }
 
   init() {
@@ -38,25 +41,49 @@ export class NtAccountsDisplay {
   render(accounts, disabledReason) {
     this.accounts = accounts || [];
 
-    // Render account badges
     if (this.el.display) {
       this.el.display.innerHTML = '';
+      this._closePopover();
+
       if (this.accounts.length > 0) {
+        // Label
         const label = document.createElement('span');
-        label.className = 'text-gray-400 mr-1';
-        label.textContent = 'NT:';
+        label.className = 'text-gray-400 mr-0.5 text-[10px] uppercase tracking-wider flex-shrink-0';
+        label.textContent = 'NT';
         this.el.display.appendChild(label);
 
-        for (const acct of this.accounts) {
+        const maxVisible = 2;
+        const visible = this.accounts.slice(0, maxVisible);
+        const hidden = this.accounts.slice(maxVisible);
+
+        // Visible account pills
+        for (const acct of visible) {
           const badge = document.createElement('span');
-          badge.className = 'px-2 py-0.5 bg-green-700 text-white rounded font-medium';
+          badge.className =
+            'px-1.5 py-0.5 bg-green-700 text-white rounded text-[11px] font-medium whitespace-nowrap flex-shrink-0';
           badge.textContent = acct.name || acct;
           badge.title = this._formatTooltip(acct);
           this.el.display.appendChild(badge);
         }
+
+        // Overflow indicator
+        if (hidden.length > 0) {
+          const overflowBtn = document.createElement('button');
+          overflowBtn.className =
+            'px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 text-white rounded text-[11px] font-medium transition-colors flex-shrink-0';
+          overflowBtn.textContent = `+${hidden.length}`;
+          overflowBtn.title = `${hidden.length} more account${hidden.length !== 1 ? 's' : ''}`;
+
+          overflowBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this._togglePopover(overflowBtn);
+          });
+
+          this.el.display.appendChild(overflowBtn);
+        }
       } else {
         const none = document.createElement('span');
-        none.className = 'text-gray-500 italic';
+        none.className = 'text-gray-500 italic text-xs';
         none.textContent = 'No accounts';
         this.el.display.appendChild(none);
       }
@@ -79,12 +106,77 @@ export class NtAccountsDisplay {
     }
   }
 
+  _togglePopover(anchorBtn) {
+    if (this._popover) {
+      this._closePopover();
+      return;
+    }
+
+    const popover = document.createElement('div');
+    popover.className =
+      'absolute mt-1 w-56 bg-gray-800 border border-gray-600 rounded shadow-lg z-50 overflow-hidden';
+    // Position it near the anchor
+    const rect = anchorBtn.getBoundingClientRect();
+    popover.style.position = 'fixed';
+    popover.style.left = `${rect.left}px`;
+    popover.style.top = `${rect.bottom + 4}px`;
+
+    const header = document.createElement('div');
+    header.className =
+      'px-3 py-1.5 bg-gray-700 text-gray-300 text-[10px] uppercase tracking-wider font-semibold border-b border-gray-600';
+    header.textContent = `All Accounts (${this.accounts.length})`;
+    popover.appendChild(header);
+
+    const list = document.createElement('ul');
+    list.className = 'max-h-48 overflow-y-auto';
+
+    for (const acct of this.accounts) {
+      const li = document.createElement('li');
+      li.className =
+        'px-3 py-2 hover:bg-gray-700 border-b border-gray-700 last:border-0';
+
+      const nameRow = document.createElement('div');
+      nameRow.className = 'text-xs font-semibold text-white';
+      nameRow.textContent = acct.name || acct;
+
+      const metaRow = document.createElement('div');
+      metaRow.className = 'text-[10px] text-gray-400 mt-0.5';
+      metaRow.textContent = this._formatTooltip(acct);
+
+      li.appendChild(nameRow);
+      li.appendChild(metaRow);
+      list.appendChild(li);
+    }
+
+    popover.appendChild(list);
+    document.body.appendChild(popover);
+    this._popover = popover;
+
+    this._outsideClickHandler = (e) => {
+      if (!popover.contains(e.target) && e.target !== anchorBtn) {
+        this._closePopover();
+      }
+    };
+    document.addEventListener('click', this._outsideClickHandler);
+  }
+
+  _closePopover() {
+    if (this._popover) {
+      this._popover.remove();
+      this._popover = null;
+    }
+    if (this._outsideClickHandler) {
+      document.removeEventListener('click', this._outsideClickHandler);
+      this._outsideClickHandler = null;
+    }
+  }
+
   _formatTooltip(acct) {
     if (typeof acct === 'string') return acct;
     const parts = [];
     if (acct.risk_usd != null) parts.push(`$${acct.risk_usd} risk`);
     if (acct.risk_pct != null) parts.push(`${acct.risk_pct}% risk`);
     if (acct.rr_ratio != null) parts.push(`${acct.rr_ratio}:1 RR`);
-    return parts.length > 0 ? parts.join(' | ') : acct.name;
+    return parts.length > 0 ? parts.join(' · ') : acct.name;
   }
 }
