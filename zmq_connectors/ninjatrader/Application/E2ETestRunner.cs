@@ -16,14 +16,11 @@ namespace NinjaTrader.NinjaScript.AddOns
     {
         private readonly ZmqNetwork _network;
         private readonly ILogger _logger;
-        private readonly System.Collections.Generic.Dictionary<string, NinjaTrader.Cbi.Account> _accounts;
 
-        public ZmqE2ETestRunner(ZmqNetwork network, ILogger logger,
-            System.Collections.Generic.Dictionary<string, NinjaTrader.Cbi.Account> accounts)
+        public ZmqE2ETestRunner(ZmqNetwork network, ILogger logger)
         {
             _network = network ?? throw new System.ArgumentNullException(nameof(network));
             _logger = logger ?? throw new System.ArgumentNullException(nameof(logger));
-            _accounts = accounts ?? throw new System.ArgumentNullException(nameof(accounts));
         }
 
         public async Task<int> RunAllScenariosAsync()
@@ -71,7 +68,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (scenario == "multi_account")
                     {
                         // Use actual connected accounts instead of hardcoded Sim101/Sim102
-                        var accountNames = _accounts?.Keys?.ToList() ?? new System.Collections.Generic.List<string>();
+                        var accountNames = NinjaTrader.Cbi.Account.All.Select(a => a.Name).ToList();
                         if (accountNames.Count == 0)
                         {
                             _logger.Warning("[TEST] multi_account: No accounts connected — skipping");
@@ -114,15 +111,15 @@ namespace NinjaTrader.NinjaScript.AddOns
         /// </summary>
         private bool ValidateSimulationEnvironment()
         {
-            if (_accounts == null || _accounts.Count == 0)
+            if (NinjaTrader.Cbi.Account.All.Count == 0)
             {
                 _logger.Error("No accounts available for E2E testing");
                 return false;
             }
 
-            foreach (var kvp in _accounts)
+            foreach (var acct in NinjaTrader.Cbi.Account.All)
             {
-                string name = kvp.Key;
+                string name = acct.Name;
                 bool isSim = name.StartsWith("Sim", System.StringComparison.OrdinalIgnoreCase);
                 bool isDemo = name.StartsWith("DEMO", System.StringComparison.OrdinalIgnoreCase);
                 if (!isSim && !isDemo)

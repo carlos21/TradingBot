@@ -21,17 +21,15 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private readonly ZmqNetwork _network;
         private readonly ILogger _logger;
-        private readonly Dictionary<string, Account> _accounts;
         private readonly string _instrument;
         private readonly IOrderTracker _orderTracker;
         private readonly bool _simulate;
 
-        public OrderOpenHandler(ZmqNetwork network, ILogger logger, Dictionary<string, Account> accounts, 
+        public OrderOpenHandler(ZmqNetwork network, ILogger logger,
             string instrument, IOrderTracker orderTracker, bool simulate = false)
         {
             _network = network ?? throw new ArgumentNullException(nameof(network));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _accounts = accounts ?? throw new ArgumentNullException(nameof(accounts));
             _instrument = instrument;
             _orderTracker = orderTracker ?? throw new ArgumentNullException(nameof(orderTracker));
             _simulate = simulate;
@@ -108,19 +106,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
-        private Account ResolveAccount(string accountName)
+        private static Account ResolveAccount(string accountName)
         {
             if (string.IsNullOrEmpty(accountName))
             {
-                // Default: use the first account if only one exists
-                if (_accounts.Count == 1)
-                {
-                    foreach (var kvp in _accounts) return kvp.Value;
-                }
+                if (Account.All.Count == 1) return Account.All.FirstOrDefault();
                 return null;
             }
-            _accounts.TryGetValue(accountName, out var account);
-            return account;
+            return Account.All.FirstOrDefault(a => a.Name == accountName);
         }
 
         private static (string tradeId, string direction, double slPoints, double rrRatio) ParsePayload(JObject payload)

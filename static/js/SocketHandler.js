@@ -4,6 +4,26 @@ export class SocketHandler {
     this.chart = chart;
   }
 
+  _setOverlayVisible(visible) {
+    const overlay = document.getElementById('connectionOverlay');
+    if (overlay) {
+      if (visible) overlay.classList.remove('hidden');
+      else overlay.classList.add('hidden');
+    }
+  }
+
+  _setConnectionStatus(text) {
+    const el = document.getElementById('connectionStatus');
+    if (el) el.textContent = text;
+  }
+
+  _showReconnectButton(visible) {
+    const btn = document.getElementById('reconnectBtn');
+    const startBtn = document.getElementById('startStreamingBtn');
+    if (btn) btn.classList.toggle('hidden', !visible);
+    if (startBtn) startBtn.classList.toggle('hidden', visible);
+  }
+
   init() {
     const c = this.chart;
 
@@ -113,6 +133,41 @@ export class SocketHandler {
       console.log('[ChartViewer] stream_status received:', data);
       if (!data.playing) c.isPlaying = false;
       if (data.live_mode) c.liveMode = true;
+
+      if (data.live_mode) {
+        if (data.platform_connected) {
+          this._setOverlayVisible(false);
+          this._showReconnectButton(false);
+        } else {
+          this._setOverlayVisible(true);
+          this._setConnectionStatus('Waiting for NinjaTrader connection...');
+        }
+      } else {
+        // Backtest mode — never show overlay
+        this._setOverlayVisible(false);
+      }
+    });
+
+    this.socket.on('gateway_started', () => {
+      this._setConnectionStatus('ZeroMQ gateway started. Launching NinjaTrader...');
+    });
+
+    this.socket.on('platform_connected', () => {
+      this._setOverlayVisible(false);
+      this._showReconnectButton(false);
+      this._setConnectionStatus('Connected! Loading chart...');
+    });
+
+    this.socket.on('platform_disconnected', () => {
+      this._setOverlayVisible(true);
+      this._setConnectionStatus('Lost connection — NinjaTrader disconnected');
+      this._showReconnectButton(true);
+    });
+
+    this.socket.on('gateway_stopped', () => {
+      this._setOverlayVisible(true);
+      this._setConnectionStatus('Streaming stopped');
+      this._showReconnectButton(false);
     });
   }
 }

@@ -42,6 +42,7 @@ from src.routes import (
     register_socketio_handlers,
     register_settings_routes,
     register_nt_routes,
+    register_stream_routes,
 )
 
 
@@ -526,6 +527,7 @@ def create_app(
     register_admin_routes(app, admin_controller, logger)
     register_settings_routes(app, settings_controller, logger)
     register_nt_routes(app, nt_service, logger)
+    register_stream_routes(app, data_source, nt_service, settings_service, socketio, logger)
     register_debug_routes(
         app, tstrategy, loader, trade_manager, repos.lines, repos.trades,
         data_source, pair, notifier, analytics, logger=logger

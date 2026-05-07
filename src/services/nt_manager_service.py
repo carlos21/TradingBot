@@ -1,6 +1,7 @@
 """Service for Windows-side NinjaTrader management from WSL."""
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -10,6 +11,21 @@ class NtManagerService:
 
     def __init__(self, project_dir: str | None = None):
         self._project_dir = Path(project_dir) if project_dir else Path(__file__).resolve().parents[2]
+
+    def _can_run_windows_exe(self) -> bool:
+        """Check if WSL can execute Windows binaries (e.g. powershell.exe)."""
+        if not shutil.which("powershell.exe"):
+            return False
+        try:
+            # Quick test: run a no-op PowerShell command
+            subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", "exit 0"],
+                capture_output=True,
+                timeout=5,
+            )
+            return True
+        except (OSError, subprocess.TimeoutExpired):
+            return False
 
     def _run_ps(self, command: str) -> subprocess.CompletedProcess:
         return subprocess.run(
@@ -36,6 +52,9 @@ class NtManagerService:
 
     def find_nt_exe(self) -> dict:
         """Try to locate NinjaTrader executable via Windows registry."""
+        if not self._can_run_windows_exe():
+            return {"found": False, "path": None, "message": "WSL cannot run Windows binaries (powershell.exe unavailable). Start NinjaTrader manually."}
+
         ps = (
             'try { '
             '$key = Get-ItemProperty "HKLM:\\SOFTWARE\\NinjaTrader, LLC\\NinjaTrader 8" -ErrorAction Stop; '
@@ -62,6 +81,12 @@ class NtManagerService:
         """Launch NinjaTrader and auto-login with the given credentials."""
         if not username or not password:
             return {"success": False, "message": "Username and password are required"}
+
+        if not self._can_run_windows_exe():
+            return {
+                "success": False,
+                "message": "WSL cannot run Windows binaries (powershell.exe unavailable). Start NinjaTrader manually.",
+            }
 
         ps_script = self._project_dir / "bin" / "Start-NinjaTraderAutoLogin.ps1"
         if not ps_script.exists():

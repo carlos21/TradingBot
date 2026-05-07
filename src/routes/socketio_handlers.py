@@ -29,18 +29,27 @@ def register_socketio_handlers(
 
     @socketio.on('connect')
     def on_connect(_auth):
+        gateway_running = False
+        platform_connected = False
+        if isinstance(data_source, ZMQDataSource) and data_source.gateway:
+            gateway_running = data_source.gateway.is_running
+            platform_connected = data_source.gateway.is_connected
+
         emit('stream_status', {
             'playing': loader.streaming,
             'live_mode': live_mode,
             'nt_accounts': account_names,
+            'gateway_running': gateway_running,
+            'platform_connected': platform_connected,
             'streaming_disabled_reason': (
                 'No NT accounts configured' if live_mode and not account_names else None
             ),
         })
-        if live_mode and isinstance(data_source, ZMQDataSource) and data_source._historical_bars:
-            emit('history_ready', {'count': len(data_source._historical_bars)})
-            # Request fresh bars from NinjaTrader (once per browser connect)
-            data_source.request_refresh(days=1)
+        if live_mode and isinstance(data_source, ZMQDataSource):
+            # Always request a refresh on browser connect so the chart gets
+            # fresh historical data. NT no longer auto-sends history on connect.
+            if not data_source.is_refreshing:
+                data_source.request_refresh(days=1)
 
     @socketio.on('start_stream')
     def on_start_stream(payload):
@@ -100,3 +109,10 @@ def register_socketio_handlers(
         fast      = bool(payload.get('fast', True))
         ts = loader.jump_day(direction=direction, fast=fast)
         emit('jump_result', {'to': ts})
+
+    # Wire up platform connection state changes
+    if isinstance(data_source, ZMQDataSource) and data_source.gateway:
+        def _on_conn_change(connected: bool):
+            event_name = 'platform_connected' if connected else 'platform_disconnected'
+            socketio.emit(event_name)
+        data_source.gateway.on_connection_change(_on_conn_change)

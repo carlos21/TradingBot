@@ -14,13 +14,19 @@ export class ControlsView {
     this.testShortBtn = document.getElementById('testShortBtn');
     this.closeAllBtn = document.getElementById('closeAllBtn');
     this.testTradeControls = document.getElementById('testTradeControls');
+    this.testDropdownToggle = document.getElementById('testDropdownToggle');
+    this.testDropdownMenu = document.getElementById('testDropdownMenu');
+    this.startStreamingBtn = document.getElementById('startStreamingBtn');
+    this.reconnectBtn = document.getElementById('reconnectBtn');
 
     this._bindReplayEvents();
     this._bindTimeframeEvents();
     this._bindTestTradeEvents();
+    this._bindStreamingEvents();
+    this._bindTestDropdown();
 
     this.socket.on('stream_status', ({ playing, live_mode }) => {
-      if (!playing) this.toggleBtn.textContent = 'Play';
+      if (!playing && this.toggleBtn) this.toggleBtn.textContent = 'Play';
       if (live_mode) this._applyLiveMode();
     });
 
@@ -29,6 +35,7 @@ export class ControlsView {
   }
 
   _bindReplayEvents() {
+    if (!this.toggleBtn) return;
     this.toggleBtn.addEventListener('click', () => {
       this.chartViewer.toggleReplay();
       this.toggleBtn.textContent = this.chartViewer.isPlaying ? 'Pause' : 'Play';
@@ -55,6 +62,61 @@ export class ControlsView {
   _setActiveTf(button) {
     this.tfButtons.forEach(b => b.classList.remove('active'));
     button.classList.add('active');
+  }
+
+  _bindStreamingEvents() {
+    if (this.startStreamingBtn) {
+      this.startStreamingBtn.addEventListener('click', async () => {
+        const statusEl = document.getElementById('connectionStatus');
+        if (statusEl) statusEl.textContent = 'Starting ZeroMQ gateway…';
+        try {
+          const resp = await fetch('/api/stream/start', { method: 'POST' });
+          const data = await resp.json();
+          if (statusEl) statusEl.textContent = data.message || 'Starting…';
+        } catch (err) {
+          if (statusEl) statusEl.textContent = 'Error: ' + err.message;
+        }
+      });
+    }
+
+    if (this.reconnectBtn) {
+      this.reconnectBtn.addEventListener('click', async () => {
+        const statusEl = document.getElementById('connectionStatus');
+        if (statusEl) statusEl.textContent = 'Reconnecting…';
+        this.reconnectBtn.classList.add('hidden');
+        try {
+          const resp = await fetch('/api/stream/start', { method: 'POST' });
+          const data = await resp.json();
+          if (statusEl) statusEl.textContent = data.message || 'Starting…';
+        } catch (err) {
+          if (statusEl) statusEl.textContent = 'Error: ' + err.message;
+          this.reconnectBtn.classList.remove('hidden');
+        }
+      });
+    }
+  }
+
+  _bindTestDropdown() {
+    if (!this.testDropdownToggle || !this.testDropdownMenu) return;
+
+    const closeMenu = () => this.testDropdownMenu.classList.add('hidden');
+
+    this.testDropdownToggle.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.testDropdownMenu.classList.toggle('hidden');
+    });
+
+    // Close when clicking outside
+    document.addEventListener('click', (e) => {
+      if (!this.testDropdownToggle.contains(e.target) && !this.testDropdownMenu.contains(e.target)) {
+        closeMenu();
+      }
+    });
+
+    // Close when clicking a menu item
+    this.testDropdownMenu.querySelectorAll('button').forEach(btn => {
+      btn.addEventListener('click', closeMenu);
+    });
   }
 
   _bindTestTradeEvents() {

@@ -171,6 +171,7 @@ to be:
         self._platform_connected = False
         self._last_heartbeat_time: float | None = None
         self._platform_info: dict[str, Any] | None = None
+        self._connection_listeners: list[Callable[[bool], None]] = []
 
         # Pending commands for acknowledgment tracking
         self._pending_commands: dict[int, dict[str, Any]] = {}  # seq_num -> command info
@@ -490,6 +491,11 @@ to be:
                     if elapsed > self.config.heartbeat_timeout_sec and self._platform_connected:
                             self.logger.warning(f"Platform heartbeat timeout ({elapsed:.1f}s) - expected every {self.config.heartbeat_interval_sec}s")
                             self._platform_connected = False
+                            for cb in self._connection_listeners:
+                                try:
+                                    cb(False)
+                                except Exception:
+                                    pass
                 else:
                     # No heartbeat received yet after connection
                     # This is normal during initial connection phase
@@ -574,6 +580,11 @@ to be:
                 if not prev_connected:
                     self._platform_connected = True
                     self.logger.info("Platform connected (heartbeat received)")
+                    for cb in self._connection_listeners:
+                        try:
+                            cb(True)
+                        except Exception:
+                            pass
         except Exception as e:
             self.logger.debug(f"Error handling heartbeat: {e}")
 
@@ -587,6 +598,11 @@ to be:
         pair = payload.get('pair', 'unknown')
         account = payload.get('account', 'N/A')
         self.logger.info(f"Platform connected: {platform} v{version} | Pair: {pair} | Account: {account}")
+        for cb in self._connection_listeners:
+            try:
+                cb(True)
+            except Exception:
+                pass
 
     def _handle_entry_fill(self, payload: dict[str, Any]) -> None:
         """Handle entry fill notification."""
@@ -934,6 +950,14 @@ to be:
         """
         self.on(MessageType.POSITION_SYNC, callback)
 
+    def on_connection_change(self, callback: Callable[[bool], None]) -> None:
+        """Register callback for platform connection state changes.
+
+        Called with True when platform connects (heartbeat or connect handshake)
+        and False when heartbeat timeout occurs.
+        """
+        self._connection_listeners.append(callback)
+
     def on_test_start(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """Register test start callback.
 
@@ -1162,6 +1186,11 @@ to be:
     # -------------------------------------------------------------------------
     # Public API - Status
     # -------------------------------------------------------------------------
+
+    @property
+    def is_running(self) -> bool:
+        """Check if gateway has been started."""
+        return self._running
 
     @property
     def is_connected(self) -> bool:

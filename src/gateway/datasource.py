@@ -482,6 +482,11 @@ class ZMQDataSource(CombinedDataSource):
         return self._live
 
     @property
+    def is_refreshing(self) -> bool:
+        """Check if a historical data refresh is in progress."""
+        return self._refreshing
+
+    @property
     def is_connected(self) -> bool:
         """Check if connected to platform."""
         return self._gateway is not None and self._gateway.is_connected

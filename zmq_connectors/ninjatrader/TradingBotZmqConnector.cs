@@ -72,7 +72,6 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         // State
         private volatile bool _connected;
-        private Dictionary<string, Account> _accounts;
         private Instrument _subscribedInstrument;
 
         // When true, ALL command handlers force simulate mode (no real orders)
@@ -238,24 +237,20 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // This ensures Python's SUB sockets are ready before we send messages
                 Thread.Sleep(300);
 
-                // Query config from Python (comma-separated account names)
-                string configuredAccounts = _network.QueryConfig("accounts");
-                List<string> accountNames = null;
-                if (!string.IsNullOrEmpty(configuredAccounts))
+                // Subscribe to execution and order updates on ALL accounts.
+                // Account config travels per-trade in the command payload;
+                // no handshake query is needed.
+                foreach (var acct in Account.All)
                 {
-                    accountNames = configuredAccounts.Split(',').Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s)).ToList();
-                    _logger.Info($"Python specified accounts: {string.Join(", ", accountNames)}");
+                    acct.ExecutionUpdate += OnExecutionUpdate;
+                    acct.OrderUpdate += OnOrderUpdate;
                 }
 
-                // Initialize NinjaTrader integrations BEFORE creating command handlers that capture _accounts
-                InitializeAccounts(accountNames);
-
-                // Create dispatcher AFTER accounts are initialized so handlers get a valid reference
+                // Create dispatcher
                 _dispatcher = CreateCommandDispatcher();
 
-                // Send connect handshake (reporting what accounts we'll use)
-                string primaryAccount = _accounts?.Count > 0 ? _accounts.Keys.First() : null;
-                _network.SendConnect("ninjatrader", _config.PlatformVersion, account: primaryAccount, pair: _config.Instrument.Split(' ')[0]);
+                // Send connect handshake (minimal — account name is not needed)
+                _network.SendConnect("ninjatrader", _config.PlatformVersion, pair: _config.Instrument.Split(' ')[0]);
                 _logger.Success("Connected to Python TradingBot via ZeroMQ");
 
                 // Start background threads
@@ -266,12 +261,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _heartbeatThread.Start();
                 
                 // Restore order tracking from broker after potential crash (for each account)
-                if (_accounts != null)
+                foreach (var acct in Account.All)
                 {
-                    foreach (var kvp in _accounts)
-                    {
-                        _orderTracker.RestoreFromBrokerOrders(kvp.Value, _logger);
-                    }
+                    _orderTracker.RestoreFromBrokerOrders(acct, _logger);
                 }
 
                 // Report actual broker positions to Python (broker is source of truth)
@@ -280,11 +272,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 SubscribeToMarketData();
                 SubscribeToLiveBars();
 
-                // Send historical data
-                _ = SendHistoryAsync().ContinueWith(t =>
-                {
-                    if (t.IsFaulted) _logger?.Error("SendHistoryAsync failed", t.Exception?.GetBaseException());
-                }, TaskContinuationOptions.OnlyOnFaulted);
+                // Historical data is NOT sent automatically on connect.
+                // Python requests it explicitly via REFRESH_REQUEST when needed.
 
                 UpdateStats();
             }
@@ -311,7 +300,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // Stop market-data thread BEFORE tearing down ZMQ sockets
                 UnsubscribeFromLiveBars();
                 UnsubscribeFromMarketData();
-                UninitializeAccounts();
+
+                // Unsubscribe from ALL account events
+                foreach (var acct in Account.All)
+                {
+                    try { acct.ExecutionUpdate -= OnExecutionUpdate; } catch { }
+                    try { acct.OrderUpdate -= OnOrderUpdate; } catch { }
+                }
 
                 // Allow in-flight background sends to drain before disposing sockets
                 Thread.Sleep(100);
@@ -400,11 +395,9 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 // Also report any untracked working orders (orphan detection) across all accounts
                 var untrackedOrders = new JArray();
-                if (_accounts != null)
+                foreach (var acct in Account.All)
                 {
-                    foreach (var kvp in _accounts)
-                    {
-                        foreach (var order in kvp.Value.Orders ?? System.Linq.Enumerable.Empty<Order>())
+                    foreach (var order in acct.Orders ?? System.Linq.Enumerable.Empty<Order>())
                         {
                             if (order.OrderState != OrderState.Working && order.OrderState != OrderState.Accepted)
                                 continue;
@@ -417,12 +410,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                                     ["order_name"] = order.Name,
                                     ["trade_id"] = tradeIdFromName,
                                     ["order_type"] = order.OrderType.ToString(),
-                                    ["account"] = kvp.Key,
+                                    ["account"] = acct.Name,
                                 });
                             }
                         }
                     }
-                }
 
                 _logger.Info($"[Sync] Reporting {positions.Count} position(s) to Python (broker is source of truth)");
                 
@@ -449,9 +441,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             var dispatcher = new CommandDispatcher(_logger);
             // Register command handlers - Chain of Responsibility pattern
             bool simulate = _ui?.IsSimulateTradesEnabled ?? false;
-            dispatcher.Register(new OrderOpenHandler(_network, _logger, _accounts, _config.Instrument, _orderTracker, simulate));
-            dispatcher.Register(new OrderCloseHandler(_network, _logger, _accounts, _config.Instrument, _orderTracker, simulate));
-            dispatcher.Register(new OrderModifyHandler(_network, _logger, _accounts, _orderTracker, simulate));
+            dispatcher.Register(new OrderOpenHandler(_network, _logger, _config.Instrument, _orderTracker, simulate));
+            dispatcher.Register(new OrderCloseHandler(_network, _logger, _config.Instrument, _orderTracker, simulate));
+            dispatcher.Register(new OrderModifyHandler(_network, _logger, _orderTracker, simulate));
             dispatcher.Register(new RefreshRequestHandler(_network, _logger, SendHistoryAsync));
             dispatcher.Register(new TestStartHandler(_network, _logger));
             return dispatcher;
@@ -881,84 +873,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         // Account / Order Management
         // ═══════════════════════════════════════════════════════════════════
 
-        private void InitializeAccounts(List<string> preferredAccountNames)
+        private static Account ResolveAccountForOrder(Order order)
         {
-            try
-            {
-                _accounts = new Dictionary<string, Account>();
-
-                if (Account.All.Count == 0)
-                {
-                    _logger.Warning("No trading accounts found");
-                    _network?.SendError("ninjatrader", "no_account", "No trading accounts found");
-                    return;
-                }
-
-                if (preferredAccountNames != null && preferredAccountNames.Count > 0)
-                {
-                    foreach (var name in preferredAccountNames)
-                    {
-                        var acct = Account.All.FirstOrDefault(a => a.Name == name);
-                        if (acct != null)
-                        {
-                            _accounts[name] = acct;
-                            _logger.Info($"Using Python-specified account: {acct.Name}");
-                        }
-                        else
-                        {
-                            _logger.Warning($"Python-specified account '{name}' not found, skipping");
-                        }
-                    }
-                }
-
-                // Fallback: if no preferred accounts matched, use all available accounts
-                if (_accounts.Count == 0)
-                {
-                    foreach (var acct in Account.All)
-                    {
-                        _accounts[acct.Name] = acct;
-                        _logger.Info($"Using account: {acct.Name}");
-                    }
-                }
-
-                // Subscribe to execution and order updates for all accounts
-                foreach (var kvp in _accounts)
-                {
-                    kvp.Value.ExecutionUpdate += OnExecutionUpdate;
-                    kvp.Value.OrderUpdate += OnOrderUpdate;
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.Error("Account initialization failed", ex);
-                _network?.SendError("ninjatrader", "account_init_failed", ex.Message, FormatExceptionDetails(ex));
-            }
-        }
-
-        private void UninitializeAccounts()
-        {
-            if (_accounts != null)
-            {
-                foreach (var kvp in _accounts)
-                {
-                    try
-                    {
-                        kvp.Value.ExecutionUpdate -= OnExecutionUpdate;
-                        kvp.Value.OrderUpdate -= OnOrderUpdate;
-                    }
-                    catch { /* ignore */ }
-                }
-                _accounts = null;
-            }
-        }
-
-        private Account ResolveAccountForOrder(Order order)
-        {
-            if (order?.Account == null) return null;
-            string name = order.Account.Name;
-            if (_accounts != null && _accounts.TryGetValue(name, out var acct))
-                return acct;
-            return null;
+            return order?.Account;
         }
 
         private void OnOrderUpdate(object sender, OrderEventArgs e)
@@ -1525,7 +1442,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             _ui?.SetE2EButtonEnabled(false);
             try
             {
-                var runner = new ZmqE2ETestRunner(_network, _logger, _accounts);
+                var runner = new ZmqE2ETestRunner(_network, _logger);
                 await runner.RunAllScenariosAsync();
             }
             finally

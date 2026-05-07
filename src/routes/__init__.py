@@ -17,6 +17,7 @@ from .lines_routes import register_lines_routes
 from .nt_routes import register_nt_routes
 from .settings_routes import register_settings_routes
 from .socketio_handlers import register_socketio_handlers
+from .stream_routes import register_stream_routes
 from .trades_routes import register_trades_routes
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "register_socketio_handlers",
     "register_settings_routes",
     "register_nt_routes",
+    "register_stream_routes",
 ]

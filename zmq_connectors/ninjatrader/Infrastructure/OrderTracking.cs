@@ -297,7 +297,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
 
                 IsRestored = true;
-                logger?.Success($"[Recovery] Restored {entryCount} entries, {stopCount} stops, {targetCount} targets, {closeCount} close orders from broker");
+                int totalRestored = entryCount + stopCount + targetCount + closeCount;
+                if (totalRestored > 0)
+                {
+                    logger?.Success($"[Recovery] Restored {entryCount} entries, {stopCount} stops, {targetCount} targets, {closeCount} close orders from broker ({account.Name})");
+                }
             }
         }
 

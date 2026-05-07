@@ -3,6 +3,21 @@ import { DataService } from './DataService.js';
 import { ControlsView } from './ControlsView.js';
 import { NtAccountsDisplay } from './NtAccountsDisplay.js';
 
+function hideOverlay() {
+    const overlay = document.getElementById('connectionOverlay');
+    if (overlay) overlay.classList.add('hidden');
+}
+
+function showOverlay() {
+    const overlay = document.getElementById('connectionOverlay');
+    if (overlay) overlay.classList.remove('hidden');
+}
+
+function setConnectionStatus(text) {
+    const el = document.getElementById('connectionStatus');
+    if (el) el.textContent = text;
+}
+
 document.addEventListener("DOMContentLoaded", () => {
     const chartContainer = document.getElementById('chartContainer');
     const socket = io();
@@ -35,4 +50,31 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const accountsDisplay = new NtAccountsDisplay(socket);
     accountsDisplay.init();
+
+    // On page load, immediately check if we're already connected.
+    // This prevents the overlay from flashing when refreshing while
+    // NinjaTrader is already connected.
+    fetch('/api/stream/status')
+        .then(r => r.json())
+        .then(data => {
+            if (data.platform_connected) {
+                hideOverlay();
+                setConnectionStatus('Connected');
+                return;
+            }
+            if (data.live_mode && !data.gateway_running) {
+                // Live mode but gateway not started — show overlay and wait for user to click Start Streaming
+                showOverlay();
+                setConnectionStatus('Waiting for NinjaTrader connection...');
+                return;
+            }
+            if (data.gateway_running) {
+                // Gateway is bound but NT hasn't connected yet
+                showOverlay();
+                setConnectionStatus('Waiting for NinjaTrader connection...');
+            }
+        })
+        .catch(() => {
+            // If the API call fails, let Socket.IO handle it
+        });
 });

@@ -56,12 +56,9 @@ def main():
 
     if config.mode == "live":
         if not getattr(config, "nt_accounts", None):
-            print(f"[{instance}] ERROR: No NT accounts configured. Live streaming DISABLED.")
-            print(f"[{instance}] HINT: Go to /admin → Settings → NT Accounts to add accounts, then restart.")
+            print(f"[{instance}] WARNING: No NT accounts configured. Live streaming will be unavailable until accounts are added.")
         else:
-            print(f"[{instance}] Starting ZeroMQ gateway...")
-            ds.start()
-            print(f"[{instance}] ZeroMQ gateway started")
+            print(f"[{instance}] ZeroMQ gateway ready (not started — use chart UI or /api/stream/start).")
 
         print(f"[{instance}] Starting LIVE mode server on port {config.flask_port} (threaded, debug=False)")
         try:
@@ -74,9 +71,10 @@ def main():
                 allow_unsafe_werkzeug=True,
             )
         finally:
-            print(f"[{instance}] Stopping ZeroMQ gateway...")
-            ds.stop()
-            print(f"[{instance}] ZeroMQ gateway stopped")
+            if ds is not None:
+                print(f"[{instance}] Stopping ZeroMQ gateway...")
+                ds.stop()
+                print(f"[{instance}] ZeroMQ gateway stopped")
     else:
         wiring.socketio.run(
             wiring.app,
