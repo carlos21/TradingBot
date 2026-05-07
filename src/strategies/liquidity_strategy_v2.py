@@ -231,7 +231,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     if current_price < lvl:
                         # Potential short: close is below the line.
                         # Accumulate the highest high seen while close stays below the line.
-                        if line.get('_pending_dir') != 'short':
+                        entered_pending = line.get('_pending_dir') != 'short'
+                        if entered_pending:
                             line['_pending_dir'] = 'short'
                             line['_pending_extreme'] = bar['high']
                         else:
@@ -251,14 +252,16 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                 direction="short", reason=f"depth={depth:.2f}")
                             self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "short", "level": lvl, "depth": depth})
                         else:
-                            depth = pending_ext - lvl if pending_ext > lvl else 0.0
-                            self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
-                                f"Pending short @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
-                                direction="short", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
+                            if entered_pending:
+                                depth = pending_ext - lvl if pending_ext > lvl else 0.0
+                                self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
+                                    f"Pending short @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
+                                    direction="short", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
                     elif current_price > lvl:
                         # Potential long: close is above the line.
                         # Accumulate the lowest low seen while close stays above the line.
-                        if line.get('_pending_dir') != 'long':
+                        entered_pending = line.get('_pending_dir') != 'long'
+                        if entered_pending:
                             line['_pending_dir'] = 'long'
                             line['_pending_extreme'] = bar['low']
                         else:
@@ -278,10 +281,11 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                 direction="long", reason=f"depth={depth:.2f}")
                             self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "long", "level": lvl, "depth": depth})
                         else:
-                            depth = lvl - pending_ext if pending_ext < lvl else 0.0
-                            self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
-                                f"Pending long @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
-                                direction="long", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
+                            if entered_pending:
+                                depth = lvl - pending_ext if pending_ext < lvl else 0.0
+                                self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
+                                    f"Pending long @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
+                                    direction="long", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
 
                 elif line['direction'] == 'short':
                     if bar['high'] > line['extreme']:

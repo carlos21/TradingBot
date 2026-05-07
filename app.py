@@ -58,7 +58,9 @@ def main():
         if not getattr(config, "nt_accounts", None):
             print(f"[{instance}] WARNING: No NT accounts configured. Live streaming will be unavailable until accounts are added.")
         else:
-            print(f"[{instance}] ZeroMQ gateway ready (not started — use chart UI or /api/stream/start).")
+            print(f"[{instance}] Starting ZeroMQ gateway...")
+            ds.start()
+            print(f"[{instance}] ZeroMQ gateway started")
 
         print(f"[{instance}] Starting LIVE mode server on port {config.flask_port} (threaded, debug=False)")
         try:

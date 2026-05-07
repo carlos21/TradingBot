@@ -1395,15 +1395,15 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         private static bool IsEntryOrder(Order order) => 
-            order?.Name == "Entry" || (order?.Name?.StartsWith("Entry_") == true);
+            order?.Name?.StartsWith("Entry_") == true;
         
         private static bool IsStopOrder(Order order) =>
-            ((order?.Name == "Stop" || order?.Name?.StartsWith("Stop_") == true) &&
-            (order.OrderType == OrderType.StopMarket || order.OrderType == OrderType.StopLimit));
+            (order?.Name?.StartsWith("Stop_") == true) &&
+            (order.OrderType == OrderType.StopMarket || order.OrderType == OrderType.StopLimit);
         
         private static bool IsTargetOrder(Order order) =>
-            ((order?.Name == "Target" || order?.Name?.StartsWith("Target_") == true) &&
-            (order.OrderType == OrderType.Limit));
+            (order?.Name?.StartsWith("Target_") == true) &&
+            (order.OrderType == OrderType.Limit);
         
         private static bool IsCloseOrder(Order order) =>
             order?.Name?.StartsWith("Close_") == true;
