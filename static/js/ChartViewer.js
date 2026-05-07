@@ -123,11 +123,13 @@ export class ChartViewer {
 
     // Init
     this._initPair()
-      .then(() => this.initBars())
+      .then(() => {
+        new SocketHandler(socket, this).init();
+        return this.initBars();
+      })
       .then(() => this._initLines())
       .then(() => {
         window.__chartReady = true;
-        new SocketHandler(socket, this).init();
       })
       .catch(console.error);
   }

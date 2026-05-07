@@ -88,26 +88,21 @@ def register_stream_routes(
                 "message": "NinjaTrader is already connected",
             }), 200
 
-        if gateway and gateway.is_running:
-            return jsonify({
-                "status": "already_starting",
-                "message": "ZeroMQ gateway is already starting, waiting for NinjaTrader...",
-            }), 200
+        # Start gateway only if it's not already running
+        if not gateway or not gateway.is_running:
+            try:
+                logger.info("[Stream] Starting ZeroMQ gateway...")
+                data_source.start()
+                socketio.emit("gateway_started")
+                logger.info("[Stream] ZeroMQ gateway started, sockets bound")
+            except Exception as e:
+                logger.error(f"[Stream] Failed to start ZeroMQ gateway: {e}")
+                return jsonify({
+                    "status": "error",
+                    "message": f"Failed to start ZeroMQ gateway: {e}",
+                }), 500
 
-        try:
-            logger.info("[Stream] Starting ZeroMQ gateway...")
-            data_source.start()
-            socketio.emit("gateway_started")
-            logger.info("[Stream] ZeroMQ gateway started, sockets bound")
-        except Exception as e:
-            logger.error(f"[Stream] Failed to start ZeroMQ gateway: {e}")
-            return jsonify({
-                "status": "error",
-                "message": f"Failed to start ZeroMQ gateway: {e}",
-            }), 500
-
-        # Start a background thread to check if NT connects on its own
-        # before launching the auto-login script.
+        # Always offer to launch NinjaTrader if it's not connected yet
         thread = threading.Thread(target=_maybe_launch_nt_after_delay, daemon=True)
         thread.start()
 
