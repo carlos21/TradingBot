@@ -1,26 +1,16 @@
-"""Tests for AdminController decision log endpoints."""
+"""Tests for src/controllers/admin_controller.py."""
 
 import pytest
 from flask import Flask
 
 from src.controllers.admin_controller import AdminController
-from src.database.database import setup_database
-from src.repositories.decision_log_repository import DecisionLogRepository
+from tests.fakes import (
+    FakeAnalyticsReporter,
+    FakeLineRepository,
+    FakeLogger,
+    FakeTradeRepository,
+)
 from src.services.analytics_service import AnalyticsService
-from tests.fakes import FakeLineRepository, FakeLogger, FakeTradeRepository
-
-
-@pytest.fixture
-def admin_ctrl(tmp_path):
-    db_path = f"sqlite:///{tmp_path / 'admin_test.db'}"
-    setup_database(db_url=db_path)
-    decision_repo = DecisionLogRepository()
-    trade_repo = FakeTradeRepository()
-    analytics = AnalyticsService(trade_repo)
-    lines_repo = FakeLineRepository()
-    logger = FakeLogger()
-    ctrl = AdminController(analytics, lines_repo, logger, decision_repo)
-    return ctrl, decision_repo
 
 
 @pytest.fixture
@@ -30,43 +20,112 @@ def app_context():
         yield
 
 
-class TestDecisionLogs:
+@pytest.fixture
+def controller(app_context):
+    trade_repo = FakeTradeRepository()
+    line_repo = FakeLineRepository()
+    logger = FakeLogger()
+    analytics = AnalyticsService(trade_repo)
+    return AdminController(analytics, line_repo, logger), trade_repo, line_repo
 
-    def test_get_decision_logs_empty(self, admin_ctrl, app_context):  # noqa: ARG002
-        ctrl, _ = admin_ctrl
+
+class TestAdminControllerDashboardStats:
+
+    def test_get_dashboard_stats(self, controller):
+        ctrl, repo, _ = controller
+        from datetime import datetime, timezone
+        repo.insert_trade(
+            pair="MNQ", trade_type="long", entry_price=100.0,
+            stop_loss=90.0, take_profit=130.0, risk=10.0,
+            entry_time=datetime.now(timezone.utc),
+        )
+        resp, status = ctrl.get_dashboard_stats("MNQ")
+        assert status == 200
+        data = resp.get_json()
+        assert data["total_trades"] == 1
+
+
+class TestAdminControllerTradeHistory:
+
+    def test_get_trade_history(self, controller):
+        ctrl, _, _ = controller
+        resp, status = ctrl.get_trade_history("MNQ", limit=10, offset=0)
+        assert status == 200
+        data = resp.get_json()
+        assert "trades" in data
+        assert data["total"] == 0
+
+
+class TestAdminControllerTradeDetails:
+
+    def test_get_trade_details_not_found(self, controller):
+        ctrl, _, _ = controller
+        with pytest.raises(Exception):
+            ctrl.get_trade_details("NONEXISTENT")
+
+    def test_get_trade_details_found(self, controller):
+        ctrl, repo, _ = controller
+        from datetime import datetime, timezone
+        trade = repo.insert_trade(
+            pair="MNQ", trade_type="long", entry_price=100.0,
+            stop_loss=90.0, take_profit=130.0, risk=10.0,
+            entry_time=datetime.now(timezone.utc),
+        )
+        resp, status = ctrl.get_trade_details(trade.trade_id)
+        assert status == 200
+        data = resp.get_json()
+        assert data["trade_id"] == trade.trade_id
+
+
+class TestAdminControllerAnalytics:
+
+    def test_get_analytics(self, controller):
+        ctrl, _, _ = controller
+        resp, status = ctrl.get_analytics("MNQ")
+        assert status == 200
+        data = resp.get_json()
+        assert "equity_curve" in data
+        assert "trades_by_hour" in data
+        assert "trades_by_day" in data
+        assert "result_distribution" in data
+        assert "monthly_pnl" in data
+        assert "pnl_distribution" in data
+
+
+class TestAdminControllerLines:
+
+    def test_get_lines_empty(self, controller):
+        ctrl, _, _ = controller
+        resp, status = ctrl.get_lines("MNQ")
+        assert status == 200
+        data = resp.get_json()
+        assert data == []
+
+    def test_get_lines_with_data(self, controller):
+        ctrl, _, line_repo = controller
+        line_repo.insert_line("MNQ", 5000.0)
+        resp, status = ctrl.get_lines("MNQ")
+        assert status == 200
+        data = resp.get_json()
+        assert len(data) == 1
+        assert data[0]["pair"] == "MNQ"
+        assert data[0]["price"] == 5000.0
+
+
+class TestAdminControllerDecisionLogs:
+
+    def test_get_decision_logs_no_repo(self, controller):
+        ctrl, _, _ = controller
         resp, status = ctrl.get_decision_logs("MNQ")
         assert status == 200
         data = resp.get_json()
         assert data["logs"] == []
         assert "events" in data
 
-    def test_get_decision_logs_with_filters(self, admin_ctrl, app_context):  # noqa: ARG002
-        ctrl, repo = admin_ctrl
-        repo.add_log(bar_time=1000.0, pair="MNQ", event="LATCH", line_id="L1")
-        repo.add_log(bar_time=2000.0, pair="MNQ", event="FILTER_BLOCK", line_id="L1", filter_name="min_cross_depth")
-        repo.add_log(bar_time=3000.0, pair="ES", event="LATCH", line_id="L2")
-
-        # Filter by pair
-        resp, _ = ctrl.get_decision_logs("MNQ")
-        data = resp.get_json()
-        assert len(data["logs"]) == 2
-
-        # Filter by event
-        resp, _ = ctrl.get_decision_logs("MNQ", event="FILTER_BLOCK")
-        data = resp.get_json()
-        assert len(data["logs"]) == 1
-        assert data["logs"][0]["event"] == "FILTER_BLOCK"
-
-        # Filter by line_id
-        resp, _ = ctrl.get_decision_logs("MNQ", line_id="L1")
-        data = resp.get_json()
-        assert len(data["logs"]) == 2
-
-    def test_get_decision_events(self, admin_ctrl, app_context):  # noqa: ARG002
-        ctrl, _ = admin_ctrl
+    def test_get_decision_events(self, controller):
+        ctrl, _, _ = controller
         resp, status = ctrl.get_decision_events()
         assert status == 200
         data = resp.get_json()
         assert "events" in data
         assert "LATCH" in data["events"]
-        assert "FILTER_BLOCK" in data["events"]

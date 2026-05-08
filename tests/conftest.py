@@ -5,6 +5,8 @@ os.environ.setdefault("TELEGRAM_CHAT_ID", "dummy")
 
 import pytest
 
+from src.database.database_protocol import Base, get_database
+from src.database.database import setup_database, db as global_db
 from src.services.trade_logger import TradeLogger
 from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import StrategyOptions
@@ -164,3 +166,54 @@ def make_bar(
     if tf:
         bar["tf"] = tf
     return bar
+
+
+# ---------------------------------------------------------------------------
+# Database fixtures
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def db_session():
+    """Provide a fresh in-memory SQLite database session for each test."""
+    database = get_database("sqlite:///:memory:")
+    database.create_tables(Base)
+    session = database.get_session()
+    try:
+        yield session
+    finally:
+        session.close()
+        database.get_engine().dispose()
+
+
+@pytest.fixture
+def setup_test_database():
+    """Set up the global database with an in-memory SQLite for repository tests."""
+    from src.database import database as db_module
+    original_db = db_module.db
+    test_db = get_database("sqlite:///:memory:")
+    test_db.create_tables(Base)
+    db_module.db = test_db
+    try:
+        yield test_db
+    finally:
+        db_module.db = original_db
+        test_db.get_engine().dispose()
+
+
+# ---------------------------------------------------------------------------
+# Flask app fixture
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def flask_app():
+    """Create a minimal Flask app for route/controller testing."""
+    from flask import Flask
+    app = Flask(__name__)
+    app.config["TESTING"] = True
+    return app
+
+
+@pytest.fixture
+def client(flask_app):
+    """Flask test client."""
+    return flask_app.test_client()

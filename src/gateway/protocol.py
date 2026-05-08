@@ -473,6 +473,7 @@ class TestPingMessage:
 @dataclass
 class TestPongMessage:
     """Connection test response."""
+    __test__ = False  # Not a pytest test class
     timestamp: float
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
@@ -507,6 +508,7 @@ class TestStartMessage:
 @dataclass
 class TestResultMessage:
     """E2E test result."""
+    __test__ = False  # Not a pytest test class
     scenario: str
     passed: bool
     trade_id: str | None = None

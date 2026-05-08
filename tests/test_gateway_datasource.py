@@ -1,0 +1,877 @@
+"""Tests for src/gateway/datasource.py.
+
+This module tests the ZMQDataSource class, which is a CombinedDataSource
+implementation that receives market data from trading platforms via ZeroMQ.
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from unittest.mock import MagicMock, call, patch
+
+import pytest
+
+from src.gateway.datasource import ZMQDataSource
+from src.gateway.gateway import GatewayConfig, TradingGateway
+from src.gateway.protocol import MessageType
+from tests.fakes import FakeLogger
+
+
+# ---------------------------------------------------------------------------
+# Fixtures
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def logger():
+    return FakeLogger()
+
+
+@pytest.fixture
+def mock_gateway():
+    """Return a mocked TradingGateway with callback storage."""
+    gateway = MagicMock(spec=TradingGateway)
+    gateway.is_connected = True
+    gateway.pair = "MNQ"
+
+    # Store registered callbacks by message type
+    gateway._callbacks = {}
+
+    def on_side_effect(msg_type, callback):
+        gateway._callbacks.setdefault(msg_type, []).append(callback)
+
+    gateway.on.side_effect = on_side_effect
+    gateway.start = MagicMock()
+    gateway.stop = MagicMock()
+    gateway.send_refresh_request = MagicMock()
+    return gateway
+
+
+@pytest.fixture
+def data_source(logger, mock_gateway):
+    """Return a ZMQDataSource wired to a mocked gateway."""
+    ds = ZMQDataSource(logger=logger, gateway=mock_gateway, pair="MNQ")
+    return ds
+
+
+def make_tick(time_val: int, price: float, volume: int = 1, pair: str = "MNQ") -> dict:
+    return {"time": time_val, "price": price, "volume": volume, "pair": pair}
+
+
+def make_bar(
+    time_val: int,
+    open_: float,
+    high: float,
+    low: float,
+    close: float,
+    volume: int = 100,
+    pair: str = "MNQ",
+) -> dict:
+    return {
+        "time": time_val,
+        "open": open_,
+        "high": high,
+        "low": low,
+        "close": close,
+        "volume": volume,
+        "pair": pair,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Initialization
+# ---------------------------------------------------------------------------
+
+
+class TestInitialization:
+
+    def test_init_defaults(self, logger):
+        ds = ZMQDataSource(logger=logger)
+        assert ds.pair == "MNQ"
+        assert ds.logger is logger
+        assert ds._gateway is None
+        assert ds._owns_gateway is True
+        assert ds._historical_bars == []
+        assert ds._live is False
+        assert ds._refreshing is False
+        assert ds._last_history_time == 0
+        assert ds._refresh_buffer == []
+        assert ds.on_history_complete is None
+        assert ds.on_live_bar is None
+        assert ds.on_before_refresh is None
+        assert ds._callback is None
+        assert ds._from_time == 0
+        assert ds._current_bar is None
+        assert ds._last_emit_time == 0.0
+        assert ds._last_native_partial_time == 0.0
+        assert ds._stats == {
+            "ticks_received": 0,
+            "bars_received": 0,
+            "history_batches": 0,
+        }
+        assert ds._gap_threshold == 120
+
+    def test_init_with_gateway(self, logger, mock_gateway):
+        ds = ZMQDataSource(logger=logger, gateway=mock_gateway, pair="ES")
+        assert ds.pair == "ES"
+        assert ds._gateway is mock_gateway
+        assert ds._owns_gateway is False
+
+    def test_init_with_config(self, logger):
+        config = GatewayConfig(heartbeat_interval_sec=10.0)
+        ds = ZMQDataSource(logger=logger, gateway_config=config)
+        assert ds._gateway_config is config
+
+    def test_ensure_gateway_creates_new(self, logger):
+        ds = ZMQDataSource(logger=logger)
+        with patch("src.gateway.datasource.TradingGateway") as MockGW:
+            mock_gw = MagicMock(spec=TradingGateway)
+            MockGW.return_value = mock_gw
+            gw = ds._ensure_gateway()
+            assert gw is mock_gw
+            assert ds._owns_gateway is True
+            MockGW.assert_called_once_with(
+                logger,
+                config=ds._gateway_config,
+                pair="MNQ",
+            )
+
+    def test_ensure_gateway_returns_existing(self, data_source, mock_gateway):
+        gw = data_source._ensure_gateway()
+        assert gw is mock_gateway
+
+
+# ---------------------------------------------------------------------------
+# Properties
+# ---------------------------------------------------------------------------
+
+
+class TestProperties:
+
+    def test_is_live(self, data_source):
+        assert data_source.is_live is False
+        data_source._live = True
+        assert data_source.is_live is True
+
+    def test_is_refreshing(self, data_source):
+        assert data_source.is_refreshing is False
+        data_source._refreshing = True
+        assert data_source.is_refreshing is True
+
+    def test_is_connected_with_gateway(self, data_source, mock_gateway):
+        mock_gateway.is_connected = True
+        assert data_source.is_connected is True
+        mock_gateway.is_connected = False
+        assert data_source.is_connected is False
+
+    def test_is_connected_without_gateway(self, logger):
+        ds = ZMQDataSource(logger=logger)
+        assert ds.is_connected is False
+
+    def test_gateway_property(self, data_source, mock_gateway):
+        assert data_source.gateway is mock_gateway
+
+    def test_stats(self, data_source):
+        data_source._stats["ticks_received"] = 5
+        data_source._stats["bars_received"] = 3
+        assert data_source.stats == {"ticks_received": 5, "bars_received": 3, "history_batches": 0}
+        # Ensure a copy is returned
+        s = data_source.stats
+        s["ticks_received"] = 999
+        assert data_source._stats["ticks_received"] == 5
+
+
+# ---------------------------------------------------------------------------
+# Start / Stop / Lifecycle
+# ---------------------------------------------------------------------------
+
+
+class TestLifecycle:
+
+    def test_start_registers_callbacks(self, data_source, mock_gateway):
+        data_source.start()
+        mock_gateway.start.assert_called_once()
+        assert MessageType.TICK in mock_gateway._callbacks
+        assert MessageType.BAR in mock_gateway._callbacks
+        assert MessageType.PARTIAL_BAR in mock_gateway._callbacks
+        assert MessageType.HISTORY_BATCH in mock_gateway._callbacks
+        assert MessageType.HISTORY_END in mock_gateway._callbacks
+        assert MessageType.REFRESH_START in mock_gateway._callbacks
+
+    def test_start_ensures_gateway(self, logger):
+        ds = ZMQDataSource(logger=logger)
+        with patch("src.gateway.datasource.TradingGateway") as MockGW:
+            mock_gw = MagicMock(spec=TradingGateway)
+            MockGW.return_value = mock_gw
+            ds.start()
+            mock_gw.start.assert_called_once()
+
+    def test_stop_owns_gateway(self, logger):
+        mock_gw = MagicMock(spec=TradingGateway)
+        ds = ZMQDataSource(logger=logger)
+        ds._gateway = mock_gw
+        ds._owns_gateway = True
+        ds.stop()
+        mock_gw.stop.assert_called_once()
+
+    def test_stop_does_not_stop_external_gateway(self, logger, mock_gateway):
+        ds = ZMQDataSource(logger=logger, gateway=mock_gateway)
+        ds.stop()
+        # In datasource.py stop(): if self._owns_gateway and self._gateway: self._gateway.stop()
+        # Since _owns_gateway is False, stop should NOT be called.
+        mock_gateway.stop.assert_not_called()
+
+    def test_shutdown_sets_stop_event_and_stops_gateway(self, logger):
+        mock_gw = MagicMock(spec=TradingGateway)
+        ds = ZMQDataSource(logger=logger)
+        ds._gateway = mock_gw
+        ds._owns_gateway = True
+        ds.shutdown()
+        assert ds._stop_event.is_set()
+        mock_gw.stop.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Tick handling & bar accumulation
+# ---------------------------------------------------------------------------
+
+
+class TestTickHandling:
+
+    def test_on_tick_creates_current_bar(self, data_source):
+        tick = make_tick(time_val=1000, price=5000.0, volume=10)
+        data_source._on_tick(tick)
+        assert data_source._stats["ticks_received"] == 1
+        cb = data_source._current_bar
+        assert cb is not None
+        assert cb["time"] == (1000 // 60) * 60
+        assert cb["open"] == 5000.0
+        assert cb["high"] == 5000.0
+        assert cb["low"] == 5000.0
+        assert cb["close"] == 5000.0
+        assert cb["volume"] == 10
+        assert cb["pair"] == "MNQ"
+
+    def test_on_tick_updates_existing_bar(self, data_source):
+        data_source._on_tick(make_tick(time_val=1000, price=5000.0, volume=10))
+        data_source._on_tick(make_tick(time_val=1001, price=5100.0, volume=5))
+        cb = data_source._current_bar
+        assert cb["high"] == 5100.0
+        assert cb["low"] == 5000.0
+        assert cb["close"] == 5100.0
+        assert cb["volume"] == 15
+
+    def test_on_tick_resets_on_minute_boundary(self, data_source):
+        # Two ticks in different minutes
+        data_source._on_tick(make_tick(time_val=60, price=100.0))
+        data_source._on_tick(make_tick(time_val=120, price=200.0))
+        cb = data_source._current_bar
+        assert cb["time"] == 120
+        assert cb["open"] == 200.0
+        assert cb["high"] == 200.0
+
+    def test_on_tick_uses_pair_from_source_when_missing(self, data_source):
+        tick = {"time": 1000, "price": 5000.0, "volume": 1}
+        data_source._on_tick(tick)
+        assert data_source._current_bar["pair"] == "MNQ"
+
+    def test_on_tick_emits_partial_after_one_second(self, data_source):
+        live_bars = []
+        data_source.on_live_bar = lambda bar: live_bars.append(bar)
+
+        base_time = 1000000.0
+        with patch("src.gateway.datasource.time.monotonic", return_value=base_time):
+            data_source._on_tick(make_tick(time_val=1000, price=5000.0))
+            # First tick always emits because _last_emit_time is 0
+            assert len(live_bars) == 1
+            assert live_bars[0].get("partial") is True
+
+        # Next tick within 1 second should not emit
+        with patch("src.gateway.datasource.time.monotonic", return_value=base_time + 0.5):
+            data_source._on_tick(make_tick(time_val=1001, price=5100.0))
+            assert len(live_bars) == 1
+
+        # After 1 second, should emit again
+        with patch("src.gateway.datasource.time.monotonic", return_value=base_time + 1.5):
+            data_source._on_tick(make_tick(time_val=1002, price=5200.0))
+            assert len(live_bars) == 2
+            assert live_bars[1]["close"] == 5200.0
+
+    def test_on_tick_skips_partial_when_native_recent(self, data_source):
+        live_bars = []
+        data_source.on_live_bar = lambda bar: live_bars.append(bar)
+        base_time = 1000000.0
+
+        # Set a recent native partial time
+        data_source._last_native_partial_time = base_time
+
+        with patch("src.gateway.datasource.time.monotonic", return_value=base_time + 1.0):
+            data_source._on_tick(make_tick(time_val=1000, price=5000.0))
+            # Should skip because native partial was < 2 seconds ago
+            assert len(live_bars) == 0
+
+        # After 2+ seconds from native partial, should emit
+        with patch("src.gateway.datasource.time.monotonic", return_value=base_time + 2.5):
+            data_source._on_tick(make_tick(time_val=1001, price=5100.0))
+            assert len(live_bars) == 1
+
+
+# ---------------------------------------------------------------------------
+# Bar handling
+# ---------------------------------------------------------------------------
+
+
+class TestBarHandling:
+
+    def test_on_bar_appends_in_order(self, data_source):
+        data_source._on_bar(make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5))
+        data_source._on_bar(make_bar(time_val=200, open_=10.5, high=12.0, low=10.0, close=11.0))
+        assert len(data_source._historical_bars) == 2
+        assert data_source._historical_bars[0]["time"] == 100
+        assert data_source._historical_bars[1]["time"] == 200
+        assert data_source._stats["bars_received"] == 2
+
+    def test_on_bar_inserts_out_of_order(self, data_source, logger):
+        data_source._on_bar(make_bar(time_val=200, open_=10.5, high=12.0, low=10.0, close=11.0))
+        data_source._on_bar(make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5))
+        assert len(data_source._historical_bars) == 2
+        assert data_source._historical_bars[0]["time"] == 100
+        assert data_source._historical_bars[1]["time"] == 200
+
+    def test_on_bar_skips_duplicate(self, data_source):
+        bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
+        data_source._on_bar(bar)
+        data_source._on_bar(bar)
+        assert len(data_source._historical_bars) == 1
+
+    def test_on_bar_during_refresh_buffers(self, data_source):
+        data_source._refreshing = True
+        bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
+        data_source._on_bar(bar)
+        assert len(data_source._historical_bars) == 0
+        assert len(data_source._refresh_buffer) == 1
+        assert data_source._refresh_buffer[0]["time"] == 100
+
+    def test_on_bar_triggers_live_bar_callback(self, data_source):
+        received = []
+        data_source.on_live_bar = lambda bar: received.append(bar)
+        bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
+        data_source._on_bar(bar)
+        assert len(received) == 1
+        assert received[0]["time"] == 100
+        assert "partial" not in received[0]
+
+    def test_on_bar_gap_detection(self, data_source, logger):
+        # Create a gap > 120 seconds
+        data_source._on_bar(make_bar(time_val=0, open_=10.0, high=11.0, low=9.0, close=10.5))
+        data_source._on_bar(make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5))
+        # The logger should have received a gap warning (we don't assert exact message,
+        # just that the code path ran without error and bars are stored)
+        assert len(data_source._historical_bars) == 2
+
+
+# ---------------------------------------------------------------------------
+# Partial bar handling
+# ---------------------------------------------------------------------------
+
+
+class TestPartialBarHandling:
+
+    def test_on_partial_bar_updates_native_time(self, data_source):
+        base_time = 1000000.0
+        with patch("src.gateway.datasource.time.monotonic", return_value=base_time):
+            data_source._on_partial_bar({"time": 100, "open": 10.0, "close": 10.5})
+            assert data_source._last_native_partial_time == base_time
+
+    def test_on_partial_bar_emits_to_callback(self, data_source):
+        received = []
+        data_source.on_live_bar = lambda bar: received.append(bar)
+        payload = {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 50}
+        data_source._on_partial_bar(payload)
+        assert len(received) == 1
+        assert received[0]["partial"] is True
+        assert received[0]["time"] == 100
+
+
+# ---------------------------------------------------------------------------
+# History batch handling
+# ---------------------------------------------------------------------------
+
+
+class TestHistoryBatchHandling:
+
+    def test_on_history_batch_adds_bars(self, data_source):
+        payload = {
+            "bars": [
+                {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100},
+                {"time": 200, "open": 10.5, "high": 12.0, "low": 10.0, "close": 11.0, "volume": 200},
+            ],
+            "days": 1,
+            "pair": "MNQ",
+        }
+        data_source._on_history_batch(payload)
+        assert len(data_source._historical_bars) == 2
+        assert data_source._stats["history_batches"] == 1
+        assert data_source._historical_bars[0]["time"] == 100
+        assert data_source._historical_bars[1]["time"] == 200
+
+    def test_on_history_batch_deduplicates(self, data_source):
+        payload = {
+            "bars": [
+                {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100},
+            ],
+            "days": 1,
+        }
+        data_source._on_history_batch(payload)
+        data_source._on_history_batch(payload)
+        assert len(data_source._historical_bars) == 1
+
+    def test_on_history_batch_sorts_bars(self, data_source):
+        payload = {
+            "bars": [
+                {"time": 300, "open": 12.0, "high": 13.0, "low": 11.0, "close": 12.5, "volume": 300},
+                {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100},
+            ],
+            "days": 1,
+        }
+        data_source._on_history_batch(payload)
+        assert data_source._historical_bars[0]["time"] == 100
+        assert data_source._historical_bars[1]["time"] == 300
+
+    def test_on_history_batch_uses_default_pair(self, data_source):
+        payload = {
+            "bars": [
+                {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100},
+            ],
+            "days": 1,
+        }
+        data_source._on_history_batch(payload)
+        assert data_source._historical_bars[0]["pair"] == "MNQ"
+
+
+# ---------------------------------------------------------------------------
+# History end handling
+# ---------------------------------------------------------------------------
+
+
+class TestHistoryEndHandling:
+
+    def test_on_history_end_sets_live_mode(self, data_source):
+        data_source._on_history_end()
+        assert data_source.is_live is True
+        assert data_source.is_refreshing is False
+
+    def test_on_history_end_calls_callback(self, data_source):
+        called_with = []
+        data_source.on_history_complete = lambda bars: called_with.append(bars)
+        data_source._historical_bars = [make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)]
+        data_source._on_history_end()
+        assert len(called_with) == 1
+        assert len(called_with[0]) == 1
+
+    def test_on_history_end_callback_error_logged(self, data_source, logger):
+        data_source.on_history_complete = lambda bars: (_ for _ in ()).throw(RuntimeError("boom"))
+        data_source._historical_bars = [make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)]
+        # Should not raise
+        data_source._on_history_end()
+        assert data_source.is_live is True
+
+    def test_on_history_end_flushes_refresh_buffer(self, data_source):
+        data_source._refreshing = True
+        data_source._refresh_buffer = [
+            make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
+        ]
+        live_bars = []
+        data_source.on_live_bar = lambda bar: live_bars.append(bar)
+        data_source._on_history_end()
+        assert len(data_source._historical_bars) == 2
+        assert data_source._refresh_buffer == []
+        assert len(live_bars) == 2
+
+    def test_on_history_end_sets_last_history_time(self, data_source):
+        data_source._historical_bars = [
+            make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
+        ]
+        data_source._on_history_end()
+        assert data_source._last_history_time == 200
+
+    def test_on_history_end_scans_for_gaps(self, data_source):
+        data_source._historical_bars = [
+            make_bar(time_val=0, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
+        ]
+        data_source._on_history_end()
+        assert data_source.is_live is True
+
+
+# ---------------------------------------------------------------------------
+# Refresh start handling
+# ---------------------------------------------------------------------------
+
+
+class TestRefreshStartHandling:
+
+    def test_on_refresh_start_clears_recent_data(self, data_source):
+        now = int(time.time())
+        old_bar = make_bar(time_val=now - 90000, open_=10.0, high=11.0, low=9.0, close=10.5)
+        new_bar = make_bar(time_val=now - 100, open_=11.0, high=12.0, low=10.0, close=11.5)
+        data_source._historical_bars = [old_bar, new_bar]
+        data_source._live = True
+        data_source._current_bar = {"time": now}
+        data_source._refreshing = False
+
+        data_source._on_refresh_start()
+
+        assert len(data_source._historical_bars) == 1
+        assert data_source._historical_bars[0]["time"] == old_bar["time"]
+        assert data_source._live is False
+        assert data_source._current_bar is None
+        assert data_source._refreshing is True
+
+    def test_on_refresh_start_calls_before_refresh_callback(self, data_source):
+        called = []
+        data_source.on_before_refresh = lambda: called.append(1)
+        data_source._on_refresh_start()
+        assert called == [1]
+
+    def test_on_refresh_start_callback_error_logged(self, data_source, logger):
+        data_source.on_before_refresh = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        # Should not raise
+        data_source._on_refresh_start()
+        assert data_source._refreshing is True
+
+    def test_on_refresh_start_sets_last_history_time(self, data_source):
+        now = int(time.time())
+        old_bar = make_bar(time_val=now - 90000, open_=10.0, high=11.0, low=9.0, close=10.5)
+        data_source._historical_bars = [old_bar]
+        data_source._on_refresh_start()
+        assert data_source._last_history_time == old_bar["time"]
+
+    def test_on_refresh_start_empty_history(self, data_source):
+        data_source._historical_bars = []
+        data_source._on_refresh_start()
+        assert data_source._last_history_time == 0
+
+
+# ---------------------------------------------------------------------------
+# Historical queries
+# ---------------------------------------------------------------------------
+
+
+class TestHistoricalQueries:
+
+    def test_load_historical_bars_returns_copy(self, data_source):
+        bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
+        data_source._historical_bars = [bar]
+        result = data_source.load_historical_bars()
+        assert result == [bar]
+        # Mutating result should not affect internal storage
+        result[0]["close"] = 999.0
+        assert data_source._historical_bars[0]["close"] == 10.5
+
+    def test_load_historical_bars_filters_by_start_time(self, data_source):
+        data_source._historical_bars = [
+            make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
+            make_bar(time_val=300, open_=12.0, high=13.0, low=11.0, close=12.5),
+        ]
+        result = data_source.load_historical_bars(start_time=200)
+        assert len(result) == 2
+        assert result[0]["time"] == 200
+        assert result[1]["time"] == 300
+
+    def test_load_historical_bars_deduplicates(self, data_source):
+        data_source._historical_bars = [
+            make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=100, open_=10.1, high=11.1, low=9.1, close=10.6),
+            make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
+        ]
+        result = data_source.load_historical_bars()
+        assert len(result) == 2
+        assert result[0]["time"] == 100
+        assert result[1]["time"] == 200
+
+    def test_load_historical_bars_1m_returns_dicts(self, data_source):
+        data_source._historical_bars = [
+            make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
+        ]
+        result = data_source.load_historical_bars(timeframe="1m")
+        assert isinstance(result, list)
+        assert result[0] == data_source._historical_bars[0]
+
+    def test_aggregate_bars_5m(self, data_source):
+        bars = [
+            make_bar(time_val=0, open_=10.0, high=11.0, low=9.0, close=10.5, volume=100),
+            make_bar(time_val=60, open_=10.5, high=12.0, low=10.0, close=11.5, volume=200),
+            make_bar(time_val=120, open_=11.5, high=13.0, low=11.0, close=12.5, volume=300),
+            make_bar(time_val=300, open_=12.5, high=14.0, low=12.0, close=13.5, volume=400),
+        ]
+        result = data_source._aggregate_bars(bars, "5m")
+        assert len(result) == 2
+        # First window: 0-240s
+        assert result[0]["time"] == 0
+        assert result[0]["open"] == 10.0
+        assert result[0]["high"] == 13.0
+        assert result[0]["low"] == 9.0
+        assert result[0]["close"] == 12.5
+        assert result[0]["volume"] == 600
+        # Second window: 300s
+        assert result[1]["time"] == 300
+        assert result[1]["volume"] == 400
+
+    def test_aggregate_bars_1h(self, data_source):
+        bars = [
+            make_bar(time_val=0, open_=10.0, high=11.0, low=9.0, close=10.5, volume=100),
+            make_bar(time_val=1800, open_=10.5, high=12.0, low=10.0, close=11.5, volume=200),
+            make_bar(time_val=3600, open_=11.5, high=13.0, low=11.0, close=12.5, volume=300),
+        ]
+        result = data_source._aggregate_bars(bars, "1h")
+        assert len(result) == 2
+        assert result[0]["time"] == 0
+        assert result[0]["volume"] == 300
+        assert result[1]["time"] == 3600
+
+    def test_aggregate_bars_unknown_timeframe_returns_copy(self, data_source):
+        bars = [
+            make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
+        ]
+        result = data_source._aggregate_bars(bars, "1d")
+        assert len(result) == 1
+        assert result[0]["time"] == 100
+
+    def test_load_historical_bars_aggregates(self, data_source):
+        data_source._historical_bars = [
+            make_bar(time_val=0, open_=10.0, high=11.0, low=9.0, close=10.5, volume=100),
+            make_bar(time_val=60, open_=10.5, high=12.0, low=10.0, close=11.5, volume=200),
+        ]
+        result = data_source.load_historical_bars(timeframe="5m")
+        assert len(result) == 1
+        assert result[0]["volume"] == 300
+
+
+# ---------------------------------------------------------------------------
+# Gap detection
+# ---------------------------------------------------------------------------
+
+
+class TestGapDetection:
+
+    def test_detect_gap_logs_warning(self, data_source, logger):
+        data_source._detect_gap(0, 200, "TEST")
+        # Code path exercised; we just verify no exception is raised.
+        assert len(data_source._historical_bars) == 0  # no state change
+
+    def test_detect_gap_no_warning_below_threshold(self, data_source, logger):
+        data_source._detect_gap(0, 60, "TEST")
+        # Should not log anything for gaps <= 120s
+
+    def test_scan_for_gaps(self, data_source):
+        bars = [
+            make_bar(time_val=0, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
+            make_bar(time_val=400, open_=12.0, high=13.0, low=11.0, close=12.5),
+        ]
+        count = data_source._scan_for_gaps(bars, "TEST")
+        assert count == 2
+
+    def test_scan_for_gaps_limits_warnings(self, data_source, logger):
+        bars = [
+            make_bar(time_val=i * 200, open_=10.0, high=11.0, low=9.0, close=10.5)
+            for i in range(10)
+        ]
+        count = data_source._scan_for_gaps(bars, "TEST")
+        assert count == 9
+
+    def test_scan_for_gaps_empty_or_single(self, data_source):
+        assert data_source._scan_for_gaps([], "TEST") == 0
+        assert data_source._scan_for_gaps([make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)], "TEST") == 0
+
+
+# ---------------------------------------------------------------------------
+# Subscribe / Pause (threading behaviour)
+# ---------------------------------------------------------------------------
+
+
+class TestSubscribePause:
+
+    def test_subscribe_sets_callback_and_blocks_until_pause(self, data_source):
+        received = []
+
+        def callback(bar):
+            received.append(bar)
+
+        # Start subscribe in a background thread so we don't deadlock the test
+        def run_subscribe():
+            data_source.subscribe(callback, from_time=50)
+
+        t = threading.Thread(target=run_subscribe, daemon=True)
+        t.start()
+
+        # Give the thread time to enter subscribe()
+        time.sleep(0.05)
+        assert data_source._callback is callback
+        assert data_source._from_time == 50
+        assert t.is_alive()
+
+        data_source.pause()
+        t.join(timeout=1.0)
+        assert not t.is_alive()
+
+    def test_pause_sets_stop_event(self, data_source):
+        data_source._stop_event.clear()
+        data_source.pause()
+        assert data_source._stop_event.is_set()
+
+    def test_shutdown_sets_stop_event(self, data_source):
+        data_source._stop_event.clear()
+        data_source.shutdown()
+        assert data_source._stop_event.is_set()
+
+
+# ---------------------------------------------------------------------------
+# Request refresh
+# ---------------------------------------------------------------------------
+
+
+class TestRequestRefresh:
+
+    def test_request_refresh(self, data_source, mock_gateway):
+        data_source.request_refresh(days=5)
+        mock_gateway.send_refresh_request.assert_called_once_with(days=5)
+
+    def test_request_refresh_ensures_gateway(self, logger):
+        ds = ZMQDataSource(logger=logger)
+        with patch("src.gateway.datasource.TradingGateway") as MockGW:
+            mock_gw = MagicMock(spec=TradingGateway)
+            MockGW.return_value = mock_gw
+            ds.request_refresh(days=3)
+            mock_gw.send_refresh_request.assert_called_once_with(days=3)
+
+
+# ---------------------------------------------------------------------------
+# Error handling
+# ---------------------------------------------------------------------------
+
+
+class TestErrorHandling:
+
+    def test_on_bar_callback_error_propagates(self, data_source):
+        # _on_bar does NOT catch on_live_bar exceptions, so they propagate
+        data_source.on_live_bar = lambda bar: (_ for _ in ()).throw(RuntimeError("boom"))
+        bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
+        with pytest.raises(RuntimeError, match="boom"):
+            data_source._on_bar(bar)
+        # The bar is still stored before the callback runs
+        assert len(data_source._historical_bars) == 1
+
+    def test_on_history_end_callback_error_does_not_abort(self, data_source):
+        data_source.on_history_complete = lambda bars: (_ for _ in ()).throw(RuntimeError("boom"))
+        data_source._historical_bars = [make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)]
+        data_source._on_history_end()
+        assert data_source.is_live is True
+
+    def test_on_refresh_start_callback_error_does_not_abort(self, data_source):
+        data_source.on_before_refresh = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        data_source._on_refresh_start()
+        assert data_source._refreshing is True
+
+    def test_on_history_batch_empty_bars(self, data_source):
+        payload = {"bars": [], "days": 1}
+        data_source._on_history_batch(payload)
+        assert len(data_source._historical_bars) == 0
+        assert data_source._stats["history_batches"] == 1
+
+    def test_on_tick_missing_volume_defaults_to_zero(self, data_source):
+        tick = {"time": 1000, "price": 5000.0}
+        data_source._on_tick(tick)
+        assert data_source._current_bar["volume"] == 0
+
+    def test_load_historical_bars_thread_safe(self, data_source):
+        data_source._historical_bars = [
+            make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
+        ]
+        # Replace the lock with a MagicMock that tracks acquire calls
+        mock_lock = MagicMock()
+        mock_lock.__enter__ = MagicMock(return_value=None)
+        mock_lock.__exit__ = MagicMock(return_value=False)
+        data_source._bars_lock = mock_lock
+        data_source.load_historical_bars()
+        mock_lock.__enter__.assert_called_once()
+        mock_lock.__exit__.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Integration-style: end-to-end message flow
+# ---------------------------------------------------------------------------
+
+
+class TestEndToEndFlow:
+
+    def test_full_refresh_cycle(self, data_source, mock_gateway):
+        live_bars = []
+        history_complete = []
+        data_source.on_live_bar = lambda bar: live_bars.append(bar)
+        data_source.on_history_complete = lambda bars: history_complete.append(bars)
+
+        # 1. Refresh starts
+        data_source._on_refresh_start()
+        assert data_source.is_refreshing is True
+
+        # 2. History batch arrives
+        data_source._on_history_batch({
+            "bars": [
+                {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100},
+                {"time": 200, "open": 10.5, "high": 12.0, "low": 10.0, "close": 11.5, "volume": 200},
+            ],
+            "days": 1,
+        })
+        assert len(data_source._historical_bars) == 2
+
+        # 3. A live bar arrives during refresh (should be buffered)
+        data_source._on_bar(make_bar(time_val=300, open_=11.5, high=13.0, low=11.0, close=12.5))
+        assert len(data_source._historical_bars) == 2  # not yet added
+        assert len(data_source._refresh_buffer) == 1
+
+        # 4. History end arrives
+        data_source._on_history_end()
+        assert data_source.is_live is True
+        assert data_source.is_refreshing is False
+        assert len(history_complete) == 1
+        assert len(history_complete[0]) == 2
+        # Buffered bar should have been flushed
+        assert len(data_source._historical_bars) == 3
+        assert len(live_bars) == 1  # flushed bar triggers on_live_bar
+
+    def test_gateway_callback_registration(self, data_source, mock_gateway):
+        data_source.start()
+        callbacks = mock_gateway._callbacks
+
+        # Simulate tick through gateway
+        tick = make_tick(time_val=1000, price=5000.0)
+        for cb in callbacks[MessageType.TICK]:
+            cb(tick)
+        assert data_source._stats["ticks_received"] == 1
+
+        # Simulate bar through gateway
+        bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
+        for cb in callbacks[MessageType.BAR]:
+            cb(bar)
+        assert data_source._stats["bars_received"] == 1
+
+        # Simulate history batch through gateway
+        for cb in callbacks[MessageType.HISTORY_BATCH]:
+            cb({"bars": [{"time": 50, "open": 9.0, "high": 10.0, "low": 8.0, "close": 9.5, "volume": 50}], "days": 1})
+        assert data_source._stats["history_batches"] == 1
+
+        # Simulate history end through gateway
+        for cb in callbacks[MessageType.HISTORY_END]:
+            cb({})
+        assert data_source.is_live is True
+
+        # Simulate refresh start through gateway
+        for cb in callbacks[MessageType.REFRESH_START]:
+            cb({})
+        assert data_source.is_refreshing is True

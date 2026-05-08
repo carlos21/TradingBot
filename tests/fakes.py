@@ -2,8 +2,11 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from src.analytics import AnalyticsReporter
+from src.config.models import AccountConfig
+from src.data_sources.combined_datasource import CombinedDataSource
 from src.models import LineData, TradeData
 from src.notifier import Notifier
+from src.services.trade_close_service import TradeEventPublisher
 from src.services.trade_executor import TradeExecutor
 from src.utils.app_logger import ILogger
 
@@ -332,3 +335,116 @@ class FakeTradeExecutor(TradeExecutor):
 
     def on_sl_update(self, trade_id, new_sl):
         self.sl_updates.append((trade_id, new_sl))
+
+
+class FakeDataSource(CombinedDataSource):
+    """Fake data source for testing."""
+
+    def __init__(self, pair="MNQ", bars=None):
+        self.pair = pair
+        self._bars = bars or []
+        self._callbacks = []
+        self._paused = False
+
+    def load_historical_bars(self, timeframe="1m") -> list[dict]:
+        return self._bars
+
+    def subscribe(self, callback, from_time=0):
+        self._callbacks.append(callback)
+        for bar in self._bars:
+            if bar.get("time", 0) >= from_time:
+                callback(bar)
+
+    def pause(self):
+        self._paused = True
+
+    def add_bar(self, bar):
+        self._bars.append(bar)
+        for cb in self._callbacks:
+            cb(bar)
+
+    def set_bars(self, bars):
+        self._bars = bars
+
+
+class FakeTradeEventPublisher(TradeEventPublisher):
+    """Records trade events for testing."""
+
+    def __init__(self):
+        self.closed_events = []
+        self.updated_events = []
+
+    def emit_trade_closed(self, trade_data: dict) -> None:
+        self.closed_events.append(trade_data)
+
+    def emit_trade_updated(self, trade_id: str, updates: dict) -> None:
+        self.updated_events.append((trade_id, updates))
+
+
+class FakeSettingsRepository:
+    """In-memory settings repository for testing."""
+
+    def __init__(self):
+        self._store = {}
+
+    def get(self, key: str) -> str | None:
+        return self._store.get(key)
+
+    def set(self, key: str, value: str, is_sensitive: bool = False) -> None:
+        self._store[key] = value
+
+    def get_all(self) -> dict[str, str]:
+        return dict(self._store)
+
+    def delete(self, key: str) -> None:
+        self._store.pop(key, None)
+
+
+class FakeNtAccountRepository:
+    """In-memory account repository for testing."""
+
+    def __init__(self):
+        self._accounts = []
+
+    def list_accounts(self) -> list[AccountConfig]:
+        return list(self._accounts)
+
+    def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None, rr_ratio: float | None = None) -> None:
+        for i, acct in enumerate(self._accounts):
+            if acct.name == name:
+                self._accounts[i] = AccountConfig(name=name, risk_usd=risk_usd, risk_pct=risk_pct, rr_ratio=rr_ratio)
+                return
+        self._accounts.append(AccountConfig(name=name, risk_usd=risk_usd, risk_pct=risk_pct, rr_ratio=rr_ratio))
+
+    def delete(self, name: str) -> None:
+        self._accounts = [a for a in self._accounts if a.name != name]
+
+    def clear_all(self) -> None:
+        self._accounts = []
+
+
+class FakeCredentialRepository:
+    """In-memory credential repository for testing."""
+
+    def __init__(self):
+        self._creds = []
+
+    def get_credential(self, service: str) -> tuple[str, str] | None:
+        for c in self._creds:
+            if c["service"] == service:
+                return c["username"], c["password_encrypted"]
+        return None
+
+    def list_all(self) -> list[dict]:
+        return [{"service": c["service"], "username": c["username"]} for c in self._creds]
+
+    def save_credential(self, service: str, username: str, password_encrypted: str) -> None:
+        for c in self._creds:
+            if c["service"] == service and c["username"] == username:
+                c["password_encrypted"] = password_encrypted
+                return
+        self._creds.append({
+            "service": service,
+            "username": username,
+            "password_encrypted": password_encrypted,
+        })
