@@ -217,125 +217,126 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             if (self.options.reentry_after_sl or self.options.reentry_only) and self._reentry_opportunities:
                 self._check_reentry_opportunities(bar)
 
-            current_price = bar['close']
-            bar_time = bar['time']
-            lines_to_remove = set()
+            if not self.is_warmup:
+                current_price = bar['close']
+                bar_time = bar['time']
+                lines_to_remove = set()
 
-            for sid, line in self.strategy_lines.items():
-                creation_ts = line.get('creation_ts', 0)
-                if creation_ts > bar_time:
-                    continue
+                for sid, line in self.strategy_lines.items():
+                    creation_ts = line.get('creation_ts', 0)
+                    if creation_ts > bar_time:
+                        continue
 
-                lvl = line['level']
-                if line['direction'] is None:
-                    if current_price < lvl:
-                        # Potential short: close is below the line.
-                        # Accumulate the highest high seen while close stays below the line.
-                        entered_pending = line.get('_pending_dir') != 'short'
-                        if entered_pending:
-                            line['_pending_dir'] = 'short'
-                            line['_pending_extreme'] = bar['high']
-                        else:
-                            line['_pending_extreme'] = max(line['_pending_extreme'], bar['high'])
-                        pending_ext = line['_pending_extreme']
-                        # If high never crossed the line (price was already below when line drawn),
-                        # latch immediately. Otherwise require min_cross_depth penetration.
-                        if pending_ext <= lvl or pending_ext - lvl >= self.min_cross_depth:
-                            line['direction'] = 'short'
-                            line['extreme'] = line.pop('_pending_extreme')
-                            line.pop('_pending_dir', None)
+                    lvl = line['level']
+                    if line['direction'] is None:
+                        if current_price < lvl:
+                            # Potential short: close is below the line.
+                            # Accumulate the highest high seen while close stays below the line.
+                            entered_pending = line.get('_pending_dir') != 'short'
+                            if entered_pending:
+                                line['_pending_dir'] = 'short'
+                                line['_pending_extreme'] = bar['high']
+                            else:
+                                line['_pending_extreme'] = max(line['_pending_extreme'], bar['high'])
+                            pending_ext = line['_pending_extreme']
+                            # If high never crossed the line (price was already below when line drawn),
+                            # latch immediately. Otherwise require min_cross_depth penetration.
+                            if pending_ext <= lvl or pending_ext - lvl >= self.min_cross_depth:
+                                line['direction'] = 'short'
+                                line['extreme'] = line.pop('_pending_extreme')
+                                line.pop('_pending_dir', None)
+                                if line['extreme'] >= lvl and 'interaction_ts' not in line:
+                                    line['interaction_ts'] = bar_time
+                                depth = pending_ext - lvl if pending_ext > lvl else 0.0
+                                self.log_decision(bar_time, "1m", sid, "LATCH",
+                                    f"Latched short @ {current_price} (depth={depth:.2f})",
+                                    direction="short", reason=f"depth={depth:.2f}")
+                                self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "short", "level": lvl, "depth": depth})
+                            else:
+                                if entered_pending:
+                                    depth = pending_ext - lvl if pending_ext > lvl else 0.0
+                                    self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
+                                        f"Pending short @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
+                                        direction="short", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
+                        elif current_price > lvl:
+                            # Potential long: close is above the line.
+                            # Accumulate the lowest low seen while close stays above the line.
+                            entered_pending = line.get('_pending_dir') != 'long'
+                            if entered_pending:
+                                line['_pending_dir'] = 'long'
+                                line['_pending_extreme'] = bar['low']
+                            else:
+                                line['_pending_extreme'] = min(line['_pending_extreme'], bar['low'])
+                            pending_ext = line['_pending_extreme']
+                            # If low never crossed the line (bounce-off support or price already above),
+                            # latch immediately. Otherwise require min_cross_depth penetration.
+                            if pending_ext >= lvl or lvl - pending_ext >= self.min_cross_depth:
+                                line['direction'] = 'long'
+                                line['extreme'] = line.pop('_pending_extreme')
+                                line.pop('_pending_dir', None)
+                                if line['extreme'] <= lvl and 'interaction_ts' not in line:
+                                    line['interaction_ts'] = bar_time
+                                depth = lvl - pending_ext if pending_ext < lvl else 0.0
+                                self.log_decision(bar_time, "1m", sid, "LATCH",
+                                    f"Latched long @ {current_price} (depth={depth:.2f})",
+                                    direction="long", reason=f"depth={depth:.2f}")
+                                self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "long", "level": lvl, "depth": depth})
+                            else:
+                                if entered_pending:
+                                    depth = lvl - pending_ext if pending_ext < lvl else 0.0
+                                    self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
+                                        f"Pending long @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
+                                        direction="long", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
+
+                    elif line['direction'] == 'short':
+                        if bar['high'] > line['extreme']:
+                            line['extreme'] = bar['high']
                             if line['extreme'] >= lvl and 'interaction_ts' not in line:
                                 line['interaction_ts'] = bar_time
-                            depth = pending_ext - lvl if pending_ext > lvl else 0.0
-                            self.log_decision(bar_time, "1m", sid, "LATCH",
-                                f"Latched short @ {current_price} (depth={depth:.2f})",
-                                direction="short", reason=f"depth={depth:.2f}")
-                            self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "short", "level": lvl, "depth": depth})
-                        else:
-                            if entered_pending:
-                                depth = pending_ext - lvl if pending_ext > lvl else 0.0
-                                self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
-                                    f"Pending short @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
-                                    direction="short", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
-                    elif current_price > lvl:
-                        # Potential long: close is above the line.
-                        # Accumulate the lowest low seen while close stays above the line.
-                        entered_pending = line.get('_pending_dir') != 'long'
-                        if entered_pending:
-                            line['_pending_dir'] = 'long'
-                            line['_pending_extreme'] = bar['low']
-                        else:
-                            line['_pending_extreme'] = min(line['_pending_extreme'], bar['low'])
-                        pending_ext = line['_pending_extreme']
-                        # If low never crossed the line (bounce-off support or price already above),
-                        # latch immediately. Otherwise require min_cross_depth penetration.
-                        if pending_ext >= lvl or lvl - pending_ext >= self.min_cross_depth:
-                            line['direction'] = 'long'
-                            line['extreme'] = line.pop('_pending_extreme')
-                            line.pop('_pending_dir', None)
+                        if current_price > (line['level'] + self.max_bounce):
+                            msg = f"Price {current_price} > {line['level'] + self.max_bounce} (Max Bounce)"
+                            self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
+                                direction="short", reason="max_bounce")
+                            self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
+                            lines_to_remove.add(sid)
+
+                    elif line['direction'] == 'long':
+                        if bar['low'] < line['extreme']:
+                            line['extreme'] = bar['low']
                             if line['extreme'] <= lvl and 'interaction_ts' not in line:
                                 line['interaction_ts'] = bar_time
-                            depth = lvl - pending_ext if pending_ext < lvl else 0.0
-                            self.log_decision(bar_time, "1m", sid, "LATCH",
-                                f"Latched long @ {current_price} (depth={depth:.2f})",
-                                direction="long", reason=f"depth={depth:.2f}")
-                            self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "long", "level": lvl, "depth": depth})
-                        else:
-                            if entered_pending:
-                                depth = lvl - pending_ext if pending_ext < lvl else 0.0
-                                self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
-                                    f"Pending long @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
-                                    direction="long", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
-
-                elif line['direction'] == 'short':
-                    if bar['high'] > line['extreme']:
-                        line['extreme'] = bar['high']
-                        if line['extreme'] >= lvl and 'interaction_ts' not in line:
-                            line['interaction_ts'] = bar_time
-                    if current_price > (line['level'] + self.max_bounce):
-                        msg = f"Price {current_price} > {line['level'] + self.max_bounce} (Max Bounce)"
-                        self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
-                            direction="short", reason="max_bounce")
-                        self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
-                        lines_to_remove.add(sid)
-
-                elif line['direction'] == 'long':
-                    if bar['low'] < line['extreme']:
-                        line['extreme'] = bar['low']
-                        if line['extreme'] <= lvl and 'interaction_ts' not in line:
-                            line['interaction_ts'] = bar_time
-                    if current_price < (line['level'] - self.max_bounce):
-                        msg = f"Price {current_price} < {line['level'] - self.max_bounce} (Max Bounce)"
-                        self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
-                            direction="long", reason="max_bounce")
-                        self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
-                        lines_to_remove.add(sid)
-
-            short_lines = [line for line in self.strategy_lines.values() if line['direction'] == 'short']
-            long_lines  = [line for line in self.strategy_lines.values() if line['direction'] == 'long']
-
-            for sid, line in self.strategy_lines.items():
-                if sid in lines_to_remove:
-                    continue
-                if line['direction'] == 'short':
-                    for other in short_lines:
-                        if other is line:
-                            continue
-                        if line['level'] < other['level'] <= bar['high']:
-                            self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit higher resistance {other['level']}")
+                        if current_price < (line['level'] - self.max_bounce):
+                            msg = f"Price {current_price} < {line['level'] - self.max_bounce} (Max Bounce)"
+                            self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
+                                direction="long", reason="max_bounce")
+                            self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
                             lines_to_remove.add(sid)
-                            break
-                elif line['direction'] == 'long':
-                    for other in long_lines:
-                        if other is line:
-                            continue
-                        if line['level'] > other['level'] >= bar['low']:
-                            self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit lower support {other['level']}")
-                            lines_to_remove.add(sid)
-                            break
 
-            for sid in lines_to_remove:
-                self.remove_strategy_line(sid)
+                short_lines = [line for line in self.strategy_lines.values() if line['direction'] == 'short']
+                long_lines  = [line for line in self.strategy_lines.values() if line['direction'] == 'long']
+
+                for sid, line in self.strategy_lines.items():
+                    if sid in lines_to_remove:
+                        continue
+                    if line['direction'] == 'short':
+                        for other in short_lines:
+                            if other is line:
+                                continue
+                            if line['level'] < other['level'] <= bar['high']:
+                                self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit higher resistance {other['level']}")
+                                lines_to_remove.add(sid)
+                                break
+                    elif line['direction'] == 'long':
+                        for other in long_lines:
+                            if other is line:
+                                continue
+                            if line['level'] > other['level'] >= bar['low']:
+                                self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit lower support {other['level']}")
+                                lines_to_remove.add(sid)
+                                break
+
+                for sid in lines_to_remove:
+                    self.remove_strategy_line(sid)
 
         ts = bar["time"]
         # Iterate over ALL internal aggregators (including 3m/15m)

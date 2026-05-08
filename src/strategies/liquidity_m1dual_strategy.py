@@ -68,6 +68,8 @@ class LiquidityDualM1Strategy:
         self._on_strategy_bar(bar)
 
     def _on_strategy_bar(self, bar: dict):
+        if self.is_warmup:
+            return
         with self.lock:
             self._check_open_trades(bar)
             # skip if any open

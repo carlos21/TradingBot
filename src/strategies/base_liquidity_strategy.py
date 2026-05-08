@@ -641,6 +641,8 @@ class BaseLiquidityStrategy:
 
     def _maybe_remove_line(self, line_id: Any, opened: bool):
         """Remove the evaluated strategy line depending on removal mode."""
+        if self.is_warmup:
+            return
         mode = self.options.line_removal_mode
         if mode == LineRemovalMode.NEVER:
             # keep the line and reset state, so it can re-trigger
