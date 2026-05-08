@@ -39,6 +39,13 @@ MNQ_FMT = "%d/%m/%Y %H:%M:%S"
 
 def load_bars(start_epoch: float, end_epoch: float) -> list[dict]:
     """Load 1m bars from the MNQ CSV for the given UTC epoch range."""
+    start_dt = datetime.fromtimestamp(start_epoch, tz=timezone.utc)
+    end_dt = datetime.fromtimestamp(end_epoch, tz=timezone.utc)
+    # Build YYYYMMDD strings for fast lexicographic comparison without parsing.
+    # CSV Date format is DD/MM/YYYY.
+    start_cmp = start_dt.strftime("%Y%m%d")
+    end_cmp = end_dt.strftime("%Y%m%d")
+
     bars = []
     with open(CSV_PATH, newline="") as f:
         sample = f.read(2048)
@@ -46,7 +53,15 @@ def load_bars(start_epoch: float, end_epoch: float) -> list[dict]:
         dialect = csv.Sniffer().sniff(sample, delimiters=",;")
         reader = csv.DictReader(f, dialect=dialect)
         for row in reader:
-            ts = f"{row['Date']} {row['Time']}"
+            date_str = row["Date"]
+            # Quick string pre-filter: YYYYMMDD from DD/MM/YYYY
+            date_cmp = date_str[-4:] + date_str[3:5] + date_str[:2]
+            if date_cmp < start_cmp:
+                continue
+            if date_cmp > end_cmp:
+                break
+
+            ts = f"{date_str} {row['Time']}"
             dt = datetime.strptime(ts, MNQ_FMT).replace(tzinfo=MNQ_TZ)
             epoch = int(dt.astimezone(timezone.utc).timestamp())
             if epoch < start_epoch:
