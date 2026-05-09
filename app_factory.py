@@ -276,11 +276,9 @@ def create_app(
     socketio_bridge = SocketIOBridge(socketio, event_bus)
     socketio_bridge.start()
 
-    # Composite publisher: emits to both SocketIO (immediate) and EventBus (decoupled)
-    event_publisher = CompositeEventPublisher(
-        SocketIOEventPublisher(socketio),
-        DomainEventBusPublisher(event_bus),
-    )
+    # Publisher goes through EventBus; SocketIOBridge forwards to SocketIO
+    # so every event reaches SocketIO exactly once.
+    event_publisher = DomainEventBusPublisher(event_bus)
     
     _setup_logging(app)
     
