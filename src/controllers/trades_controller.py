@@ -75,29 +75,15 @@ class TradesController:
 
         trade_id = f"manual_{trade_type}_{uuid.uuid4().hex[:8]}"
 
-        trade_for_zmq = {
-            'trade_id': trade_id,
-            'pair': pair,
-            'type': trade_type,
-            'entry': entry_price,
-            'stop_loss': stop_loss,
-            'take_profit': take_profit,
-            'risk': risk,
-            'rr_ratio': self.rr_ratio,
-            'entry_time': entry_time,
-            'source': 'manual',
-        }
         try:
-            self.trade_manager.trade_executor.on_trade_open(trade_for_zmq)
+            trade = self.trade_manager.open_trade(
+                pair, trade_type, entry_price,
+                stop_loss, take_profit, risk, entry_time, self.rr_ratio,
+                source="manual", trade_id=trade_id
+            )
         except Exception as e:
-            self.logger.error(f"[TradesController] ZMQ open failed for {trade_id}: {e}")
+            self.logger.error(f"[TradesController] Open failed for {trade_id}: {e}")
             abort(500, f"Failed to send order to platform: {e}")
-
-        trade = self.trade_manager.open_trade(
-            pair, trade_type, entry_price,
-            stop_loss, take_profit, risk, entry_time, self.rr_ratio,
-            source="manual", trade_id=trade_id
-        )
         return jsonify(trade), 201
 
     def open_test_trade(self, pair: str, direction: str):
@@ -119,32 +105,17 @@ class TradesController:
 
         trade_id = f"test_{direction}_{uuid.uuid4().hex[:8]}"
 
-        trade_for_zmq = {
-            'trade_id': trade_id,
-            'pair': pair,
-            'type': trade_type,
-            'entry': entry_price,
-            'stop_loss': stop_loss,
-            'take_profit': take_profit,
-            'risk': risk,
-            'rr_ratio': rr_ratio,
-            'entry_time': entry_time,
-            'source': 'test',
-        }
         try:
-            self.trade_manager.trade_executor.on_trade_open(trade_for_zmq)
+            trade = self.trade_manager.open_trade(
+                pair, trade_type, entry_price,
+                stop_loss, take_profit, risk, entry_time, rr_ratio,
+                source="test", trade_id=trade_id
+            )
         except Exception as e:
-            self.logger.error(f"[TradesController] ZMQ open failed for test trade {trade_id}: {e}")
+            self.logger.error(f"[TradesController] Open failed for test trade {trade_id}: {e}")
             abort(500, f"Failed to send order to platform: {e}")
 
         self.logger.info(f"[TradesController] Sent test {direction} trade {trade_id} to executor")
-
-        trade = self.trade_manager.open_trade(
-            pair, trade_type, entry_price,
-            stop_loss, take_profit, risk, entry_time, rr_ratio,
-            source="test", trade_id=trade_id
-        )
-
         return jsonify(trade), 201
 
     def close_trade(self, trade_id):

@@ -139,6 +139,24 @@ class TradeOpenUseCase:
             signal_id=signal_id,
         )
 
+        # Send to broker/platform
+        trade_for_executor = {
+            'trade_id': td.trade_id,
+            'pair': pair,
+            'type': trade_type,
+            'entry': entry_price,
+            'stop_loss': stop_loss,
+            'take_profit': take_profit,
+            'risk': risk,
+            'rr_ratio': rr_ratio,
+            'entry_time': entry_time,
+            'risk_dollars': risk_dollars,
+            'risk_pct': risk_pct,
+            'contracts': contracts,
+            'account': account,
+        }
+        self._executor.on_trade_open(trade_for_executor)
+
         if self._logger:
             self._logger.info(f"[TradeOpenUseCase] Registered OPEN trade {result.trade_id} @ {entry_time}")
 

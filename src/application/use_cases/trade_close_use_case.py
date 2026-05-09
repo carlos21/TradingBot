@@ -84,7 +84,7 @@ class TradeCloseUseCase:
         log_event: str = "CLOSE",
         log_message: str | None = None,
         analytics_event: str = "CLOSE",
-        raise_on_db_error: bool = False,
+        raise_on_db_error: bool = True,
     ) -> CloseResult | None:
         """Execute the full close flow for a single trade.
 
@@ -140,15 +140,24 @@ class TradeCloseUseCase:
             if isinstance(exit_time, (int, float))
             else exit_time
         )
-        self._repo.close_trade(
-            trade_id=trade_id,
-            exit_price=exit_price,
-            exit_time=close_db_time,
-            result=result,
-            result_type=result_type,
-            fees=fees,
-            pnl_usd=pnl_usd,
-        )
+        try:
+            self._repo.close_trade(
+                trade_id=trade_id,
+                exit_price=exit_price,
+                exit_time=close_db_time,
+                result=result,
+                result_type=result_type,
+                fees=fees,
+                pnl_usd=pnl_usd,
+            )
+        except Exception as e:
+            if self._logger:
+                self._logger.error(f"[TradeCloseUseCase] DB error closing trade {trade_id}: {e}")
+            if self._trade_logger:
+                self._trade_logger.log(trade_id, "ERROR", f"DB close failed: {e}")
+            if raise_on_db_error:
+                raise
+            return None
 
         # 4. Log
         if self._trade_logger:

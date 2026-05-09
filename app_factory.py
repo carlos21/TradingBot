@@ -152,8 +152,6 @@ def _create_bar_callbacks(
                     trade_manager.trade_logger.log(tid, "CMD_SENT", "close_order → NinjaTrader")
                     trade_manager.trade_executor.on_trade_close(tid, close_price)
                     _close_commands_sent.add(tid)
-            # Clear the set so it doesn't grow unbounded across reconnects
-            _close_commands_sent.clear()
     else:
         def combined_bar_callback(bar):
             # Strategy runs first so it can detect SL/TP and notify TradeManager
