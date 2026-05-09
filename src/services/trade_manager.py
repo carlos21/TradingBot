@@ -236,6 +236,7 @@ class TradeManager:
 
             if result is not None:
                 self.account_balance += result.pnl_usd
+                self._open_use_case.update_account_balance(self.account_balance)
             with contextlib.suppress(ValueError):
                 self.open_trades.remove(trade)
 
@@ -293,6 +294,7 @@ class TradeManager:
 
             if result is not None:
                 self.account_balance += result.pnl_usd
+                self._open_use_case.update_account_balance(self.account_balance)
             with contextlib.suppress(ValueError):
                 self.open_trades.remove(trade)
 
@@ -313,6 +315,10 @@ class TradeManager:
                    risk_per_trade_override: float | None = None,
                    risk_pct_per_trade_override: float | None = None,
                    trade_id: str | None = None):
+        # Sync use-case balance with manager balance BEFORE calculating contracts
+        self._open_use_case.update_account_balance(self.account_balance)
+        self._broker_handler.update_balance(self.account_balance)
+
         result = self._open_use_case.execute(
             pair=pair, trade_type=trade_type, entry_price=entry_price,
             stop_loss=stop_loss, take_profit=take_profit, risk=risk,
@@ -322,10 +328,6 @@ class TradeManager:
             risk_pct_per_trade_override=risk_pct_per_trade_override,
             trade_id=trade_id,
         )
-
-        # Sync use-case balance with manager balance
-        self._open_use_case.update_account_balance(self.account_balance)
-        self._broker_handler.update_balance(self.account_balance)
 
         trade = {
             'trade_id':   result.trade_id,
@@ -400,6 +402,7 @@ class TradeManager:
         )
 
         self.account_balance += result.pnl_usd
+        self._open_use_case.update_account_balance(self.account_balance)
         if trade in self.open_trades:
             self.open_trades.remove(trade)
 
@@ -454,6 +457,7 @@ class TradeManager:
 
             if result is not None:
                 self.account_balance += result.pnl_usd
+                self._open_use_case.update_account_balance(self.account_balance)
             with contextlib.suppress(ValueError):
                 self.open_trades.remove(trade)
 
@@ -511,6 +515,7 @@ class TradeManager:
             return
 
         self.account_balance += result.pnl_usd
+        self._open_use_case.update_account_balance(self.account_balance)
         with contextlib.suppress(ValueError):
             self.open_trades.remove(trade)
 
@@ -521,6 +526,7 @@ class TradeManager:
             return
 
         self.account_balance += pnl_usd
+        self._open_use_case.update_account_balance(self.account_balance)
         self.open_trades.remove(trade)
 
         event = "SL_HIT" if result_type == "SL" else "TP_HIT" if result_type == "TP" else "SESSION_END"

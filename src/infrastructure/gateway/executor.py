@@ -165,6 +165,13 @@ class MultiAccountExecutor(TradeExecutor):
         self._close_dedup_seconds = 5.0
 
     def on_trade_open(self, signal_trade: dict) -> None:
+        # Guard: if this trade already has an account assigned, it's an
+        # already-expanded account trade — pass through to gateway instead
+        # of recursing infinitely.
+        if signal_trade.get("account"):
+            self.gateway_executor.on_trade_open(signal_trade)
+            return
+
         signal_id = signal_trade["trade_id"]
         account_trade_ids: list[str] = []
 
@@ -189,7 +196,7 @@ class MultiAccountExecutor(TradeExecutor):
                     risk=risk,
                     entry_time=signal_trade["entry_time"],
                     rr_ratio=rr,
-                    source=signal_trade.get("source"),
+                    source=signal_trade.get("source") or "strategy",
                     account=acct.name,
                     signal_id=signal_id,
                     risk_per_trade_override=acct.risk_usd,

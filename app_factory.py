@@ -39,7 +39,7 @@ from src.infrastructure.repositories.decision_log_repository import DecisionLogR
 from src.infrastructure.repositories.settings_repository import SettingsRepository
 from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.infrastructure.repositories.credentials_repository import CredentialRepository
-from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
+from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2, LiveLiquidityStrategyV2
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.notifier import Notifier, NoOpNotifier
 from src.analytics import AnalyticsReporter, NoOpReporter
@@ -321,7 +321,8 @@ def create_app(
         trade_executor.trade_manager = trade_manager
     
     # Initialize strategy BEFORE registering ZMQ callbacks so closures can reference it safely
-    tstrategy = LiquidityStrategyV2(
+    StrategyCls = LiveLiquidityStrategyV2 if live_mode else LiquidityStrategyV2
+    tstrategy = StrategyCls(
         min_stop_loss   = numbers.min_stop_loss,
         max_bounce      = numbers.max_bounce,
         socketio        = event_publisher,

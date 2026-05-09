@@ -183,6 +183,48 @@ class TestMultiAccountExpansion:
         assert executor.signal_to_accounts.get("S1") == []
         assert len(gateway.open_orders) == 0
 
+    def test_account_trade_passes_through_without_recursion(self):
+        """An already-expanded account trade must not recurse infinitely.
+
+        Regression: TradeOpenUseCase.execute() calls executor.on_trade_open()
+        with the account trade dict. If the executor is MultiAccountExecutor,
+        it must detect the trade already has an 'account' field and pass it
+        straight to the gateway instead of trying to expand it again.
+        """
+        tm = _make_trade_manager()
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+
+        executor = MultiAccountExecutor(
+            trade_manager=tm,
+            account_configs=[
+                AccountConfig("A1", rr_ratio=3.0),
+                AccountConfig("A2", rr_ratio=5.0),
+            ],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+
+        # Simulate what TradeOpenUseCase passes back to the executor
+        account_trade = {
+            "trade_id": "ACCT-123",
+            "pair": "MNQ",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 130.0,
+            "risk": 10.0,
+            "account": "A1",
+        }
+
+        executor.on_trade_open(account_trade)
+
+        # Should NOT create any new signal→account mappings
+        assert len(executor.signal_to_accounts) == 0
+        # Should pass through to gateway exactly once
+        assert len(gateway.open_orders) == 1
+        assert gateway.open_orders[0]["trade_id"] == "ACCT-123"
+
 
 class TestMultiAccountClose:
     """Test close resolution signal→accounts."""
