@@ -3,7 +3,7 @@
 import pytest
 from flask import Flask
 
-from src.data_sources.combined_datasource import CombinedDataSource
+from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.routes.core_routes import register_core_routes
 from tests.fakes import FakeDataSource, FakeLogger
 

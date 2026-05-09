@@ -8,7 +8,7 @@ but provide factory methods to convert to DomainEvent.
 from dataclasses import dataclass
 from typing import Any
 
-from .event_bus import DomainEvent, EventType
+from src.domain.events import DomainEvent, EventType
 
 
 @dataclass(frozen=True)

@@ -6,23 +6,27 @@ Provides both SQL and in-memory implementations for persisting trigger state.
 from datetime import datetime, timezone
 from typing import Any
 
+from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.dbexception import DBException
-from src.repositories.interfaces import (
+from src.domain.repositories import (
     LineTriggerStateRepository as ILineTriggerStateRepository,
 )
+from src.infrastructure.repositories.base import SQLRepositoryBase
 
 
-class SQLiteLineTriggerStateRepository(ILineTriggerStateRepository):
+class SQLiteLineTriggerStateRepository(SQLRepositoryBase, ILineTriggerStateRepository):
     """SQL-based trigger state repository."""
+
+    def __init__(self, db: DatabaseProtocol | None = None):
+        super().__init__(db)
 
     def save(self, line_id: str, pair: str, state: dict[str, Any]) -> None:
         import json
 
         from sqlalchemy import text
 
-        from src.database.database import get_db_session
         now = datetime.now(timezone.utc)
-        with get_db_session() as db:
+        with self._session() as db:
             # Use INSERT OR REPLACE to avoid SELECT-then-UPDATE race conditions
             db.execute(
                 text(
@@ -50,25 +54,22 @@ class SQLiteLineTriggerStateRepository(ILineTriggerStateRepository):
 
     def load(self, line_id: str) -> dict[str, Any] | None:
         """Load state for a single line."""
-        from src.database.database import LineTriggerState as _ORM
-        from src.database.database import get_db_session
-        with get_db_session() as db:
+        from src.infrastructure.database.database import LineTriggerState as _ORM
+        with self._session() as db:
             row = db.query(_ORM).filter_by(line_id=line_id).first()
             if row:
                 return dict(row.state_json or {})
             return None
 
     def load_all(self, pair: str) -> dict[str, dict[str, Any]]:
-        from src.database.database import LineTriggerState as _ORM
-        from src.database.database import get_db_session
-        with get_db_session() as db:
+        from src.infrastructure.database.database import LineTriggerState as _ORM
+        with self._session() as db:
             rows = db.query(_ORM).filter_by(pair=pair).all()
             return {row.line_id: dict(row.state_json or {}) for row in rows}
 
     def delete(self, line_id: str) -> None:
-        from src.database.database import LineTriggerState as _ORM
-        from src.database.database import get_db_session
-        with get_db_session() as db:
+        from src.infrastructure.database.database import LineTriggerState as _ORM
+        with self._session() as db:
             db.query(_ORM).filter_by(line_id=line_id).delete()
             try:
                 db.commit()
@@ -97,5 +98,3 @@ class InMemoryLineTriggerStateRepository(ILineTriggerStateRepository):
         self._store.pop(line_id, None)
 
 
-# Backward compatibility alias
-LineTriggerStateRepository = ILineTriggerStateRepository

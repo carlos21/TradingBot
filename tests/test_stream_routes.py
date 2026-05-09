@@ -3,7 +3,7 @@
 import pytest
 from flask import Flask
 
-from src.gateway.datasource import ZMQDataSource
+from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.routes.stream_routes import register_stream_routes
 from tests.fakes import FakeLogger
 

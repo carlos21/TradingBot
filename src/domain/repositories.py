@@ -6,12 +6,18 @@ Instead of one large repository interface, we have:
 - TradeReader / TradeWriter (for trades)
 
 This allows code to depend only on the operations it needs.
+
+All repository interfaces live in the domain layer so that:
+- Domain code depends on abstractions, not implementations
+- Infrastructure implements these interfaces
+- The dependency arrow points inward (domain knows nothing of infra)
 """
 
 from abc import ABC, abstractmethod
 from datetime import datetime
 
-from src.models import LineData, TradeData
+from src.domain.models import LineData, TradeData
+
 
 # =============================================================================
 # Line Repository Interfaces
@@ -164,3 +170,152 @@ class TriggerStateWriter(ABC):
 
 class LineTriggerStateRepository(TriggerStateReader, TriggerStateWriter):
     """Full trigger state repository interface."""
+
+
+# =============================================================================
+# Account Repository Interface
+# =============================================================================
+
+class AccountConfig:
+    """Value object for account configuration."""
+
+    def __init__(self, name: str, risk_usd: float | None = None,
+                 risk_pct: float | None = None, rr_ratio: float | None = None):
+        self.name = name
+        self.risk_usd = risk_usd
+        self.risk_pct = risk_pct
+        self.rr_ratio = rr_ratio
+
+
+class AccountReader(ABC):
+    """Interface for read-only account operations."""
+
+    @abstractmethod
+    def list_accounts(self) -> list[AccountConfig]:
+        """List all configured accounts."""
+
+    @abstractmethod
+    def get_account(self, name: str) -> AccountConfig | None:
+        """Get a single account by name."""
+
+
+class AccountWriter(ABC):
+    """Interface for write account operations."""
+
+    @abstractmethod
+    def upsert(self, name: str, risk_usd: float | None = None,
+               risk_pct: float | None = None, rr_ratio: float | None = None) -> None:
+        """Save or update an account configuration."""
+
+    @abstractmethod
+    def delete(self, name: str) -> None:
+        """Delete an account configuration."""
+
+    @abstractmethod
+    def clear_all(self) -> None:
+        """Delete all account configurations."""
+
+
+class AccountRepository(AccountReader, AccountWriter):
+    """Full account repository interface."""
+
+
+# =============================================================================
+# Credential Repository Interface
+# =============================================================================
+
+class CredentialReader(ABC):
+    """Interface for read-only credential operations."""
+
+    @abstractmethod
+    def get_credential(self, service: str) -> tuple[str, str] | None:
+        """Get a credential by service name. Returns (username, password_encrypted)."""
+
+    @abstractmethod
+    def list_all(self) -> list[dict]:
+        """List all credentials (without passwords)."""
+
+
+class CredentialWriter(ABC):
+    """Interface for write credential operations."""
+
+    @abstractmethod
+    def save_credential(self, service: str, username: str, password_encrypted: str) -> None:
+        """Save or update a credential."""
+
+    @abstractmethod
+    def delete_credential(self, service: str) -> None:
+        """Delete a credential by service name."""
+
+
+class CredentialRepository(CredentialReader, CredentialWriter):
+    """Full credential repository interface."""
+
+
+# =============================================================================
+# Decision Log Repository Interface
+# =============================================================================
+
+class DecisionLogReader(ABC):
+    """Interface for read-only decision log operations."""
+
+    @abstractmethod
+    def get_recent(self, pair: str | None = None, event: str | None = None,
+                   line_id: str | None = None, limit: int = 500) -> list[dict]:
+        """Query recent decision logs with optional filters."""
+
+    @abstractmethod
+    def get_by_line_id(self, line_id: str) -> list[dict]:
+        """Full audit trail for a single strategy line."""
+
+
+class DecisionLogWriter(ABC):
+    """Interface for write decision log operations."""
+
+    @abstractmethod
+    def add_log(self, *, bar_time: float, pair: str, tf: str | None = None,
+                line_id: str | None = None, event: str,
+                direction: str | None = None, trigger_name: str | None = None,
+                filter_name: str | None = None, reason: str | None = None,
+                details: str | None = None) -> None:
+        """Insert a single decision log."""
+
+    @abstractmethod
+    def cleanup_old(self, days: int = 30) -> int:
+        """Delete logs older than N days. Returns number of rows deleted."""
+
+
+class DecisionLogRepository(DecisionLogReader, DecisionLogWriter):
+    """Full decision log repository interface."""
+
+
+# =============================================================================
+# Settings Repository Interface
+# =============================================================================
+
+class SettingsReader(ABC):
+    """Interface for read-only settings operations."""
+
+    @abstractmethod
+    def get(self, key: str) -> str | None:
+        """Get a setting value by key."""
+
+    @abstractmethod
+    def get_all(self) -> dict[str, str]:
+        """Get all settings as a dictionary."""
+
+
+class SettingsWriter(ABC):
+    """Interface for write settings operations."""
+
+    @abstractmethod
+    def set(self, key: str, value: str, is_sensitive: bool = False) -> None:
+        """Set a setting value."""
+
+    @abstractmethod
+    def delete(self, key: str) -> None:
+        """Delete a setting."""
+
+
+class SettingsRepository(SettingsReader, SettingsWriter):
+    """Full settings repository interface."""

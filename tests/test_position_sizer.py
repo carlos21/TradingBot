@@ -8,7 +8,7 @@ from src.services.position_sizing.position_sizer import (
     PositionSize,
     TieredSLPositionSizer,
 )
-from src.types import Direction
+from src.domain.types import Direction
 
 
 class TestFixedRiskPositionSizer:

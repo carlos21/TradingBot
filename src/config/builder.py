@@ -12,20 +12,22 @@ from zoneinfo import ZoneInfo
 from app_factory import AppWiring, Repositories, create_app
 from src.analytics import AnalyticsReporter, NoOpReporter, SentryReporter
 from src.config.models import AppConfig
-from src.data_sources.combined_datasource import CombinedDataSource
-from src.data_sources.csv_datasource import CSVDataSource
-from src.database import database
+from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
+from src.infrastructure.data_sources.csv_datasource import CSVDataSource
+from src.infrastructure.database import database
+from src.infrastructure.database.database_protocol import SQLiteDatabase
+from src.infrastructure.gateway import create_live_components, create_multi_account_live_components
 from src.notifier import NoOpNotifier, Notifier, TelegramNotifier
 from src.prod_config import (
     get_prod_candle_config,
     get_prod_strategy_numbers,
     get_prod_strategy_options,
 )
-from src.repositories.line_trigger_state_repository import (
+from src.infrastructure.repositories.line_trigger_state_repository import (
     SQLiteLineTriggerStateRepository,
 )
-from src.repositories.lines_repository import SQLLineRepository
-from src.repositories.trades_repository import SQLTradeRepository
+from src.infrastructure.repositories.lines_repository import SQLLineRepository
+from src.infrastructure.repositories.trades_repository import SQLTradeRepository
 from src.utils.app_logger import FileAndConsoleLogger
 
 
@@ -73,11 +75,13 @@ class AppBuilder:
     # ------------------------------------------------------------------
     def _build_backtest(self) -> AppWiring:
         cfg = self.config
+        db = SQLiteDatabase(db_url=cfg.db_path)
+        database.db = db
         database.setup_database(db_url=cfg.db_path)
         repos = Repositories(
-            lines=SQLLineRepository(),
-            trades=SQLTradeRepository(),
-            trigger_state=SQLiteLineTriggerStateRepository(),
+            lines=SQLLineRepository(db=db),
+            trades=SQLTradeRepository(db=db),
+            trigger_state=SQLiteLineTriggerStateRepository(db=db),
         )
 
         initial_start = _parse_input_to_epoch(cfg.start_str, cfg.input_tz)
@@ -134,11 +138,13 @@ class AppBuilder:
     # ------------------------------------------------------------------
     def _build_live(self) -> tuple[AppWiring, CombinedDataSource]:
         cfg = self.config
+        db = SQLiteDatabase(db_url=cfg.db_path)
+        database.db = db
         database.setup_database(db_url=cfg.db_path)
         repos = Repositories(
-            lines=SQLLineRepository(),
-            trades=SQLTradeRepository(),
-            trigger_state=SQLiteLineTriggerStateRepository(),
+            lines=SQLLineRepository(db=db),
+            trades=SQLTradeRepository(db=db),
+            trigger_state=SQLiteLineTriggerStateRepository(db=db),
         )
 
         notifier = _build_notifier(cfg)
@@ -154,7 +160,6 @@ class AppBuilder:
 
         print("[liquid] Starting ZeroMQ gateway...")
         if cfg.nt_accounts:
-            from src.gateway import create_multi_account_live_components
             ds, executor = create_multi_account_live_components(
                 cfg.pair,
                 logger,
@@ -168,7 +173,6 @@ class AppBuilder:
                 heartbeat_port=cfg.zmq_heartbeat_port,
             )
         else:
-            from src.gateway import create_live_components
             ds, executor = create_live_components(
                 cfg.pair,
                 logger,

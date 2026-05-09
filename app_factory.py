@@ -13,19 +13,32 @@ from src.bars_loader import BarsLoader
 from src.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
 from src.controllers.admin_controller import AdminController
-from src.data_sources.combined_datasource import CombinedDataSource
-from src.gateway.datasource import ZMQDataSource
+from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
+from src.infrastructure.database.database_protocol import DatabaseProtocol
+from src.events.event_bus import EventBus
+from src.infrastructure.gateway.datasource import ZMQDataSource
+from src.infrastructure.event_publisher import (
+    CompositeEventPublisher,
+    DomainEventBusPublisher,
+    SocketIOEventPublisher,
+)
 from src.services.trade_manager import TradeManager
 from src.services.trade_executor import TradeExecutor
-from src.gateway.executor import MultiAccountExecutor
+from src.infrastructure.gateway.executor import MultiAccountExecutor
 from src.services.trade_logger import TradeLogger
 from src.services.analytics_service import AnalyticsService
 from src.financial_calc import FinancialCalc
 from src.strategies.base_liquidity_strategy import StrategyOptions
-from src.repositories.lines_repository import LineRepository
-from src.repositories.trades_repository import TradeRepository
-from src.repositories.decision_log_repository import DecisionLogRepository
-from src.repositories.line_trigger_state_repository import LineTriggerStateRepository, InMemoryLineTriggerStateRepository
+from src.domain.repositories import (
+    LineRepository,
+    TradeRepository,
+    LineTriggerStateRepository,
+)
+from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
+from src.infrastructure.repositories.decision_log_repository import DecisionLogRepository
+from src.infrastructure.repositories.settings_repository import SettingsRepository
+from src.infrastructure.repositories.accounts_repository import NtAccountRepository
+from src.infrastructure.repositories.credentials_repository import CredentialRepository
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.notifier import Notifier, NoOpNotifier
@@ -246,6 +259,7 @@ def create_app(
     notifier: Notifier = None,
     analytics: AnalyticsReporter = None,
     logger: Optional[ILogger] = None,
+    db: DatabaseProtocol | None = None,
 ) -> AppWiring:
     """
     Build the whole application with injected dependencies.
@@ -255,6 +269,18 @@ def create_app(
     CORS(app)
     # Use threading async mode for better performance with local NinjaTrader
     socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+
+    # Wire domain event bus → SocketIO bridge for decoupled notifications
+    event_bus = EventBus()
+    from src.events.event_bus import SocketIOBridge
+    socketio_bridge = SocketIOBridge(socketio, event_bus)
+    socketio_bridge.start()
+
+    # Composite publisher: emits to both SocketIO (immediate) and EventBus (decoupled)
+    event_publisher = CompositeEventPublisher(
+        SocketIOEventPublisher(socketio),
+        DomainEventBusPublisher(event_bus),
+    )
     
     _setup_logging(app)
     
@@ -275,7 +301,7 @@ def create_app(
 
     trade_manager = TradeManager(
         trade_repository=repos.trades,
-        socketio=socketio,
+        socketio=event_publisher,
         pair=pair,
         session_end_time="17:00",
         session_tz="America/New_York",
@@ -302,7 +328,7 @@ def create_app(
     tstrategy = LiquidityStrategyV2(
         min_stop_loss   = numbers.min_stop_loss,
         max_bounce      = numbers.max_bounce,
-        socketio        = socketio,
+        socketio        = event_publisher,
         line_repository = repos.lines,
         trade_repository= repos.trades,
         trade_manager   = trade_manager,
@@ -496,17 +522,17 @@ def create_app(
     admin_controller = AdminController(analytics_service, repos.lines, logger=logger, decision_log_repository=repos.decision_logs)
 
     # Initialize settings/manager/NT services from DB
-    from src.repositories.settings_repository import SettingsRepository
-    from src.repositories.accounts_repository import NtAccountRepository
-    from src.repositories.credentials_repository import CredentialRepository
     from src.services.settings_service import SettingsService
+    from src.infrastructure.repositories.settings_repository import SettingsRepository
+    from src.infrastructure.repositories.accounts_repository import NtAccountRepository
+    from src.infrastructure.repositories.credentials_repository import CredentialRepository
     from src.services.nt_manager_service import NtManagerService
     from src.controllers.settings_controller import SettingsController
 
     secret_key = os.environ.get("SECRET_KEY")
-    settings_repo = SettingsRepository()
-    accounts_repo = NtAccountRepository()
-    creds_repo = CredentialRepository()
+    settings_repo = SettingsRepository(db=db)
+    accounts_repo = NtAccountRepository(db=db)
+    creds_repo = CredentialRepository(db=db)
     settings_service = SettingsService(settings_repo, accounts_repo, creds_repo, secret_key=secret_key)
     settings_controller = SettingsController(settings_service)
     nt_service = NtManagerService()

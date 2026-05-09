@@ -15,7 +15,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timezone
 
-from src.data_sources.combined_datasource import CombinedDataSource
+from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.utils.app_logger import ILogger
 
 from .gateway import GatewayConfig, TradingGateway
@@ -32,7 +32,7 @@ class ZMQDataSource(CombinedDataSource):
     more efficient ZeroMQ implementation.
 
     Usage:
-        from src.gateway import TradingGateway, ZMQDataSource
+        from src.infrastructure.gateway import TradingGateway, ZMQDataSource
 
         gateway = TradingGateway()
         data_source = ZMQDataSource(gateway=gateway)

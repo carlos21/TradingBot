@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.database.database import setup_database
-from src.database.unit_of_work import UnitOfWork
+from src.infrastructure.database.database import setup_database
+from src.infrastructure.database.unit_of_work import UnitOfWork
 from src.dbexception import DBNotFoundException
 
 

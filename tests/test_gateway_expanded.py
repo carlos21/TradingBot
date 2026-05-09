@@ -15,8 +15,8 @@ import pytest
 
 zmq = pytest.importorskip("zmq")
 
-from src.gateway.gateway import GatewayConfig, TradingGateway
-from src.gateway.protocol import (
+from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
+from src.infrastructure.gateway.protocol import (
     CommandAckMessage,
     ConfigResponseMessage,
     ConnectMessage,
@@ -829,7 +829,7 @@ class TestRefreshAccountNames:
     def test_refresh_account_names_success(self):
         logger = FakeLogger()
         gw = TradingGateway(logger)
-        with patch("src.repositories.accounts_repository.NtAccountRepository") as MockRepo:
+        with patch("src.infrastructure.repositories.accounts_repository.NtAccountRepository") as MockRepo:
             mock_repo = MagicMock()
             a1 = MagicMock()
             a1.name = "Sim101"
@@ -843,7 +843,7 @@ class TestRefreshAccountNames:
     def test_refresh_account_names_failure(self):
         logger = FakeLogger()
         gw = TradingGateway(logger)
-        with patch("src.repositories.accounts_repository.NtAccountRepository") as MockRepo:
+        with patch("src.infrastructure.repositories.accounts_repository.NtAccountRepository") as MockRepo:
             MockRepo.side_effect = Exception("DB error")
             gw._refresh_account_names()
             assert any("Failed to refresh" in m for m in logger.messages)

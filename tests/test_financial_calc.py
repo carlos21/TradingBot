@@ -1,7 +1,7 @@
 """Comprehensive tests for src/financial_calc.FinancialCalc — Single Source of Truth."""
 
 from src.financial_calc import FinancialCalc
-from src.types import Direction
+from src.domain.types import Direction
 
 
 class TestContracts:

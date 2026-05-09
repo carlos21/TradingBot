@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.database.database import setup_database
+from src.infrastructure.database.database import setup_database
 from src.dbexception import DBNotFoundException
-from src.repositories.trades_repository import SQLTradeRepository
+from src.infrastructure.repositories.trades_repository import SQLTradeRepository
 
 
 @pytest.fixture

@@ -7,18 +7,23 @@ the Unit of Work compatible implementation.
 import uuid
 from datetime import datetime, timezone
 
-from src.database.database import Line, get_db_session
+from src.infrastructure.database.database import Line
+from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.dbexception import DBException, DBNotFoundException
-from src.models import LineData
-from src.repositories.interfaces import LineRepository as ILineRepository
+from src.domain.models import LineData
+from src.domain.repositories import LineRepository as ILineRepository
+from src.infrastructure.repositories.base import SQLRepositoryBase
 
 
-class SQLLineRepository(ILineRepository):
+class SQLLineRepository(SQLRepositoryBase, ILineRepository):
     """SQL-based line repository with per-operation sessions.
 
     Each operation opens and closes its own database session.
     For multi-operation transactions, use UnitOfWork instead.
     """
+
+    def __init__(self, db: DatabaseProtocol | None = None):
+        super().__init__(db)
 
     def _ensure_utc_aware(self, dt: datetime) -> datetime:
         """SQLite often strips timezone info; re-attach UTC when missing."""
@@ -36,7 +41,7 @@ class SQLLineRepository(ILineRepository):
         )
 
     def insert_line(self, pair: str, price: float, creation_date: datetime | None = None) -> LineData:
-        with get_db_session() as db:
+        with self._session() as db:
             c_date = creation_date if creation_date else datetime.now(timezone.utc)
 
             new_line = Line(
@@ -59,14 +64,14 @@ class SQLLineRepository(ILineRepository):
             return self._make_line_data(new_line)
 
     def get_line(self, line_id: str) -> LineData | None:
-        with get_db_session() as db:
+        with self._session() as db:
             row = db.query(Line).filter(Line.line_id == line_id).one_or_none()
             if not row:
                 return None
             return self._make_line_data(row)
 
     def list_lines(self, pair: str) -> list[LineData]:
-        with get_db_session() as db:
+        with self._session() as db:
             rows = (
                 db.query(Line)
                   .filter(Line.pair == pair)
@@ -75,7 +80,7 @@ class SQLLineRepository(ILineRepository):
             return [self._make_line_data(row) for row in rows]
 
     def update_line(self, line_id: str, price: float) -> LineData:
-        with get_db_session() as db:
+        with self._session() as db:
             row = db.query(Line).filter(Line.line_id == line_id).one_or_none()
             if not row:
                 db.close()
@@ -93,7 +98,7 @@ class SQLLineRepository(ILineRepository):
             return self._make_line_data(row)
 
     def delete_line(self, line_id: str) -> None:
-        with get_db_session() as db:
+        with self._session() as db:
             db.query(Line) \
                 .filter(Line.line_id == line_id) \
                 .delete()
@@ -106,5 +111,3 @@ class SQLLineRepository(ILineRepository):
                 db.close()
 
 
-# Backward compatibility alias
-LineRepository = ILineRepository

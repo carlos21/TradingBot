@@ -2,10 +2,11 @@ import contextlib
 from datetime import datetime, timezone
 from threading import RLock
 
+from src.application.ports import EventPublisher
 from src.dbexception import DBNotFoundException
-from src.repositories.lines_repository import LineRepository
-from src.repositories.trades_repository import TradeRepository
-from src.strategies.base_liquidity_strategy import BE_TRESHOLD_POINTS
+from src.domain.repositories import LineRepository
+from src.domain.repositories import TradeRepository
+from src.financial_calc import FinancialCalc
 from src.utils.app_logger import ILogger
 
 
@@ -20,7 +21,7 @@ class LiquidityDualM1Strategy:
         self,
         min_stop_loss: float,
         max_bounce: float,
-        socketio,
+        socketio: EventPublisher | None,
         line_repository: LineRepository,
         trade_repository: TradeRepository,
         extra_sl_space: dict[str, float],
@@ -174,7 +175,7 @@ class LiquidityDualM1Strategy:
 
             if closed:
                 from src.financial_calc import FinancialCalc
-                from src.types import Direction
+                from src.domain.types import Direction
                 r_result, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
                     direction=Direction.from_string(t['type']),
                     entry_price=t['entry'],
@@ -248,7 +249,7 @@ class LiquidityDualM1Strategy:
             tp = trade.get('take_profit')
             exit_px = trade.get('exit_price')
             # Check BE first (SL might be at entry for breakeven trades)
-            if entry and abs(exit_px - entry) < BE_TRESHOLD_POINTS:
+            if entry and abs(exit_px - entry) < FinancialCalc.DEFAULT_BE_THRESHOLD_POINTS:
                 result_type = "BE"
             elif sl and abs(exit_px - sl) < 0.5:
                 result_type = "SL"

@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from src.strategies.entry_context import EntryContext, EntryTrigger
-from src.types import Direction
+from src.domain.types import Direction
 
 if TYPE_CHECKING:
     from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
@@ -518,10 +518,6 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
 
     trigger.__name__ = "velocity_adaptive_tsi_trigger"
     return trigger
-
-
-# Backward-compatible default instance (uses VelocityTriggerConfig defaults)
-velocity_adaptive_tsi_trigger = make_velocity_adaptive_tsi_trigger()
 
 
 def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val):

@@ -12,7 +12,7 @@ from src.strategies.base_liquidity_strategy import (
     StrategyOptions,
 )
 from src.strategies.entry_context import EntryContext
-from src.types import Direction
+from src.domain.types import Direction
 from datetime import datetime
 
 from tests.conftest import make_bar

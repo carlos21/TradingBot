@@ -3,7 +3,7 @@ import threading
 
 import websocket
 
-from src.data_sources.live.live_datasource import LiveDataSource
+from src.infrastructure.data_sources.live.live_datasource import LiveDataSource
 
 
 class WebsocketLiveDataSource(LiveDataSource):

@@ -2,8 +2,8 @@
 
 import pytest
 
-from src.database.database import setup_database
-from src.repositories.decision_log_repository import DecisionLogRepository
+from src.infrastructure.database.database import setup_database
+from src.infrastructure.repositories.decision_log_repository import DecisionLogRepository
 
 
 @pytest.fixture

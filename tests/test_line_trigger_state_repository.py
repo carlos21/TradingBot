@@ -2,8 +2,8 @@
 
 import pytest
 
-from src.database.database import setup_database
-from src.repositories.line_trigger_state_repository import (
+from src.infrastructure.database.database import setup_database
+from src.infrastructure.repositories.line_trigger_state_repository import (
     InMemoryLineTriggerStateRepository,
     SQLiteLineTriggerStateRepository,
 )

@@ -1,4 +1,4 @@
-from src.repositories.trades_repository import TradeRepository
+from src.domain.repositories import TradeRepository
 
 
 class TradeLogger:

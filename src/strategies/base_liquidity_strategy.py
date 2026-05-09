@@ -9,26 +9,22 @@ from threading import RLock
 from typing import Any
 
 from src.analytics import AnalyticsReporter, NoOpReporter
+from src.application.ports import EventPublisher
+from src.application.services.strategy_trade_service import StrategyTradeService
 from src.dbexception import DBNotFoundException
 from src.financial_calc import FinancialCalc
-from src.repositories.line_trigger_state_repository import (
-    InMemoryLineTriggerStateRepository,
-    LineTriggerStateRepository,
-)
-from src.repositories.lines_repository import LineRepository
-from src.repositories.trades_repository import TradeRepository
+from src.domain.repositories import LineTriggerStateRepository
+from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
+from src.domain.repositories import LineRepository
+from src.domain.repositories import TradeRepository
 from src.services.trade_manager import TradeManager
 from src.strategies.entry_context import (
     EntryContext,
     EntryFilter,
     EntryTrigger,
 )
-from src.types import Direction
+from src.domain.types import Direction
 from src.utils.app_logger import ILogger
-
-# Re-export for backward compatibility - use FinancialCalc.DEFAULT_BE_THRESHOLD_POINTS
-BE_TRESHOLD_POINTS = FinancialCalc.DEFAULT_BE_THRESHOLD_POINTS
-
 
 class LineRemovalMode(str, Enum):
     ON_EVALUATE = "on_evaluate"   # remove line after we evaluated it
@@ -71,7 +67,7 @@ class BaseLiquidityStrategy:
         self,
         min_stop_loss: float,
         max_bounce: float,
-        socketio,
+        socketio: EventPublisher | None,
         line_repository: LineRepository,
         trade_repository: TradeRepository,
         trade_manager: TradeManager,
@@ -125,6 +121,17 @@ class BaseLiquidityStrategy:
         self.trigger_state_repo: LineTriggerStateRepository = trigger_state_repo or InMemoryLineTriggerStateRepository()
         self.decision_log_repository = decision_log_repository
         self._account_configs: list = list(account_configs) if account_configs else []
+
+        self._trade_service = StrategyTradeService(
+            trade_repository=trade_repository,
+            trade_executor=trade_manager.trade_executor if trade_manager else NoOpExecutor(),
+            event_publisher=socketio,
+            logger=logger,
+            trade_logger=trade_logger,
+            point_value=point_value,
+            fee_per_rt=fee_per_rt,
+            broker_spread=broker_spread,
+        )
 
         self.strategy_lines: dict[Any, dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
         self.open_trades: list[dict[str, Any]] = []
@@ -929,66 +936,21 @@ class BaseLiquidityStrategy:
         }
 
     def _store_and_emit_open(self, trade: dict[str, Any]):
-        if self.is_warmup:
-            return
-        if trade.get("is_phantom"):
-            trade["trade_id"] = f"phantom-{trade['entry_time']}"
-            self.open_trades.append(trade)
-            self.logger.info(f"[Strategy] Phantom trade opened @ {trade['entry']:.2f} (reentry_only mode)")
-            return
-
-        # Multi-account mode: create a Signal trade (account=NULL) and let the
-        # MultiAccountExecutor expand it into per-account trades.
-        if self._account_configs:
-            td = self.trade_repository.insert_trade(
-                pair=trade["pair"],
-                trade_type=trade["type"],
-                entry_price=trade["entry"],
-                stop_loss=trade["stop_loss"],
-                take_profit=trade["take_profit"],
-                risk=trade["risk"],
-                entry_time=self._ts_to_dt(trade["entry_time"]),
-                params={
-                    "line_level": trade.get("line_level"),
-                    "is_reentry": trade.get("is_reentry", False),
-                },
-                source="signal",
-                risk_dollars=trade.get("risk_dollars"),
-                risk_pct=trade.get("risk_pct"),
-                contracts=trade.get("contracts"),
-            )
-            trade["trade_id"] = td.trade_id
-            trade["is_signal"] = True
-            self.open_trades.append(trade)
-            self.socketio.emit("trade_open", {**trade})
-            self.trade_manager.trade_executor.on_trade_open(trade)
-            if self.trade_logger:
-                self.trade_logger.log(trade["trade_id"], "CMD_SENT", "expand_signal → MultiAccountExecutor")
-            return
-
-        # Single-account mode: existing behavior
-        td = self.trade_repository.insert_trade(
-            pair=trade["pair"],
-            trade_type=trade["type"],
-            entry_price=trade["entry"],
-            stop_loss=trade["stop_loss"],
-            take_profit=trade["take_profit"],
-            risk=trade["risk"],
-            entry_time=self._ts_to_dt(trade["entry_time"]),
-            params={
-                "line_level": trade.get("line_level"),
-                "is_reentry": trade.get("is_reentry", False),
-            },
-            source="strategy",
-            risk_dollars=trade.get("risk_dollars"),
-            risk_pct=trade.get("risk_pct"),
-            contracts=trade.get("contracts"),
+        trade_id = self._trade_service.open_trade(
+            trade=trade,
+            is_warmup=self.is_warmup,
+            account_configs=self._account_configs,
         )
-        trade["trade_id"] = td.trade_id
+        if trade_id is None:
+            # Warmup or phantom — trade dict already mutated by service
+            if trade.get("is_phantom"):
+                self.open_trades.append(trade)
+            return
+
         self.open_trades.append(trade)
 
         # Also register with trade_manager so it can track SL/TP hits
-        if self.trade_manager:
+        if self.trade_manager and not trade.get("is_signal"):
             tm_trade = {
                 'trade_id':    trade["trade_id"],
                 'pair':        trade["pair"],
@@ -1006,56 +968,8 @@ class BaseLiquidityStrategy:
             self.trade_manager.open_trades.append(tm_trade)
             self.trade_manager._monitored_trades.add(trade["trade_id"])
 
-        self.socketio.emit("trade_open", {**trade})
-        self.trade_manager.trade_executor.on_trade_open(trade)
-        if self.trade_logger:
-            self.trade_logger.log(trade["trade_id"], "CMD_SENT", "place_order → NinjaTrader")
-
     def _store_and_emit_close(self, trade: dict[str, Any]):
-        contracts = trade.get("contracts") or 1
-        risk_pts = trade.get("risk", 0) or 1.0
-        _, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
-            direction=Direction.from_string(trade["type"]),
-            entry_price=trade["entry"],
-            exit_price=trade["exit_price"],
-            stop_loss=trade["stop_loss"],
-            take_profit=trade["take_profit"],
-            risk_points=risk_pts,
-            contracts=contracts,
-            point_value=self.point_value,
-            fee_per_rt=self.fee_per_rt,
-        )
-        # Deduct spread cost separately so result_r stays at theoretical RR
-        if self.broker_spread > 0:
-            spread_cost = contracts * self.broker_spread * self.point_value
-            t_pnl_usd -= spread_cost
-            t_fees += spread_cost
-        trade["fees"] = t_fees
-        trade["pnl_usd"] = t_pnl_usd
-        # Determine result_type if not already set (use unified FinancialCalc)
-        result_type = trade.get("result_type")
-        if not result_type:
-            entry = trade.get("entry")
-            sl = trade.get("stop_loss")
-            tp = trade.get("take_profit")
-            exit_px = trade.get("exit_price")
-            result_type = FinancialCalc.determine_result_type(
-                exit_price=exit_px,
-                entry_price=entry,
-                stop_loss=sl,
-                take_profit=tp,
-            )
-            trade["result_type"] = result_type
-        self.socketio.emit("trade_close", trade)
-        self.trade_repository.close_trade(
-            trade_id=trade["trade_id"],
-            exit_price=trade["exit_price"],
-            exit_time=self._ts_to_dt(trade["exit_time"]),
-            result=trade["result"],
-            result_type=result_type,
-            fees=t_fees,
-            pnl_usd=t_pnl_usd,
-        )
+        self._trade_service.close_trade(trade)
 
     # ----- utils -----
 

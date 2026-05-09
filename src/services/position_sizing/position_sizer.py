@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from src.financial_calc import FinancialCalc
-from src.types import Direction
+from src.domain.types import Direction
 
 
 @dataclass

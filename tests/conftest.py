@@ -5,8 +5,8 @@ os.environ.setdefault("TELEGRAM_CHAT_ID", "dummy")
 
 import pytest
 
-from src.database.database_protocol import Base, get_database
-from src.database.database import setup_database, db as global_db
+from src.infrastructure.database.database_protocol import Base, get_database
+from src.infrastructure.database.database import setup_database, db as global_db
 from src.services.trade_logger import TradeLogger
 from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import StrategyOptions
@@ -188,7 +188,7 @@ def db_session():
 @pytest.fixture
 def setup_test_database():
     """Set up the global database with an in-memory SQLite for repository tests."""
-    from src.database import database as db_module
+    from src.infrastructure.database import database as db_module
     original_db = db_module.db
     test_db = get_database("sqlite:///:memory:")
     test_db.create_tables(Base)

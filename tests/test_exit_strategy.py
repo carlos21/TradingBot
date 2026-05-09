@@ -7,7 +7,7 @@ from src.strategies.exits import (
     SessionEndExitStrategy,
     SLTPExitStrategy,
 )
-from src.types import Direction
+from src.domain.types import Direction
 
 
 class TestSLTPExitStrategy:

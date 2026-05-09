@@ -3,17 +3,21 @@
 from datetime import datetime, timedelta, timezone
 from threading import Lock
 
-from src.database.database import DecisionLog, get_db_session
+from src.domain.repositories import DecisionLogRepository as IDecisionLogRepository
+from src.infrastructure.database.database import DecisionLog
+from src.infrastructure.database.database_protocol import DatabaseProtocol
+from src.infrastructure.repositories.base import SQLRepositoryBase
 
 
-class DecisionLogRepository:
+class DecisionLogRepository(SQLRepositoryBase, IDecisionLogRepository):
     """Repository for persisting strategy decision logs to SQLite.
 
     Each decision (latch, trigger skip, filter block, entry, etc.) is stored
     as a row so the full lifecycle of a line can be audited after the fact.
     """
 
-    def __init__(self):
+    def __init__(self, db: DatabaseProtocol | None = None):
+        super().__init__(db)
         self._lock = Lock()
 
     def add_log(
@@ -31,7 +35,7 @@ class DecisionLogRepository:
         details: str | None = None,
     ) -> None:
         """Insert a single decision log."""
-        with self._lock, get_db_session() as db:
+        with self._lock, self._session() as db:
             log = DecisionLog(
                 bar_time=bar_time,
                 pair=pair,
@@ -50,8 +54,6 @@ class DecisionLogRepository:
             except Exception:
                 db.rollback()
                 raise
-            finally:
-                db.close()
 
     def get_recent(
         self,
@@ -61,7 +63,7 @@ class DecisionLogRepository:
         limit: int = 500,
     ) -> list[dict]:
         """Query recent decision logs with optional filters."""
-        with get_db_session() as db:
+        with self._session() as db:
             query = db.query(DecisionLog).order_by(DecisionLog.bar_time.desc())
             if pair:
                 query = query.filter(DecisionLog.pair == pair)
@@ -70,27 +72,23 @@ class DecisionLogRepository:
             if line_id:
                 query = query.filter(DecisionLog.line_id == line_id)
             rows = query.limit(limit).all()
-            result = [self._to_dict(r) for r in rows]
-            db.close()
-            return result
+            return [self._to_dict(r) for r in rows]
 
     def get_by_line_id(self, line_id: str) -> list[dict]:
         """Full audit trail for a single strategy line."""
-        with get_db_session() as db:
+        with self._session() as db:
             rows = (
                 db.query(DecisionLog)
                 .filter(DecisionLog.line_id == line_id)
                 .order_by(DecisionLog.bar_time.asc())
                 .all()
             )
-            result = [self._to_dict(r) for r in rows]
-            db.close()
-            return result
+            return [self._to_dict(r) for r in rows]
 
     def cleanup_old(self, days: int = 30) -> int:
         """Delete logs older than N days. Returns number of rows deleted."""
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        with self._lock, get_db_session() as db:
+        with self._lock, self._session() as db:
             count = (
                 db.query(DecisionLog)
                 .filter(DecisionLog.created_at < cutoff)
@@ -101,8 +99,6 @@ class DecisionLogRepository:
             except Exception:
                 db.rollback()
                 raise
-            finally:
-                db.close()
             return count
 
     @staticmethod

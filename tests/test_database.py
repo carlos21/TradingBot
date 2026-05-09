@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy import text
 
-from src.database.database import (
+from src.infrastructure.database.database import (
     AppCredential,
     AppSetting,
     DecisionLog,

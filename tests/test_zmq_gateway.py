@@ -13,8 +13,8 @@ import pytest
 # Skip if zmq not installed
 zmq = pytest.importorskip("zmq")
 
-from src.gateway.gateway import GatewayConfig, TradingGateway  # noqa: E402
-from src.gateway.protocol import (  # noqa: E402
+from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway  # noqa: E402
+from src.infrastructure.gateway.protocol import (  # noqa: E402
     BarMessage,
     MessageEnvelope,
     MessageType,
@@ -216,7 +216,7 @@ class TestDataSource:
     """Test ZMQDataSource."""
 
     def test_datasource_creation(self):
-        from src.gateway.datasource import ZMQDataSource
+        from src.infrastructure.gateway.datasource import ZMQDataSource
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
         logger = ConsoleLogger()
@@ -227,7 +227,7 @@ class TestDataSource:
         assert ds._historical_bars == []
 
     def test_bar_aggregation(self):
-        from src.gateway.datasource import ZMQDataSource
+        from src.infrastructure.gateway.datasource import ZMQDataSource
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
         logger = ConsoleLogger()
@@ -256,7 +256,7 @@ class TestExecutor:
     """Test ZMQTradeExecutor."""
 
     def test_executor_creation(self):
-        from src.gateway.executor import ZMQTradeExecutor
+        from src.infrastructure.gateway.executor import ZMQTradeExecutor
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
         mock_gateway = MagicMock()
@@ -271,7 +271,7 @@ class TestExecutor:
         assert executor._gateway == mock_gateway
 
     def test_on_trade_open(self):
-        from src.gateway.executor import ZMQTradeExecutor
+        from src.infrastructure.gateway.executor import ZMQTradeExecutor
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
         mock_gateway = MagicMock()
@@ -295,7 +295,7 @@ class TestExecutor:
         assert args["direction"] == "long"
 
     def test_on_trade_close(self):
-        from src.gateway.executor import ZMQTradeExecutor
+        from src.infrastructure.gateway.executor import ZMQTradeExecutor
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
         mock_gateway = MagicMock()
@@ -310,7 +310,7 @@ class TestExecutor:
         )
 
     def test_on_sl_update(self):
-        from src.gateway.executor import ZMQTradeExecutor
+        from src.infrastructure.gateway.executor import ZMQTradeExecutor
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
         mock_gateway = MagicMock()
@@ -329,7 +329,7 @@ class TestMultiAccountE2E:
     """Tests for multi-account E2E test sequence state machine."""
 
     def test_multi_account_test_queues_multiple_open_orders(self):
-        from src.gateway.gateway import TradingGateway
+        from src.infrastructure.gateway.gateway import TradingGateway
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
         gw = TradingGateway(logger=ConsoleLogger())
@@ -349,7 +349,7 @@ class TestMultiAccountE2E:
         assert group['stage'] == 'awaiting_entry_fills'
 
     def test_multi_account_group_advances_on_all_entry_fills(self):
-        from src.gateway.gateway import TradingGateway
+        from src.infrastructure.gateway.gateway import TradingGateway
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
         gw = TradingGateway(logger=ConsoleLogger())
@@ -375,7 +375,7 @@ class TestMultiAccountE2E:
         assert group['stage'] == 'awaiting_exit_fills'
 
     def test_multi_account_group_completes_on_all_exit_fills(self):
-        from src.gateway.gateway import TradingGateway
+        from src.infrastructure.gateway.gateway import TradingGateway
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
         gw = TradingGateway(logger=ConsoleLogger())

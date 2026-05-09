@@ -6,7 +6,7 @@ import time
 
 from flask import Flask, jsonify, request
 
-from src.gateway.datasource import ZMQDataSource
+from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.utils.app_logger import ILogger
 
 

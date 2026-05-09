@@ -4,7 +4,7 @@ from flask import abort, jsonify
 
 from src.bars_loader import BarsLoader
 from src.dbexception import DBNotFoundException
-from src.repositories.lines_repository import LineRepository
+from src.domain.repositories import LineRepository
 from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 from src.utils.app_logger import ILogger
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from typing import Any
 
+from src.application.ports import EventPublisher
 from src.financial_calc import FinancialCalc
 from src.services.trade_manager import TradeManager
 from src.strategies.base_liquidity_strategy import (
@@ -22,7 +23,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         self,
         min_stop_loss: float,
         max_bounce: float,
-        socketio,
+        socketio: EventPublisher | None,
         line_repository,
         trade_repository,
         trade_manager: TradeManager,

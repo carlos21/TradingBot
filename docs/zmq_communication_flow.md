@@ -255,7 +255,7 @@ sequenceDiagram
 ### Python Usage
 
 ```python
-from src.gateway.executor import MultiAccountExecutor
+from src.infrastructure.gateway.executor import MultiAccountExecutor
 from src.config.models import AccountConfig
 
 accounts = [
@@ -373,7 +373,7 @@ internal void HandleModifyOrder(string body)
 ### Python Usage Example
 
 ```python
-from src.gateway import TradingGateway
+from src.infrastructure.gateway import TradingGateway
 
 gateway = TradingGateway(logger, config, pair="MNQ")
 gateway.start()
@@ -680,7 +680,7 @@ sequenceDiagram
 # and passed to MultiAccountExecutor at startup.
 
 from src.config.loaders import DbConfigLoader
-from src.gateway.executor import MultiAccountExecutor
+from src.infrastructure.gateway.executor import MultiAccountExecutor
 
 cfg = DbConfigLoader().load()  # Reads AppSetting + NtAccount from DB
 account_configs = cfg.nt_accounts  # List[AccountConfig]

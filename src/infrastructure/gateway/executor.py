@@ -297,7 +297,7 @@ def create_zmq_executor(
     Convenience factory function to create a ZMQTradeExecutor.
 
     Usage:
-        from src.gateway import TradingGateway, create_zmq_executor
+        from src.infrastructure.gateway import TradingGateway, create_zmq_executor
 
         gateway = TradingGateway()
         gateway.start()

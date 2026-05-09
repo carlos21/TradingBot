@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from src.types import Direction
+from src.domain.types import Direction
 
 
 class FinancialCalc:

@@ -85,7 +85,7 @@ class TestAppBuilderLive:
              patch("src.config.builder._build_notifier"), \
              patch("src.config.builder._build_analytics"), \
              patch("src.config.builder.FileAndConsoleLogger"), \
-             patch("src.gateway.create_live_components") as mock_live:
+             patch("src.config.builder.create_live_components") as mock_live:
 
             mock_live.return_value = (MagicMock(), MagicMock())
             cfg = AppConfig(mode="live", pair="MNQ")
@@ -104,7 +104,7 @@ class TestAppBuilderLive:
              patch("src.config.builder._build_notifier"), \
              patch("src.config.builder._build_analytics"), \
              patch("src.config.builder.FileAndConsoleLogger"), \
-             patch("src.gateway.create_live_components") as mock_live:
+             patch("src.config.builder.create_live_components") as mock_live:
 
             mock_live.return_value = (MagicMock(), MagicMock())
             cfg = AppConfig(
@@ -129,7 +129,7 @@ class TestAppBuilderLive:
              patch("src.config.builder._build_notifier"), \
              patch("src.config.builder._build_analytics"), \
              patch("src.config.builder.FileAndConsoleLogger"), \
-             patch("src.gateway.create_multi_account_live_components") as mock_multi:
+             patch("src.config.builder.create_multi_account_live_components") as mock_multi:
 
             mock_multi.return_value = (MagicMock(), MagicMock())
             from src.config.models import AccountConfig

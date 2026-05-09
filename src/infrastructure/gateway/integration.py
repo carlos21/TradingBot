@@ -4,7 +4,7 @@ Integration module for connecting ZeroMQ gateway to app_factory.
 This module provides the live trading entry point using ZeroMQ.
 
 Usage:
-    from src.gateway import create_live_components
+    from src.infrastructure.gateway import create_live_components
     data_source, trade_executor = create_live_components(pair="MNQ")
 
     # Then pass to app_factory:

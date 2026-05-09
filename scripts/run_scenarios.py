@@ -33,7 +33,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app_factory import create_app, Repositories
-from src.data_sources.csv_datasource import CSVDataSource
+from src.infrastructure.data_sources.csv_datasource import CSVDataSource
 from src.financial_calc import FinancialCalc
 
 # Use unified BE threshold from FinancialCalc
@@ -45,9 +45,9 @@ from src.prod_config import (
 )
 from src.strategies.base_liquidity_strategy import LineRemovalMode
 from tests.fakes import FakeLineRepository, FakeTradeRepository
-from src.repositories.lines_repository import SQLLineRepository
-from src.repositories.trades_repository import SQLTradeRepository
-from src.database import database
+from src.infrastructure.repositories.lines_repository import SQLLineRepository
+from src.infrastructure.repositories.trades_repository import SQLTradeRepository
+from src.infrastructure.database import database
 from scripts.html_report import generate_html_report
 from scripts.mode_pnl import per_trade_sim, per_trade_futures, per_trade_cfd
 

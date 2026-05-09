@@ -2,8 +2,8 @@
 
 from flask import abort, jsonify
 
-from src.repositories.decision_log_repository import DecisionLogRepository
-from src.repositories.lines_repository import LineRepository
+from src.infrastructure.repositories.decision_log_repository import DecisionLogRepository
+from src.domain.repositories import LineRepository
 from src.services.analytics_service import AnalyticsService
 from src.utils.app_logger import ILogger
 

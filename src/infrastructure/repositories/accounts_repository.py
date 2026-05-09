@@ -2,22 +2,39 @@
 from __future__ import annotations
 
 from src.config.models import AccountConfig
-from src.database.database import NtAccount, get_db_session
+from src.domain.repositories import AccountRepository
+from src.infrastructure.database.database import NtAccount
+from src.infrastructure.database.database_protocol import DatabaseProtocol
+from src.infrastructure.repositories.base import SQLRepositoryBase
 
 
-class NtAccountRepository:
+class NtAccountRepository(SQLRepositoryBase, AccountRepository):
     """CRUD for NtAccount rows."""
 
+    def __init__(self, db: DatabaseProtocol | None = None):
+        super().__init__(db)
+
+    def get_account(self, name: str) -> AccountConfig | None:
+        with self._session() as session:
+            row = session.query(NtAccount).filter_by(name=name).first()
+            if row:
+                return AccountConfig(
+                    name=row.name, risk_usd=row.risk_usd,
+                    risk_pct=row.risk_pct, rr_ratio=row.rr_ratio
+                )
+            return None
+
     def list_accounts(self) -> list[AccountConfig]:
-        with get_db_session() as session:
+        with self._session() as session:
             rows = session.query(NtAccount).all()
             return [
                 AccountConfig(name=r.name, risk_usd=r.risk_usd, risk_pct=r.risk_pct, rr_ratio=r.rr_ratio)
                 for r in rows
             ]
 
-    def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None, rr_ratio: float | None = None) -> None:
-        with get_db_session() as session:
+    def upsert(self, name: str, risk_usd: float | None = None,
+               risk_pct: float | None = None, rr_ratio: float | None = None) -> None:
+        with self._session() as session:
             try:
                 row = session.query(NtAccount).filter_by(name=name).first()
                 if row:
@@ -33,7 +50,7 @@ class NtAccountRepository:
                 raise
 
     def delete(self, name: str) -> None:
-        with get_db_session() as session:
+        with self._session() as session:
             try:
                 row = session.query(NtAccount).filter_by(name=name).first()
                 if row:
@@ -44,7 +61,7 @@ class NtAccountRepository:
                 raise
 
     def clear_all(self) -> None:
-        with get_db_session() as session:
+        with self._session() as session:
             try:
                 session.query(NtAccount).delete()
                 session.commit()

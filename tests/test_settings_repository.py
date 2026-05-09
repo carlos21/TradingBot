@@ -1,17 +1,17 @@
 """Tests for settings repositories."""
 import pytest
 
-from src.database.database import setup_database
-from src.repositories.accounts_repository import NtAccountRepository
-from src.repositories.credentials_repository import CredentialRepository
-from src.repositories.settings_repository import SettingsRepository
+from src.infrastructure.database.database import setup_database
+from src.infrastructure.repositories.accounts_repository import NtAccountRepository
+from src.infrastructure.repositories.credentials_repository import CredentialRepository
+from src.infrastructure.repositories.settings_repository import SettingsRepository
 
 
 @pytest.fixture
 def db_session(tmp_path):
     db_path = f"sqlite:///{tmp_path / 'settings_test.db'}"
     setup_database(db_url=db_path)
-    from src.database.database import get_db_session
+    from src.infrastructure.database.database import get_db_session
     session = get_db_session().__enter__()
     yield session
     session.close()

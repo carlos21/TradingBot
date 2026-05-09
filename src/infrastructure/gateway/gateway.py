@@ -187,7 +187,7 @@ to be:
     def _refresh_account_names(self) -> None:
         """Reload account names from DB so changes take effect without restart."""
         try:
-            from src.repositories.accounts_repository import NtAccountRepository
+            from src.infrastructure.repositories.accounts_repository import NtAccountRepository
             repo = NtAccountRepository()
             accounts = repo.list_accounts()
             self._account_names = [a.name for a in accounts]

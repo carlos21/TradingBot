@@ -8,20 +8,23 @@ import uuid
 from datetime import datetime, timezone
 from threading import Lock
 
-from src.database.database import Trade, get_db_session
+from src.infrastructure.database.database import Trade
+from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.dbexception import DBException, DBNotFoundException
-from src.models import TradeData
-from src.repositories.interfaces import TradeRepository as ITradeRepository
+from src.domain.models import TradeData
+from src.domain.repositories import TradeRepository as ITradeRepository
+from src.infrastructure.repositories.base import SQLRepositoryBase
 
 
-class SQLTradeRepository(ITradeRepository):
+class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
     """SQL-based trade repository with per-operation sessions.
 
     Each operation opens and closes its own database session.
     For multi-operation transactions, use UnitOfWork instead.
     """
 
-    def __init__(self):
+    def __init__(self, db: DatabaseProtocol | None = None):
+        super().__init__(db)
         self._log_lock = Lock()
 
     def _ensure_utc(self, dt: datetime | None) -> datetime | None:
@@ -78,7 +81,7 @@ class SQLTradeRepository(ITradeRepository):
         signal_id: str | None = None,
         trade_id: str | None = None,
     ) -> TradeData:
-        with get_db_session() as db:
+        with self._session() as db:
             t = Trade(
                 trade_id=trade_id if trade_id else str(uuid.uuid4()),
                 pair=pair,
@@ -109,7 +112,7 @@ class SQLTradeRepository(ITradeRepository):
         return self._make_trade_data(t)
 
     def list_trades(self, pair: str) -> list[TradeData]:
-        with get_db_session() as db:
+        with self._session() as db:
             rows = db.query(Trade).filter(Trade.pair == pair).all()
             result: list[TradeData] = []
             for t in rows:
@@ -118,7 +121,7 @@ class SQLTradeRepository(ITradeRepository):
             return result
 
     def update_stop_loss(self, trade_id: str, new_stop_loss: float) -> TradeData:
-        with get_db_session() as db:
+        with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
             if not t:
                 db.close()
@@ -136,7 +139,7 @@ class SQLTradeRepository(ITradeRepository):
         return self._make_trade_data(t)
 
     def update_take_profit(self, trade_id: str, new_take_profit: float) -> TradeData:
-        with get_db_session() as db:
+        with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
             if not t:
                 db.close()
@@ -154,7 +157,7 @@ class SQLTradeRepository(ITradeRepository):
         return self._make_trade_data(t)
 
     def update_entry_price(self, trade_id: str, new_entry_price: float) -> TradeData:
-        with get_db_session() as db:
+        with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
             if not t:
                 db.close()
@@ -172,7 +175,7 @@ class SQLTradeRepository(ITradeRepository):
         return self._make_trade_data(t)
 
     def update_risk_fields(self, trade_id: str, risk: float, risk_dollars: float, risk_pct: float) -> TradeData:
-        with get_db_session() as db:
+        with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
             if not t:
                 db.close()
@@ -192,7 +195,7 @@ class SQLTradeRepository(ITradeRepository):
         return self._make_trade_data(t)
 
     def update_contracts(self, trade_id: str, contracts: float) -> TradeData:
-        with get_db_session() as db:
+        with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
             if not t:
                 db.close()
@@ -219,7 +222,7 @@ class SQLTradeRepository(ITradeRepository):
         fees: float | None = None,
         pnl_usd: float | None = None,
     ) -> TradeData:
-        with get_db_session() as db:
+        with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
             if not t:
                 db.close()
@@ -250,8 +253,6 @@ class SQLTradeRepository(ITradeRepository):
 
         from sqlalchemy import text
 
-        from src.database.database import db
-
         log_entry = {
             "ts": datetime.now(tz=timezone.utc).isoformat(),
             "event": event,
@@ -261,7 +262,7 @@ class SQLTradeRepository(ITradeRepository):
 
         # Fast path: direct SQL JSON append using SQLite JSON1 extension
         try:
-            with db.get_engine().connect() as conn:
+            with self._engine().connect() as conn:
                 # First try: use json_insert to append to array
                 result = conn.execute(
                     text("""
@@ -283,7 +284,7 @@ class SQLTradeRepository(ITradeRepository):
             # Fall through to ORM method
 
         # Fallback: use ORM approach with minimal lock time
-        with self._log_lock, get_db_session() as db_session:
+        with self._log_lock, self._session() as db_session:
             t = db_session.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
             if not t:
                 return
@@ -297,14 +298,14 @@ class SQLTradeRepository(ITradeRepository):
                 raise
 
     def get_trade_logs(self, trade_id: str) -> list:
-        with get_db_session() as db:
+        with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
             result = list(t.logs or []) if t else []
             db.close()
             return result
 
     def get_trade(self, trade_id: str) -> TradeData | None:
-        with get_db_session() as db:
+        with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
             if not t:
                 db.close()
@@ -318,7 +319,7 @@ class SQLTradeRepository(ITradeRepository):
 
     def clear(self):
         """Delete all trades. Used by scenario runner to reset between runs."""
-        with get_db_session() as db:
+        with self._session() as db:
             db.query(Trade).delete()
             try:
                 db.commit()
@@ -329,5 +330,3 @@ class SQLTradeRepository(ITradeRepository):
                 db.close()
 
 
-# Backward compatibility alias
-TradeRepository = ITradeRepository

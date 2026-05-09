@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from src.models import LineData, TradeData
+from src.domain.models import LineData, TradeData
 
 
 class TestLineData:

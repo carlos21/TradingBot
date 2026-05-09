@@ -2,7 +2,7 @@
 
 from flask import Flask, jsonify, render_template
 
-from src.data_sources.combined_datasource import CombinedDataSource
+from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.utils.app_logger import ILogger
 
 

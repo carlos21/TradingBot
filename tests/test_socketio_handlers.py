@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.gateway.datasource import ZMQDataSource
+from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.routes.socketio_handlers import register_socketio_handlers
 from tests.fakes import FakeDataSource, FakeLogger
 

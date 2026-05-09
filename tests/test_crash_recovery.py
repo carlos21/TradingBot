@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from src.prod_config import get_prod_candle_config, get_prod_strategy_options
-from src.repositories.line_trigger_state_repository import (
+from src.infrastructure.repositories.line_trigger_state_repository import (
     InMemoryLineTriggerStateRepository,
 )
 from src.services.trade_manager import TradeManager

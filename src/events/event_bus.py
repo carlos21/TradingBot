@@ -12,43 +12,9 @@ This eliminates direct coupling between:
 
 from collections import defaultdict
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import datetime
-from enum import Enum, auto
 from typing import Any, Protocol
 
-
-class EventType(Enum):
-    """Enumeration of all domain event types."""
-    # Trade lifecycle events
-    TRADE_OPENED = auto()
-    TRADE_CLOSED = auto()
-    TRADE_UPDATED = auto()  # SL moved, etc.
-
-    # Line events
-    LINE_ADDED = auto()
-    LINE_REMOVED = auto()
-    LINE_UPDATED = auto()
-
-    # Stream events
-    STREAM_STARTED = auto()
-    STREAM_PAUSED = auto()
-    STREAM_ENDED = auto()
-
-    # Strategy events
-    ENTRY_SIGNAL = auto()
-    FILTER_BLOCKED = auto()
-
-
-@dataclass(frozen=True)
-class DomainEvent:
-    """Base class for all domain events.
-
-    Events are immutable (frozen dataclass) to prevent accidental modification.
-    """
-    event_type: EventType
-    timestamp: datetime = field(default_factory=lambda: datetime.utcnow())
-    payload: dict[str, Any] = field(default_factory=dict)
+from src.domain.events import DomainEvent, EventType
 
 
 class EventSubscriber(Protocol):
@@ -217,6 +183,7 @@ class SocketIOBridge:
         self.event_bus.subscribe(EventType.STREAM_STARTED, self._on_stream_started)
         self.event_bus.subscribe(EventType.STREAM_PAUSED, self._on_stream_paused)
         self.event_bus.subscribe(EventType.STREAM_ENDED, self._on_stream_ended)
+        self.event_bus.subscribe(EventType.INDICATOR_UPDATE, self._on_indicator_update)
 
     def stop(self) -> None:
         """Stop forwarding events."""
@@ -229,6 +196,7 @@ class SocketIOBridge:
         self.event_bus.unsubscribe(EventType.STREAM_STARTED, self._on_stream_started)
         self.event_bus.unsubscribe(EventType.STREAM_PAUSED, self._on_stream_paused)
         self.event_bus.unsubscribe(EventType.STREAM_ENDED, self._on_stream_ended)
+        self.event_bus.unsubscribe(EventType.INDICATOR_UPDATE, self._on_indicator_update)
 
     def _on_trade_opened(self, event: DomainEvent) -> None:
         """Forward trade open event."""
@@ -266,6 +234,10 @@ class SocketIOBridge:
         """Forward stream ended event."""
         reason = event.payload.get('reason', 'eof')
         self.socketio.emit('stream_end', {'reason': reason})
+
+    def _on_indicator_update(self, event: DomainEvent) -> None:
+        """Forward indicator update event."""
+        self.socketio.emit('indicator_update', event.payload)
 
 
 # Global event bus singleton for convenience

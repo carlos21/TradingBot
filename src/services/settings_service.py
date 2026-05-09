@@ -8,9 +8,9 @@ from typing import Protocol
 from cryptography.fernet import Fernet
 
 from src.config.models import AccountConfig, AppConfig
-from src.repositories.accounts_repository import NtAccountRepository
-from src.repositories.credentials_repository import CredentialRepository
-from src.repositories.settings_repository import SettingsRepository
+from src.infrastructure.repositories.accounts_repository import NtAccountRepository
+from src.infrastructure.repositories.credentials_repository import CredentialRepository
+from src.infrastructure.repositories.settings_repository import SettingsRepository
 
 
 class ISettingsRepository(Protocol):

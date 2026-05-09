@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from src.gateway.gateway import GatewayConfig
-from src.gateway.protocol import (
+from src.infrastructure.gateway.gateway import GatewayConfig
+from src.infrastructure.gateway.protocol import (
     BarMessage,
     CommandAckMessage,
     EntryFillMessage,

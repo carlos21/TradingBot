@@ -3,8 +3,13 @@ from datetime import datetime
 
 from src.analytics import AnalyticsReporter
 from src.config.models import AccountConfig
-from src.data_sources.combined_datasource import CombinedDataSource
-from src.models import LineData, TradeData
+from src.domain.models import LineData, TradeData
+from src.domain.repositories import (
+    AccountRepository,
+    CredentialRepository as ICredentialRepository,
+    SettingsRepository as ISettingsRepository,
+)
+from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.notifier import Notifier
 from src.services.trade_close_service import TradeEventPublisher
 from src.services.trade_executor import TradeExecutor
@@ -400,7 +405,7 @@ class FakeSettingsRepository:
         self._store.pop(key, None)
 
 
-class FakeNtAccountRepository:
+class FakeNtAccountRepository(AccountRepository):
     """In-memory account repository for testing."""
 
     def __init__(self):
@@ -408,6 +413,12 @@ class FakeNtAccountRepository:
 
     def list_accounts(self) -> list[AccountConfig]:
         return list(self._accounts)
+
+    def get_account(self, name: str) -> AccountConfig | None:
+        for acct in self._accounts:
+            if acct.name == name:
+                return acct
+        return None
 
     def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None, rr_ratio: float | None = None) -> None:
         for i, acct in enumerate(self._accounts):
@@ -423,7 +434,7 @@ class FakeNtAccountRepository:
         self._accounts = []
 
 
-class FakeCredentialRepository:
+class FakeCredentialRepository(ICredentialRepository):
     """In-memory credential repository for testing."""
 
     def __init__(self):
@@ -448,3 +459,6 @@ class FakeCredentialRepository:
             "username": username,
             "password_encrypted": password_encrypted,
         })
+
+    def delete_credential(self, service: str) -> None:
+        self._creds = [c for c in self._creds if c["service"] != service]

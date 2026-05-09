@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
-from src.models import TradeData
+from src.domain.models import TradeData
 from src.strategies.entry_context import (
     EntryContext,
     daily_trades_limit_filter,

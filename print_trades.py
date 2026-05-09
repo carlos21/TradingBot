@@ -1,7 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from tabulate import tabulate
-from src.database.database import Trade
+from src.infrastructure.database.database import Trade
 
 import os
 

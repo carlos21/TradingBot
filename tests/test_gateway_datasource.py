@@ -12,9 +12,9 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from src.gateway.datasource import ZMQDataSource
-from src.gateway.gateway import GatewayConfig, TradingGateway
-from src.gateway.protocol import MessageType
+from src.infrastructure.gateway.datasource import ZMQDataSource
+from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
+from src.infrastructure.gateway.protocol import MessageType
 from tests.fakes import FakeLogger
 
 
@@ -125,7 +125,7 @@ class TestInitialization:
 
     def test_ensure_gateway_creates_new(self, logger):
         ds = ZMQDataSource(logger=logger)
-        with patch("src.gateway.datasource.TradingGateway") as MockGW:
+        with patch("src.infrastructure.gateway.datasource.TradingGateway") as MockGW:
             mock_gw = MagicMock(spec=TradingGateway)
             MockGW.return_value = mock_gw
             gw = ds._ensure_gateway()
@@ -201,7 +201,7 @@ class TestLifecycle:
 
     def test_start_ensures_gateway(self, logger):
         ds = ZMQDataSource(logger=logger)
-        with patch("src.gateway.datasource.TradingGateway") as MockGW:
+        with patch("src.infrastructure.gateway.datasource.TradingGateway") as MockGW:
             mock_gw = MagicMock(spec=TradingGateway)
             MockGW.return_value = mock_gw
             ds.start()
@@ -281,19 +281,19 @@ class TestTickHandling:
         data_source.on_live_bar = lambda bar: live_bars.append(bar)
 
         base_time = 1000000.0
-        with patch("src.gateway.datasource.time.monotonic", return_value=base_time):
+        with patch("src.infrastructure.gateway.datasource.time.monotonic", return_value=base_time):
             data_source._on_tick(make_tick(time_val=1000, price=5000.0))
             # First tick always emits because _last_emit_time is 0
             assert len(live_bars) == 1
             assert live_bars[0].get("partial") is True
 
         # Next tick within 1 second should not emit
-        with patch("src.gateway.datasource.time.monotonic", return_value=base_time + 0.5):
+        with patch("src.infrastructure.gateway.datasource.time.monotonic", return_value=base_time + 0.5):
             data_source._on_tick(make_tick(time_val=1001, price=5100.0))
             assert len(live_bars) == 1
 
         # After 1 second, should emit again
-        with patch("src.gateway.datasource.time.monotonic", return_value=base_time + 1.5):
+        with patch("src.infrastructure.gateway.datasource.time.monotonic", return_value=base_time + 1.5):
             data_source._on_tick(make_tick(time_val=1002, price=5200.0))
             assert len(live_bars) == 2
             assert live_bars[1]["close"] == 5200.0
@@ -306,13 +306,13 @@ class TestTickHandling:
         # Set a recent native partial time
         data_source._last_native_partial_time = base_time
 
-        with patch("src.gateway.datasource.time.monotonic", return_value=base_time + 1.0):
+        with patch("src.infrastructure.gateway.datasource.time.monotonic", return_value=base_time + 1.0):
             data_source._on_tick(make_tick(time_val=1000, price=5000.0))
             # Should skip because native partial was < 2 seconds ago
             assert len(live_bars) == 0
 
         # After 2+ seconds from native partial, should emit
-        with patch("src.gateway.datasource.time.monotonic", return_value=base_time + 2.5):
+        with patch("src.infrastructure.gateway.datasource.time.monotonic", return_value=base_time + 2.5):
             data_source._on_tick(make_tick(time_val=1001, price=5100.0))
             assert len(live_bars) == 1
 
@@ -380,7 +380,7 @@ class TestPartialBarHandling:
 
     def test_on_partial_bar_updates_native_time(self, data_source):
         base_time = 1000000.0
-        with patch("src.gateway.datasource.time.monotonic", return_value=base_time):
+        with patch("src.infrastructure.gateway.datasource.time.monotonic", return_value=base_time):
             data_source._on_partial_bar({"time": 100, "open": 10.0, "close": 10.5})
             assert data_source._last_native_partial_time == base_time
 
@@ -744,7 +744,7 @@ class TestRequestRefresh:
 
     def test_request_refresh_ensures_gateway(self, logger):
         ds = ZMQDataSource(logger=logger)
-        with patch("src.gateway.datasource.TradingGateway") as MockGW:
+        with patch("src.infrastructure.gateway.datasource.TradingGateway") as MockGW:
             mock_gw = MagicMock(spec=TradingGateway)
             MockGW.return_value = mock_gw
             ds.request_refresh(days=3)

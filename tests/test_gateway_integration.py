@@ -8,10 +8,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.config.models import AccountConfig
-from src.gateway.datasource import ZMQDataSource
-from src.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
-from src.gateway.gateway import GatewayConfig, TradingGateway
-from src.gateway.integration import (
+from src.infrastructure.gateway.datasource import ZMQDataSource
+from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
+from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
+from src.infrastructure.gateway.integration import (
     create_gateway_only,
     create_live_components,
     create_multi_account_live_components,
@@ -67,7 +67,7 @@ class TestCreateLiveComponents:
         assert config.query_rep == "tcp://0.0.0.0:6002"
         assert config.heartbeat_pub == "tcp://0.0.0.0:6003"
 
-    @patch("src.gateway.gateway.zmq.Context")
+    @patch("src.infrastructure.gateway.gateway.zmq.Context")
     def test_returned_data_source_can_start_with_mocked_zmq(self, mock_ctx_cls):
         """Verify the created data source can be started when zmq is mocked."""
         mock_ctx = MagicMock()
@@ -158,7 +158,7 @@ class TestCreateGatewayOnly:
         assert config.query_rep == "tcp://192.168.1.1:7002"
         assert config.heartbeat_pub == "tcp://192.168.1.1:7003"
 
-    @patch("src.gateway.gateway.zmq.Context")
+    @patch("src.infrastructure.gateway.gateway.zmq.Context")
     def test_gateway_can_start_with_mocked_zmq(self, mock_ctx_cls):
         mock_ctx = MagicMock()
         mock_socket = MagicMock()

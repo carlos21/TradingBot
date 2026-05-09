@@ -5,22 +5,31 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from src.analytics import AnalyticsReporter, NoOpReporter
+from src.application.ports import EventPublisher
+from src.application.use_cases.broker_fill_handler import BrokerFillHandler
+from src.application.use_cases.trade_close_use_case import TradeCloseUseCase
+from src.application.use_cases.trade_open_use_case import TradeOpenUseCase
 from src.financial_calc import FinancialCalc
 from src.notifier import NoOpNotifier, Notifier
-from src.repositories.trades_repository import TradeRepository
+from src.domain.repositories import TradeRepository
 from src.services.trade_executor import NoOpExecutor, TradeExecutor
-from src.types import Direction
+from src.domain.types import Direction
 from src.utils.app_logger import ILogger
 
 
 class TradeManager:
     """
-    Handles closing open trades when a raw 1m bar touches SL or TP.
+    Manages the lifecycle of open trades: SL/TP detection, session close,
+    broker fill handling, and stream-end cleanup.
+
+    Core close logic is delegated to TradeCloseUseCase.
+    Core open logic is delegated to TradeOpenUseCase.
+    Broker fill logic is delegated to BrokerFillHandler.
     """
 
-    def __init__(self, trade_repository: TradeRepository, socketio,
-                 point_value: float, account_balance: float,
-                 logger: ILogger,
+    def __init__(self, trade_repository: TradeRepository, socketio: EventPublisher | None = None,
+                 point_value: float = 0.0, account_balance: float = 0.0,
+                 logger: ILogger | None = None,
                  risk_per_trade: float = None, risk_pct_per_trade: float = None,
                  pair: str = 'MNQ',
                  session_end_time: str = None, session_tz: str = None,
@@ -31,16 +40,6 @@ class TradeManager:
                  trade_logger=None,
                  notifier: Notifier = None,
                  analytics: AnalyticsReporter = None):
-        """
-        :param trade_repository: SQLTradeRepository instance (must have close_trade)
-        :param socketio:         flask_socketio.SocketIO instance
-        :param pair:             Instrument pair name (e.g. "MNQ", "MNQ")
-        :param session_end_time: "HH:MM" — close open trades at this time (e.g. "15:00")
-        :param session_tz:       Timezone for session_end_time (e.g. "America/New_York")
-        :param broker_mode:      'futures' or 'cfd' - affects TP/SL hit logic
-        :param broker_spread:    Spread in points for CFD mode (e.g., 0.5)
-        :param trade_logger:     TradeLogger instance for per-trade lifecycle logging
-        """
         self.open_trades = []
         self.trade_repository = trade_repository
         self.socketio         = socketio
@@ -66,31 +65,61 @@ class TradeManager:
             self._session_end_time = datetime.strptime(session_end_time, "%H:%M").time()
             self._session_tz = ZoneInfo(session_tz)
 
-        # Track which trades we have already logged as "Active" to avoid spamming logs
+        # Track which trades we have already logged as "Active"
         self._monitored_trades = set()
 
-        # RESUME: Load any open trades from the DB so we can manage them
+        # Use cases
+        self._open_use_case = TradeOpenUseCase(
+            trade_repository=trade_repository,
+            trade_executor=self.trade_executor,
+            event_publisher=socketio,
+            logger=logger,
+            trade_logger=trade_logger,
+            point_value=point_value,
+            account_balance=account_balance,
+            risk_per_trade=risk_per_trade,
+            risk_pct_per_trade=risk_pct_per_trade,
+            use_fractional_lots=use_fractional_lots,
+        )
+        self._close_use_case = TradeCloseUseCase(
+            trade_repository=trade_repository,
+            trade_executor=self.trade_executor,
+            event_publisher=socketio,
+            logger=logger,
+            trade_logger=trade_logger,
+            point_value=point_value,
+            fee_per_rt=fee_per_rt,
+            broker_spread=broker_spread,
+        )
+        self._broker_handler = BrokerFillHandler(
+            trade_repository=trade_repository,
+            event_publisher=socketio,
+            logger=logger,
+            trade_logger=trade_logger,
+            analytics=analytics,
+            point_value=point_value,
+            account_balance=account_balance,
+            risk_per_trade=risk_per_trade,
+            risk_pct_per_trade=risk_pct_per_trade,
+            use_fractional_lots=use_fractional_lots,
+        )
+
+        # RESUME: Load any open trades from the DB
         self._load_open_trades_from_db()
 
+    # ------------------------------------------------------------------
+    # Contract / financial helpers
+    # ------------------------------------------------------------------
     def _calc_contracts(self, risk_per_contract: float,
                         risk_per_trade_override: float | None = None,
                         risk_pct_per_trade_override: float | None = None) -> float:
-        """Calculate number of contracts/lots, matching NinjaTrader's logic."""
-        if risk_per_contract <= 0:
-            return 1.0 if not self.use_fractional_lots else 0.01
-        risk_budget = FinancialCalc.risk_budget(
-            self.account_balance,
-            risk_per_trade_override if risk_per_trade_override is not None else self.risk_per_trade,
-            risk_pct_per_trade_override if risk_pct_per_trade_override is not None else self.risk_pct_per_trade,
+        """Calculate number of contracts/lots."""
+        return self._open_use_case._calc_contracts(
+            risk_per_contract, risk_per_trade_override, risk_pct_per_trade_override
         )
-        if risk_budget <= 0:
-            return 1.0 if not self.use_fractional_lots else 0.01
-        if self.use_fractional_lots:
-            return FinancialCalc.lots(risk_budget, risk_per_contract)
-        return FinancialCalc.contracts(risk_budget, risk_per_contract)
 
     def _calc_close_financials(self, trade: dict, result: float) -> tuple[float, float]:
-        """Return (fees, pnl_usd) for a closing trade using FinancialCalc."""
+        """Return (fees, pnl_usd) for a closing trade."""
         contracts = trade.get('contracts') or 1
         risk = trade.get('risk', 0)
         if risk <= 0:
@@ -99,11 +128,10 @@ class TradeManager:
         pnl_usd = FinancialCalc.pnl_usd(contracts, result, risk, self.point_value, fees)
         return fees, pnl_usd
 
+    # ------------------------------------------------------------------
+    # DB resume
+    # ------------------------------------------------------------------
     def _load_open_trades_from_db(self):
-        """
-        Fetch all trades, filter for open ones, and populate self.open_trades.
-        This ensures orphaned trades are picked up and closed properly during replay.
-        """
         try:
             all_trades = self.trade_repository.list_trades(self.pair)
             open_count = 0
@@ -111,8 +139,6 @@ class TradeManager:
 
             for t in all_trades:
                 if t.exit_time is None and t.source != "signal":
-                    # Map TradeData back to the dict structure TradeManager expects
-                    # Skip signal trades — they are not executable.
                     trade_dict = {
                         'trade_id':    t.trade_id,
                         'pair':        t.pair,
@@ -136,36 +162,28 @@ class TradeManager:
                     closed_count += 1
 
             self.logger.info(f"[TradeManager] DB scan complete: {open_count} open, {closed_count} closed, {len(all_trades)} total trades for {self.pair}")
-            if open_count > 0:
-                self.logger.info(f"[TradeManager] Resumed {open_count} open trade(s) from DB.")
-            else:
-                self.logger.info("[TradeManager] No open trades found in DB to resume.")
 
         except Exception as e:
             self.logger.error(f"[TradeManager] Failed to load open trades on init: {e}")
             self.analytics.capture_exception(e, {"op": "load_open_trades"})
             self.notifier.send(f"[TradeManager] Failed to load open trades on init: {e}")
 
+    # ------------------------------------------------------------------
+    # Bar handlers
+    # ------------------------------------------------------------------
     def handle_new_1m_bar(self, bar: dict):
-        """
-        Call this on every 1m bar:
-        - scans open_trades for SL/TP hits, closes & emits
-        - checks session end close
-        """
         self._check_sl_tp(bar)
         self._check_session_end_close(bar)
 
     def _check_sl_tp(self, bar: dict):
-        """SL/TP detection on 1m bars."""
         for trade in list(self.open_trades):
             if trade['pair'] != bar['pair']:
                 continue
-
             if trade['entry_time'] > bar['time']:
                 continue
 
             if trade['trade_id'] not in self._monitored_trades:
-                self.logger.info(f"[TradeManager] ACTIVATING Trade {trade['trade_id']} at {bar['time']} (Replay caught up to Entry)")
+                self.logger.info(f"[TradeManager] ACTIVATING Trade {trade['trade_id']} at {bar['time']}")
                 self._monitored_trades.add(trade['trade_id'])
 
             ttype = trade['type']
@@ -176,106 +194,56 @@ class TradeManager:
             hit_tp = False
 
             if is_long:
-                # NOTE: If both SL and TP are hit in the same bar, SL takes precedence.
                 if bar['low'] <= trade['stop_loss']:
                     hit_sl = True
-                    self.logger.info(f"[TradeManager] LONG SL HIT! Trade {trade['trade_id']} | Low {bar['low']} <= SL {trade['stop_loss']:.2f}")
                 elif bar['high'] >= trade['take_profit']:
                     hit_tp = True
-                    self.logger.info(f"[TradeManager] LONG TP HIT! Trade {trade['trade_id']} | High {bar['high']} >= TP {trade['take_profit']:.2f}")
             elif is_short:
-                # NOTE: If both SL and TP are hit in the same bar, SL takes precedence.
                 if bar['high'] >= trade['stop_loss']:
                     hit_sl = True
-                    self.logger.info(f"[TradeManager] SHORT SL HIT! Trade {trade['trade_id']} | High {bar['high']} >= SL {trade['stop_loss']:.2f}")
                 elif bar['low'] <= trade['take_profit']:
                     hit_tp = True
-                    self.logger.info(f"[TradeManager] SHORT TP HIT! Trade {trade['trade_id']} | Low {bar['low']} <= TP {trade['take_profit']:.2f}")
 
             if not hit_sl and not hit_tp:
                 continue
 
             exit_price = trade['stop_loss'] if hit_sl else trade['take_profit']
-            exit_time  = datetime.fromtimestamp(bar['time'], tz=ZoneInfo('UTC'))
-
-            # Use unified FinancialCalc for ALL close metrics (single source of truth)
-            risk = trade.get('risk', 0)
-            if risk <= 0:
-                risk = 1.0
-            contracts = trade.get('contracts') or 1
-
-            result, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-                direction=Direction.from_string(trade['type']),
-                entry_price=trade['entry'],
-                exit_price=exit_price,
-                stop_loss=trade['stop_loss'],
-                take_profit=trade['take_profit'],
-                risk_points=risk,
-                contracts=contracts,
-                point_value=self.point_value,
-                fee_per_rt=self.fee_per_rt,
-            )
-            # Deduct spread cost separately so result_r stays at theoretical RR
-            if self.broker_spread > 0:
-                spread_cost = contracts * self.broker_spread * self.point_value
-                pnl_usd -= spread_cost
-                fees += spread_cost
-
-            # SAFETY: Send ZMQ close command FIRST, persist only on success
-            try:
-                self.trade_executor.on_trade_close(trade['trade_id'], exit_price)
-            except Exception as e:
-                self.logger.error(f"[TradeManager] ZMQ close failed for SL/TP on {trade['trade_id']}: {e}")
-                if self.trade_logger:
-                    self.trade_logger.log(trade['trade_id'], "ERROR", f"ZMQ close failed: {e}")
-                # Trade stays open — will retry on next bar
-                continue
-
-            # ZMQ succeeded — update balance, persist to DB, clean up memory
-            self.account_balance += pnl_usd
+            result_type_override = "SL" if hit_sl else "TP"
+            log_event = "SL_HIT" if hit_sl else "TP_HIT"
+            analytics_event = "SL_HIT" if hit_sl else "TP_HIT"
 
             try:
-                self.trade_repository.close_trade(
-                    trade_id   = trade['trade_id'],
-                    exit_price = exit_price,
-                    exit_time  = exit_time,
-                    result     = result,
-                    result_type = result_type,
-                    fees       = fees,
-                    pnl_usd    = pnl_usd,
+                result = self._close_use_case.execute(
+                    trade=trade,
+                    exit_price=exit_price,
+                    exit_time=bar['time'],
+                    result_type_override=result_type_override,
+                    log_event=log_event,
+                    analytics_event=analytics_event,
                 )
-                self.logger.info(f"[TradeManager] DB Updated for Trade {trade['trade_id']} (Closed)")
             except Exception as e:
-                self.logger.error(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
+                # Distinguish executor failure (before DB) from DB failure
+                # Executor failure: trade stays open, no analytics
+                # DB failure: trade removed, analytics captured
+                if "ZMQ" in str(e) or "Executor" in str(e) or "connection" in str(e).lower():
+                    continue  # executor failed — retry next bar
+                self.logger.error(f"[TradeManager] DB error on SL/TP close for {trade['trade_id']}: {e}")
                 self.analytics.capture_exception(e, {"op": "close_trade_sl_tp", "trade_id": trade['trade_id']})
                 if self.trade_logger:
                     self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
-                self.notifier.send(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
+                self.notifier.send(f"[TradeManager] DB error on SL/TP close for {trade['trade_id']}: {e}")
+                result = None
 
-            if self.trade_logger:
-                event = "SL_HIT" if hit_sl else "TP_HIT"
-                self.trade_logger.log(trade['trade_id'], event, f"Exit={exit_price:.2f} Result={result:.2f}R")
-                self.trade_logger.log(trade['trade_id'], "CLOSE", "Persisted to DB")
-
+            if result is not None:
+                self.account_balance += result.pnl_usd
             with contextlib.suppress(ValueError):
                 self.open_trades.remove(trade)
 
-            self.analytics.capture_trade_event("SL_HIT" if hit_sl else "TP_HIT", {
-                "trade_id": trade['trade_id'], "exit_price": exit_price,
-                "result": result, "result_type": result_type,
-            })
-
-            self.socketio.emit('trade_close', {
-                'trade_id':   trade['trade_id'],
-                'pair':       trade['pair'],
-                'type':       trade['type'],
-                'exit_price': exit_price,
-                'exit_time':  bar['time'],
-                'result':     result,
-                'result_type': result_type,
-                'fees':       fees,
-                'pnl_usd':   pnl_usd,
-            })
+            if result is not None:
+                self.analytics.capture_trade_event(analytics_event, {
+                    "trade_id": trade['trade_id'], "exit_price": exit_price,
+                    "result": result.result, "result_type": result.result_type,
+                })
 
     def _check_session_end_close(self, bar: dict):
         if not self._session_end_time or not self._session_tz:
@@ -291,86 +259,51 @@ class TradeManager:
             if trade['entry_time'] > bar['time']:
                 continue
 
-            exit_price = bar['close']
-            exit_time = datetime.fromtimestamp(bar['time'], tz=ZoneInfo('UTC'))
-
-            risk = trade.get('risk', 0)
-            if risk <= 0:
-                risk = 1.0
-            contracts = trade.get('contracts') or 1
-
-            # Use unified FinancialCalc for ALL close metrics (single source of truth)
-            result, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
-                direction=Direction.from_string(trade['type']),
-                entry_price=trade['entry'],
-                exit_price=exit_price,
-                stop_loss=trade['stop_loss'],
-                take_profit=trade['take_profit'],
-                risk_points=risk,
-                contracts=contracts,
-                point_value=self.point_value,
-                fee_per_rt=self.fee_per_rt,
-            )
-            # Deduct spread cost separately so result_r stays at theoretical RR
-            if self.broker_spread > 0:
-                spread_cost = contracts * self.broker_spread * self.point_value
-                pnl_usd -= spread_cost
-                fees += spread_cost
-            result_type = FinancialCalc.calculate_session_end_result_type(result)
-
-            # SAFETY: Send ZMQ close command FIRST, persist only on success
             try:
-                self.trade_executor.on_trade_close(trade['trade_id'], exit_price)
-            except Exception as e:
-                self.logger.error(f"[TradeManager] ZMQ close failed for session end on {trade['trade_id']}: {e}")
-                if self.trade_logger:
-                    self.trade_logger.log(trade['trade_id'], "ERROR", f"ZMQ close failed: {e}")
-                # Trade stays open — will retry on next bar
-                continue
-
-            # ZMQ succeeded — update balance, persist to DB, clean up memory
-            self.account_balance += pnl_usd
-
-            try:
-                self.trade_repository.close_trade(
-                    trade_id=trade['trade_id'],
-                    exit_price=exit_price,
-                    exit_time=exit_time,
-                    result=result,
-                    result_type=result_type,
-                    fees=fees,
-                    pnl_usd=pnl_usd,
+                result = self._close_use_case.execute(
+                    trade=trade,
+                    exit_price=bar['close'],
+                    exit_time=bar['time'],
+                    result_type_override=FinancialCalc.calculate_session_end_result_type(
+                        FinancialCalc.calculate_close_metrics(
+                            direction=Direction.from_string(trade['type']),
+                            entry_price=trade['entry'],
+                            exit_price=bar['close'],
+                            stop_loss=trade['stop_loss'],
+                            take_profit=trade['take_profit'],
+                            risk_points=trade.get('risk', 1.0) or 1.0,
+                            contracts=trade.get('contracts') or 1,
+                            point_value=self.point_value,
+                            fee_per_rt=self.fee_per_rt,
+                        )[0]
+                    ),
+                    log_event="SESSION_END",
+                    log_message=f"Close @ {bar['close']:.2f}",
+                    analytics_event="SESSION_END",
                 )
             except Exception as e:
-                self.logger.error(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
+                if "ZMQ" in str(e) or "Executor" in str(e) or "connection" in str(e).lower():
+                    continue
+                self.logger.error(f"[TradeManager] DB error on session end for {trade['trade_id']}: {e}")
                 self.analytics.capture_exception(e, {"op": "session_end_close", "trade_id": trade['trade_id']})
                 if self.trade_logger:
                     self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
-                self.notifier.send(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
+                self.notifier.send(f"[TradeManager] DB error on session end for {trade['trade_id']}: {e}")
+                result = None
 
-            if self.trade_logger:
-                self.trade_logger.log(trade['trade_id'], "SESSION_END", f"Close @ {exit_price:.2f} Result={result:.2f}R")
-                self.trade_logger.log(trade['trade_id'], "CLOSE", "Persisted to DB")
-
+            if result is not None:
+                self.account_balance += result.pnl_usd
             with contextlib.suppress(ValueError):
                 self.open_trades.remove(trade)
 
-            self.analytics.capture_trade_event("SESSION_END", {
-                "trade_id": trade['trade_id'], "exit_price": exit_price, "result": result,
-            })
+            if result is not None:
+                self.analytics.capture_trade_event("SESSION_END", {
+                    "trade_id": trade['trade_id'], "exit_price": bar['close'], "result": result.result,
+                })
 
-            self.socketio.emit('trade_close', {
-                'trade_id':   trade['trade_id'],
-                'pair':       trade['pair'],
-                'type':       trade['type'],
-                'exit_price': exit_price,
-                'exit_time':  bar['time'],
-                'result':     result,
-                'result_type': result_type,
-                'fees':       fees,
-                'pnl_usd':   pnl_usd,
-            })
-
+    # ------------------------------------------------------------------
+    # Open / Close public API
+    # ------------------------------------------------------------------
     def open_trade(self, pair: str, trade_type: str, entry_price: float,
                    stop_loss: float, take_profit: float,
                    risk: float, entry_time: float, rr_ratio: float = 5.0,
@@ -380,81 +313,57 @@ class TradeManager:
                    risk_per_trade_override: float | None = None,
                    risk_pct_per_trade_override: float | None = None,
                    trade_id: str | None = None):
-        """
-        Open a new trade with precomputed parameters.
-        """
-        risk_per_contract = risk * self.point_value
-        contracts = self._calc_contracts(risk_per_contract, risk_per_trade_override, risk_pct_per_trade_override)
-        risk_dollars = risk_per_contract * contracts
-        risk_pct = (risk_dollars / self.account_balance * 100) if self.account_balance > 0 else None
-
-        # persist open trade
-        td = self.trade_repository.insert_trade(
-            pair=pair,
-            trade_type=trade_type,
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            risk=risk,
-            entry_time=datetime.fromtimestamp(entry_time, tz=timezone.utc),
-            params={},
-            risk_dollars=risk_dollars,
-            risk_pct=risk_pct,
-            contracts=contracts,
-            source=source,
-            account=account,
-            signal_id=signal_id,
+        result = self._open_use_case.execute(
+            pair=pair, trade_type=trade_type, entry_price=entry_price,
+            stop_loss=stop_loss, take_profit=take_profit, risk=risk,
+            entry_time=entry_time, rr_ratio=rr_ratio, source=source,
+            account=account, signal_id=signal_id,
+            risk_per_trade_override=risk_per_trade_override,
+            risk_pct_per_trade_override=risk_pct_per_trade_override,
             trade_id=trade_id,
         )
-        trade = {
-            'trade_id':   td.trade_id,
-            'pair':       pair,
-            'type':       trade_type,
-            'entry':      entry_price,
-            'stop_loss':  stop_loss,
-            'take_profit':take_profit,
-            'risk':       risk,
-            'risk_dollars': risk_dollars,
-            'risk_pct':   risk_pct,
-            'contracts':  contracts,
-            'entry_time': entry_time,
-            'rr_ratio':   rr_ratio,
-            'account':    account,
-            'signal_id':  signal_id,
-        }
-        # track in-memory
-        self.open_trades.append(trade)
-        self._monitored_trades.add(td.trade_id) # Mark as monitored since we just opened it
 
-        self.logger.info(f"[TradeManager] Registered OPEN trade {trade['trade_id']} @ {entry_time}")
+        # Sync use-case balance with manager balance
+        self._open_use_case.update_account_balance(self.account_balance)
+        self._broker_handler.update_balance(self.account_balance)
+
+        trade = {
+            'trade_id':   result.trade_id,
+            'pair':       result.pair,
+            'type':       result.trade_type,
+            'entry':      result.entry_price,
+            'stop_loss':  result.stop_loss,
+            'take_profit':result.take_profit,
+            'risk':       result.risk,
+            'risk_dollars': result.risk_dollars,
+            'risk_pct':   result.risk_pct,
+            'contracts':  result.contracts,
+            'entry_time': result.entry_time,
+            'rr_ratio':   rr_ratio,
+            'account':    result.account,
+            'signal_id':  result.signal_id,
+        }
+        self.open_trades.append(trade)
+        self._monitored_trades.add(result.trade_id)
 
         self.analytics.capture_trade_event("TRADE_OPEN", {
-            "trade_id": trade['trade_id'], "pair": pair, "type": trade_type,
+            "trade_id": result.trade_id, "pair": pair, "type": trade_type,
             "entry": entry_price, "sl": stop_loss, "tp": take_profit,
         })
-
-        # notify clients
-        self.socketio.emit('trade_open', trade)
 
         return trade
 
     def close_trade(self, trade_id: str, exit_price: float, exit_time: float):
-        """
-        Close an existing trade by ID with provided exit parameters.
-        """
-        # find the trade
         trade = next(
-            (t for t in self.open_trades if t['trade_id'] == trade_id),
-            None
+            (t for t in self.open_trades if t['trade_id'] == trade_id), None
         )
 
-        # If not in memory, try to fetch from DB to calculate PnL
         if not trade:
             self.logger.warning(f"[TradeManager] Trade {trade_id} not in memory, fetching from DB.")
             trade_data = self.trade_repository.get_trade(trade_id)
             if trade_data:
                 if trade_data.exit_time is not None:
-                    self.logger.warning(f"[TradeManager] Trade {trade_id} already closed in DB (exit_time={trade_data.exit_time}). Skipping close command.")
+                    self.logger.warning(f"[TradeManager] Trade {trade_id} already closed in DB.")
                     return {
                         'trade_id': trade_id,
                         'exit_price': exit_price,
@@ -472,7 +381,6 @@ class TradeManager:
                     'contracts': trade_data.contracts,
                 }
             else:
-                # Fallback: just close in DB with SP (unknown reason)
                 self.trade_repository.close_trade(
                     trade_id=trade_id,
                     exit_price=exit_price,
@@ -480,177 +388,81 @@ class TradeManager:
                     result=0.0,
                     result_type="SP"
                 )
-                return {
-                    'trade_id': trade_id,
-                    'exit_price': exit_price,
-                    'result': 0.0
-                }
+                return {'trade_id': trade_id, 'exit_price': exit_price, 'result': 0.0}
 
-
-        # Use unified FinancialCalc for ALL close metrics (single source of truth)
-        risk = trade.get('risk', 0)
-        if risk <= 0:
-            risk = 1.0
-
-        sl = trade.get('stop_loss', trade.get('sl', trade.get('orig_sl')))
-        tp = trade.get('take_profit', trade.get('tp'))
-        entry = trade.get('entry', trade.get('entry_price'))
-
-        result, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
-            direction=Direction.from_string(trade['type']),
-            entry_price=entry,
+        result = self._close_use_case.execute(
+            trade=trade,
             exit_price=exit_price,
-            stop_loss=sl,
-            take_profit=tp,
-            risk_points=risk,
-            contracts=trade.get('contracts') or 1,
-            point_value=self.point_value,
-            fee_per_rt=self.fee_per_rt,
-        )
-        # Deduct spread cost separately so result_r stays at theoretical RR
-        if self.broker_spread > 0:
-            spread_cost = trade.get('contracts', 1) * self.broker_spread * self.point_value
-            pnl_usd -= spread_cost
-            fees += spread_cost
-
-        # SAFETY: Send ZMQ close command FIRST, persist to DB only on success
-        try:
-            self.trade_executor.on_trade_close(trade_id, exit_price)
-        except Exception as e:
-            self.logger.error(f"[TradeManager] ZMQ close failed for {trade_id}: {e}")
-            if self.trade_logger:
-                self.trade_logger.log(trade_id, "ERROR", f"ZMQ close failed: {e}")
-            # Trade stays open in memory and DB — will retry or manual close needed
-            raise
-
-        # ZMQ succeeded — now persist close to DB and clean up memory
-        self.trade_repository.close_trade(
-            trade_id=trade_id,
-            exit_price=exit_price,
-            exit_time=datetime.fromtimestamp(exit_time, tz=timezone.utc),
-            result=result,
-            result_type=result_type,
-            fees=fees,
-            pnl_usd=pnl_usd,
+            exit_time=exit_time,
+            log_event="CLOSE",
+            log_message=f"Exit={exit_price:.2f}",
+            analytics_event="CLOSE",
         )
 
-        if self.trade_logger:
-            self.trade_logger.log(trade_id, "CLOSE", f"Exit={exit_price:.2f} Result={result:.2f}R")
-            self.trade_logger.log(trade_id, "CMD_SENT", "close_order → NinjaTrader")
-
-        # Update account balance with realized P&L for percentage-based risk compounding
-        self.account_balance += pnl_usd
-
-        # remove from in-memory
+        self.account_balance += result.pnl_usd
         if trade in self.open_trades:
             self.open_trades.remove(trade)
 
-        # emit close event
-        payload = {
-            'trade_id':  trade_id,
-            'pair':      trade['pair'],
-            'type':      trade['type'],
-            'exit_price':exit_price,
+        return {
+            'trade_id': trade_id,
+            'pair': trade['pair'],
+            'type': trade['type'],
+            'exit_price': exit_price,
             'exit_time': exit_time,
-            'result':    result,
-            'result_type': result_type,
-            'fees':      fees,
-            'pnl_usd':  pnl_usd,
+            'result': result.result,
+            'result_type': result.result_type,
+            'fees': result.fees,
+            'pnl_usd': result.pnl_usd,
         }
-        self.socketio.emit('trade_close', payload)
-
-        return payload
 
     def close_remaining_trades_at_stream_end(self, final_close_price: float, final_time: float):
-        """
-        Close any remaining open trades at stream end (end of day/replay).
-        Uses the final bar's close price and time. Marks with result_type="SP".
-        """
         self.logger.info(f"[TradeManager] STREAM END CALLBACK FIRED! close_price={final_close_price}, time={final_time}")
-        print(f"[TradeManager] Open trades count: {len(self.open_trades)}")
         for trade in list(self.open_trades):
-            exit_price = final_close_price
-            exit_time = datetime.fromtimestamp(final_time, tz=ZoneInfo('UTC'))
-
-            risk = trade.get('risk', 0)
-            if risk <= 0:
-                risk = 1.0
-            contracts = trade.get('contracts') or 1
-
-            # Use unified FinancialCalc for ALL close metrics (single source of truth)
-            result, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
-                direction=Direction.from_string(trade['type']),
-                entry_price=trade['entry'],
-                exit_price=exit_price,
-                stop_loss=trade['stop_loss'],
-                take_profit=trade['take_profit'],
-                risk_points=risk,
-                contracts=contracts,
-                point_value=self.point_value,
-                fee_per_rt=self.fee_per_rt,
+            result_type = FinancialCalc.calculate_session_end_result_type(
+                FinancialCalc.calculate_close_metrics(
+                    direction=Direction.from_string(trade['type']),
+                    entry_price=trade['entry'],
+                    exit_price=final_close_price,
+                    stop_loss=trade['stop_loss'],
+                    take_profit=trade['take_profit'],
+                    risk_points=trade.get('risk', 1.0) or 1.0,
+                    contracts=trade.get('contracts') or 1,
+                    point_value=self.point_value,
+                    fee_per_rt=self.fee_per_rt,
+                )[0]
             )
-            # Deduct spread cost separately so result_r stays at theoretical RR
-            if self.broker_spread > 0:
-                spread_cost = contracts * self.broker_spread * self.point_value
-                pnl_usd -= spread_cost
-                fees += spread_cost
-            result_type = FinancialCalc.calculate_session_end_result_type(result)
-
-            self.logger.info(f"[TradeManager] STREAM END closing trade {trade['trade_id']} @ {exit_price} (Result: {result:.2f}R, Type: {result_type})")
-
-            # SAFETY: Send ZMQ close command FIRST, persist only on success
-            try:
-                self.trade_executor.on_trade_close(trade['trade_id'], exit_price)
-            except Exception as e:
-                self.logger.error(f"[TradeManager] ZMQ close failed for stream end on {trade['trade_id']}: {e}")
-                if self.trade_logger:
-                    self.trade_logger.log(trade['trade_id'], "ERROR", f"ZMQ close failed: {e}")
-                continue
 
             try:
-                self.trade_repository.close_trade(
-                    trade_id=trade['trade_id'],
-                    exit_price=exit_price,
-                    exit_time=exit_time,
-                    result=result,
-                    result_type=result_type,
-                    fees=fees,
-                    pnl_usd=pnl_usd,
+                result = self._close_use_case.execute(
+                    trade=trade,
+                    exit_price=final_close_price,
+                    exit_time=final_time,
+                    result_type_override=result_type,
+                    log_event="SESSION_END",
+                    log_message=f"Stream end @ {final_close_price:.2f}",
+                    analytics_event="STREAM_END",
                 )
             except Exception as e:
-                self.logger.error(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
+                if "ZMQ" in str(e) or "Executor" in str(e) or "connection" in str(e).lower():
+                    continue
+                self.logger.error(f"[TradeManager] DB error on stream end for {trade['trade_id']}: {e}")
                 self.analytics.capture_exception(e, {"op": "stream_end_close", "trade_id": trade['trade_id']})
                 if self.trade_logger:
                     self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
-                self.notifier.send(f"[TradeManager] DB ERROR closing trade {trade['trade_id']}: {e}")
+                self.notifier.send(f"[TradeManager] DB error on stream end for {trade['trade_id']}: {e}")
+                result = None
 
-            if self.trade_logger:
-                self.trade_logger.log(trade['trade_id'], "SESSION_END", f"Stream end @ {exit_price:.2f} Result={result:.2f}R")
-                self.trade_logger.log(trade['trade_id'], "CLOSE", "Persisted to DB")
-
+            if result is not None:
+                self.account_balance += result.pnl_usd
             with contextlib.suppress(ValueError):
                 self.open_trades.remove(trade)
 
-            self.analytics.capture_trade_event("STREAM_END", {
-                "trade_id": trade['trade_id'], "exit_price": exit_price, "result": result,
-            })
-
-            self.socketio.emit('trade_close', {
-                'trade_id':   trade['trade_id'],
-                'pair':       trade['pair'],
-                'type':       trade['type'],
-                'exit_price': exit_price,
-                'exit_time':  final_time,
-                'result':     result,
-                'result_type': result_type,
-                'fees':       fees,
-                'pnl_usd':   pnl_usd,
-            })
+            if result is not None:
+                self.analytics.capture_trade_event("STREAM_END", {
+                    "trade_id": trade['trade_id'], "exit_price": final_close_price, "result": result.result,
+                })
 
     def update_local_trade_sl(self, trade_id: str, new_sl: float):
-        """
-        Update the SL of an in-memory trade so the exit logic respects the new level.
-        """
         for t in self.open_trades:
             if t['trade_id'] == trade_id:
                 old_sl = t['stop_loss']
@@ -659,109 +471,56 @@ class TradeManager:
                 return
         self.logger.warning(f"[TradeManager] Could not find trade {trade_id} to update SL")
 
+    # ------------------------------------------------------------------
+    # Broker fills
+    # ------------------------------------------------------------------
     def handle_broker_entry_fill(self, trade_id: str, entry_price: float,
                                 stop_loss: float = None, take_profit: float = None):
-        """
-        Called when NinjaTrader reports the actual entry fill price and
-        the real SL/TP calculated from the fill price.
-        Updates DB, in-memory trade, and emits to UI so chart shows real broker levels.
-        """
-        # Update in-memory trade
-        trade = next(
-            (t for t in self.open_trades if t['trade_id'] == trade_id),
-            None
-        )
-
+        trade = next((t for t in self.open_trades if t['trade_id'] == trade_id), None)
         if not trade:
             print(f"[TradeManager] ⚠️ Entry fill for {trade_id} but trade not in memory")
             return
 
-        old_entry = trade['entry']
-        trade['entry'] = entry_price
+        self._broker_handler.update_balance(self.account_balance)
+        self._broker_handler.handle_entry_fill(trade, entry_price, stop_loss, take_profit)
 
-        # Update SL/TP if provided by broker (calculated from real fill price)
-        if stop_loss is not None:
-            trade['stop_loss'] = stop_loss
-        if take_profit is not None:
-            trade['take_profit'] = take_profit
+    def handle_broker_fill(self, trade_id: str, exit_price: float, result_type: str = None):
+        trade = next((t for t in self.open_trades if t['trade_id'] == trade_id), None)
+        if not trade:
+            print(f"[TradeManager] ⚠️ Broker fill for {trade_id} but trade not in memory")
+            return
 
-        # Recalculate risk based on actual entry and SL
-        is_long = trade['type'] == 'long'
-        if is_long:
-            trade['risk'] = abs(entry_price - trade['stop_loss'])
-        else:
-            trade['risk'] = abs(trade['stop_loss'] - entry_price)
-
-        # Recalculate dollar risk and risk %
-        risk_per_contract = trade['risk'] * self.point_value
-        risk_budget = FinancialCalc.risk_budget(
-            self.account_balance, self.risk_per_trade, self.risk_pct_per_trade
-        )
-        if self.use_fractional_lots:
-            contracts = FinancialCalc.lots(risk_budget, risk_per_contract) if risk_budget > 0 else 0.01
-        else:
-            contracts = FinancialCalc.contracts(risk_budget, risk_per_contract) if risk_budget > 0 else 1
-        trade['contracts'] = contracts
-        trade['risk_dollars'] = risk_per_contract * contracts
-        trade['risk_pct'] = (trade['risk_dollars'] / self.account_balance * 100) if self.account_balance > 0 else None
-
-        self.logger.info(f"[TradeManager] ENTRY FILL: {trade_id} @ {entry_price} "
-              f"(was {old_entry}, slippage={entry_price - old_entry:+.2f}) "
-              f"SL={trade['stop_loss']} TP={trade['take_profit']}")
-
-        if self.trade_logger:
-            self.trade_logger.log(trade_id, "NT_ENTRY_FILL",
-                f"Filled @ {entry_price:.2f} (slippage: {entry_price - old_entry:+.2f}) "
-                f"SL={trade['stop_loss']:.2f} TP={trade['take_profit']:.2f}")
-
-        # Persist to DB
         try:
-            self.trade_repository.update_entry_price(trade_id, entry_price)
-            if stop_loss is not None:
-                self.trade_repository.update_stop_loss(trade_id, stop_loss)
-            if take_profit is not None:
-                self.trade_repository.update_take_profit(trade_id, take_profit)
-            self.trade_repository.update_risk_fields(
-                trade_id, trade['risk'], trade['risk_dollars'], trade.get('risk_pct')
+            result = self._close_use_case.execute(
+                trade=trade,
+                exit_price=exit_price,
+                exit_time=datetime.now(tz=timezone.utc).timestamp(),
+                result_type_override=result_type,
+                log_event="NT_FILL",
+                log_message=f"{result_type or 'FILL'} @ {exit_price:.2f}",
+                analytics_event="BROKER_FILL",
             )
-            # Persist updated contract count so closes use correct sizing
-            if trade.get('contracts') is not None:
-                self.trade_repository.update_contracts(trade_id, trade['contracts'])
         except Exception as e:
-            self.logger.error(f"[TradeManager] DB ERROR on entry fill for {trade_id}: {e}")
-            self.analytics.capture_exception(e, {"op": "broker_entry_fill", "trade_id": trade_id})
+            self.logger.error(f"[TradeManager] DB error on broker fill for {trade_id}: {e}")
+            self.analytics.capture_exception(e, {"op": "broker_fill", "trade_id": trade_id})
             if self.trade_logger:
                 self.trade_logger.log(trade_id, "ERROR", str(e))
-            self.notifier.send(f"[TradeManager] DB ERROR on entry fill for {trade_id}: {e}")
+            self.notifier.send(f"[TradeManager] DB error on broker fill for {trade_id}: {e}")
+            with contextlib.suppress(ValueError):
+                self.open_trades.remove(trade)
+            return
 
-        # Emit to UI so chart updates
-        self.socketio.emit('trade_entry_update', {
-            'trade_id':    trade_id,
-            'entry_price': entry_price,
-            'stop_loss':   trade['stop_loss'],
-            'take_profit': trade['take_profit'],
-            'risk':        trade['risk'],
-            'risk_dollars': trade.get('risk_dollars'),
-            'risk_pct':    trade.get('risk_pct'),
-        })
+        self.account_balance += result.pnl_usd
+        with contextlib.suppress(ValueError):
+            self.open_trades.remove(trade)
 
     def notify_strategy_close(self, trade_id: str, exit_price: float, result: float,
                                pnl_usd: float, fees: float, result_type: str, exit_time: float):
-        """
-        Called by the strategy when it has already closed a trade via bar-based
-        SL/TP or session-end detection. Syncs TradeManager state (removes from
-        open_trades, updates account_balance, logs) WITHOUT re-persisting to DB,
-        re-calling the executor, or re-emitting to UI.
-
-        Safe to call even if TradeManager already removed the trade.
-        """
         trade = next((t for t in self.open_trades if t['trade_id'] == trade_id), None)
         if not trade:
             return
 
-        # Update account balance with realized P&L for percentage-based risk compounding
         self.account_balance += pnl_usd
-
         self.open_trades.remove(trade)
 
         event = "SL_HIT" if result_type == "SL" else "TP_HIT" if result_type == "TP" else "SESSION_END"
@@ -774,95 +533,4 @@ class TradeManager:
         self.analytics.capture_trade_event(event, {
             "trade_id": trade_id, "exit_price": exit_price,
             "result": result, "result_type": result_type,
-        })
-
-    def handle_broker_fill(self, trade_id: str, exit_price: float, result_type: str = None):
-        """
-        Called when NinjaTrader reports a fill (SL, TP, or manual close).
-        This is the ONLY path that closes trades in live mode.
-        Updates DB, removes from open_trades, emits to UI.
-        """
-        # Find trade in memory
-        trade = next(
-            (t for t in self.open_trades if t['trade_id'] == trade_id),
-            None
-        )
-
-        if not trade:
-            print(f"[TradeManager] ⚠️ Broker fill for {trade_id} but trade not in memory (already closed?)")
-            return
-
-        # Use unified FinancialCalc for ALL close metrics (single source of truth)
-        risk = trade.get('risk', 0)
-        if risk <= 0:
-            risk = 1.0
-
-        result, fees, pnl_usd, detected_result_type = FinancialCalc.calculate_close_metrics(
-            direction=Direction.from_string(trade['type']),
-            entry_price=trade['entry'],
-            exit_price=exit_price,
-            stop_loss=trade['stop_loss'],
-            take_profit=trade['take_profit'],
-            risk_points=risk,
-            contracts=trade.get('contracts') or 1,
-            point_value=self.point_value,
-            fee_per_rt=self.fee_per_rt,
-        )
-        # Deduct spread cost separately so result_r stays at theoretical RR
-        if self.broker_spread > 0:
-            spread_cost = trade.get('contracts', 1) * self.broker_spread * self.point_value
-            pnl_usd -= spread_cost
-            fees += spread_cost
-
-        # Use provided result_type if given, otherwise use detected type
-        if not result_type:
-            result_type = detected_result_type
-
-        exit_time = datetime.now(tz=timezone.utc)
-
-        self.logger.info(f"[TradeManager] BROKER FILL: {trade_id} @ {exit_price} "
-              f"(Result: {result:.2f}R, Type: {result_type})")
-
-        if self.trade_logger:
-            self.trade_logger.log(trade_id, "NT_FILL", f"{result_type} @ {exit_price:.2f} (Result: {result:.2f}R)")
-
-        # Persist close
-        try:
-            self.trade_repository.close_trade(
-                trade_id=trade_id,
-                exit_price=exit_price,
-                exit_time=exit_time,
-                result=result,
-                result_type=result_type,
-                fees=fees,
-                pnl_usd=pnl_usd,
-            )
-        except Exception as e:
-            self.logger.error(f"[TradeManager] DB ERROR on broker fill for {trade_id}: {e}")
-            self.analytics.capture_exception(e, {"op": "broker_fill", "trade_id": trade_id})
-            if self.trade_logger:
-                self.trade_logger.log(trade_id, "ERROR", str(e))
-            self.notifier.send(f"[TradeManager] DB ERROR on broker fill for {trade_id}: {e}")
-
-        if self.trade_logger:
-            self.trade_logger.log(trade_id, "CLOSE", "Persisted to DB")
-
-        # Update account balance with realized P&L for percentage-based risk compounding
-        self.account_balance += pnl_usd
-
-        # Remove from in-memory lists
-        with contextlib.suppress(ValueError):
-            self.open_trades.remove(trade)
-
-        # Emit to UI
-        self.socketio.emit('trade_close', {
-            'trade_id':    trade_id,
-            'pair':        trade['pair'],
-            'type':        trade['type'],
-            'exit_price':  exit_price,
-            'exit_time':   exit_time.timestamp(),
-            'result':      result,
-            'result_type': result_type,
-            'fees':        fees,
-            'pnl_usd':    pnl_usd,
         })

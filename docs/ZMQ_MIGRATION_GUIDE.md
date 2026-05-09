@@ -43,14 +43,14 @@ pip install pyzmq
 
 ```python
 # OLD: HTTP-based
-from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource
+from src.infrastructure.data_sources.ninjatrader_datasource import NinjaTraderDataSource
 from src.services.trade_executor import NinjaTraderExecutor
 
 data_source = NinjaTraderDataSource(cfg=...)
 trade_executor = NinjaTraderExecutor(data_source, risk_usd=500)
 
 # NEW: ZeroMQ-based
-from src.gateway import create_live_components
+from src.infrastructure.gateway import create_live_components
 
 data_source, trade_executor = create_live_components(
     pair="MNQ",
@@ -92,7 +92,7 @@ data_source.start()
 **Before (HTTP):**
 ```python
 # main.py
-from src.data_sources.ninjatrader_datasource import NinjaTraderDataSource, NinjaTraderConfig
+from src.infrastructure.data_sources.ninjatrader_datasource import NinjaTraderDataSource, NinjaTraderConfig
 from app_factory import create_app, Repositories
 
 def main():
@@ -117,7 +117,7 @@ def main():
 **After (ZeroMQ):**
 ```python
 # main.py
-from src.gateway import create_live_components
+from src.infrastructure.gateway import create_live_components
 from app_factory import create_app, Repositories
 
 def main():
@@ -156,7 +156,7 @@ Default ports:
 
 To customize:
 ```python
-from src.gateway import GatewayConfig, TradingGateway, ZMQDataSource, ZMQTradeExecutor
+from src.infrastructure.gateway import GatewayConfig, TradingGateway, ZMQDataSource, ZMQTradeExecutor
 
 config = GatewayConfig(
     market_data_pub="tcp://127.0.0.1:5555",
@@ -192,7 +192,7 @@ trade_executor = ZMQTradeExecutor(gateway=gateway, risk_usd=500)
 ### Custom Callbacks
 
 ```python
-from src.gateway import TradingGateway
+from src.infrastructure.gateway import TradingGateway
 
 gateway = TradingGateway(pair="MNQ")
 
@@ -454,7 +454,7 @@ internal void HandleModifyOrder(string body)
 ### Python Example
 
 ```python
-from src.gateway import TradingGateway
+from src.infrastructure.gateway import TradingGateway
 
 gateway = TradingGateway(logger, config)
 gateway.start()
@@ -530,7 +530,7 @@ wiring = create_app(
 
 Or use the hybrid mode:
 ```python
-from src.gateway.integration import HybridDataSource
+from src.infrastructure.gateway.integration import HybridDataSource
 
 hybrid = HybridDataSource(
     primary=zmq_data_source,

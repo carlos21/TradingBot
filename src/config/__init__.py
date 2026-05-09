@@ -9,11 +9,7 @@ Example::
 
     loader = CompositeConfigLoader(EnvConfigLoader(), CliConfigLoader())
     config = loader.load()
-
-    from src.config import AppBuilder
-    wiring, ds = AppBuilder(config).build()
 """
-from src.config.builder import AppBuilder
 from src.config.loaders import (
     CliConfigLoader,
     CompositeConfigLoader,
@@ -29,5 +25,4 @@ __all__ = [
     "EnvConfigLoader",
     "CliConfigLoader",
     "CompositeConfigLoader",
-    "AppBuilder",
 ]

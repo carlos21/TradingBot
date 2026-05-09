@@ -6,7 +6,7 @@ Python trading strategies and various trading platforms (NinjaTrader,
 MetaTrader, cTrader, etc.).
 
 Usage:
-    from src.gateway import TradingGateway, create_zmq_executor
+    from src.infrastructure.gateway import TradingGateway, create_zmq_executor
 
     gateway = TradingGateway(logger, pair="MNQ")
     gateway.start()

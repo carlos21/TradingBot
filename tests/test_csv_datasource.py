@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.data_sources.csv_datasource import CSVDataSource
+from src.infrastructure.data_sources.csv_datasource import CSVDataSource
 
 
 CSV_CONTENT = """Date,Time,Open,High,Low,Close,Volume

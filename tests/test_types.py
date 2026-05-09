@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.types import (
+from src.domain.types import (
     Direction,
     ResultType,
     TimeFrame,

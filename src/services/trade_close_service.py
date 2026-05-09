@@ -10,8 +10,8 @@ from enum import Enum, auto
 from typing import Literal, Protocol
 
 from src.financial_calc import FinancialCalc
-from src.repositories.trades_repository import TradeRepository
-from src.types import Direction
+from src.domain.repositories import TradeRepository
+from src.domain.types import Direction
 
 
 class CloseReason(Enum):

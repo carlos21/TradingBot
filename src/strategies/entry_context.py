@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 if TYPE_CHECKING:
     from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy
 
-from src.types import Direction
+from src.domain.types import Direction
 
 # Map pairs to their primary trading timezone.
 # This allows the filter to automatically convert UTC timestamps to the

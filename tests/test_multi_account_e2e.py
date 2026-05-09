@@ -16,9 +16,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
+from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
 from src.services.trade_manager import TradeManager
-from src.types import Direction
+from src.domain.types import Direction
 from tests.fakes import FakeLogger, FakeTradeExecutor, FakeTradeRepository, DummySocketIO
 
 

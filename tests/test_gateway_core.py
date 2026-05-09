@@ -16,8 +16,8 @@ import pytest
 
 zmq = pytest.importorskip("zmq")
 
-from src.gateway.gateway import GatewayConfig, TradingGateway
-from src.gateway.protocol import (
+from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
+from src.infrastructure.gateway.protocol import (
     BarMessage,
     CloseOrderCommand,
     CommandAckMessage,
@@ -439,7 +439,7 @@ class TestConnectionState:
         def _sleep_and_stop(_duration):
             gateway._running = False
 
-        with patch("src.gateway.gateway.time.sleep", side_effect=_sleep_and_stop):
+        with patch("src.infrastructure.gateway.gateway.time.sleep", side_effect=_sleep_and_stop):
             gateway._heartbeat_loop()
         assert gateway._platform_connected is False
         assert False in calls
@@ -452,7 +452,7 @@ class TestConnectionState:
         def _sleep_and_stop(_duration):
             gateway._running = False
 
-        with patch("src.gateway.gateway.time.sleep", side_effect=_sleep_and_stop):
+        with patch("src.infrastructure.gateway.gateway.time.sleep", side_effect=_sleep_and_stop):
             gateway._heartbeat_loop()
         assert gateway._platform_connected is False
 
@@ -463,7 +463,7 @@ class TestConnectionState:
         def _sleep_and_stop(_duration):
             gateway._running = False
 
-        with patch("src.gateway.gateway.time.sleep", side_effect=_sleep_and_stop):
+        with patch("src.infrastructure.gateway.gateway.time.sleep", side_effect=_sleep_and_stop):
             gateway._heartbeat_loop()
         gateway.config = original
         assert any("Error in heartbeat loop" in m for m in logger.messages)
@@ -1274,7 +1274,7 @@ class TestQueryPositions:
 
 
 class TestLifecycle:
-    @patch("src.gateway.gateway.zmq.Context")
+    @patch("src.infrastructure.gateway.gateway.zmq.Context")
     def test_start_creates_context_and_sockets(self, mock_ctx_cls, logger):
         mock_ctx = MagicMock()
         mock_socket = MagicMock()
@@ -1293,7 +1293,7 @@ class TestLifecycle:
         assert gw._context is None
         assert len(gw._threads) == 0
 
-    @patch("src.gateway.gateway.zmq.Context")
+    @patch("src.infrastructure.gateway.gateway.zmq.Context")
     def test_start_when_already_running_warns(self, mock_ctx_cls, logger):
         gw = TradingGateway(logger=logger)
         gw._running = True
@@ -1305,7 +1305,7 @@ class TestLifecycle:
         gateway.stop()
         assert gateway._running is False
 
-    @patch("src.gateway.gateway.zmq.Context")
+    @patch("src.infrastructure.gateway.gateway.zmq.Context")
     def test_stop_clears_all_state(self, mock_ctx_cls, logger):
         mock_ctx = MagicMock()
         mock_socket = MagicMock()
@@ -1334,7 +1334,7 @@ class TestLifecycle:
         assert gw._platform_connected is False
         assert gw._platform_info is None
 
-    @patch("src.gateway.gateway.zmq.Context")
+    @patch("src.infrastructure.gateway.gateway.zmq.Context")
     def test_setup_python_connects_creates_req_socket(self, mock_ctx_cls, logger):
         mock_ctx = MagicMock()
         mock_socket = MagicMock()
@@ -1348,7 +1348,7 @@ class TestLifecycle:
         assert gw._query_rep is None
         gw.stop()
 
-    @patch("src.gateway.gateway.zmq.Context")
+    @patch("src.infrastructure.gateway.gateway.zmq.Context")
     def test_setup_python_binds_creates_rep_socket(self, mock_ctx_cls, logger):
         mock_ctx = MagicMock()
         mock_socket = MagicMock()
@@ -1370,7 +1370,7 @@ class TestLifecycle:
 
 class TestRefreshAccountNames:
     def test_success(self, gateway):
-        with patch("src.repositories.accounts_repository.NtAccountRepository") as MockRepo:
+        with patch("src.infrastructure.repositories.accounts_repository.NtAccountRepository") as MockRepo:
             mock_repo = MagicMock()
             a1 = MagicMock()
             a1.name = "Sim101"
@@ -1382,7 +1382,7 @@ class TestRefreshAccountNames:
             assert gateway._account_names == ["Sim101", "Sim102"]
 
     def test_failure_logs_warning(self, gateway, logger):
-        with patch("src.repositories.accounts_repository.NtAccountRepository") as MockRepo:
+        with patch("src.infrastructure.repositories.accounts_repository.NtAccountRepository") as MockRepo:
             MockRepo.side_effect = Exception("DB error")
             gateway._refresh_account_names()
             assert any("Failed to refresh" in m for m in logger.messages)
@@ -1425,7 +1425,7 @@ class TestHeartbeatListenerResilience:
         def _sleep_and_stop(_duration):
             gateway._running = False
 
-        with patch("src.gateway.gateway.time.sleep", side_effect=_sleep_and_stop):
+        with patch("src.infrastructure.gateway.gateway.time.sleep", side_effect=_sleep_and_stop):
             gateway._heartbeat_loop()
         assert gateway._platform_connected is False
 

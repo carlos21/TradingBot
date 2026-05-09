@@ -23,113 +23,17 @@ Usage:
 """
 
 import uuid
-from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any, TypeVar
+from typing import Any
 
-from src.database.database import Line, LineTriggerState, Trade
+from src.infrastructure.database.database import Line, LineTriggerState, Trade
 from src.dbexception import DBNotFoundException
-from src.models import LineData, TradeData
-
-T = TypeVar('T')
-
-
-class ILineRepository(ABC):
-    """Interface for line repository operations within a Unit of Work."""
-
-    @abstractmethod
-    def insert_line(self, pair: str, price: float, creation_date: datetime | None = None) -> LineData:
-        pass
-
-    @abstractmethod
-    def get_line(self, line_id: str) -> LineData | None:
-        pass
-
-    @abstractmethod
-    def list_lines(self, pair: str) -> list[LineData]:
-        pass
-
-    @abstractmethod
-    def update_line(self, line_id: str, price: float) -> LineData:
-        pass
-
-    @abstractmethod
-    def delete_line(self, line_id: str) -> None:
-        pass
-
-
-class ITradeRepository(ABC):
-    """Interface for trade repository operations within a Unit of Work."""
-
-    @abstractmethod
-    def insert_trade(self, pair: str, trade_type: str, entry_price: float,
-                     stop_loss: float, take_profit: float, risk: float,
-                     entry_time: datetime, params: dict | None = None,
-                     risk_dollars: float | None = None,
-                     risk_pct: float | None = None,
-                     contracts: float | None = None,
-                     trade_id: str | None = None) -> TradeData:
-        pass
-
-    @abstractmethod
-    def list_trades(self, pair: str) -> list[TradeData]:
-        pass
-
-    @abstractmethod
-    def update_stop_loss(self, trade_id: str, new_stop_loss: float) -> TradeData:
-        pass
-
-    @abstractmethod
-    def update_take_profit(self, trade_id: str, new_take_profit: float) -> TradeData:
-        pass
-
-    @abstractmethod
-    def update_entry_price(self, trade_id: str, new_entry_price: float) -> TradeData:
-        pass
-
-    @abstractmethod
-    def update_risk_fields(self, trade_id: str, risk: float, risk_dollars: float,
-                          risk_pct: float) -> TradeData:
-        pass
-
-    @abstractmethod
-    def update_contracts(self, trade_id: str, contracts: float) -> TradeData:
-        pass
-
-    @abstractmethod
-    def close_trade(self, trade_id: str, exit_price: float, exit_time: datetime,
-                   result: float, result_type: str | None = None,
-                   fees: float | None = None, pnl_usd: float | None = None) -> TradeData:
-        pass
-
-    @abstractmethod
-    def get_trade(self, trade_id: str) -> TradeData | None:
-        pass
-
-    @abstractmethod
-    def get_all_trades(self, pair: str) -> list[TradeData]:
-        pass
-
-
-class ILineTriggerStateRepository(ABC):
-    """Interface for line trigger state repository operations."""
-
-    @abstractmethod
-    def save(self, line_id: str, pair: str, state: dict[str, Any]) -> None:
-        pass
-
-    @abstractmethod
-    def load(self, line_id: str) -> dict[str, Any] | None:
-        pass
-
-    @abstractmethod
-    def load_all(self, pair: str) -> dict[str, dict[str, Any]]:
-        pass
-
-    @abstractmethod
-    def delete(self, line_id: str) -> None:
-        pass
-
+from src.domain.models import LineData, TradeData
+from src.domain.repositories import (
+    LineRepository as ILineRepository,
+    TradeRepository as ITradeRepository,
+    LineTriggerStateRepository as ILineTriggerStateRepository,
+)
 
 class UnitOfWorkLineRepository(ILineRepository):
     """Line repository that operates within a Unit of Work session."""
@@ -317,6 +221,14 @@ class UnitOfWorkTradeRepository(ITradeRepository):
     def get_all_trades(self, pair: str) -> list[TradeData]:
         return self.list_trades(pair)
 
+    def append_trade_log(self, trade_id: str, event: str, message: str) -> None:
+        # UoW repositories do not implement trade logging;
+        # logs are handled by persistent repository implementations.
+        pass
+
+    def get_trade_logs(self, trade_id: str) -> list:
+        return []
+
 
 class UnitOfWorkLineTriggerStateRepository(ILineTriggerStateRepository):
     """Line trigger state repository that operates within a Unit of Work session."""
@@ -393,7 +305,7 @@ class UnitOfWork:
     def _init_session(self):
         """Initialize the database session if not already done."""
         if self._session is None:
-            from src.database.database import db
+            from src.infrastructure.database.database import db
             self._session = db.get_session()
 
     @property

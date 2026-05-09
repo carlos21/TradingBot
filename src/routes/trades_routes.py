@@ -3,7 +3,7 @@
 from flask import Flask, abort, jsonify, request
 
 from src.controllers.trades_controller import TradesController
-from src.repositories.trades_repository import TradeRepository
+from src.domain.repositories import TradeRepository
 from src.services.trade_logger import TradeLogger
 from src.utils.app_logger import ILogger
 

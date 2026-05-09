@@ -3,10 +3,10 @@ import pytest
 from flask import Flask
 
 from src.controllers.settings_controller import SettingsController
-from src.database.database import setup_database
-from src.repositories.accounts_repository import NtAccountRepository
-from src.repositories.credentials_repository import CredentialRepository
-from src.repositories.settings_repository import SettingsRepository
+from src.infrastructure.database.database import setup_database
+from src.infrastructure.repositories.accounts_repository import NtAccountRepository
+from src.infrastructure.repositories.credentials_repository import CredentialRepository
+from src.infrastructure.repositories.settings_repository import SettingsRepository
 from src.routes.settings_routes import register_settings_routes
 from src.services.settings_service import SettingsService
 from tests.fakes import FakeLogger
@@ -16,7 +16,7 @@ from tests.fakes import FakeLogger
 def app(tmp_path):
     db_path = f"sqlite:///{tmp_path / 'api_test.db'}"
     setup_database(db_url=db_path)
-    from src.database.database import get_db_session
+    from src.infrastructure.database.database import get_db_session
     session = get_db_session().__enter__()
 
     settings_repo = SettingsRepository()

@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from src.models import TradeData
+from src.domain.models import TradeData
 from src.services.trade_logger import TradeLogger
 from tests.fakes import FakeTradeRepository
 
