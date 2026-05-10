@@ -135,9 +135,26 @@ def _feed_until_trade_open(strat, bars, trade_repo, start_idx=0):
     pre = len(trade_repo.inserted)
     for i in range(start_idx, len(bars)):
         strat.on_raw_bar(bars[i])
+        if strat.trade_manager:
+            strat.trade_manager.handle_new_1m_bar(bars[i])
         if len(trade_repo.inserted) > pre:
             return i
     raise AssertionError("No trade was opened")
+
+
+def _notify_strategy_of_closes(strat, trade_repo, pre_closed):
+    """Manually notify strategy of trade closes since tests have no event bus."""
+    for closed in trade_repo.closed[pre_closed:]:
+        inserted = next((t for t in trade_repo.inserted if t["trade_id"] == closed["trade_id"]), {})
+        params = inserted.get("params") or {}
+        strat._on_trade_closed({
+            "trade_id": closed["trade_id"],
+            "result_type": closed.get("result_type", "SL"),
+            "exit_price": closed.get("exit_price", 0.0),
+            "line_level": params.get("line_level"),
+            "is_reentry": params.get("is_reentry", False),
+            "is_phantom": params.get("is_phantom", False),
+        })
 
 
 def _feed_until_sl(strat, bars, trade_repo, start_idx=0):
@@ -145,7 +162,10 @@ def _feed_until_sl(strat, bars, trade_repo, start_idx=0):
     pre = len(trade_repo.closed)
     for i in range(start_idx, len(bars)):
         strat.on_raw_bar(bars[i])
+        if strat.trade_manager:
+            strat.trade_manager.handle_new_1m_bar(bars[i])
         if len(trade_repo.closed) > pre and trade_repo.closed[-1]["result"] < 0:
+            _notify_strategy_of_closes(strat, trade_repo, pre)
             return i
     raise AssertionError("No SL was hit")
 
@@ -228,6 +248,8 @@ class TestCrashRecoveryReentry:
         pre = len(trade_repo.inserted)
         for bar in all_bars[crash_idx + 1:]:
             strat2.on_raw_bar(bar)
+            if strat2.trade_manager:
+                strat2.trade_manager.handle_new_1m_bar(bar)
             if len(trade_repo.inserted) > pre:
                 break
 
@@ -303,6 +325,8 @@ class TestCrashRecoveryReentry:
         pre = len(trade_repo.inserted)
         for bar in all_bars[crash_idx + 1:]:
             strat2.on_raw_bar(bar)
+            if strat2.trade_manager:
+                strat2.trade_manager.handle_new_1m_bar(bar)
             if len(trade_repo.inserted) > pre:
                 reentry = trade_repo.inserted[-1]
                 break
@@ -350,6 +374,8 @@ class TestCrashRecoveryOpenTrade:
         # PHASE 3: Continue — trade should eventually close (SL or TP)
         for bar in all_bars[open_idx + 1:]:
             strat2.on_raw_bar(bar)
+            if strat2.trade_manager:
+                strat2.trade_manager.handle_new_1m_bar(bar)
             if trade_repo.closed:
                 break
 
@@ -523,8 +549,14 @@ class TestCrashRecoveryEdgeCases:
         strat1 = make_recovery_strategy(trade_repo, tsr)
         strat1.add_strategy_line("line-20046", 20046.00, creation_timestamp=MAY01_LINE_TS)
         strat1.add_strategy_line("line-20198", 20198.25, creation_timestamp=MAY01_LINE_TS)
+        pre_closed = 0
         for bar in all_bars:
             strat1.on_raw_bar(bar)
+            if strat1.trade_manager:
+                strat1.trade_manager.handle_new_1m_bar(bar)
+            if len(trade_repo.closed) > pre_closed:
+                _notify_strategy_of_closes(strat1, trade_repo, pre_closed)
+                pre_closed = len(trade_repo.closed)
 
         reentry_trades = [t for t in trade_repo.inserted if t.get("params", {}).get("is_reentry")]
         assert len(reentry_trades) >= 1

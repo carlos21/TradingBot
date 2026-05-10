@@ -58,7 +58,12 @@ def per_trade_sim(
         return 0.0, 0.0, 0.0, 0.0, "open"
     risk = _resolve_risk(balance, risk_usd_fix, risk_pct)
     actual_r = close.get("result", 0.0)
-    usd = risk * actual_r if actual_r > 0 else -risk
+    if abs(actual_r) < BE_THRESHOLD:
+        usd = risk * actual_r
+    elif actual_r > 0:
+        usd = risk * actual_r
+    else:
+        usd = -risk
     pct = usd / balance * 100 if balance else 0.0
     if FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD):
         outcome = "be"
@@ -99,7 +104,9 @@ def per_trade_futures(
                 risk_pts = trade.get("risk")
                 sl_pts_price = round(abs(entry - orig_sl), 4) if entry and orig_sl else 0.0
                 sl_pts = risk_pts if risk_pts is not None else sl_pts_price
-                contracts = max(1, round(_resolve_risk(balance, risk_usd_fix, risk_pct) / (sl_pts_price * nq_pv))) if sl_pts_price > 0 else 1
+                contracts = trade.get("contracts")
+                if contracts is None:
+                    contracts = max(1, round(_resolve_risk(balance, risk_usd_fix, risk_pct) / (sl_pts_price * nq_pv))) if sl_pts_price > 0 else 1
                 fees = contracts * fee_per_rt
                 usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, nq_pv, fees)
                 commission = fees
@@ -112,7 +119,20 @@ def per_trade_futures(
         if stored_pnl is not None:
             usd = stored_pnl
         else:
-            usd = 0.0
+            if trade is None:
+                usd = 0.0
+            else:
+                entry = trade.get("entry") or trade.get("entry_price")
+                orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+                risk_pts = trade.get("risk")
+                sl_pts_price = round(abs(entry - orig_sl), 4) if entry and orig_sl else 0.0
+                sl_pts = risk_pts if risk_pts is not None else sl_pts_price
+                contracts = trade.get("contracts")
+                if contracts is None:
+                    contracts = max(1, round(_resolve_risk(balance, risk_usd_fix, risk_pct) / (sl_pts_price * nq_pv))) if sl_pts_price > 0 else 1
+                fees = contracts * fee_per_rt
+                usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, nq_pv, fees)
+                commission = fees
         pct = usd / balance * 100 if balance else 0.0
         return usd, pct, actual_r, commission, "be"
 
@@ -134,8 +154,10 @@ def per_trade_futures(
             return None, None, actual_r, 0.0, "loss"
         risk_pts = trade.get("risk")
         sl_pts = risk_pts if risk_pts is not None else sl_pts_price
-        risk = _resolve_risk(balance, risk_usd_fix, risk_pct)
-        contracts = FinancialCalc.contracts(risk, sl_pts_price * nq_pv)
+        contracts = trade.get("contracts")
+        if contracts is None:
+            risk = _resolve_risk(balance, risk_usd_fix, risk_pct)
+            contracts = FinancialCalc.contracts(risk, sl_pts_price * nq_pv)
         fees = FinancialCalc.fees(contracts, fee_per_rt)
         usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, nq_pv, fees)
         commission = fees
@@ -170,7 +192,11 @@ def per_trade_cfd(
     actual_r = close.get("result", 0.0)
 
     if result_type == "SP":
-        if trade is None:
+        stored_pnl = close.get("pnl_usd")
+        if stored_pnl is not None:
+            usd = stored_pnl
+            commission = close.get("fees", 0.0)
+        elif trade is None:
             usd = 0.0
             commission = 0.0
         else:
@@ -185,8 +211,10 @@ def per_trade_cfd(
                     usd = 0.0
                     commission = 0.0
                 else:
-                    risk = _resolve_risk(balance, risk_usd_fix, risk_pct)
-                    lots = FinancialCalc.lots(risk, sl_pts * nq_pv)
+                    lots = trade.get("contracts")
+                    if lots is None:
+                        risk = _resolve_risk(balance, risk_usd_fix, risk_pct)
+                        lots = FinancialCalc.lots(risk, sl_pts * nq_pv)
                     spread_cost = lots * cfd_spread * nq_pv
                     commission_cost = lots * cfd_commission
                     total_cost = spread_cost + commission_cost
@@ -196,7 +224,11 @@ def per_trade_cfd(
         return usd, pct, actual_r, commission, "sp"
 
     if result_type == "BE":
-        if trade is None:
+        stored_pnl = close.get("pnl_usd")
+        if stored_pnl is not None:
+            usd = stored_pnl
+            commission = close.get("fees", 0.0)
+        elif trade is None:
             usd = 0.0
             commission = 0.0
         else:
@@ -211,8 +243,10 @@ def per_trade_cfd(
                     usd = 0.0
                     commission = 0.0
                 else:
-                    risk = _resolve_risk(balance, risk_usd_fix, risk_pct)
-                    lots = FinancialCalc.lots(risk, sl_pts * nq_pv)
+                    lots = trade.get("contracts")
+                    if lots is None:
+                        risk = _resolve_risk(balance, risk_usd_fix, risk_pct)
+                        lots = FinancialCalc.lots(risk, sl_pts * nq_pv)
                     spread_cost = lots * cfd_spread * nq_pv
                     commission_cost = lots * cfd_commission
                     total_cost = spread_cost + commission_cost
@@ -220,6 +254,23 @@ def per_trade_cfd(
                     commission = total_cost
         pct = usd / balance * 100 if balance else 0.0
         return usd, pct, actual_r, commission, "be"
+
+    # Use stored pnl_usd from strategy if available (single source of truth)
+    stored_pnl = close.get("pnl_usd")
+    stored_fees = close.get("fees") or 0.0
+    if stored_pnl is not None:
+        usd = stored_pnl
+        commission = stored_fees
+        pct = usd / balance * 100 if balance else 0.0
+        is_be = FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD)
+        is_win = actual_r >= BE_THRESHOLD
+        if is_be:
+            outcome = "be"
+        elif is_win:
+            outcome = "win"
+        else:
+            outcome = "loss"
+        return usd, pct, actual_r, commission, outcome
 
     if trade is None:
         return None, None, actual_r, 0.0, "loss"
@@ -232,8 +283,10 @@ def per_trade_cfd(
     if sl_pts <= 0:
         return None, None, actual_r, 0.0, "loss"
 
-    risk = _resolve_risk(balance, risk_usd_fix, risk_pct)
-    lots = FinancialCalc.lots(risk, sl_pts * nq_pv)
+    lots = trade.get("contracts")
+    if lots is None:
+        risk = _resolve_risk(balance, risk_usd_fix, risk_pct)
+        lots = FinancialCalc.lots(risk, sl_pts * nq_pv)
     spread_cost = lots * cfd_spread * nq_pv
     commission_cost = lots * cfd_commission
     total_cost = spread_cost + commission_cost

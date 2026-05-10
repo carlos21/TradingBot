@@ -25,8 +25,8 @@ class TestContracts:
         assert FinancialCalc.contracts(risk_budget=1000, risk_per_contract=-10) == 1
 
     def test_contracts_large_numbers(self):
-        """Should cap at MAX_CONTRACTS to prevent catastrophic sizing."""
-        assert FinancialCalc.contracts(risk_budget=1_000_000, risk_per_contract=100) == FinancialCalc.MAX_CONTRACTS
+        """Should scale contracts proportionally for large accounts with no cap."""
+        assert FinancialCalc.contracts(risk_budget=1_000_000, risk_per_contract=100) == 10_000
 
     def test_contracts_small_budget(self):
         """Should handle very small budgets."""

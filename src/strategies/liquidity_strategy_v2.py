@@ -209,8 +209,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
     def on_raw_bar(self, bar: dict[str, Any]):
         with self.lock:
-            self._check_open_trades(bar)
-            self._check_session_end_close(bar)
+            # Phantom trades are strategy-only (no DB/broker); check their exits here.
+            # Real trades are monitored by TradeManager / broker fills.
+            self._check_phantom_exits(bar)
 
             if self.options.breakeven or self.options.reentry_breakeven:
                 self._check_breakeven(bar)
@@ -458,11 +459,3 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 self._maybe_remove_line(sid, opened)
 
 
-class LiveLiquidityStrategyV2(LiquidityStrategyV2):
-    """Live mode variant — NinjaTrader handles all SL/TP/session-end closes."""
-
-    def _check_open_trades(self, bar: dict[str, Any]):
-        pass  # NinjaTrader is source of truth for SL/TP
-
-    def _check_session_end_close(self, bar: dict[str, Any]):
-        pass  # Wiring layer sends close commands to NinjaTrader

@@ -16,11 +16,29 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
         return {"outcome": "open", "usd": 0.0, "pct": 0.0, "r": 0.0, "is_reentry": is_reentry, "commission": 0.0}
 
     result_type = close.get("result_type", None)
+    actual_r = close.get("result", 0.0)
+
+    def _sim_usd(risk, actual_r, be_threshold):
+        if abs(actual_r) < be_threshold:
+            return risk * actual_r
+        elif actual_r > 0:
+            return risk * actual_r
+        else:
+            return -risk
+
+    def _contracts_from_trade_or_compute(trade, risk, sl_pts_price, nq_pv):
+        if trade is not None:
+            contracts = trade.get("contracts")
+            if contracts is not None:
+                return contracts
+        if sl_pts_price > 0:
+            return max(1, round(risk / (sl_pts_price * nq_pv)))
+        return 1
+
     if result_type == "SP":
-        actual_r = close.get("result", 0.0)
         commission = 0.0
         if mode == "sim":
-            usd = risk * actual_r if actual_r > 0 else -risk
+            usd = _sim_usd(risk, actual_r, be_threshold)
         else:  # real
             # Use stored pnl_usd if available (single source of truth)
             stored_pnl = close.get("pnl_usd")
@@ -45,7 +63,7 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
                         if sl_pts <= 0:
                             usd = 0.0
                         else:
-                            contracts = max(1, round(risk / (sl_pts_price * nq_pv)))
+                            contracts = _contracts_from_trade_or_compute(trade, risk, sl_pts_price, nq_pv)
                             fees = contracts * fee_per_rt
                             commission = fees
                             if actual_r > 0:
@@ -56,11 +74,10 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
         pct = usd / pct_base * 100 if pct_base else 0.0
         return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry, "commission": commission}
 
-    actual_r = close.get("result", 0.0)
     commission = 0.0
 
     if mode == "sim":
-        usd = risk * actual_r if actual_r > 0 else -risk
+        usd = _sim_usd(risk, actual_r, be_threshold)
     else:  # real
         # Use stored pnl_usd if available (single source of truth)
         stored_pnl = close.get("pnl_usd")
@@ -85,7 +102,7 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
                     if sl_pts <= 0:
                         usd = 0.0
                     else:
-                        contracts = max(1, round(risk / (sl_pts_price * nq_pv)))
+                        contracts = _contracts_from_trade_or_compute(trade, risk, sl_pts_price, nq_pv)
                         fees = contracts * fee_per_rt
                         commission = fees
                         if actual_r > 0:
@@ -96,7 +113,7 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
     pct_base = balance if (risk_pct is not None and balance) else account
     pct = usd / pct_base * 100 if pct_base else 0.0
 
-    if actual_r > 0 and actual_r < be_threshold:
+    if abs(actual_r) < be_threshold:
         outcome = "be"
     elif actual_r >= be_threshold:
         outcome = "win"

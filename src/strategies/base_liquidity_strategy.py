@@ -24,6 +24,8 @@ from src.strategies.entry_context import (
     EntryTrigger,
 )
 from src.domain.types import Direction
+from src.domain.events import DomainEvent, EventType
+from src.events.event_bus import EventSubscriber
 from src.utils.app_logger import ILogger
 
 class LineRemovalMode(str, Enum):
@@ -345,14 +347,14 @@ class BaseLiquidityStrategy:
         """
         Feed raw stream bars (assumed 1s or tick granularity).
         We aggregate to the configured TF and then process strategy logic on each completed bar.
+        
+        NOTE: Trade exits are handled by TradeManager (backtest) or broker fills (live).
+        The strategy reacts to TRADE_CLOSED domain events instead of polling bars.
         """
 
         # Check breakeven conditions on every raw bar before aggregation
         if self.options.breakeven or self.options.reentry_breakeven:
             self._check_breakeven(bar)
-
-        # Close any open trades at session end
-        self._check_session_end_close(bar)
 
         ts = bar["time"]
         win = (ts // self.strategy_window) * self.strategy_window
@@ -411,77 +413,6 @@ class BaseLiquidityStrategy:
 
             if should_update and new_sl is not None:
                 self._update_trade_sl(trade, new_sl)
-
-    def _check_session_end_close(self, bar: dict[str, Any]):
-        """Close any open trades if the bar is at or past the NY session end (15:00 NY)."""
-        if self.is_warmup:
-            return
-        session_end = self.trade_manager._session_end_time
-        session_tz = self.trade_manager._session_tz
-        if not session_end or not session_tz:
-            return
-
-        bar_dt = datetime.fromtimestamp(bar["time"], tz=session_tz)
-        if bar_dt.time() < session_end:
-            return
-
-        remaining = []
-        for t in self.open_trades:
-            if t["status"] != "open" or t["pair"] != bar["pair"]:
-                remaining.append(t)
-                continue
-
-            exit_price = bar["close"]
-            risk = t.get("risk", 1.0)
-            if risk <= 0:
-                risk = 1.0
-            contracts = t.get("contracts") or 1
-
-            # Use unified FinancialCalc for ALL close metrics (single source of truth)
-            r_result, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
-                direction=Direction.from_string(t["type"]),
-                entry_price=t["entry"],
-                exit_price=exit_price,
-                stop_loss=t["stop_loss"],
-                take_profit=t["take_profit"],
-                risk_points=risk,
-                contracts=contracts,
-                point_value=self.point_value,
-                fee_per_rt=self.fee_per_rt,
-            )
-            result_type = FinancialCalc.calculate_session_end_result_type(r_result)
-            t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, result_type=result_type)
-            try:
-                self.trade_repository.close_trade(
-                    trade_id=t["trade_id"],
-                    exit_price=exit_price,
-                    exit_time=self._ts_to_dt(bar["time"]),
-                    result=r_result,
-                    result_type=result_type,
-                    fees=t_fees,
-                    pnl_usd=t_pnl_usd,
-                )
-                self.logger.info(f"[Strategy] SESSION END closed {t['trade_id']} @ {exit_price} (Result: {r_result:.2f}R)")
-            except Exception as e:
-                self.logger.error(f"[Strategy] Failed to persist session-end close for {t['trade_id']}: {e}")
-                self.analytics.capture_exception(e, {"op": "strategy_session_close", "trade_id": t["trade_id"]})
-                if self.trade_logger:
-                    self.trade_logger.log(t["trade_id"], "ERROR", str(e))
-
-            # Note: Logging is handled by TradeManager to avoid duplicates
-
-            self.trade_manager.notify_strategy_close(
-                trade_id=t['trade_id'],
-                exit_price=exit_price,
-                result=r_result,
-                pnl_usd=t_pnl_usd,
-                fees=t_fees,
-                result_type=result_type,
-                exit_time=bar['time'],
-            )
-            self.socketio.emit("trade_close", t)
-
-        self.open_trades = remaining
 
     def _check_reentry_opportunities(self, bar: dict[str, Any]):
         """
@@ -592,15 +523,14 @@ class BaseLiquidityStrategy:
 
     def _on_strategy_bar(self, bar: dict[str, Any]):
         """
-        1) check exits on open trades
-        2) for each strategy line, run triggers → may propose an EntryContext
-        3) if proposed, run filters; if allowed, open trade and maybe remove the line
+        1) for each strategy line, run triggers → may propose an EntryContext
+        2) if proposed, run filters; if allowed, open trade and maybe remove the line
+        
+        NOTE: Trade exits are handled by TradeManager (backtest) or broker fills (live).
+        The strategy reacts to TRADE_CLOSED domain events instead of polling bars.
         """
         with self.lock:
-            # 1) exits first
-            self._check_open_trades(bar)
-
-            # 2) evaluate lines via triggers
+            # 1) evaluate lines via triggers
             for sid, line in list(self.strategy_lines.items()):
                 opened = False
                 proposed_ctx: EntryContext | None = None
@@ -659,54 +589,96 @@ class BaseLiquidityStrategy:
         if mode == LineRemovalMode.ON_EVALUATE or mode == LineRemovalMode.ON_ENTER and opened:
             self.remove_strategy_line(line_id)
 
-    # ----- Exits -----
+    # ------------------------------------------------------------------
+    # Event-driven trade close (replaces _check_open_trades / handle_broker_exit_fill)
+    # ------------------------------------------------------------------
+    def on_event(self, event: DomainEvent) -> None:
+        """EventSubscriber protocol: react to TRADE_CLOSED domain events."""
+        if event.event_type == EventType.TRADE_CLOSED:
+            self._on_trade_closed(event.payload)
 
-    def _check_open_trades(self, bar: dict[str, Any]):
+    def _on_trade_closed(self, payload: dict[str, Any]) -> None:
+        """Update strategy state when a trade close event is published.
+
+        This is the SINGLE code path for trade closes in both live and backtest:
+        - Backtest: TradeManager._check_sl_tp / _check_session_end_close emits event
+        - Live: TradeManager.handle_broker_fill emits event after NT fill
+        """
+        trade_id = payload.get("trade_id")
+        trade = next((t for t in self.open_trades if t.get("trade_id") == trade_id), None)
+        if not trade or trade.get("status") != "open":
+            return
+
+        trade["status"] = "closed"
+        trade["exit_price"] = payload.get("exit_price")
+        trade["result_type"] = payload.get("result_type")
+
+        # Remove from strategy's open list so has_open becomes False
+        self.open_trades = [t for t in self.open_trades if t.get("trade_id") != trade_id]
+
+        # Create re-entry opportunity on SL hit (mirrors old _check_open_trades logic)
+        is_phantom = payload.get("is_phantom", False)
+        if (
+            (self.options.reentry_after_sl or is_phantom)
+            and payload.get("result_type") == "SL"
+            and not payload.get("is_reentry", False)
+        ):
+            level = payload.get("line_level")
+            if level is not None:
+                direction = trade["type"]
+                extreme = payload.get("extreme_excursion", payload.get("exit_price"))
+                self._reentry_opportunities.append({
+                    "level": level,
+                    "direction": direction,
+                    "pair": trade["pair"],
+                    "extreme_excursion": extreme,
+                })
+                self.logger.info(
+                    f"[ReEntry] SL hit on {direction} @ {trade['pair']}. "
+                    f"Watching level={level} for re-entry."
+                )
+
+    def _check_phantom_exits(self, bar: dict[str, Any]) -> None:
+        """Check SL/TP for phantom trades only.
+
+        Real trades are monitored by TradeManager._check_sl_tp.
+        Phantom trades are strategy-only constructs (no DB, no broker).
+        """
         if self.is_warmup:
             return
-        remaining: list[dict[str, Any]] = []
+        remaining = []
         for t in self.open_trades:
-            if t["status"] != "open":
-                continue
-            # Skip bars that predate the trade's entry time (e.g. restored trades during history replay)
-            if bar["time"] < t.get("entry_time", 0):
+            if t.get("status") != "open" or not t.get("is_phantom"):
                 remaining.append(t)
                 continue
             low, high = bar["low"], bar["high"]
-
-            # Calculate R-multiple dynamically
-            risk = t.get("risk", 1.0)
-            if risk == 0:
-                risk = 1.0
-
             closed = False
             exit_price = 0.0
-            r_result = 0.0
             result_type = None
-
-            exit_price = None
 
             if t["type"] == "long":
                 if low <= t["stop_loss"]:
                     exit_price = t["stop_loss"]
+                    result_type = "SL"
                     closed = True
                 elif high >= t["take_profit"]:
                     exit_price = t["take_profit"]
+                    result_type = "TP"
                     closed = True
-            else:  # short
+            else:
                 if high >= t["stop_loss"]:
                     exit_price = t["stop_loss"]
+                    result_type = "SL"
                     closed = True
                 elif low <= t["take_profit"]:
                     exit_price = t["take_profit"]
+                    result_type = "TP"
                     closed = True
 
-            if closed and exit_price is not None:
-                # Use unified FinancialCalc for ALL close metrics (single source of truth)
+            if closed:
                 contracts = t.get("contracts") or 1
                 risk_pts = t.get("risk", 0) or 1.0
-
-                r_result, t_fees, t_pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
+                r_result, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
                     direction=Direction.from_string(t["type"]),
                     entry_price=t["entry"],
                     exit_price=exit_price,
@@ -717,113 +689,34 @@ class BaseLiquidityStrategy:
                     point_value=self.point_value,
                     fee_per_rt=self.fee_per_rt,
                 )
-                # Deduct spread cost separately so result_r stays at theoretical RR
                 if self.broker_spread > 0:
                     spread_cost = contracts * self.broker_spread * self.point_value
                     t_pnl_usd -= spread_cost
                     t_fees += spread_cost
-                t.update(status="closed", result=r_result, exit_time=bar["time"], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, result_type=result_type)
-                is_phantom = t.get("is_phantom", False)
-
-                # Register re-entry opportunity when SL is hit (not on TP, not on re-entry trades)
-                # For reentry_only mode, phantom trades always create reentry opportunities
+                t.update(
+                    status="closed", result=r_result, exit_time=bar["time"],
+                    exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd,
+                    result_type=result_type,
+                )
+                self.socketio.emit("trade_close", t)
+                # Reentry logic for phantom SL hits
                 if (
-                    (self.options.reentry_after_sl or is_phantom)
-                    and r_result < 0
+                    (self.options.reentry_after_sl or self.options.reentry_only)
+                    and result_type == "SL"
                     and not t.get("is_reentry", False)
                 ):
                     level = t.get("line_level")
                     if level is not None:
-                        direction = t["type"]
+                        extreme = bar["low"] if t["type"] == Direction.LONG else bar["high"]
                         self._reentry_opportunities.append({
                             "level": level,
-                            "direction": direction,
+                            "direction": t["type"],
                             "pair": t["pair"],
-                            # track the most adverse price seen since SL hit
-                            "extreme_excursion": bar["low"] if direction == Direction.LONG else bar["high"],
+                            "extreme_excursion": extreme,
                         })
-                        self.logger.info(f"[ReEntry] SL hit on {direction} @ {t['pair']}. Watching level={level} for re-entry.")
-                        self.log_decision(
-                            bar["time"], "1m", f"reentry@{level:.2f}",
-                            "REENTRY_WATCH",
-                            f"SL hit on {direction} trade — watching level={level:.2f} for re-entry (threshold={self.options.reentry_threshold:.0f}pts)"
-                        )
-
-                if is_phantom:
-                    self.logger.info(f"[Strategy] Phantom trade closed (Result: {r_result:.2f}R) — not persisted")
-                else:
-                    try:
-                        self.trade_repository.close_trade(
-                            trade_id=t["trade_id"],
-                            exit_price=exit_price,
-                            exit_time=self._ts_to_dt(bar["time"]),
-                            result=r_result,
-                            result_type=result_type,
-                            fees=t_fees,
-                            pnl_usd=t_pnl_usd,
-                        )
-                        self.logger.info(f"[Strategy] Persisted CLOSE for {t['trade_id']} (Result: {r_result:.2f}R, Type: {result_type})")
-                    except Exception as e:
-                        self.logger.error(f"[Strategy] Failed to persist close for {t['trade_id']}: {e}")
-                        self.analytics.capture_exception(e, {"op": "strategy_persist_close", "trade_id": t["trade_id"]})
-                        if self.trade_logger:
-                            self.trade_logger.log(t["trade_id"], "ERROR", str(e))
-
-                    # Note: SL_HIT/TP_HIT/CLOSE logging is handled by TradeManager to avoid duplicates
-
-                    self.trade_manager.notify_strategy_close(
-                        trade_id=t['trade_id'],
-                        exit_price=exit_price,
-                        result=r_result,
-                        pnl_usd=t_pnl_usd,
-                        fees=t_fees,
-                        result_type=result_type,
-                        exit_time=bar['time'],
-                    )
-                    self.socketio.emit("trade_close", t)
             else:
                 remaining.append(t)
-
         self.open_trades = remaining
-
-    def handle_broker_exit_fill(self, trade_id: str, exit_price: float, result_type: str = None):
-        """Called when NinjaTrader reports an exit fill (SL, TP, or manual close).
-
-        Syncs the strategy's open_trades so that bar-based checks and reentry
-        logic see the trade as closed.  Reentry opportunities are created here
-        for SL hits because LiveLiquidityStrategyV2 bypasses _check_open_trades.
-        """
-        trade = next((t for t in self.open_trades if t["trade_id"] == trade_id), None)
-        if not trade or trade.get("status") != "open":
-            return
-
-        trade["status"] = "closed"
-        trade["exit_price"] = exit_price
-        trade["result_type"] = result_type
-
-        # Remove from strategy's open list so has_open becomes False
-        self.open_trades = [t for t in self.open_trades if t["trade_id"] != trade_id]
-
-        # Create re-entry opportunity on SL hit (mirrors _check_open_trades logic)
-        is_phantom = trade.get("is_phantom", False)
-        if (
-            (self.options.reentry_after_sl or is_phantom)
-            and result_type == "SL"
-            and not trade.get("is_reentry", False)
-        ):
-            level = trade.get("line_level")
-            if level is not None:
-                direction = trade["type"]
-                self._reentry_opportunities.append({
-                    "level": level,
-                    "direction": direction,
-                    "pair": trade["pair"],
-                    "extreme_excursion": exit_price,
-                })
-                self.logger.info(
-                    f"[ReEntry] SL hit on {direction} @ {trade['pair']}. "
-                    f"Watching level={level} for re-entry."
-                )
 
     # ----- Trade creation & persistence -----
 
@@ -950,7 +843,8 @@ class BaseLiquidityStrategy:
         self.open_trades.append(trade)
 
         # Also register with trade_manager so it can track SL/TP hits
-        if self.trade_manager and not trade.get("is_signal"):
+        # Skip phantom trades (strategy-only, no DB/broker) and signal trades (multi-account)
+        if self.trade_manager and not trade.get("is_signal") and not trade.get("is_phantom"):
             tm_trade = {
                 'trade_id':    trade["trade_id"],
                 'pair':        trade["pair"],
@@ -963,7 +857,9 @@ class BaseLiquidityStrategy:
                 'risk_pct':    trade.get("risk_pct"),
                 'contracts':   trade.get("contracts"),
                 'entry_time':  trade["entry_time"],
-                'status':      'open'
+                'status':      'open',
+                'line_level':  trade.get("line_level"),
+                'is_reentry':  trade.get("is_reentry", False),
             }
             self.trade_manager.open_trades.append(tm_trade)
             self.trade_manager._monitored_trades.add(trade["trade_id"])

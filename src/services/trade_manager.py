@@ -212,6 +212,11 @@ class TradeManager:
             log_event = "SL_HIT" if hit_sl else "TP_HIT"
             analytics_event = "SL_HIT" if hit_sl else "TP_HIT"
 
+            # For reentry SL calculation: use the bar's extreme, not just the SL price
+            extreme_excursion = None
+            if hit_sl:
+                extreme_excursion = bar['low'] if is_long else bar['high']
+
             try:
                 result = self._close_use_case.execute(
                     trade=trade,
@@ -220,6 +225,7 @@ class TradeManager:
                     result_type_override=result_type_override,
                     log_event=log_event,
                     analytics_event=analytics_event,
+                    extreme_excursion=extreme_excursion,
                 )
             except Exception as e:
                 # Distinguish executor failure (before DB) from DB failure

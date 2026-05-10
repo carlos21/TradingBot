@@ -130,10 +130,7 @@ class TradesController:
         self.logger.info(f"[TradesController] Closing Trade {trade_id} at Virtual Time: {exit_time}")
 
         payload = self.trade_manager.close_trade(trade_id, exit_price, exit_time)
-
-        if self.strategy:
-            self.strategy.handle_broker_exit_fill(trade_id, exit_price, "CLOSE")
-
+        # Strategy state is updated reactively via TRADE_CLOSED domain events
         return jsonify(payload), 200
 
     def close_all_trades(self, pair: str):
@@ -153,10 +150,9 @@ class TradesController:
             try:
                 payload = self.trade_manager.close_trade(trade_id, exit_price, exit_time)
                 closed.append({'trade_id': trade_id, 'exit_price': exit_price, 'result': payload.get('result')})
-                if self.strategy:
-                    self.strategy.handle_broker_exit_fill(trade_id, exit_price, "CLOSE")
             except Exception as e:
                 self.logger.error(f"[TradesController] Failed to close trade {trade_id}: {e}")
                 failed.append({'trade_id': trade_id, 'error': str(e)})
 
+        # Strategy state is updated reactively via TRADE_CLOSED domain events
         return jsonify({'closed': closed, 'failed': failed, 'count': len(closed)}), 200

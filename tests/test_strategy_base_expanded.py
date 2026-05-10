@@ -88,238 +88,6 @@ def _make_ctx(strat, direction=Direction.LONG, close=100.0, extreme=90.0, level=
 # BE Threshold Logic
 # ---------------------------------------------------------------------------
 
-class TestBEThresholdLogic:
-
-    def test_session_end_close_near_entry_is_be(self):
-        """Exit within BE threshold of entry should classify as BE on session end."""
-        from zoneinfo import ZoneInfo
-        sio = DummySocketIO()
-        tr = FakeTradeRepository()
-        tm = TradeManager(
-            tr, sio,
-            trade_executor=FakeTradeExecutor(),
-            analytics=FakeAnalyticsReporter(),
-            point_value=2.0,
-            account_balance=100000.0,
-            logger=FakeLogger(),
-            session_end_time="15:00",
-            session_tz="America/New_York",
-        )
-        strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
-        strat.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open",
-        })
-        tm.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "entry_time": 500,
-        })
-        ny = ZoneInfo("America/New_York")
-        # close=100.5 is within 2.0 points of entry=100 → BE
-        bar = make_bar(time=int(datetime(2025, 6, 15, 15, 1, tzinfo=ny).timestamp()), close=100.5, pair="MNQ")
-        strat._check_session_end_close(bar)
-        assert len(strat.open_trades) == 0
-        assert len(tr.closed) == 1
-        assert tr.closed[0]["result_type"] == "BE"
-
-    def test_session_end_close_far_from_entry_is_sp(self):
-        """Exit far from entry should classify as SP on session end."""
-        from zoneinfo import ZoneInfo
-        sio = DummySocketIO()
-        tr = FakeTradeRepository()
-        tm = TradeManager(
-            tr, sio,
-            trade_executor=FakeTradeExecutor(),
-            analytics=FakeAnalyticsReporter(),
-            point_value=2.0,
-            account_balance=100000.0,
-            logger=FakeLogger(),
-            session_end_time="15:00",
-            session_tz="America/New_York",
-        )
-        strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
-        strat.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open",
-        })
-        tm.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "entry_time": 500,
-        })
-        ny = ZoneInfo("America/New_York")
-        bar = make_bar(time=int(datetime(2025, 6, 15, 15, 1, tzinfo=ny).timestamp()), close=120, pair="MNQ")
-        strat._check_session_end_close(bar)
-        assert len(strat.open_trades) == 0
-        assert len(tr.closed) == 1
-        assert tr.closed[0]["result_type"] == "SP"
-
-
-# ---------------------------------------------------------------------------
-# Session End Handling
-# ---------------------------------------------------------------------------
-
-class TestSessionEndHandling:
-
-    def test_no_session_config_does_nothing(self):
-        tm = TradeManager(
-            FakeTradeRepository(), DummySocketIO(),
-            trade_executor=FakeTradeExecutor(),
-            analytics=FakeAnalyticsReporter(),
-            point_value=2.0,
-            account_balance=100000.0,
-            logger=FakeLogger(),
-        )
-        strat = _make_base(trade_manager=tm)
-        strat.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open",
-        })
-        bar = make_bar(time=1000, close=105, pair="MNQ")
-        strat._check_session_end_close(bar)
-        assert len(strat.open_trades) == 1
-
-    def test_bar_before_session_end_keeps_trade(self):
-        from zoneinfo import ZoneInfo
-        tm = TradeManager(
-            FakeTradeRepository(), DummySocketIO(),
-            trade_executor=FakeTradeExecutor(),
-            analytics=FakeAnalyticsReporter(),
-            point_value=2.0,
-            account_balance=100000.0,
-            logger=FakeLogger(),
-            session_end_time="15:00",
-            session_tz="America/New_York",
-        )
-        strat = _make_base(trade_manager=tm)
-        strat.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open",
-        })
-        ny = ZoneInfo("America/New_York")
-        bar = make_bar(time=int(datetime(2025, 6, 15, 14, 59, tzinfo=ny).timestamp()), close=105, pair="MNQ")
-        strat._check_session_end_close(bar)
-        assert len(strat.open_trades) == 1
-
-    def test_different_pair_not_closed(self):
-        from zoneinfo import ZoneInfo
-        tm = TradeManager(
-            FakeTradeRepository(), DummySocketIO(),
-            trade_executor=FakeTradeExecutor(),
-            analytics=FakeAnalyticsReporter(),
-            point_value=2.0,
-            account_balance=100000.0,
-            logger=FakeLogger(),
-            session_end_time="15:00",
-            session_tz="America/New_York",
-        )
-        strat = _make_base(trade_manager=tm)
-        strat.open_trades.append({
-            "trade_id": "T1", "pair": "MES", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open",
-        })
-        ny = ZoneInfo("America/New_York")
-        bar = make_bar(time=int(datetime(2025, 6, 15, 15, 1, tzinfo=ny).timestamp()), close=105, pair="MNQ")
-        strat._check_session_end_close(bar)
-        assert len(strat.open_trades) == 1
-
-    def test_non_open_status_not_closed(self):
-        from zoneinfo import ZoneInfo
-        tm = TradeManager(
-            FakeTradeRepository(), DummySocketIO(),
-            trade_executor=FakeTradeExecutor(),
-            analytics=FakeAnalyticsReporter(),
-            point_value=2.0,
-            account_balance=100000.0,
-            logger=FakeLogger(),
-            session_end_time="15:00",
-            session_tz="America/New_York",
-        )
-        strat = _make_base(trade_manager=tm)
-        strat.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "closed",
-        })
-        ny = ZoneInfo("America/New_York")
-        bar = make_bar(time=int(datetime(2025, 6, 15, 15, 1, tzinfo=ny).timestamp()), close=105, pair="MNQ")
-        strat._check_session_end_close(bar)
-        assert len(strat.open_trades) == 1
-
-    def test_session_end_risk_zero_fallback(self):
-        from zoneinfo import ZoneInfo
-        tr = FakeTradeRepository()
-        tm = TradeManager(
-            tr, DummySocketIO(),
-            trade_executor=FakeTradeExecutor(),
-            analytics=FakeAnalyticsReporter(),
-            point_value=2.0,
-            account_balance=100000.0,
-            logger=FakeLogger(),
-            session_end_time="15:00",
-            session_tz="America/New_York",
-        )
-        strat = _make_base(trade_repo=tr, trade_manager=tm)
-        strat.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 0, "status": "open",
-        })
-        tm.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 0, "entry_time": 500,
-        })
-        ny = ZoneInfo("America/New_York")
-        bar = make_bar(time=int(datetime(2025, 6, 15, 15, 1, tzinfo=ny).timestamp()), close=105, pair="MNQ")
-        strat._check_session_end_close(bar)
-        assert len(strat.open_trades) == 0
-        assert len(tr.closed) == 1
-        # Should not crash despite risk=0
-
-    def test_session_end_persist_exception_caught(self):
-        from zoneinfo import ZoneInfo
-        tr = FakeTradeRepository()
-        tm = TradeManager(
-            tr, DummySocketIO(),
-            trade_executor=FakeTradeExecutor(),
-            analytics=FakeAnalyticsReporter(),
-            point_value=2.0,
-            account_balance=100000.0,
-            logger=FakeLogger(),
-            session_end_time="15:00",
-            session_tz="America/New_York",
-        )
-        strat = _make_base(trade_repo=tr, trade_manager=tm)
-        strat.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open",
-        })
-        tm.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "entry_time": 500,
-        })
-
-        def boom(*args, **kwargs):
-            raise RuntimeError("DB down")
-
-        tr.close_trade = boom
-        ny = ZoneInfo("America/New_York")
-        bar = make_bar(time=int(datetime(2025, 6, 15, 15, 1, tzinfo=ny).timestamp()), close=105, pair="MNQ")
-        # Should not raise
-        strat._check_session_end_close(bar)
-        # Trade is removed from open_trades even if persist fails
-        assert len(strat.open_trades) == 0
-
-
 # ---------------------------------------------------------------------------
 # Multi-Account Expansion
 # ---------------------------------------------------------------------------
@@ -529,29 +297,6 @@ class TestTrailingSL:
 
 class TestEdgeCasesTradeManagement:
 
-    def test_bar_before_entry_time_keeps_trade(self):
-        """Restored trades during replay should not be checked by bars predating entry."""
-        strat = _make_base()
-        strat.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open", "entry_time": 5000,
-        })
-        bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
-        strat._check_open_trades(bar)
-        assert len(strat.open_trades) == 1
-
-    def test_broker_spread_deducted_from_pnl(self):
-        strat = _make_base(broker_spread=1.0)
-        strat.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
-            "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open", "contracts": 2,
-        })
-        bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
-        strat._check_open_trades(bar)
-        assert len(strat.open_trades) == 0
-
     def test_phantom_trade_not_persisted(self):
         tr = FakeTradeRepository()
         strat = _make_base(trade_repo=tr, options=StrategyOptions(reentry_only=True))
@@ -561,54 +306,53 @@ class TestEdgeCasesTradeManagement:
             "risk": 10, "status": "open", "is_phantom": True,
         })
         bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
-        strat._check_open_trades(bar)
+        strat._check_phantom_exits(bar)
         assert len(strat.open_trades) == 0
         # Phantom close should NOT be persisted
         phantom_closes = [c for c in tr.closed if c["trade_id"] == "phantom-1000"]
         assert len(phantom_closes) == 0
 
-    def test_sl_hit_creates_reentry_opportunity(self):
+    def test_sl_event_creates_reentry_opportunity(self):
         strat = _make_base(options=StrategyOptions(reentry_after_sl=True))
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "line_level": 100,
         })
-        bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
-        strat._check_open_trades(bar)
+        strat._on_trade_closed({
+            "trade_id": "T1", "result_type": "SL",
+            "exit_price": 90.0, "line_level": 100,
+            "is_reentry": False, "is_phantom": False,
+        })
         assert len(strat._reentry_opportunities) == 1
         assert strat._reentry_opportunities[0]["level"] == 100
         assert strat._reentry_opportunities[0]["direction"] == "long"
 
-    def test_tp_hit_does_not_create_reentry(self):
+    def test_tp_event_does_not_create_reentry(self):
         strat = _make_base(options=StrategyOptions(reentry_after_sl=True))
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "line_level": 100,
         })
-        bar = make_bar(time=1000, low=100, high=135, pair="MNQ")
-        strat._check_open_trades(bar)
+        strat._on_trade_closed({
+            "trade_id": "T1", "result_type": "TP",
+            "exit_price": 130.0, "line_level": 100,
+            "is_reentry": False, "is_phantom": False,
+        })
         assert len(strat._reentry_opportunities) == 0
 
-    def test_persist_close_exception_caught(self):
-        tr = FakeTradeRepository()
-        strat = _make_base(trade_repo=tr)
+    def test_phantom_sl_hit_creates_reentry(self):
+        strat = _make_base(options=StrategyOptions(reentry_only=True))
         strat.open_trades.append({
-            "trade_id": "T1", "pair": "MNQ", "type": "long",
+            "trade_id": "phantom-1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open",
+            "risk": 10, "status": "open", "line_level": 100, "is_phantom": True,
         })
-
-        def boom(*args, **kwargs):
-            raise RuntimeError("DB down")
-
-        tr.close_trade = boom
         bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
-        # Should not raise
-        strat._check_open_trades(bar)
-        # Trade is removed even if persist fails
-        assert len(strat.open_trades) == 0
+        strat._check_phantom_exits(bar)
+        assert len(strat._reentry_opportunities) == 1
+        assert strat._reentry_opportunities[0]["level"] == 100
 
     def test_calc_contracts_fractional_lots(self):
         strat = _make_base(use_fractional_lots=True, risk_pct_per_trade=1.0)
@@ -657,7 +401,7 @@ class TestEdgeCasesTradeManagement:
         assert len(processed) == 1
         assert processed[0]["close"] == 100
 
-    def test_on_raw_bar_calls_breakeven_and_session_end_before_aggregation(self):
+    def test_on_raw_bar_calls_breakeven_before_aggregation(self):
         strat = _make_base(
             options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=1.0, move_to_rr=0.0)),
         )
@@ -873,52 +617,73 @@ class TestRestoreAndPersist:
 # Broker Exit Fill
 # ---------------------------------------------------------------------------
 
-class TestBrokerExitFill:
+class TestTradeClosedEvent:
+    """Strategy reacts to TRADE_CLOSED events (replaces handle_broker_exit_fill)."""
 
-    def test_handle_broker_exit_fill_closes_trade(self):
+    def test_trade_closed_event_removes_trade(self):
         strat = _make_base()
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open",
         })
-        strat.handle_broker_exit_fill("T1", 90.0, result_type="SL")
+        strat._on_trade_closed({
+            "trade_id": "T1", "result_type": "SL",
+            "exit_price": 90.0, "line_level": None,
+            "is_reentry": False, "is_phantom": False,
+        })
         assert len(strat.open_trades) == 0
 
-    def test_handle_broker_exit_fill_unknown_trade_id(self):
+    def test_trade_closed_event_unknown_trade_id(self):
         strat = _make_base()
         # Should not crash
-        strat.handle_broker_exit_fill("UNKNOWN", 90.0, result_type="SL")
+        strat._on_trade_closed({
+            "trade_id": "UNKNOWN", "result_type": "SL",
+            "exit_price": 90.0, "line_level": None,
+            "is_reentry": False, "is_phantom": False,
+        })
 
-    def test_handle_broker_exit_fill_already_closed(self):
+    def test_trade_closed_event_already_closed_skipped(self):
         strat = _make_base()
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "closed",
         })
-        strat.handle_broker_exit_fill("T1", 90.0, result_type="SL")
+        strat._on_trade_closed({
+            "trade_id": "T1", "result_type": "SL",
+            "exit_price": 90.0, "line_level": None,
+            "is_reentry": False, "is_phantom": False,
+        })
         # Should remain
         assert len(strat.open_trades) == 1
 
-    def test_handle_broker_exit_fill_creates_reentry(self):
+    def test_trade_closed_event_creates_reentry(self):
         strat = _make_base(options=StrategyOptions(reentry_after_sl=True))
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "line_level": 100,
         })
-        strat.handle_broker_exit_fill("T1", 90.0, result_type="SL")
+        strat._on_trade_closed({
+            "trade_id": "T1", "result_type": "SL",
+            "exit_price": 90.0, "line_level": 100,
+            "is_reentry": False, "is_phantom": False,
+        })
         assert len(strat._reentry_opportunities) == 1
 
-    def test_handle_broker_exit_fill_non_sl_does_not_create_reentry(self):
+    def test_trade_closed_event_non_sl_does_not_create_reentry(self):
         strat = _make_base(options=StrategyOptions(reentry_after_sl=True))
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "line_level": 100,
         })
-        strat.handle_broker_exit_fill("T1", 130.0, result_type="TP")
+        strat._on_trade_closed({
+            "trade_id": "T1", "result_type": "TP",
+            "exit_price": 130.0, "line_level": 100,
+            "is_reentry": False, "is_phantom": False,
+        })
         assert len(strat._reentry_opportunities) == 0
 
 
@@ -1025,16 +790,16 @@ class TestMiscMethods:
         close_events = [e for e in sio.events if e[0] == "trade_close"]
         assert len(close_events) == 1
 
-    def test_check_open_trades_warmup_skips(self):
+    def test_check_phantom_exits_warmup_skips(self):
         strat = _make_base()
         strat.is_warmup = True
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open",
+            "risk": 10, "status": "open", "is_phantom": True,
         })
         bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
-        strat._check_open_trades(bar)
+        strat._check_phantom_exits(bar)
         assert len(strat.open_trades) == 1
 
     def test_maybe_remove_line_warmup_skips(self):

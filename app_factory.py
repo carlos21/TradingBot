@@ -39,7 +39,7 @@ from src.infrastructure.repositories.decision_log_repository import DecisionLogR
 from src.infrastructure.repositories.settings_repository import SettingsRepository
 from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.infrastructure.repositories.credentials_repository import CredentialRepository
-from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2, LiveLiquidityStrategyV2
+from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
 from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.notifier import Notifier, NoOpNotifier
 from src.analytics import AnalyticsReporter, NoOpReporter
@@ -154,12 +154,17 @@ def _create_bar_callbacks(
                     _close_commands_sent.add(tid)
     else:
         def combined_bar_callback(bar):
-            # Strategy runs first so it can detect SL/TP and notify TradeManager
-            # before TradeManager runs its own bar-based checks. This eliminates
-            # duplicate executor calls and (for strategies that check every bar)
-            # duplicate DB writes/emissions.
+            # Strategy runs first (entry triggers, breakeven, line management)
             strategy.on_raw_bar(bar)
+            # TradeManager checks real trades for SL/TP and emits TRADE_CLOSED events
             trade_manager.handle_new_1m_bar(bar)
+            # After events are processed, check reentries created by closed trades
+            # so they can fire (and be checked for SL/TP) on the same bar
+            if (strategy.options.reentry_after_sl or strategy.options.reentry_only) and strategy._reentry_opportunities:
+                pre_reentry_trades = len(trade_manager.open_trades)
+                strategy._check_reentry_opportunities(bar)
+                if len(trade_manager.open_trades) > pre_reentry_trades:
+                    trade_manager.handle_new_1m_bar(bar)
         
         def stream_end_callback(close_price: float, final_time: float):
             trade_manager.close_remaining_trades_at_stream_end(close_price, final_time)
@@ -321,8 +326,7 @@ def create_app(
         trade_executor.trade_manager = trade_manager
     
     # Initialize strategy BEFORE registering ZMQ callbacks so closures can reference it safely
-    StrategyCls = LiveLiquidityStrategyV2 if live_mode else LiquidityStrategyV2
-    tstrategy = StrategyCls(
+    tstrategy = LiquidityStrategyV2(
         min_stop_loss   = numbers.min_stop_loss,
         max_bounce      = numbers.max_bounce,
         socketio        = event_publisher,
@@ -353,6 +357,11 @@ def create_app(
         decision_log_repository = repos.decision_logs,
         account_configs = numbers.account_configs,
     )
+
+    # Wire strategy to TRADE_CLOSED events so it updates state reactively
+    # (same code path for live and backtest — broker is source of truth for exits)
+    from src.domain.events import EventType
+    event_bus.add_subscriber(EventType.TRADE_CLOSED, tstrategy)
     
     # Wire up position sync handler for crash recovery (ZeroMQ only)
     # Broker (NinjaTrader) is the source of truth - it reports actual positions to Python

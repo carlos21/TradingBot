@@ -85,6 +85,7 @@ class TradeCloseUseCase:
         log_message: str | None = None,
         analytics_event: str = "CLOSE",
         raise_on_db_error: bool = True,
+        extreme_excursion: float | None = None,
     ) -> CloseResult | None:
         """Execute the full close flow for a single trade.
 
@@ -171,7 +172,7 @@ class TradeCloseUseCase:
                 f"(Result: {result:.2f}R, Type: {result_type})"
             )
 
-        # 5. Emit event
+        # 5. Emit event (enriched with strategy state fields)
         payload = {
             'trade_id': trade_id,
             'pair': trade.get('pair', ''),
@@ -182,6 +183,10 @@ class TradeCloseUseCase:
             'result_type': result_type,
             'fees': fees,
             'pnl_usd': pnl_usd,
+            'line_level': trade.get('line_level'),
+            'is_reentry': trade.get('is_reentry', False),
+            'is_phantom': trade.get('is_phantom', False),
+            'extreme_excursion': extreme_excursion if extreme_excursion is not None else exit_price,
         }
         if self._publisher:
             self._publisher.emit('trade_close', payload)

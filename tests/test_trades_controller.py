@@ -104,22 +104,11 @@ class TestCloseAllTrades:
         assert tm.open_trades[0]["pair"] == "ES"
 
 
-class FakeStrategy:
-    """Minimal fake strategy to verify TradesController syncs state on manual close."""
+class TestControllerCloseTrade:
+    """Tests for the single-trade close endpoint."""
 
-    def __init__(self):
-        self.exit_fills = []
-
-    def handle_broker_exit_fill(self, trade_id, exit_price, result_type):
-        self.exit_fills.append((trade_id, exit_price, result_type))
-
-
-class TestStrategySyncOnManualClose:
-
-    def test_close_trade_notifies_strategy(self, app_context):  # noqa: ARG002
+    def test_close_trade_closes_and_returns_payload(self, app_context):  # noqa: ARG002
         controller, tm, executor, repo = _make_controller(close_price=105.0)
-        fake_strategy = FakeStrategy()
-        controller.strategy = fake_strategy
 
         tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
         trade_id = tm.open_trades[0]["trade_id"]
@@ -127,20 +116,15 @@ class TestStrategySyncOnManualClose:
         resp, status = controller.close_trade(trade_id)
 
         assert status == 200
-        assert len(fake_strategy.exit_fills) == 1
-        assert fake_strategy.exit_fills[0][0] == trade_id
-        assert fake_strategy.exit_fills[0][2] == "CLOSE"
+        data = resp.get_json()
+        assert data["trade_id"] == trade_id
+        assert data["exit_price"] == 105.0
+        assert len(tm.open_trades) == 0
+        assert len(repo.closed) == 1
 
-    def test_close_all_trades_notifies_strategy(self, app_context):  # noqa: ARG002
+    def test_close_trade_not_found_returns_404(self, app_context):  # noqa: ARG002
         controller, tm, executor, repo = _make_controller(close_price=105.0)
-        fake_strategy = FakeStrategy()
-        controller.strategy = fake_strategy
 
-        tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
-        tm.open_trade("MNQ", "short", 100.0, 110.0, 70.0, 10.0, 500.0, 5.0)
-
-        resp, status = controller.close_all_trades("MNQ")
-
-        assert status == 200
-        assert len(fake_strategy.exit_fills) == 2
-        assert all(f[2] == "CLOSE" for f in fake_strategy.exit_fills)
+        with pytest.raises(Exception) as exc_info:
+            controller.close_trade("NONEXISTENT")
+        assert exc_info.value.code == 404
