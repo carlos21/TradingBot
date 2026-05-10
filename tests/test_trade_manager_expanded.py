@@ -601,37 +601,6 @@ class TestNotifyStrategyCloseEventTypes:
 # _calc_close_financials
 # ============================================================================
 
-class TestCalcCloseFinancials:
-
-    def test_normal_case(self):
-        tm = _make_manager()
-        trade = {"contracts": 2, "risk": 10}
-        fees, pnl_usd = tm._calc_close_financials(trade, 1.5)
-        assert fees == 3.0
-        assert pnl_usd == 2 * 1.5 * 10 * 2.0 - 3.0  # 60 - 3 = 57
-
-    def test_zero_risk_defaults_to_one(self):
-        tm = _make_manager()
-        trade = {"contracts": 1, "risk": 0}
-        fees, pnl_usd = tm._calc_close_financials(trade, 1.0)
-        assert fees == 1.5
-        assert pnl_usd == 1 * 1.0 * 1.0 * 2.0 - 1.5  # 2 - 1.5 = 0.5
-
-    def test_negative_risk_defaults_to_one(self):
-        tm = _make_manager()
-        trade = {"contracts": 1, "risk": -5}
-        fees, pnl_usd = tm._calc_close_financials(trade, 1.0)
-        assert fees == 1.5
-        assert pnl_usd == 0.5
-
-    def test_missing_contracts_defaults_to_one(self):
-        tm = _make_manager()
-        trade = {"risk": 10}
-        fees, pnl_usd = tm._calc_close_financials(trade, 1.0)
-        assert fees == 1.5
-        assert pnl_usd == 1 * 1.0 * 10 * 2.0 - 1.5  # 20 - 1.5 = 18.5
-
-
 # ============================================================================
 # update_local_trade_sl Logging
 # ============================================================================

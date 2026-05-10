@@ -312,3 +312,41 @@ class TestComputeTradePnl:
         )
         # risk = 2% of 200k = 4k; 2R win = 8k
         assert result["usd"] == 8_000.0
+
+    def test_real_partial_loss_scales_by_actual_r(self):
+        """Bug: real-mode fallback hard-coded full loss for any actual_r <= 0.
+        A -0.5R loss should lose half the risk, not full risk."""
+        trade = make_trade(entry=20000.0, sl=19985.0, risk=15.0, contracts=10)
+        close = make_close(result=-0.5, result_type="SL")
+        result = compute_trade_pnl(
+            trade, close, account=100_000, risk=1_000,
+            mode="real_futures", nq_pv=2.0, fee_per_rt=1.50, be_threshold=0.1,
+        )
+        # 10 contracts * -0.5R * 15 pts * $2 - $15 fees = -150 - 15 = -165
+        assert result["usd"] == pytest.approx(-165.0)
+        assert result["outcome"] == "loss"
+
+    def test_real_be_without_stored_pnl_is_small_loss_not_full_loss(self):
+        """Bug: BE trades without stored_pnl fell into the full-loss branch.
+        A breakeven at -0.02R should be a tiny loss, not -1R."""
+        trade = make_trade(entry=20000.0, sl=19985.0, risk=15.0, contracts=10)
+        close = make_close(result=-0.02, result_type="BE")
+        result = compute_trade_pnl(
+            trade, close, account=100_000, risk=1_000,
+            mode="real_futures", nq_pv=2.0, fee_per_rt=1.50, be_threshold=0.1,
+        )
+        # 10 contracts * -0.02R * 15 pts * $2 - $15 fees = -6 - 15 = -21
+        assert result["usd"] == pytest.approx(-21.0)
+        assert result["outcome"] == "be"
+
+    def test_contracts_fallback_uses_round_half_up(self):
+        """Bug: fallback contract calculation used banker's rounding.
+        With risk=300, sl_pts_price=100, nq_pv=2  =>  300/200 = 1.5 → should be 2."""
+        trade = {"entry": 20000.0, "stop_loss": 19900.0, "risk": 100.0}
+        close = make_close(result=1.0, result_type="TP")
+        result = compute_trade_pnl(
+            trade, close, account=100_000, risk=300,
+            mode="real_futures", nq_pv=2.0, fee_per_rt=1.50, be_threshold=0.1,
+        )
+        # 2 contracts * 1R * 100 pts * $2 - $3 = 397
+        assert result["usd"] == pytest.approx(397.0)

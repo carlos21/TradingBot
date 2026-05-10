@@ -973,7 +973,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             for key in sorted(data):
                 v        = data[key]
                 balance += v["usd"]
-                sb = v.get("start_balance") or ACCT
+                sb = v.get("start_balance")
+                if sb is None:
+                    sb = ACCT
                 v["pct"] = v["usd"] / sb * 100 if sb else 0.0
                 parts = []
                 if v["wins"]:    parts.append(f"{GREEN}{BOLD}{v['wins']}W{RST}")
@@ -1031,7 +1033,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 trades_str = f"{trades_val:^{TRADES_W}}"
                 print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str} | {comm_str} | {trades_str}{sl_risk_str}{re_str}{pas_str}{vel_str}")
             total_usd = sum(v["usd"]    for v in data.values())
-            total_pct = total_usd / ACCT * 100
+            total_pct = total_usd / ACCT * 100 if ACCT else 0.0
             total_w   = sum(v["wins"]   for v in data.values())
             total_l   = sum(v["losses"] for v in data.values())
             total_be  = sum(v["be"]     for v in data.values())

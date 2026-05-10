@@ -118,16 +118,6 @@ class TradeManager:
             risk_per_contract, risk_per_trade_override, risk_pct_per_trade_override
         )
 
-    def _calc_close_financials(self, trade: dict, result: float) -> tuple[float, float]:
-        """Return (fees, pnl_usd) for a closing trade."""
-        contracts = trade.get('contracts') or 1
-        risk = trade.get('risk', 0)
-        if risk <= 0:
-            risk = 1.0
-        fees = FinancialCalc.fees(contracts, self.fee_per_rt)
-        pnl_usd = FinancialCalc.pnl_usd(contracts, result, risk, self.point_value, fees)
-        return fees, pnl_usd
-
     # ------------------------------------------------------------------
     # DB resume
     # ------------------------------------------------------------------

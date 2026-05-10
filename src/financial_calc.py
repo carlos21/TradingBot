@@ -18,12 +18,20 @@ class FinancialCalc:
 
     @staticmethod
     def contracts(risk_budget: float, risk_per_contract: float) -> int:
-        """Number of contracts to trade, matching NinjaTrader's logic."""
+        """Number of contracts to trade, matching NinjaTrader's logic.
+
+        Uses round-half-up (not Python's banker's rounding) so that
+        e.g. 2.5 → 3 and 4.5 → 5, ensuring exact-half budgets don't
+        silently under-size.
+        """
         if risk_budget <= 0:
             return 0
         if risk_per_contract <= 0:
             return 1
-        return max(1, round(risk_budget / risk_per_contract))
+        raw = risk_budget / risk_per_contract
+        # Round-half-up for positive numbers
+        rounded = int(raw + 0.5)
+        return max(1, rounded)
 
     @staticmethod
     def lots(risk_budget: float, risk_per_lot: float) -> float:
@@ -35,6 +43,8 @@ class FinancialCalc:
     @staticmethod
     def fees(contracts: float, fee_per_rt: float = DEFAULT_FEE_PER_RT) -> float:
         """Total round-trip fees for a trade."""
+        if contracts < 0:
+            return 0.0
         return contracts * fee_per_rt
 
     @staticmethod
@@ -63,6 +73,8 @@ class FinancialCalc:
         if risk_per_trade is not None:
             return risk_per_trade
         if risk_pct_per_trade is not None:
+            if account_balance <= 0:
+                return 0.0
             return account_balance * risk_pct_per_trade / 100.0
         return 0.0
 
@@ -86,7 +98,7 @@ class FinancialCalc:
         Returns:
             True if the exit is within threshold of entry
         """
-        return abs(exit_price - entry_price) < threshold_points
+        return abs(exit_price - entry_price) < abs(threshold_points)
 
     @staticmethod
     def is_breakeven_by_r(
@@ -102,7 +114,7 @@ class FinancialCalc:
         Returns:
             True if |result_r| < threshold_r
         """
-        return abs(result_r) < threshold_r
+        return abs(result_r) < abs(threshold_r)
 
     @staticmethod
     def determine_result_type(
@@ -204,7 +216,7 @@ class FinancialCalc:
             R-multiple (pnl_points / risk_points)
         """
         if risk_points <= 0:
-            risk_points = 1.0
+            return 0.0
 
         if direction.is_long:
             pnl_points = exit_price - entry_price

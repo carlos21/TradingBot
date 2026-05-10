@@ -15,6 +15,11 @@ class TestContracts:
         """Should round to nearest integer."""
         assert FinancialCalc.contracts(risk_budget=1000, risk_per_contract=150) == 7  # 1000/150 = 6.67
 
+    def test_contracts_half_value_rounds_up(self):
+        """Should round half-values up (not banker's rounding)."""
+        assert FinancialCalc.contracts(risk_budget=250, risk_per_contract=100) == 3  # 2.5 → 3
+        assert FinancialCalc.contracts(risk_budget=450, risk_per_contract=100) == 5  # 4.5 → 5
+
     def test_contracts_minimum_one(self):
         """Should always return at least 1."""
         assert FinancialCalc.contracts(risk_budget=10, risk_per_contract=100) == 1
@@ -48,6 +53,10 @@ class TestFees:
     def test_fees_zero_contracts(self):
         """Should return 0 for zero contracts."""
         assert FinancialCalc.fees(contracts=0) == 0
+
+    def test_fees_negative_contracts(self):
+        """Should return 0 for negative contracts (safety guard)."""
+        assert FinancialCalc.fees(contracts=-5) == 0.0
 
     def test_fees_custom_fee(self):
         """Should accept custom fee per contract."""
@@ -132,6 +141,17 @@ class TestRiskBudget:
             account_balance=100000, risk_per_trade=None, risk_pct_per_trade=0.1
         )
         assert result == 100
+
+    def test_risk_budget_negative_balance(self):
+        """Should return 0 when account balance is negative or zero."""
+        result = FinancialCalc.risk_budget(
+            account_balance=-5000, risk_per_trade=None, risk_pct_per_trade=1.0
+        )
+        assert result == 0.0
+        result = FinancialCalc.risk_budget(
+            account_balance=0, risk_per_trade=None, risk_pct_per_trade=1.0
+        )
+        assert result == 0.0
 
 
 class TestIsBreakeven:
@@ -379,20 +399,19 @@ class TestCalculateRMultiple:
         )
         assert abs(result - 0.5) < 0.001
 
-    def test_calculate_r_multiple_zero_risk_defaults_to_one(self):
-        """Zero risk should default to 1.0 to avoid division by zero."""
+    def test_calculate_r_multiple_zero_risk_returns_zero(self):
+        """Zero or negative risk should return 0.0 (invalid risk)."""
         result = FinancialCalc.calculate_r_multiple(
             direction=Direction.LONG, entry_price=100.0, exit_price=110.0, risk_points=0.0
         )
-        # risk defaults to 1.0, so 10 points / 1 = 10R
-        assert abs(result - 10.0) < 0.001
+        assert result == 0.0
 
-    def test_calculate_r_multiple_negative_risk(self):
-        """Negative risk should default to 1.0."""
+    def test_calculate_r_multiple_negative_risk_returns_zero(self):
+        """Negative risk should return 0.0."""
         result = FinancialCalc.calculate_r_multiple(
             direction=Direction.LONG, entry_price=100.0, exit_price=110.0, risk_points=-5.0
         )
-        assert abs(result - 10.0) < 0.001
+        assert result == 0.0
 
 
 class TestCalculateCloseMetrics:

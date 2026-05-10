@@ -378,7 +378,7 @@ class TestEdgeCasesTradeManagement:
         )
         strat = _make_base(trade_manager=tm, risk_pct_per_trade=1.0)
         # risk_budget = 50000 * 1% = 500
-        assert strat._calc_contracts(40.0) == 12  # round(500/40)
+        assert strat._calc_contracts(40.0) == 13  # 500/40 = 12.5 → round-half-up = 13
 
     def test_make_trade_dict_risk_pct_none_when_zero_balance(self):
         strat = _make_base(account_balance=0.0)

@@ -106,7 +106,11 @@ def per_trade_futures(
                 sl_pts = risk_pts if risk_pts is not None else sl_pts_price
                 contracts = trade.get("contracts")
                 if contracts is None:
-                    contracts = max(1, round(_resolve_risk(balance, risk_usd_fix, risk_pct) / (sl_pts_price * nq_pv))) if sl_pts_price > 0 else 1
+                    if sl_pts_price > 0:
+                        raw = _resolve_risk(balance, risk_usd_fix, risk_pct) / (sl_pts_price * nq_pv)
+                        contracts = max(1, int(raw + 0.5))
+                    else:
+                        contracts = 1
                 fees = contracts * fee_per_rt
                 usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, nq_pv, fees)
                 commission = fees
@@ -129,7 +133,11 @@ def per_trade_futures(
                 sl_pts = risk_pts if risk_pts is not None else sl_pts_price
                 contracts = trade.get("contracts")
                 if contracts is None:
-                    contracts = max(1, round(_resolve_risk(balance, risk_usd_fix, risk_pct) / (sl_pts_price * nq_pv))) if sl_pts_price > 0 else 1
+                    if sl_pts_price > 0:
+                        raw = _resolve_risk(balance, risk_usd_fix, risk_pct) / (sl_pts_price * nq_pv)
+                        contracts = max(1, int(raw + 0.5))
+                    else:
+                        contracts = 1
                 fees = contracts * fee_per_rt
                 usd = FinancialCalc.pnl_usd(contracts, actual_r, sl_pts, nq_pv, fees)
                 commission = fees

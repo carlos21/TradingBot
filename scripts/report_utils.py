@@ -32,7 +32,8 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
             if contracts is not None:
                 return contracts
         if sl_pts_price > 0:
-            return max(1, round(risk / (sl_pts_price * nq_pv)))
+            raw = risk / (sl_pts_price * nq_pv)
+            return max(1, int(raw + 0.5))
         return 1
 
     if result_type == "SP":
@@ -66,10 +67,7 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
                             contracts = _contracts_from_trade_or_compute(trade, risk, sl_pts_price, nq_pv)
                             fees = contracts * fee_per_rt
                             commission = fees
-                            if actual_r > 0:
-                                usd = contracts * (actual_r * sl_pts) * nq_pv - fees
-                            else:
-                                usd = -(contracts * sl_pts * nq_pv) - fees
+                            usd = contracts * actual_r * sl_pts * nq_pv - fees
         pct_base = balance if (risk_pct is not None and balance) else account
         pct = usd / pct_base * 100 if pct_base else 0.0
         return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry, "commission": commission}
@@ -105,10 +103,7 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
                         contracts = _contracts_from_trade_or_compute(trade, risk, sl_pts_price, nq_pv)
                         fees = contracts * fee_per_rt
                         commission = fees
-                        if actual_r > 0:
-                            usd = contracts * (actual_r * sl_pts) * nq_pv - fees
-                        else:
-                            usd = -(contracts * sl_pts * nq_pv) - fees
+                        usd = contracts * actual_r * sl_pts * nq_pv - fees
 
     pct_base = balance if (risk_pct is not None and balance) else account
     pct = usd / pct_base * 100 if pct_base else 0.0
