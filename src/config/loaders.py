@@ -243,7 +243,10 @@ class DbConfigLoader:
             Session = sessionmaker(bind=engine)
             session = Session()
 
+            from src.infrastructure.database.database_protocol import Base
             from src.infrastructure.database.database import AppSetting, NtAccount
+
+            Base.metadata.create_all(engine)
 
             settings = session.query(AppSetting).all()
             for row in settings:

@@ -10,6 +10,7 @@ Example::
     loader = CompositeConfigLoader(EnvConfigLoader(), CliConfigLoader())
     config = loader.load()
 """
+from src.config.builder import AppBuilder
 from src.config.loaders import (
     CliConfigLoader,
     CompositeConfigLoader,
@@ -20,9 +21,11 @@ from src.config.loaders import (
 from src.config.models import AppConfig
 
 __all__ = [
+    "AppBuilder",
     "AppConfig",
     "ConfigLoader",
     "EnvConfigLoader",
     "CliConfigLoader",
     "CompositeConfigLoader",
+    "DbConfigLoader",
 ]
