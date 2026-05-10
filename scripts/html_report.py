@@ -13,7 +13,8 @@ from scripts.report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pc
 
 
 def generate_html_report(summary_results, account, risk, mode, output_path,
-                         nq_pv=2.0, fee_per_rt=1.50, be_threshold=0.5, risk_pct=None):
+                         nq_pv=2.0, fee_per_rt=1.50, be_threshold=0.5, risk_pct=None,
+                         cfd_spread=None, cfd_commission=None):
     """
     Generate a self-contained HTML report with monthly horizontal-scroll pages.
 
@@ -35,7 +36,8 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         trades_data = []
         for trade, close in (r.get("trade_pairs") or []):
             td = compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold,
-                                   risk_pct=risk_pct, balance=running_balance)
+                                   risk_pct=risk_pct, balance=running_balance,
+                                   cfd_spread=cfd_spread, cfd_commission=cfd_commission)
             trades_data.append(td)
             if td["outcome"] != "open":
                 running_balance += td["usd"]

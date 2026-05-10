@@ -1178,8 +1178,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             _per_trade_real,
         )
     if mode in ('real_cfd', 'both'):
-        cfd_spread = getattr(args, 'cfd_spread', 0.5)
-        cfd_commission = getattr(args, 'cfd_commission', 5.0)
+        cfd_spread = getattr(args, 'cfd_spread', 1.5)
+        # Respect --commission override in CFD report, same as server startup logic
+        cfd_commission = getattr(args, 'commission', None)
+        if cfd_commission is None:
+            cfd_commission = getattr(args, 'cfd_commission', 5.0)
 
         def _per_trade_cfd(trade, close, balance=ACCT):
             usd, pct, actual_r, comm, _outcome = per_trade_cfd(
@@ -1223,8 +1226,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         # For "both" mode, default HTML report to real_futures (the more realistic scenario)
         html_mode = "real_futures" if mode == "both" else mode
         html_path = Path(args.outdir) / "report.html"
-        generate_html_report(
-            summary_results,
+        html_kwargs = dict(
+            summary_results=summary_results,
             account=ACCT,
             risk=RISK_USD_FIX,
             mode=html_mode,
@@ -1234,6 +1237,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             be_threshold=BE_THRESHOLD,
             risk_pct=RISK_PCT,
         )
+        if html_mode == "real_cfd":
+            html_kwargs["cfd_spread"] = getattr(args, 'cfd_spread', 1.5)
+            html_kwargs["cfd_commission"] = getattr(args, 'commission', None) or getattr(args, 'cfd_commission', 5.0)
+        generate_html_report(**html_kwargs)
         print(f"\n📄 HTML report: {html_path.resolve()}")
 
 

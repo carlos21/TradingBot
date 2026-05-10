@@ -350,3 +350,93 @@ class TestComputeTradePnl:
         )
         # 2 contracts * 1R * 100 pts * $2 - $3 = 397
         assert result["usd"] == pytest.approx(397.0)
+
+
+    # ---------------------------------------------------------------------------
+    # CFD mode tests for compute_trade_pnl
+    # ---------------------------------------------------------------------------
+
+    def test_cfd_fallback_computes_spread_and_commission(self):
+        """CFD mode without stored_pnl must deduct spread + commission."""
+        trade = make_trade(entry=20000.0, sl=19990.0, risk=10.0, contracts=2.5)
+        close = make_close(result=3.0, result_type="TP")
+        result = compute_trade_pnl(
+            trade, close, account=100_000, risk=1_000,
+            mode="real_cfd", nq_pv=2.0, fee_per_rt=5.0, be_threshold=0.1,
+            cfd_spread=1.5, cfd_commission=5.0,
+        )
+        # lots = 2.5, sl_pts = 10, nq_pv = 2
+        # gross = 2.5 * 3 * 10 * 2 = 150
+        # spread = 2.5 * 1.5 * 2 = 7.5
+        # commission = 2.5 * 5 = 12.5
+        # total_cost = 20, net = 130
+        assert result["usd"] == pytest.approx(130.0)
+        assert result["commission"] == pytest.approx(20.0)
+        assert result["outcome"] == "win"
+
+    def test_cfd_uses_stored_pnl_when_available(self):
+        """CFD mode with stored_pnl should use it directly."""
+        trade = make_trade(contracts=1.5)
+        close = make_close(result=2.0, result_type="TP", pnl_usd=888.0, fees=12.0)
+        result = compute_trade_pnl(
+            trade, close, account=100_000, risk=1_000,
+            mode="real_cfd", nq_pv=2.0, fee_per_rt=5.0, be_threshold=0.1,
+            cfd_spread=1.5, cfd_commission=5.0,
+        )
+        assert result["usd"] == 888.0
+        assert result["commission"] == 12.0
+        assert result["outcome"] == "win"
+
+    def test_cfd_fallback_without_contracts_computes_fractional_lots(self):
+        """CFD mode without stored contracts should compute fractional lots."""
+        trade = {"entry": 20000.0, "stop_loss": 19990.0, "risk": 10.0}
+        close = make_close(result=1.0, result_type="TP")
+        result = compute_trade_pnl(
+            trade, close, account=100_000, risk=1_000,
+            mode="real_cfd", nq_pv=2.0, fee_per_rt=5.0, be_threshold=0.1,
+            cfd_spread=1.5, cfd_commission=5.0,
+        )
+        # risk_per_lot = 10 * 2 = 20; lots = 1000 / 20 = 50
+        # gross = 50 * 1 * 10 * 2 = 1000
+        # spread = 50 * 1.5 * 2 = 150
+        # commission = 50 * 5 = 250
+        # total_cost = 400, net = 600
+        assert result["usd"] == pytest.approx(600.0)
+        assert result["commission"] == pytest.approx(400.0)
+        assert result["outcome"] == "win"
+
+    def test_cfd_sp_with_fallback(self):
+        """CFD SP mode fallback must include spread + commission."""
+        trade = make_trade(entry=20000.0, sl=19990.0, risk=10.0, contracts=2.0)
+        close = make_close(result=0.5, result_type="SP")
+        result = compute_trade_pnl(
+            trade, close, account=100_000, risk=1_000,
+            mode="real_cfd", nq_pv=2.0, fee_per_rt=5.0, be_threshold=0.1,
+            cfd_spread=1.5, cfd_commission=5.0,
+        )
+        # lots = 2.0, sl_pts = 10, nq_pv = 2
+        # gross = 2.0 * 0.5 * 10 * 2 = 20
+        # spread = 2.0 * 1.5 * 2 = 6.0
+        # commission = 2.0 * 5 = 10.0
+        # total_cost = 16.0, net = 4.0
+        assert result["usd"] == pytest.approx(4.0)
+        assert result["commission"] == pytest.approx(16.0)
+        assert result["outcome"] == "sp"
+
+    def test_cfd_be_with_fallback(self):
+        """CFD BE mode fallback must include spread + commission."""
+        trade = make_trade(entry=20000.0, sl=19990.0, risk=10.0, contracts=2.0)
+        close = make_close(result=-0.02, result_type="BE")
+        result = compute_trade_pnl(
+            trade, close, account=100_000, risk=1_000,
+            mode="real_cfd", nq_pv=2.0, fee_per_rt=5.0, be_threshold=0.1,
+            cfd_spread=1.5, cfd_commission=5.0,
+        )
+        # lots = 2.0, sl_pts = 10, nq_pv = 2
+        # gross = 2.0 * -0.02 * 10 * 2 = -0.8
+        # spread = 2.0 * 1.5 * 2 = 6.0
+        # commission = 2.0 * 5 = 10.0
+        # total_cost = 16.0, net = -16.8
+        assert result["usd"] == pytest.approx(-16.8)
+        assert result["commission"] == pytest.approx(16.0)
+        assert result["outcome"] == "be"

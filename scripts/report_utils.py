@@ -5,7 +5,7 @@ Shared report utility functions used by html_report.py and html_comparison_repor
 
 
 def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold,
-                      risk_pct=None, balance=None):
+                      risk_pct=None, balance=None, cfd_spread=None, cfd_commission=None):
     """Compute PnL for a single trade+close pair. Returns dict with outcome/usd/pct/r.
     If risk_pct is set, risk is computed as balance * risk_pct / 100."""
     if risk_pct is not None and balance is not None:
@@ -26,48 +26,58 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
         else:
             return -risk
 
-    def _contracts_from_trade_or_compute(trade, risk, sl_pts_price, nq_pv):
+    def _contracts_from_trade_or_compute(trade, risk, sl_pts_price, nq_pv, use_fractional=False):
         if trade is not None:
             contracts = trade.get("contracts")
             if contracts is not None:
                 return contracts
         if sl_pts_price > 0:
             raw = risk / (sl_pts_price * nq_pv)
+            if use_fractional:
+                return max(0.01, raw)
             return max(1, int(raw + 0.5))
-        return 1
+        return 0.01 if use_fractional else 1
+
+    def _real_mode_pnl(trade, close, risk, nq_pv, fee_per_rt, use_fractional=False):
+        """Calculate PnL for real modes (futures or CFD), handling stored vs fallback."""
+        stored_pnl = close.get("pnl_usd")
+        if stored_pnl is not None:
+            return stored_pnl, close.get("fees", 0.0)
+
+        if trade is None:
+            return 0.0, 0.0
+
+        entry = trade.get("entry") or trade.get("entry_price")
+        orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+        risk_pts = trade.get("risk")
+        if entry is None or orig_sl is None:
+            return 0.0, 0.0
+
+        sl_pts_price = round(abs(entry - orig_sl), 4)
+        sl_pts = risk_pts if risk_pts is not None else sl_pts_price
+        if sl_pts <= 0:
+            return 0.0, 0.0
+
+        contracts = _contracts_from_trade_or_compute(trade, risk, sl_pts_price, nq_pv, use_fractional)
+
+        if use_fractional and cfd_spread is not None and cfd_commission is not None:
+            spread_cost = contracts * cfd_spread * nq_pv
+            commission_cost = contracts * cfd_commission
+            total_cost = spread_cost + commission_cost
+            usd = contracts * actual_r * sl_pts * nq_pv - total_cost
+            return usd, total_cost
+        else:
+            fees = contracts * fee_per_rt
+            usd = contracts * actual_r * sl_pts * nq_pv - fees
+            return usd, fees
 
     if result_type == "SP":
         commission = 0.0
         if mode == "sim":
             usd = _sim_usd(risk, actual_r, be_threshold)
         else:  # real
-            # Use stored pnl_usd if available (single source of truth)
-            stored_pnl = close.get("pnl_usd")
-            if stored_pnl is not None:
-                usd = stored_pnl
-                commission = close.get("fees", 0.0)
-            else:
-                # Fallback: recalculate (legacy path)
-                if trade is None:
-                    usd = 0.0
-                else:
-                    entry = trade.get("entry") or trade.get("entry_price")
-                    orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-                    # Use stored risk field (ticks) for PnL calculation
-                    risk_pts = trade.get("risk")
-                    if entry is None or orig_sl is None:
-                        usd = 0.0
-                    else:
-                        sl_pts_price = round(abs(entry - orig_sl), 4)
-                        # Use stored risk if available, otherwise fall back to price diff
-                        sl_pts = risk_pts if risk_pts is not None else sl_pts_price
-                        if sl_pts <= 0:
-                            usd = 0.0
-                        else:
-                            contracts = _contracts_from_trade_or_compute(trade, risk, sl_pts_price, nq_pv)
-                            fees = contracts * fee_per_rt
-                            commission = fees
-                            usd = contracts * actual_r * sl_pts * nq_pv - fees
+            usd, commission = _real_mode_pnl(trade, close, risk, nq_pv, fee_per_rt,
+                                             use_fractional=(mode == "real_cfd"))
         pct_base = balance if (risk_pct is not None and balance) else account
         pct = usd / pct_base * 100 if pct_base else 0.0
         return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry, "commission": commission}
@@ -77,33 +87,8 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
     if mode == "sim":
         usd = _sim_usd(risk, actual_r, be_threshold)
     else:  # real
-        # Use stored pnl_usd if available (single source of truth)
-        stored_pnl = close.get("pnl_usd")
-        if stored_pnl is not None:
-            usd = stored_pnl
-            commission = close.get("fees", 0.0)
-        else:
-            # Fallback: recalculate (legacy path)
-            if trade is None:
-                usd = 0.0
-            else:
-                entry = trade.get("entry") or trade.get("entry_price")
-                orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
-                # Use stored risk field (ticks) for PnL calculation
-                risk_pts = trade.get("risk")
-                if entry is None or orig_sl is None:
-                    usd = 0.0
-                else:
-                    sl_pts_price = round(abs(entry - orig_sl), 4)
-                    # Use stored risk if available, otherwise fall back to price diff
-                    sl_pts = risk_pts if risk_pts is not None else sl_pts_price
-                    if sl_pts <= 0:
-                        usd = 0.0
-                    else:
-                        contracts = _contracts_from_trade_or_compute(trade, risk, sl_pts_price, nq_pv)
-                        fees = contracts * fee_per_rt
-                        commission = fees
-                        usd = contracts * actual_r * sl_pts * nq_pv - fees
+        usd, commission = _real_mode_pnl(trade, close, risk, nq_pv, fee_per_rt,
+                                         use_fractional=(mode == "real_cfd"))
 
     pct_base = balance if (risk_pct is not None and balance) else account
     pct = usd / pct_base * 100 if pct_base else 0.0

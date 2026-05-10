@@ -197,8 +197,9 @@ class AppConfig:
     ``"cfd"`` (spread-based). Affects SL/TP hit detection and PnL calc."""
 
     broker_spread: float = 0.0
-    """Spread in points for CFD mode. Added to the effective stop-loss distance
-    when ``broker_mode`` is ``"cfd"``."""
+    """Spread in points for CFD mode. Deducted from PnL (as a cost) on trade
+    close when ``broker_mode`` is ``"cfd"``. Does NOT affect SL/TP hit
+    detection — that uses the raw price levels."""
 
     bootstrap_existing_lines: bool = True
     """If ``True``, loads pre-existing lines from the DB into the strategy on startup.
