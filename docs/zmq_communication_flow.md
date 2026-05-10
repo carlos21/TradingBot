@@ -33,7 +33,6 @@ sequenceDiagram
     participant GW as TradingGateway
     participant ZMQ as ZeroMQ
     participant NT as NinjaTrader ZMQ Connector
-    participant ATM as ATM Strategy
     participant MK as Market
 
     %% ===== INITIALIZATION =====
@@ -78,18 +77,16 @@ sequenceDiagram
             NT->>NT: Resolve account by name
             NT->>NT: Validate order parameters
             NT->>NT: Check duplicate (seq_num tracking)
-            NT->>ATM: Create market order + Start ATM Strategy
+            NT->>MK: Submit entry market order
+            MK->>NT: Order accepted
             
-            ATM->>NT: Order created
             NT->>ZMQ: COMMAND_ACK<br/>{command_type: "order_open",<br/>seq_num: 42, success: true}
-            ATM->>MK: Submit entry order
-            MK->>ATM: Fill at entry price
             
-            ATM->>ATM: Auto-create Stop Loss order
-            ATM->>ATM: Auto-create Take Profit order
+            MK->>NT: Fill at entry price
             
-            ATM->>NT: Entry filled notification
-            NT->>NT: Track SL order in _stopLossOrders[trade_id]
+            NT->>NT: Create bracket orders manually<br/>(Stop + Target via OCO)
+            NT->>NT: Track orders in OrderTracker
+            
             NT->>ZMQ: ENTRY_FILL<br/>{trade_id, entry_price, stop_loss, take_profit, account}
             ZMQ->>GW: Entry fill received
             GW->>PY: on_entry_fill callback
@@ -100,45 +97,47 @@ sequenceDiagram
 
     %% ===== STOP LOSS UPDATE =====
     rect rgb(255, 255, 230)
-        Note over PY,MK: Phase 2: Trailing Stop / Breakeven Update
+        Note over PY,MK: Phase 2: Trailing Stop / Breakeven Update (Multi-Account)
         PY->>PY: Price moves in favor
         PY->>PY: Strategy decides to move SL to breakeven
-        PY->>GW: send_modify_order()<br/>new_stop_loss = entry_price
         
-        GW->>ZMQ: ORDER_MODIFY seq=43<br/>{trade_id, stop_loss}
-        ZMQ->>NT: Receive modify command
-        
-        NT->>NT: Check duplicate (seq_num tracking)
-        NT->>NT: Look up stop order<br/>Find by name: "Stop_{trade_id}"
-        
-        alt Order found
-            NT->>NT: Use found order
-        else Not found
-            NT->>NT: ERROR - Stop order not found
-            NT->>ZMQ: COMMAND_ACK {seq_num: 43, success: false}
+        loop For each account trade
+            PY->>GW: send_modify_order(account=Sim101)<br/>new_stop_loss = entry_price
+            
+            GW->>ZMQ: ORDER_MODIFY seq=43<br/>{trade_id, stop_loss, account}
+            ZMQ->>NT: Receive modify command
+            
+            NT->>NT: Resolve account by name
+            NT->>NT: Check duplicate (seq_num tracking)
+            NT->>NT: Look up stop order<br/>Find by name: "Stop_{trade_id}"
+            
+            alt Order found
+                NT->>NT: Use found order
+            else Not found
+                NT->>NT: ERROR - Stop order not found
+                NT->>ZMQ: COMMAND_ACK {seq_num: 43, success: false}
+            end
+            
+            NT->>NT: Validate order state<br/>(Working or Accepted)
+            NT->>NT: Cancel old stop order + Create replacement<br/>at new stop price
+            
+            NT->>ZMQ: TRADE_LOG<br/>{trade_id, event: NT:MODIFY, message}
+            ZMQ->>GW: Modification confirmed
+            GW->>PY: on_trade_log callback
+            PY->>PY: Log SL change in database<br/>account=Sim101
         end
-        
-        NT->>NT: Validate order state<br/>(Working or Accepted)
-        NT->>ATM: _account.ChangeOrder()<br/>Update stop price
-        ATM->>MK: Modify stop order
-        
-        NT->>ZMQ: TRADE_LOG<br/>{trade_id, event: NT:MODIFY, message}
-        ZMQ->>GW: Modification confirmed
-        GW->>PY: on_trade_log callback
-        PY->>PY: Log SL change in database
     end
 
     %% ===== TAKE PROFIT HIT =====
     rect rgb(230, 255, 230)
         Note over PY,MK: Phase 3: Take Profit Hit (Winning Trade)
-        MK->>ATM: Price hits take profit level
-        ATM->>MK: Execute take profit order
-        MK->>ATM: Fill at TP price
+        MK->>NT: Price hits take profit level
+        NT->>MK: Execute take profit order
+        MK->>NT: Fill at TP price
         
-        ATM->>ATM: Auto-cancel Stop Loss order
-        ATM->>ATM: Close ATM strategy
+        NT->>NT: Target filled — cancel working Stop order
+        NT->>NT: Remove trade from OrderTracker
         
-        ATM->>NT: Target filled notification
         NT->>ZMQ: EXIT_FILL<br/>{trade_id, exit_price, result_type: TP}
         ZMQ->>GW: Exit fill received
         GW->>PY: on_exit_fill callback
@@ -151,14 +150,13 @@ sequenceDiagram
     %% ===== ALTERNATIVE: STOP LOSS HIT =====
     rect rgb(255, 230, 230)
         Note over PY,MK: Alternative: Stop Loss Hit (Losing Trade)
-        MK->>ATM: Price hits stop loss level
-        ATM->>MK: Execute stop loss order
-        MK->>ATM: Fill at SL price
+        MK->>NT: Price hits stop loss level
+        NT->>MK: Execute stop loss order
+        MK->>NT: Fill at SL price
         
-        ATM->>ATM: Auto-cancel Take Profit order
-        ATM->>ATM: Close ATM strategy
+        NT->>NT: Stop filled — cancel working Target order
+        NT->>NT: Remove trade from OrderTracker
         
-        ATM->>NT: Stop filled notification
         NT->>ZMQ: EXIT_FILL<br/>{trade_id, exit_price, result_type: SL}
         ZMQ->>GW: Exit fill received
         GW->>PY: on_exit_fill callback
@@ -175,23 +173,24 @@ sequenceDiagram
         PY->>PY: _check_live_session_end(bar)
         
         loop For each open trade
-            PY->>GW: send_close_order()<br/>{trade_id, reason: "session_end"}
-            GW->>ZMQ: ORDER_CLOSE<br/>{trade_id}
+            PY->>GW: send_close_order(account=Sim101)<br/>{trade_id, reason: "session_end"}
+            GW->>ZMQ: ORDER_CLOSE<br/>{trade_id, account}
             ZMQ->>NT: Receive close command
             
+            NT->>NT: Resolve account by name
             NT->>NT: Find position for instrument
             NT->>NT: Store _pendingCloseTradeId
-            NT->>ATM: _account.Flatten()<br/>Cancel SL/TP + Close position
-            ATM->>MK: Market order to close
-            MK->>ATM: Fill at market price
+            NT->>NT: Cancel SL/TP + Submit close market order
+            NT->>MK: Market order to close
+            MK->>NT: Fill at market price
             
-            ATM->>NT: Execution update
+            NT->>NT: Execution update
             NT->>NT: Detect position is flat
-            NT->>ZMQ: EXIT_FILL<br/>{trade_id, exit_price, result_type: CLOSE}
+            NT->>ZMQ: EXIT_FILL<br/>{trade_id, exit_price, result_type: CLOSE, account}
             ZMQ->>GW: Exit fill received
             GW->>PY: on_exit_fill callback
             
-            PY->>PY: Update trade in database<br/>Status: CLOSED<br/>exit_price, result_type: SP
+            PY->>PY: Update trade in database<br/>Status: CLOSED<br/>exit_price, result_type: SP<br/>account=Sim101
             PY->>PY: Log: "SESSION_END - Trade closed"
         end
     end
@@ -278,33 +277,40 @@ executor = MultiAccountExecutor(
 
 ### How It Works
 
-The `order_modify` command uses **Cancel + Replace** since `ChangeOrder()` is not available in AddOn context:
+The `order_modify` command uses **Cancel + Replace** since `ChangeOrder()` is not available in AddOn context. Each command includes the target `account` so the connector routes to the correct NinjaTrader account.
 
 ```csharp
 // 1. Python sends modification request
-gateway.send_modify_order(trade_id="abc123", stop_loss=21050)
+gateway.send_modify_order(
+    trade_id="abc123",
+    stop_loss=21050,
+    account="Sim101"  // Required for multi-account routing
+)
 
 // 2. NinjaTrader receives ORDER_MODIFY command
 
-// 3. Find the tracked stop order
-Order stopOrder = _stopLossOrders[trade_id];
+// 3. Extract account from payload and resolve
+var accountName = payload?["account"]?.ToString();
+var account = ResolveAccount(accountName);
+if (account == null)
+    throw new InvalidOperationException($"No account available (requested: {accountName ?? "(default)"})");
 
-// 4. Resolve the account for this trade
-var account = ResolveAccountForOrder(stopOrder);
+// 4. Find the tracked stop order (or search account orders)
+if (!_orderTracker.TryGetStopLoss(tradeId, out var stopOrder))
+{
+    stopOrder = FindStopOrderForTrade(account, tradeId);
+    if (stopOrder == null)
+        throw new InvalidOperationException($"Stop order not found for trade {tradeId}");
+}
 
-// 5. Cancel the existing order
-account.Cancel(stopOrder);
+// 5. Queue pending modify and cancel the existing order
+_orderTracker.TrackPendingModify(tradeId, new PendingModifyInfo(
+    newSl, stopOrder.Instrument, stopOrder.OrderAction, stopOrder.Quantity));
+_orderTracker.ExpectCancellation(stopOrder.Name);
+account.Cancel(new[] { stopOrder });
 
-// 6. Create new stop order at new price
-Order newStopOrder = account.CreateOrder(
-    instrument: stopOrder.Instrument,
-    orderAction: stopOrder.OrderAction,
-    orderType: OrderType.StopMarket,
-    stopPrice: newSl  // New stop price
-);
-
-// 6. Track the new order
-_stopLossOrders[trade_id] = newStopOrder;
+// 6. OnOrderUpdate detects the cancellation and creates replacement
+//    (see OnOrderUpdate in TradingBotZmqConnector.cs)
 
 // 7. Send confirmation back to Python
 _network?.SendTradeLog(trade_id, "NT:MODIFY", "Stop loss changed to 21050")
@@ -317,58 +323,8 @@ There's a **brief moment** (milliseconds) where **no stop loss is active** betwe
 2. Creation of new stop order
 
 In fast-moving markets, the price could gap through this window. For this reason:
-- Use ATM strategy's built-in breakeven for safer SL management
 - Only use `modify_order` for non-critical adjustments
 - Consider the risk before modifying SL near market price
-
-### Code Changes
-
-**Added to OrderManager class:**
-
-```csharp
-// Track stop loss orders for modification capability
-private readonly Dictionary<string, Order> _stopLossOrders = 
-    new Dictionary<string, Order>();
-
-// Updated OnOrderUpdate to track stop orders
-private void OnOrderUpdate(object sender, OrderEventArgs e)
-{
-    var order = e.Order;
-    
-    // Track stop loss orders
-    if ((order.Name == "Stop" || order.Name.Contains("Stop")) && 
-        (order.OrderType == OrderType.StopMarket || order.OrderType == OrderType.StopLimit))
-    {
-        var tradeId = FindTradeIdByAtmOrder(order);
-        if (tradeId != null)
-        {
-            _stopLossOrders[tradeId] = order;
-            _log($"TRACKING SL order for {trade_id}");
-        }
-    }
-}
-
-// New HandleModifyOrder implementation
-internal void HandleModifyOrder(string body)
-{
-    var tradeId = JsonHelper.ExtractString(body, "trade_id");
-    var newSl = JsonHelper.ExtractDouble(body, "stop_loss");
-    
-    // Get cached or find stop order
-    Order stopOrder;
-    if (!_stopLossOrders.TryGetValue(tradeId, out stopOrder))
-    {
-        stopOrder = FindStopOrderForTrade(tradeId); // Search account
-    }
-    
-    // Validate state
-    if (stopOrder.OrderState != Working && stopOrder.OrderState != Accepted)
-        return error;
-    
-    // Modify via NinjaTrader API
-    account.ChangeOrder(stopOrder, qty, limitPrice, newSl, atmStrategyId);
-}
-```
 
 ### Python Usage Example
 
@@ -389,7 +345,8 @@ gateway.on_trade_log(on_trade_log)
 # After receiving entry fill...
 gateway.send_modify_order(
     trade_id="trade_abc123",
-    stop_loss=21050  # Move to breakeven
+    stop_loss=21050,  # Move to breakeven
+    account="Sim101",  # Required for multi-account routing
 )
 ```
 
@@ -439,142 +396,136 @@ def on_trade_close(self, trade_id, exit_price):
 
 #### Order Open (Entry)
 
-Located in `zmq_connectors/ninjatrader/TradingBotZmqConnector.cs`:
+Located in `zmq_connectors/ninjatrader/Commands/OrderOpenHandler.cs`:
 
 ```csharp
-private void HandleOpenOrder(JObject payload)
+public bool Handle(JObject payload)
 {
-    var tradeId = payload["trade_id"]?.ToString();
-    var direction = payload["direction"]?.ToString();  // "long" or "short"
-    var slPoints = payload["risk_points"]?.Value<double>() ?? 0;
+    var (tradeId, direction, slPoints, rrRatio) = ParsePayload(payload);
+    var accountName = payload?["account"]?.ToString();
+
     // Multi-account routing
-    var accountName = payload["account"]?.ToString();
     var account = ResolveAccount(accountName);
     if (account == null)
         throw new InvalidOperationException($"No account available (requested: {accountName ?? "(default)"})");
 
-    var rrRatio = payload["rr_ratio"]?.Value<double>() ?? 2.0;
-    
-    // Position sizing based on risk (per-account overrides)
-    double riskUsd = payload["risk_usd"]?.Value<double>() ?? 0;
-    double riskPct = payload["risk_pct"]?.Value<double>() ?? 0;
+    var instrument = Instrument.GetInstrument(_instrument);
+    bool isLong = direction == "long";
     int qty = CalculatePositionSize(instrument, payload, slPoints, account);
-    
-    // Get ATM strategy based on SL points
-    string atmStrategyName = GetAtmStrategyName(slPoints);
-    // slPoints <= 15 -> "TA_MNQ_15pt"
-    // slPoints <= 20 -> "TA_MNQ_20pt"
-    // slPoints <= 30 -> "TA_MNQ_30pt"
-    // else -> "TA_MNQ_40pt"
-    
-    // Create market order (name MUST be "Entry" for ATM)
+
+    // Create market order (name includes trade_id for recovery)
+    string entryOrderName = $"Entry_{tradeId}";
     var entryOrder = account.CreateOrder(
-        instrument,
-        isLong ? OrderAction.Buy : OrderAction.SellShort,
-        OrderType.Market,
-        OrderEntry.Automated,
-        TimeInForce.Gtc,
-        qty,
-        0, 0,
-        string.Empty,
-        "Entry",  // CRITICAL: Must be exactly "Entry"
-        DateTime.MinValue,
-        null);
-    
-    // Start ATM strategy - auto-manages SL/TP
-    NinjaTrader.NinjaScript.AtmStrategy.StartAtmStrategy(atmStrategyName, entryOrder);
-    
-    // Track pending entry
-    _pendingEntries[tradeId] = new PendingEntry {
-        Direction = direction,
-        SlPoints = slPoints,
-        RrRatio = rrRatio,
-        AtmStrategyName = atmStrategyName
-    };
-    _tradeIdToAtmStrategy[tradeId] = atmStrategyName;
-    
-    // ENTRY_FILL sent from OnExecutionUpdate when fill confirmed
+        instrument, isLong ? OrderAction.Buy : OrderAction.SellShort,
+        OrderType.Market, OrderEntry.Automated, TimeInForce.Gtc,
+        qty, 0, 0, string.Empty, entryOrderName, DateTime.MinValue, null);
+
+    _orderTracker.TrackEntry(tradeId, entryOrder);
+    _orderTracker.TrackPendingEntry(tradeId, new PendingEntryInfo(direction, slPoints, rrRatio));
+
+    account.Submit(new[] { entryOrder });
+
+    // ENTRY_FILL sent from HandleEntryFill when fill confirmed
+    // Bracket orders (SL/TP) are created manually after entry fill
+}
+
+private static Account ResolveAccount(string accountName)
+{
+    if (string.IsNullOrEmpty(accountName))
+    {
+        if (Account.All.Count == 1) return Account.All.FirstOrDefault();
+        return null;
+    }
+    return Account.All.FirstOrDefault(a => a.Name == accountName);
 }
 ```
 
 #### Order Close
 
+Located in `zmq_connectors/ninjatrader/Commands/OrderCloseHandler.cs`:
+
 ```csharp
-private void HandleCloseOrder(JObject payload)
+public bool Handle(JObject payload)
 {
-    var tradeId = payload["trade_id"]?.ToString();
-    
-    // Store pending close info
-    _pendingCloseTradeId = tradeId;
-    
-    // Resolve account and flatten the position
+    var tradeId = payload?["trade_id"]?.ToString();
+    var accountName = payload?["account"]?.ToString();
+
+    // Multi-account routing
     var account = ResolveAccount(accountName);
-    account.Flatten(new[] { instrument });
-    
-    // Clean up tracking
-    _stopLossOrders.Remove(tradeId);
-    _tradeIdToAtmStrategy.Remove(tradeId);
-    
-    // EXIT_FILL sent from OnExecutionUpdate when fill confirmed
+    if (account == null)
+        throw new InvalidOperationException($"No account available (requested: {accountName ?? "(default)"})");
+
+    var instrument = Instrument.GetInstrument(_instrument);
+
+    // Cancel all working orders for this trade
+    var entryOrder = FindOrderByName(account, $"Entry_{tradeId}");
+    var stopOrder = FindOrderByName(account, $"Stop_{tradeId}");
+    var targetOrder = FindOrderByName(account, $"Target_{tradeId}");
+
+    if (stopOrder != null && IsWorking(stopOrder)) account.Cancel(new[] { stopOrder });
+    if (targetOrder != null && IsWorking(targetOrder)) account.Cancel(new[] { targetOrder });
+
+    // Submit closing market order for filled quantity
+    bool hasFilledPosition = entryOrder != null && 
+        (entryOrder.OrderState == OrderState.Filled || entryOrder.OrderState == OrderState.PartFilled);
+    if (hasFilledPosition)
+    {
+        var closeAction = entryOrder.OrderAction == OrderAction.Buy ? OrderAction.Sell : OrderAction.BuyToCover;
+        var closeOrder = account.CreateOrder(
+            instrument, closeAction, OrderType.Market, OrderEntry.Automated, TimeInForce.Gtc,
+            entryOrder.Filled, 0, 0, string.Empty, $"Close_{tradeId}", DateTime.MinValue, null);
+
+        _orderTracker.TrackCloseOrder(tradeId, closeOrder);
+        account.Submit(new[] { closeOrder });
+    }
+
+    // EXIT_FILL sent from HandleCloseFill when fill confirmed
 }
 ```
 
 **Execution Update Handler** (detects fills and sends confirmations):
 
+Located in `zmq_connectors/ninjatrader/TradingBotZmqConnector.cs`:
+
 ```csharp
 private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
 {
     var execution = e.Execution;
-    var orderName = execution.Order.Name;  // "Entry", "Stop", "Target"
+    var order = execution.Order;
     var fillPrice = execution.Price;
-    
-    // ENTRY FILL: Entry order filled
-    if (orderName == "Entry")
+
+    string execTradeId = ExtractTradeIdFromOrderName(order.Name) ?? order.Name;
+    string accountName = order.Account?.Name;
+
+    if (IsEntryOrder(order))
     {
-        // Find trade_id by ATM strategy
-        var tradeId = FindTradeIdByAtmStrategy(execution.Order.AtmStrategyId);
-        var entry = _pendingEntries[tradeId];
-        
-        // Calculate SL/TP based on actual fill price
-        double sl = entry.Direction == "long" 
-            ? fillPrice - entry.SlPoints 
-            : fillPrice + entry.SlPoints;
-        double tp = entry.Direction == "long"
-            ? fillPrice + (entry.SlPoints * entry.RrRatio)
-            : fillPrice - (entry.SlPoints * entry.RrRatio);
-        
-        // Send entry fill to Python
-        _network?.SendEntryFill(tradeId, fillPrice, sl, tp);
+        HandleEntryFill(order, fillPrice);  // Creates bracket orders manually
     }
-    
-    // SL/TP FILL: Stop or Target order filled
-    else if (orderName.Contains("Stop") || orderName.Contains("Target"))
+    else if (IsStopOrder(order))
     {
-        var tradeId = FindTradeIdByAtmStrategy(execution.Order.AtmStrategyId);
-        var resultType = orderName.Contains("Stop") ? "SL" : "TP";
-        
-        _network?.SendExitFill(tradeId, fillPrice, resultType);
-        
-        // Clean up tracking
-        _pendingEntries.Remove(tradeId);
-        _stopLossOrders.Remove(tradeId);
-        _tradeIdToAtmStrategy.Remove(tradeId);
+        HandleStopLossFill(order, fillPrice);   // Sends EXIT_FILL (SL) with account
     }
-    
-    // MANUAL CLOSE: Position flattened
-    else if (!string.IsNullOrEmpty(_pendingCloseTradeId))
+    else if (IsTargetOrder(order))
     {
-        // Check if position is now flat
-        var position = GetCurrentPosition();
-        if (position == null || position.Quantity == 0)
-        {
-            _network?.SendExitFill(_pendingCloseTradeId, fillPrice, "CLOSE");
-            
-            // Clean up and clear pending close
-            _pendingEntries.Remove(_pendingCloseTradeId);
-            _pendingCloseTradeId = null;
-        }
+        HandleTakeProfitFill(order, fillPrice); // Sends EXIT_FILL (TP) with account
     }
+    else if (IsCloseOrder(order))
+    {
+        HandleCloseFill(order, fillPrice);      // Sends EXIT_FILL (CLOSE) with account
+    }
+    else
+    {
+        // Catch manual closes that don't match Close_{tradeId} naming
+        HandlePotentialManualClose(order, fillPrice);
+    }
+}
+
+// Example: Entry fill sends account back to Python
+private void HandleEntryFill(Order order, double fillPrice)
+{
+    // ... bracket creation ...
+    string accountName = account?.Name;
+    _network?.SendEntryFill(tradeId, fillPrice, sl, tp, account: accountName);
 }
 ```
 
@@ -596,51 +547,58 @@ sequenceDiagram
     participant GW as TradingGateway
     participant ZMQ as ZeroMQ
     participant NT as NinjaTrader
-    participant ATM as ATM Strategy
 
     rect rgb(255, 245, 230)
-        Note over PY,ATM: Session End Close Flow
+        Note over PY,NT: Session End Close Flow (Multi-Account)
         
         PY->>PY: Bar time >= 15:00 NY
         PY->>TM: _check_live_session_end(bar)
         
-        TM->>TE: on_trade_close(trade_id, exit_price)
-        TE->>TE: enqueue_command({command: "close_order", trade_id})
-        
-        TE->>GW: send_close_order(trade_id)
-        GW->>GW: Queue ORDER_CLOSE command
-        GW->>ZMQ: ORDER_CLOSE<br/>{trade_id}
-        ZMQ->>NT: Receive close command
-        
-        NT->>NT: Get instrument<br/>Find current position
-        NT->>NT: _pendingCloseTradeId = trade_id
-        NT->>ATM: _account.Flatten(instrument)<br/>Close position + cancel orders
-        ATM->>ATM: Close market order submitted
-        ATM->>NT: OnExecutionUpdate fired
-        
-        NT->>NT: Check position flat?<br/>position.Quantity == 0
-        NT->>ZMQ: EXIT_FILL<br/>{trade_id, exit_price, result_type: CLOSE}
-        NT->>NT: Clear _pendingCloseTradeId
-        ZMQ->>GW: Exit fill received
-        GW->>PY: on_exit_fill callback
-        
-        PY->>PY: Update DB: result_type="SP"
-        PY->>PY: Log: "SESSION_END closed"
+        loop For each open trade
+            TM->>TE: on_trade_close(trade_id, exit_price)
+            TE->>TE: enqueue_command({command: "close_order", trade_id, account})
+            
+            TE->>GW: send_close_order(trade_id, account="Sim101")
+            GW->>GW: Queue ORDER_CLOSE command
+            GW->>ZMQ: ORDER_CLOSE<br/>{trade_id, account}
+            ZMQ->>NT: Receive close command
+            
+            NT->>NT: Resolve account by name
+            NT->>NT: Get instrument<br/>Find current position
+            NT->>NT: Cancel SL/TP + Submit close market order
+            NT->>NT: Close market order submitted
+            NT->>NT: OnExecutionUpdate fired
+            
+            NT->>NT: Check position flat?
+            NT->>ZMQ: EXIT_FILL<br/>{trade_id, exit_price, result_type: CLOSE, account}
+            ZMQ->>GW: Exit fill received
+            GW->>PY: on_exit_fill callback
+            
+            PY->>PY: Update DB: result_type="SP"<br/>account=Sim101
+            PY->>PY: Log: "SESSION_END closed"
+        end
     end
 ```
 
 ### Key Points
 
-1. **Trade ID is Critical**: Same as SL updates, Python sends its `trade_id` so NinjaTrader knows which position to close
+1. **Trade ID + Account are Critical**: Python sends both `trade_id` and `account` so NinjaTrader knows exactly which position to close on which account
 2. **Result Type**: Session end closes are marked as `SP` (Session Position/Stop) in the database
 3. **Idempotent**: `_close_commands_sent` set prevents duplicate close commands
-4. **ATM Strategy Tracking**: NinjaTrader maintains `_tradeIdToAtmStrategy` dictionary to map Python's trade_id to the actual ATM strategy
+4. **Per-Account Order Tracking**: NinjaTracker tracks orders per account using order names (`Entry_{trade_id}`, `Stop_{trade_id}`, etc.)
 
-## Account Configuration Flow
+## Connection Handshake & Account Routing
 
-NinjaTrader queries the account list from Python during connection initialization. Accounts are configured in the web admin (Settings tab) and stored in the `nt_accounts` SQLite table. `DbConfigLoader` reads them at startup and `MultiAccountExecutor` expands each signal into per-account trades.
+Account information is **no longer exchanged during the initial handshake**. Instead, the NinjaTrader connector sends a minimal `CONNECT` message, and account routing happens **per-trade** via the `account` field in every command and fill message.
 
-### Flow
+### Platform Differences
+
+| Platform | Handshake Account Info | Account Routing |
+|----------|----------------------|-----------------|
+| **NinjaTrader** | None — minimal `CONNECT` | Per-trade `account` field in commands & fills |
+| **MetaTrader 5** | Sends broker login ID in `CONNECT` | Single account per EA instance |
+
+### NinjaTrader Handshake Flow
 
 ```mermaid
 sequenceDiagram
@@ -651,42 +609,42 @@ sequenceDiagram
     participant PY as Python
 
     rect rgb(230, 245, 255)
-        Note over NT,PY: Connection Initialization
+        Note over NT,PY: Connection Initialization (NinjaTrader)
         
         NT->>NT: User clicks Connect
         NT->>ZMQ: Connect sockets
         
         Note over NT: Wait 300ms for slow joiner protection
         
-        NT->>ZMQ: CONFIG_QUERY {key: "accounts"}
-        ZMQ->>GW: Query received
-        GW->>GW: Look up _account_names
-        GW->>ZMQ: CONFIG_RESPONSE {accounts: "FNFTCHCARLOSDUCLOS42006"}
-        ZMQ->>NT: Receive account list
+        NT->>NT: Subscribe to ExecutionUpdate & OrderUpdate<br/>on ALL connected accounts
         
-        NT->>NT: InitializeAccounts(["FNFTCHCARLOSDUCLOS42006"])
-        NT->>NT: Find each account by name, or fallback to all available
-        
-        NT->>ZMQ: CONNECT {platform: "ninjatrader", version: "2.0.0", account: "FNFTCHCARLOSDUCLOS42006", pair: "MNQ"}
+        NT->>ZMQ: CONNECT {platform: "ninjatrader", version: "2.0.0", pair: "MNQ"}
+        Note over ZMQ: No account field. No config query.
         ZMQ->>GW: Connection established
-        GW->>PY: Log: "Platform connected: ninjatrader | Pair: MNQ | Accounts: [FNFTCHCARLOSDUCLOS42006]"
+        GW->>PY: Log: "Platform connected: ninjatrader | Pair: MNQ"
+        
+        NT->>ZMQ: POSITION_SYNC {positions[], untracked_orders[]}
+        ZMQ->>GW: Broker positions reported
+        GW->>PY: Reconcile DB state with broker
     end
 ```
 
-### Python Side
+### Why No Account in Handshake?
+
+1. **Decoupling**: The connector doesn't need to know account names at connect time. It subscribes to **all** accounts and routes each incoming command to the correct one.
+2. **Dynamic accounts**: Accounts can be added/removed in Python's web admin without restarting NinjaTrader.
+3. **Simpler reconnection**: After a crash/reconnect, there's no dependency on config query timing.
+
+### Python Side — Account Configuration
+
+Accounts are configured in the web admin (Settings tab) and stored in the `nt_accounts` SQLite table. `DbConfigLoader` reads them at startup and `MultiAccountExecutor` expands each signal into per-account trades.
 
 ```python
-# Accounts are loaded from SQLite (nt_accounts table) via DbConfigLoader
-# and passed to MultiAccountExecutor at startup.
-
 from src.config.loaders import DbConfigLoader
 from src.infrastructure.gateway.executor import MultiAccountExecutor
 
 cfg = DbConfigLoader().load()  # Reads AppSetting + NtAccount from DB
 account_configs = cfg.nt_accounts  # List[AccountConfig]
-
-# Stored on gateway for config queries from NinjaTrader
-gateway._account_names = [a.name for a in account_configs]
 
 # MultiAccountExecutor expands one signal into N per-account trades
 trade_executor = MultiAccountExecutor(
@@ -697,40 +655,76 @@ trade_executor = MultiAccountExecutor(
 )
 ```
 
-### NinjaTrader Side
+### NinjaTrader Side — Minimal Connect
 
 ```csharp
 // In Connect() method
 _network.Start();
 Thread.Sleep(300);  // Slow joiner protection
 
-// Query accounts from Python
-string configuredAccounts = _network.QueryConfig("accounts");
-List<string> accountNames = null;
-if (!string.IsNullOrEmpty(configuredAccounts))
+// Subscribe to ALL accounts — no config query needed
+foreach (var acct in Account.All)
 {
-    accountNames = configuredAccounts.Split(',').Select(s => s.Trim()).Where(s => !string.IsNullOrEmpty(s)).ToList();
-    _logger.Info($"Python specified accounts: {string.Join(", ", accountNames)}");
+    acct.ExecutionUpdate += OnExecutionUpdate;
+    acct.OrderUpdate += OnOrderUpdate;
 }
 
-// Send connect with primary account info
-string primaryAccount = accountNames?.Count > 0 ? accountNames[0] : null;
-_network.SendConnect("ninjatrader", _config.PlatformVersion, 
-    account: primaryAccount, pair: "MNQ");
+// Send minimal connect handshake (account name is not needed)
+_network.SendConnect("ninjatrader", _config.PlatformVersion, pair: _config.Instrument.Split(' ')[0]);
 
-// Initialize using specified accounts
-InitializeAccounts(accountNames);
+// Restore order tracking and report positions for crash recovery
+foreach (var acct in Account.All)
+{
+    _orderTracker.RestoreFromBrokerOrders(acct, _logger);
+}
+ReportPositionsToPython();
+```
+
+### Per-Trade Account Routing
+
+Every command from Python includes the target `account`. The NinjaTrader handler resolves it at execution time:
+
+```csharp
+// In OrderOpenHandler, OrderCloseHandler, OrderModifyHandler
+var accountName = payload?["account"]?.ToString();
+var account = ResolveAccount(accountName);
+if (account == null)
+    throw new InvalidOperationException($"No account available (requested: {accountName ?? "(default)"})");
+
+private static Account ResolveAccount(string accountName)
+{
+    if (string.IsNullOrEmpty(accountName))
+    {
+        if (Account.All.Count == 1) return Account.All.FirstOrDefault();
+        return null;
+    }
+    return Account.All.FirstOrDefault(a => a.Name == accountName);
+}
 ```
 
 ### Fallback Behavior
 
-If Python doesn't specify an account (or query fails):
-1. NinjaTrader logs: "No account specified by Python, using first available"
-2. Uses `Account.All[0]` (first account in NinjaTrader)
+If a command arrives without an `account` field:
+1. If only **one** account is connected in NinjaTrader, it is used automatically.
+2. If **multiple** accounts are connected, the command fails with `"No account available (requested: (default))"`.
 
-If specified account is not found:
-1. NinjaTrader logs: "Account 'XYZ' not found, using first available"
-2. Falls back to `Account.All[0]`
+If a specified account is not found:
+1. The command fails immediately with `"No account available (requested: 'XYZ')"`.
+2. No fallback to `Account.All[0]` occurs — commands must explicitly target a valid account when multiple accounts exist.
+
+### MetaTrader 5 Handshake (Legacy Behavior)
+
+MetaTrader 5 still queries config and sends the account in `CONNECT`:
+
+```mql5
+// Query config from Python (account name, etc.)
+string configuredAccount = _network.QueryConfig("account", 2000);
+
+// Send connect handshake
+_network.SendConnect("metatrader5", _config.platformVersion, configuredAccount, _Symbol);
+```
+
+> **Note**: MT5 queries `"account"` (singular), but Python's `CONFIG_QUERY` handler only responds to `"accounts"` or `"all"`. This causes the query to return empty, and MT5 falls back to the broker login ID (`AccountInfoInteger(ACCOUNT_LOGIN)`).
 
 ## Message Types Reference
 
@@ -738,9 +732,9 @@ If specified account is not found:
 
 | Message Type | Payload Fields | Description |
 |-------------|----------------|-------------|
-| `order_open` | trade_id, direction, entry_price, stop_loss, take_profit, risk_points, rr_ratio, **account**, **risk_usd**, **risk_pct** | Open new position with ATM strategy on specified account |
-| `order_close` | trade_id, reason | Close position (flatten) |
-| `order_modify` | trade_id, stop_loss, take_profit | Modify SL via Cancel+Replace (⚠️ brief gap risk) |
+| `order_open` | trade_id, direction, entry_price, stop_loss, take_profit, risk_points, rr_ratio, **account**, **risk_usd**, **risk_pct** | Open new position on specified account |
+| `order_close` | trade_id, reason, **account** | Close position on specified account |
+| `order_modify` | trade_id, stop_loss, take_profit, **account** | Modify SL/TP on specified account via Cancel+Replace (⚠️ brief gap risk) |
 | `refresh_request` | days | Request historical data refresh |
 
 ### NinjaTrader → Python (Market Data via PUB/SUB)
@@ -755,7 +749,7 @@ If specified account is not found:
 | `exit_fill` | trade_id, exit_price, result_type, **account** | Exit execution (TP/SL/CLOSE/SP) |
 | `trade_log` | trade_id, event, message | Trading events log |
 | `heartbeat` | source, status | Health check (every 5s) |
-| `connect` | platform, version, **account** (primary), pair | Initial handshake |
+| `connect` | platform, version, account (optional), pair | Initial handshake. **NT**: no account sent. **MT5**: sends broker login ID |
 | `error` | source, error_type, message, details | Error notification |
 | `command_ack` | command_type, seq_num, success, trade_id, message | Command acknowledgment |
 | `position_sync` | positions[], count, source, is_source_of_truth | Crash recovery sync |
@@ -768,8 +762,8 @@ If specified account is not found:
 | `test_pong` | PY → NT | timestamp | Connection test response |
 | `position_query` | NT → PY | - | Query open positions for recovery |
 | `position_response` | PY → NT | positions[], count | Open positions list |
-| `config_query` | NT → PY | key | Query config value (account, etc.) |
-| `config_response` | PY → NT | {key: value} | Config value response |
+| `config_query` | NT → PY | key | Query config value. **Used by MT5** (queries `"account"`). **Not used by NT** |
+| `config_response` | PY → NT | {key: value} | Config value response. Python handles `"accounts"` / `"all"` keys |
 
 ## Socket Flow Details
 
@@ -821,7 +815,7 @@ flowchart TB
     PYPUSH -->|ORDER_OPEN| NTPULL
     PYPUSH -->|ORDER_MODIFY| NTPULL
     NTPULL --> CL
-    CL --> ATM[ATM Strategy]
+    CL --> BROKER[Broker / Exchange]
     
     %% Query Flow
     NTREQ -->|TEST_PING| PYREP
@@ -988,9 +982,9 @@ CRITICAL: Stop order 'Stop' has no trade_id in name - cannot track!
 | Stop order not found | Searches Account.Orders by name `Stop_{trade_id}`, errors if not found |
 | Modify order gap risk | Warning logged: Brief gap between cancel and new order |
 | Order not modifiable (Filled/Cancelled) | Error: "Stop order not modifiable" |
-| ChangeOrder exception | Error logged + sent to Python via TRADE_LOG |
+| Modify replacement failed | Error logged + sent to Python via TRADE_LOG |
 | Account not connected | Error: "No account available" |
-| Position not found for close | Error: "No ATM strategy found for trade_id" |
+| Position not found for close | Error: "Trade not tracked — already closed or never opened" |
 | Close order fails | Error sent via TRADE_LOG, position may remain open |
 | Order without trade_id in name | CRITICAL error logged, tracking failed |
 | Fill received but order not tracked | CRITICAL error logged, cannot process fill |
