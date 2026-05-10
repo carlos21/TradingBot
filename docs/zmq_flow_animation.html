@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ZMQ Flow: Python ↔ NinjaTrader</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, monospace;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 20px;
+    background: #161b22;
+    border-bottom: 1px solid #30363d;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  #toolbar h2 {
+    font-size: 16px;
+    color: #58a6ff;
+    margin-right: 10px;
+  }
+  .btn {
+    padding: 6px 14px;
+    border: 1px solid #30363d;
+    background: #21262d;
+    color: #c9d1d9;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: .15s;
+  }
+  .btn:hover { background: #30363d; border-color: #8b949e; }
+  .btn.primary { border-color: #238636; color: #3fb950; }
+  .btn.primary:hover { background: #238636; color: #fff; }
+  .btn.danger { border-color: #da3633; color: #f85149; }
+  .btn.danger:hover { background: #da3633; color: #fff; }
+  .btn.active { background: #1f6feb; border-color: #58a6ff; color: #fff; }
+  #speed {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #8b949e;
+  }
+  #speed input { width: 100px; }
+  #main { display: flex; flex: 1; overflow: hidden; }
+  #canvas-wrap { flex: 1; position: relative; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #sidebar {
+    width: 360px;
+    background: #161b22;
+    border-left: 1px solid #30363d;
+    display: flex;
+    flex-direction: column;
+  }
+  #sidebar h3 {
+    padding: 12px 16px;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    color: #8b949e;
+    border-bottom: 1px solid #30363d;
+  }
+  #log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px 14px;
+    font-size: 12px;
+    line-height: 1.6;
+  }
+  .log-line {
+    padding: 5px 8px;
+    margin-bottom: 4px;
+    border-radius: 4px;
+    border-left: 3px solid transparent;
+    animation: pop .25s ease;
+  }
+  @keyframes pop { from { opacity: 0; transform: translateX(-6px); } }
+  .log-line.py  { background: rgba(46,160,67,.08); border-left-color: #3fb950; }
+  .log-line.nt  { background: rgba(47,129,247,.08); border-left-color: #58a6ff; }
+  .log-line.warn{ background: rgba(210,153,34,.08); border-left-color: #d29922; }
+  .log-line.ok  { background: rgba(139,148,158,.08); border-left-color: #8b949e; }
+  .log-line.key { background: rgba(210,54,54,.12); border-left-color: #f85149; }
+  .log-time { color: #484f58; margin-right: 6px; font-size: 11px; }
+  .legend {
+    position: absolute;
+    bottom: 14px;
+    left: 14px;
+    background: rgba(13,17,23,.92);
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 11px;
+    line-height: 1.8;
+    pointer-events: none;
+  }
+  .legend span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 8px; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <h2>🔌 ZMQ Flow</h2>
+  <button class="btn primary" id="btn-handshake">1. Handshake</button>
+  <button class="btn primary" id="btn-entry">2. Trade Entry</button>
+  <button class="btn primary" id="btn-modify">3. Modify SL</button>
+  <button class="btn primary" id="btn-tp">4. TP Hit</button>
+  <button class="btn primary" id="btn-close">5. Session Close</button>
+  <button class="btn danger" id="btn-reset">Reset</button>
+  <div id="speed">
+    <label>Speed</label>
+    <input type="range" id="speedRange" min="0.3" max="2.5" step="0.1" value="1.0">
+    <span id="speedLabel">1.0x</span>
+  </div>
+</div>
+
+<div id="main">
+  <div id="canvas-wrap">
+    <canvas id="c"></canvas>
+    <div class="legend">
+      <div><span style="background:#3fb950"></span>Python → NT (Command)</div>
+      <div><span style="background:#58a6ff"></span>NT → Python (Data/Fill)</div>
+      <div><span style="background:#d29922"></span>Heartbeat</div>
+      <div><span style="background:#a371f7"></span>Query / Sync</div>
+      <div><span style="background:#f85149"></span>Market Price</div>
+    </div>
+  </div>
+  <div id="sidebar">
+    <h3>📋 Event Log</h3>
+    <div id="log"></div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const logEl = document.getElementById('log');
+let W, H;
+
+const SPEED_EL = document.getElementById('speedRange');
+const SPEED_LBL = document.getElementById('speedLabel');
+let SPEED = 1;
+SPEED_EL.addEventListener('input', e => { SPEED = parseFloat(e.target.value); SPEED_LBL.textContent = SPEED.toFixed(1)+'x'; });
+
+/* ---------- geometry ---------- */
+const NODE_W = 200;
+const NODE_H = 380;
+const PAD = 24;
+const LANE_GAP = 90;
+const TOP = 90;
+
+const LANES = [
+  { label: 'Market Data :5555 (PUB/SUB)',  color: '#58a6ff', dir: -1 }, // NT → PY
+  { label: 'Commands   :5556 (PUSH/PULL)', color: '#3fb950', dir:  1 }, // PY → NT
+  { label: 'Queries    :5557 (REQ/REP)',   color: '#a371f7', dir:  0 }, // bidir
+  { label: 'Heartbeats :5558 (PUB/SUB)',   color: '#d29922', dir: -1 }, // NT → PY
+];
+
+function resize() {
+  const wrap = document.getElementById('canvas-wrap');
+  canvas.width = wrap.clientWidth;
+  canvas.height = wrap.clientHeight;
+  W = canvas.width; H = canvas.height;
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ---------- state ---------- */
+let packets = [];
+let bursts = [];
+let heartbeatsOn = false;
+let marketTicksOn = false;
+let scenario = null;      // string name
+let stepIdx = 0;
+let stepList = [];
+let nextStepAt = 0;
+let scenarioT = 0;
+let lastTs = 0;
+
+/* ---------- helpers ---------- */
+function now() { return performance.now()/1000; }
+
+function log(msg, cls='ok') {
+  const d = new Date();
+  const t = d.toLocaleTimeString('en',{hour12:false,hour:'2-digit',minute:'2-digit',second:'2-digit'})+'.'+String(d.getMilliseconds()).padStart(3,'0');
+  const row = document.createElement('div');
+  row.className = 'log-line '+cls;
+  row.innerHTML = '<span class="log-time">'+t+'</span>'+msg;
+  logEl.appendChild(row);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+function clearLog() { logEl.innerHTML = ''; }
+
+/* ---------- packet ---------- */
+class Packet {
+  constructor(lane, fromRight, label, sub, color, dur=1.4) {
+    this.lane = lane;
+    this.fromRight = fromRight; // true = NT→PY, false = PY→NT
+    this.label = label;
+    this.sub = sub;
+    this.color = color;
+    this.dur = dur / SPEED;
+    this.t = 0;
+    this.dead = false;
+    this.arrived = false;
+    this.w = Math.max(90, label.length*7 + (sub?sub.length*3:0));
+    this.h = sub ? 32 : 22;
+  }
+  update(dt) {
+    this.t += dt;
+    if (this.t >= this.dur && !this.arrived) {
+      this.arrived = true;
+      this.burst();
+    }
+    if (this.t > this.dur + 0.3) this.dead = true;
+  }
+  burst() {
+    const y = TOP + this.lane*LANE_GAP;
+    const x = this.fromRight ? PAD+NODE_W+10 : W-PAD-NODE_W-10;
+    for (let i=0;i<10;i++) bursts.push({x,y,vx:(Math.random()-.5)*200,vy:(Math.random()-.5)*200,life:.4,color:this.color});
+  }
+  draw(ctx) {
+    const y = TOP + this.lane*LANE_GAP;
+    const x0 = PAD + NODE_W + 30;
+    const x1 = W - PAD - NODE_W - 30;
+    const p = Math.min(1, this.t / this.dur);
+    const x = this.fromRight ? (x1 - (x1-x0)*p) : (x0 + (x1-x0)*p);
+
+    ctx.save();
+    ctx.shadowColor = this.color;
+    ctx.shadowBlur = 18;
+    ctx.globalAlpha = this.t > this.dur ? 1 - (this.t-this.dur)/0.3 : 1;
+    ctx.fillStyle = this.color;
+    ctx.beginPath(); ctx.roundRect(x-this.w/2, y-this.h/2, this.w, this.h, 6); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth=1.5; ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.fillStyle = '#fff'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText(this.label, x, y - (this.sub?5:0));
+    if (this.sub) { ctx.font='10px monospace'; ctx.fillStyle='rgba(255,255,255,.85)'; ctx.fillText(this.sub, x, y+7); }
+    ctx.restore();
+  }
+}
+
+/* ---------- drawing ---------- */
+function drawNode(x, y, title, lines, accent) {
+  ctx.save();
+  ctx.fillStyle = '#161b22'; ctx.strokeStyle = accent||'#30363d'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.roundRect(x,y,NODE_W,NODE_H,10); ctx.fill(); ctx.stroke();
+
+  ctx.fillStyle = accent||'#21262d';
+  ctx.beginPath(); ctx.roundRect(x,y,NODE_W,34,[10,10,0,0]); ctx.fill();
+  ctx.fillStyle = '#f0f6fc'; ctx.font='bold 14px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(title, x+NODE_W/2, y+22);
+
+  ctx.textAlign='left'; ctx.font='12px sans-serif'; ctx.fillStyle='#8b949e';
+  lines.forEach((l,i)=>ctx.fillText(l, x+14, y+58+i*20));
+  ctx.restore();
+}
+
+function drawLanes() {
+  const x0 = PAD + NODE_W + 10;
+  const x1 = W - PAD - NODE_W - 10;
+  LANES.forEach((L,i) => {
+    const y = TOP + i*LANE_GAP;
+    ctx.save();
+    ctx.fillStyle = 'rgba(48,54,61,.25)';
+    ctx.strokeStyle = 'rgba(48,54,61,.6)';
+    ctx.beginPath(); ctx.roundRect(x0, y-28, x1-x0, 56, 8); ctx.fill(); ctx.stroke();
+
+    ctx.fillStyle = 'rgba(139,148,158,.5)'; ctx.font='11px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(L.label, W/2, y-36);
+
+    ctx.strokeStyle = 'rgba(139,148,158,.15)'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.moveTo(x0+20, y); ctx.lineTo(x1-20, y); ctx.stroke();
+
+    // arrow heads
+    ctx.fillStyle = 'rgba(139,148,158,.25)';
+    if (L.dir >= 0) { // right arrow
+      ctx.beginPath(); ctx.moveTo(x1-20, y); ctx.lineTo(x1-28, y-5); ctx.lineTo(x1-28, y+5); ctx.fill();
+    }
+    if (L.dir <= 0) { // left arrow
+      ctx.beginPath(); ctx.moveTo(x0+20, y); ctx.lineTo(x0+28, y-5); ctx.lineTo(x0+28, y+5); ctx.fill();
+    }
+    ctx.restore();
+  });
+}
+
+function draw() {
+  ctx.clearRect(0,0,W,H);
+
+  // title
+  ctx.fillStyle = '#c9d1d9'; ctx.font='bold 16px sans-serif'; ctx.textAlign='center';
+  if (scenario) {
+    const titles = {
+      handshake: '🔌 Scenario: Handshake  —  Notice: CONNECT has NO account field',
+      trade_entry: '📈 Scenario: Multi-Account Trade Entry  —  Each command carries its own account',
+      modify: '📉 Scenario: Stop Loss Update  —  Cancel + Replace on specific account',
+      tp_hit: '💰 Scenario: Take Profit Hit',
+      close: '🌅 Scenario: Session End Close  —  Close commands sent per-account',
+    };
+    ctx.fillText(titles[scenario], W/2, 28);
+  } else {
+    ctx.fillStyle = '#484f58';
+    ctx.fillText('Click a scenario above to start', W/2, 28);
+  }
+
+  drawLanes();
+
+  // nodes
+  const ny = H/2 - NODE_H/2;
+  drawNode(PAD, ny, '🐍 Python TradingBot', [
+    '• Strategy Engine',
+    '• MultiAccountExecutor',
+    '• TradingGateway',
+    '  └ Command Queue',
+    '  └ Market Data Loop',
+    '  └ Query Handler',
+    '• SQLite (nt_accounts)'
+  ], '#238636');
+
+  drawNode(W-PAD-NODE_W, ny, '⚔️ NinjaTrader', [
+    '• CommandDispatcher',
+    '  ├ OrderOpenHandler',
+    '  ├ OrderCloseHandler',
+    '  └ OrderModifyHandler',
+    '• OrderTracker',
+    '• Heartbeat Loop',
+    '• Account.All[0..N]'
+  ], '#1f6feb');
+
+  // highlight multi-account area
+  if (scenario==='trade_entry' || scenario==='close') {
+    ctx.save();
+    ctx.strokeStyle = '#f85149'; ctx.lineWidth=2; ctx.setLineDash([6,4]);
+    const ax = W-PAD-NODE_W+10, ay = ny+250;
+    ctx.strokeRect(ax, ay, NODE_W-20, 44);
+    ctx.fillStyle = '#f85149'; ctx.textAlign='center'; ctx.font='12px sans-serif';
+    ctx.fillText('Sim101  |  Sim102  |  ...', ax+(NODE_W-20)/2, ay+27);
+    ctx.restore();
+  }
+
+  packets.forEach(p=>p.draw(ctx));
+
+  bursts.forEach(b=>{
+    ctx.save(); ctx.globalAlpha=Math.max(0,b.life*3); ctx.fillStyle=b.color;
+    ctx.beginPath(); ctx.arc(b.x,b.y,3,0,Math.PI*2); ctx.fill(); ctx.restore();
+  });
+}
+
+/* ---------- scenario engine ---------- */
+function spawn(lane, fromRight, label, sub, color, dur) {
+  packets.push(new Packet(lane, fromRight, label, sub, color, dur));
+}
+
+const SCENARIOS = {
+  handshake: [
+    { dt: 0.5, fn() {
+      log('NT: Connecting ZeroMQ sockets...','nt');
+    }},
+    { dt: 1.0, fn() {
+      log('NT: Subscribed to ExecutionUpdate & OrderUpdate on ALL accounts','nt');
+    }},
+    { dt: 1.2, fn() {
+      log('NT → PY: CONNECT  (minimal, no account!)','nt');
+      spawn(0, true, 'CONNECT', 'platform: ninjatrader', '#58a6ff', 1.2);
+    }},
+    { dt: 1.0, fn() {
+      log('PY: Platform connected: ninjatrader | Pair: MNQ','py');
+    }},
+    { dt: 0.8, fn() {
+      log('NT → PY: POSITION_SYNC (broker is source of truth)','nt');
+      spawn(2, true, 'POSITION_SYNC', 'positions + untracked', '#a371f7', 1.2);
+    }},
+    { dt: 1.0, fn() {
+      log('PY: Reconciled DB with broker positions','py');
+      heartbeatsOn = true; marketTicksOn = true;
+      log('💓 Heartbeats started','ok');
+      log('📊 Market data stream started','ok');
+      log('🔑 KEY POINT: No account info was exchanged at handshake!','key');
+    }},
+  ],
+
+  trade_entry: [
+    { dt: 0.6, fn() {
+      log('PY: Strategy generated LONG signal','py');
+      log('PY: MultiAccountExecutor expanding to Sim101 & Sim102...','py');
+    }},
+    { dt: 0.8, fn() {
+      log('PY → NT: ORDER_OPEN  account=Sim101  rr=3.0  risk=$100','py');
+      spawn(1, false, 'ORDER_OPEN', 'account: Sim101', '#3fb950', 1.2);
+    }},
+    { dt: 0.4, fn() {
+      log('PY → NT: ORDER_OPEN  account=Sim102  rr=5.0  risk=$200','py');
+      spawn(1, false, 'ORDER_OPEN', 'account: Sim102', '#3fb950', 1.2);
+    }},
+    { dt: 1.4, fn() {
+      log('NT: Sim101 — entry submitted, bracket pending','nt');
+      log('NT: Sim102 — entry submitted, bracket pending','nt');
+      spawn(1, true, 'COMMAND_ACK', 'order_open ✓', '#58a6ff', 1.0);
+      spawn(1, true, 'COMMAND_ACK', 'order_open ✓', '#58a6ff', 1.0);
+    }},
+    { dt: 1.0, fn() {
+      log('Market: Entry orders filled','warn');
+    }},
+    { dt: 0.6, fn() {
+      log('NT → PY: ENTRY_FILL  Sim101 @ 21250','nt');
+      spawn(0, true, 'ENTRY_FILL', 'account: Sim101', '#58a6ff', 1.2);
+    }},
+    { dt: 0.3, fn() {
+      log('NT → PY: ENTRY_FILL  Sim102 @ 21250','nt');
+      spawn(0, true, 'ENTRY_FILL', 'account: Sim102', '#58a6ff', 1.2);
+    }},
+    { dt: 1.0, fn() {
+      log('PY: 2 trades OPEN in DB (independent trade_ids)','py');
+      log('✅ One signal → N trades. Account routing is per-command.','ok');
+    }},
+  ],
+
+  modify: [
+    { dt: 0.8, fn() {
+      log('PY: Price moved in favor — move SL to breakeven','py');
+    }},
+    { dt: 0.6, fn() {
+      log('PY → NT: ORDER_MODIFY  account=Sim101  SL: 20950→21200','py');
+      spawn(1, false, 'ORDER_MODIFY', 'account: Sim101', '#3fb950', 1.2);
+    }},
+    { dt: 1.2, fn() {
+      log('NT: Sim101 — Stop_abc123 found (state=Working)','nt');
+    }},
+    { dt: 0.6, fn() {
+      log('NT: Sim101 — Cancelling stop order...','nt');
+    }},
+    { dt: 0.6, fn() {
+      log('NT: Sim101 — Creating replacement stop @ 21200','nt');
+      log('⚠️ Gap risk: ~ms without stop loss','warn');
+    }},
+    { dt: 0.4, fn() {
+      spawn(1, true, 'COMMAND_ACK', 'order_modify ✓', '#58a6ff', 1.0);
+    }},
+    { dt: 0.4, fn() {
+      spawn(0, true, 'TRADE_LOG', 'NT:MODIFY SL→21200', '#58a6ff', 1.0);
+    }},
+    { dt: 0.8, fn() {
+      log('PY: SL updated in DB for Sim101','py');
+    }},
+  ],
+
+  tp_hit: [
+    { dt: 0.8, fn() {
+      log('Market: Price hitting take profit level...','warn');
+    }},
+    { dt: 0.8, fn() {
+      log('Market: 🎯 Target filled on Sim101!','warn');
+    }},
+    { dt: 0.6, fn() {
+      log('NT: Sim101 — Cancelling working Stop order','nt');
+      log('NT: Sim101 — Removing trade from OrderTracker','nt');
+    }},
+    { dt: 0.6, fn() {
+      spawn(0, true, 'EXIT_FILL', 'TP | account: Sim101', '#58a6ff', 1.2);
+    }},
+    { dt: 1.0, fn() {
+      log('PY: Trade closed — WIN for Sim101','py');
+      log('✅ P&L calculated per-account','ok');
+    }},
+  ],
+
+  close: [
+    { dt: 0.6, fn() {
+      log('PY: Session end detected (15:00 NY)','py');
+      log('PY: Closing all open trades...','py');
+    }},
+    { dt: 0.6, fn() {
+      log('PY → NT: ORDER_CLOSE  account=Sim101','py');
+      spawn(1, false, 'ORDER_CLOSE', 'account: Sim101', '#3fb950', 1.2);
+    }},
+    { dt: 0.3, fn() {
+      log('PY → NT: ORDER_CLOSE  account=Sim102','py');
+      spawn(1, false, 'ORDER_CLOSE', 'account: Sim102', '#3fb950', 1.2);
+    }},
+    { dt: 1.0, fn() {
+      log('NT: Sim101 — Cancel SL/TP + submit close market order','nt');
+      log('NT: Sim102 — Cancel SL/TP + submit close market order','nt');
+    }},
+    { dt: 0.6, fn() {
+      spawn(1, true, 'COMMAND_ACK', 'order_close ✓', '#58a6ff', 1.0);
+      spawn(1, true, 'COMMAND_ACK', 'order_close ✓', '#58a6ff', 1.0);
+    }},
+    { dt: 0.8, fn() {
+      log('Market: Close orders filled','warn');
+    }},
+    { dt: 0.5, fn() {
+      spawn(0, true, 'EXIT_FILL', 'CLOSE | Sim101', '#58a6ff', 1.2);
+    }},
+    { dt: 0.3, fn() {
+      spawn(0, true, 'EXIT_FILL', 'CLOSE | Sim102', '#58a6ff', 1.2);
+    }},
+    { dt: 1.0, fn() {
+      log('PY: Both trades CLOSED  result_type=SP','py');
+      log('🌅 Session end complete — no overnight positions','ok');
+    }},
+  ],
+};
+
+function startScenario(name) {
+  reset();
+  scenario = name;
+  stepList = SCENARIOS[name];
+  stepIdx = 0;
+  scenarioT = 0;
+  nextStepAt = stepList[0].dt;
+
+  document.querySelectorAll('#toolbar .btn').forEach(b=>b.classList.remove('active'));
+  document.getElementById('btn-'+name).classList.add('active');
+
+  if (name==='handshake') {
+    log('=== Handshake: Watch the CONNECT packet — no account field! ===','ok');
+  } else {
+    heartbeatsOn = true; marketTicksOn = true;
+    const titles = {trade_entry:'Multi-Account Trade Entry', modify:'Stop Loss Update', tp_hit:'Take Profit Hit', close:'Session End Close'};
+    log('=== '+titles[name]+' ===','ok');
+  }
+}
+
+function reset() {
+  scenario = null; stepIdx = 0; stepList = []; nextStepAt = 0; scenarioT = 0;
+  packets = []; bursts = []; heartbeatsOn = false; marketTicksOn = false;
+  clearLog();
+  document.querySelectorAll('#toolbar .btn').forEach(b=>b.classList.remove('active'));
+}
+
+/* ---------- heartbeat & ticks (background) ---------- */
+let hbAccum = 0, tickAccum = 0;
+
+function updateBackground(dt) {
+  if (heartbeatsOn) {
+    hbAccum += dt;
+    if (hbAccum > 3/SPEED) { hbAccum = 0; spawn(3, true, 'HEARTBEAT', 'status: ok', '#d29922', 2); }
+  }
+  if (marketTicksOn) {
+    tickAccum += dt;
+    if (tickAccum > 0.4/SPEED) { tickAccum = 0; spawn(0, true, 'TICK', 'MNQ @ 21250', '#f85149', 1.8); }
+  }
+}
+
+/* ---------- main loop ---------- */
+function frame(ts) {
+  const dt = Math.min((ts - lastTs)/1000, 0.05);
+  lastTs = ts;
+
+  // scenario steps
+  if (scenario && stepIdx < stepList.length) {
+    scenarioT += dt * SPEED;
+    if (scenarioT >= nextStepAt) {
+      stepList[stepIdx].fn();
+      stepIdx++;
+      if (stepIdx < stepList.length) {
+        nextStepAt += stepList[stepIdx].dt;
+      }
+    }
+  }
+
+  updateBackground(dt * SPEED);
+
+  packets.forEach(p=>p.update(dt * SPEED));
+  packets = packets.filter(p=>!p.dead);
+
+  bursts.forEach(b=>{ b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dt; });
+  bursts = bursts.filter(b=>b.life>0);
+
+  draw();
+  requestAnimationFrame(frame);
+}
+
+/* ---------- bindings ---------- */
+document.getElementById('btn-handshake').onclick = ()=>startScenario('handshake');
+document.getElementById('btn-entry').onclick   = ()=>startScenario('trade_entry');
+document.getElementById('btn-modify').onclick  = ()=>startScenario('modify');
+document.getElementById('btn-tp').onclick      = ()=>startScenario('tp_hit');
+document.getElementById('btn-close').onclick   = ()=>startScenario('close');
+document.getElementById('btn-reset').onclick   = reset;
+
+log('👋 Click a scenario button to animate the flow','ok');
+log('🔑 Watch for the account field — it ONLY appears during trades, never in handshake','key');
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
