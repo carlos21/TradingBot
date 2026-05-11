@@ -189,6 +189,10 @@ class AppConfig:
     """Identifier for this app instance. Included in log output to help
     distinguish between multiple running instances."""
 
+    platform_type: str = "ninjatrader"
+    """Platform this instance connects to: ``"ninjatrader"`` or ``"metatrader"``.
+    Drives UI labels, auto-launch behaviour, and admin tabs."""
+
     # ------------------------------------------------------------------
     # Infra
     # ------------------------------------------------------------------

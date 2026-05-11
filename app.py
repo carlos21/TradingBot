@@ -55,7 +55,8 @@ def main():
     signal.signal(signal.SIGTERM, _signal_handler)
 
     if config.mode == "live":
-        if not getattr(config, "nt_accounts", None):
+        platform_label = "NinjaTrader" if config.platform_type == "ninjatrader" else "MetaTrader"
+        if config.platform_type == "ninjatrader" and not getattr(config, "nt_accounts", None):
             print(f"[{instance}] WARNING: No NT accounts configured. Live streaming will be unavailable until accounts are added.")
         else:
             print(f"[{instance}] Starting ZeroMQ gateway...")

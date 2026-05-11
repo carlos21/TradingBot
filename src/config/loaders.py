@@ -105,6 +105,7 @@ class EnvConfigLoader:
         "LOG_DIR": ("log_dir", str),
         "FLASK_PORT": ("flask_port", int),
         "INSTANCE_NAME": ("instance_name", str),
+        "PLATFORM_TYPE": ("platform_type", str),
         "BROKER_MODE": ("broker_mode", str),
         "BROKER_SPREAD": ("broker_spread", float),
         "BOOTSTRAP_EXISTING_LINES": ("bootstrap_existing_lines", lambda _v: _bool_env("BOOTSTRAP_EXISTING_LINES", True)),
@@ -177,6 +178,7 @@ class CliConfigLoader:
         p.add_argument("--log-dir", dest="log_dir", help="Log directory (e.g. logs/ninja)")
         p.add_argument("--flask-port", dest="flask_port", type=int, help="Flask server port")
         p.add_argument("--instance-name", dest="instance_name", help="Instance identifier for logs")
+        p.add_argument("--platform-type", dest="platform_type", choices=["ninjatrader", "metatrader"], help="Trading platform this instance connects to")
         p.add_argument("--broker-mode", dest="broker_mode", choices=["futures", "cfd"], help="Broker mode")
         p.add_argument("--broker-spread", dest="broker_spread", type=float, help="Broker spread")
         p.add_argument("--no-bootstrap-lines", dest="bootstrap_existing_lines", action="store_false", help="Skip bootstrapping lines")

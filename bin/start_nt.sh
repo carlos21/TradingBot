@@ -15,6 +15,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 export MODE="live"
 export INSTANCE_NAME="${INSTANCE_NAME:-ninja}"
+export PLATFORM_TYPE="${PLATFORM_TYPE:-ninjatrader}"
 export PAIR="${PAIR:-MNQ}"
 
 # Isolation: separate DB, logs, and Flask port

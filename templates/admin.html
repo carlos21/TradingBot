@@ -402,6 +402,7 @@
     </div>
 
     <!-- NinjaTrader Tab -->
+    {% if is_ninjatrader %}
     <div id="ninjatrader-tab" class="tab-content {% if active_tab != 'ninjatrader' %}hidden{% endif %}">
       <h2 class="text-2xl font-bold mb-6">NinjaTrader</h2>
 
@@ -445,6 +446,52 @@
         <div id="nt-install-netmq-result" class="mt-2 text-sm text-gray-300"></div>
       </div>
     </div>
+    {% endif %}
+
+    <!-- MetaTrader Tab -->
+    {% if is_metatrader %}
+    <div id="metatrader-tab" class="tab-content {% if active_tab != 'metatrader' %}hidden{% endif %}">
+      <h2 class="text-2xl font-bold mb-6">MetaTrader 5</h2>
+
+      <div class="bg-gray-800 rounded-xl p-6 border border-gray-700 mb-6">
+        <h3 class="text-lg font-semibold mb-4">Connection</h3>
+        <p class="text-gray-400 text-sm mb-4">
+          MetaTrader 5 connects via the <code>TradingBotZmqEA.mq5</code> Expert Advisor.
+          Attach the EA to a chart and it will auto-connect using the ZMQ ports configured for this instance.
+        </p>
+        <div class="mt-2 text-sm text-gray-400">
+          <p>Default MetaTrader ports: <span class="font-mono text-white">5565</span> (market), <span class="font-mono text-white">5566</span> (commands), <span class="font-mono text-white">5567</span> (queries), <span class="font-mono text-white">5568</span> (heartbeat).</p>
+          <p class="mt-1">Make sure the EA inputs match the ports this Python instance is bound to.</p>
+        </div>
+      </div>
+
+      <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+        <h3 class="text-lg font-semibold mb-4">Setup Checklist</h3>
+        <ul class="space-y-2 text-sm text-gray-300">
+          <li class="flex items-start gap-2">
+            <span class="text-green-400">✓</span>
+            <span>Install ZeroMQ library for MQL5 (<code>MQL5/Include/Zmq/</code>)</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="text-green-400">✓</span>
+            <span>Copy EA files to <code>MQL5/Experts/TradingBot/</code></span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="text-green-400">✓</span>
+            <span>Compile <code>TradingBotZmqEA.mq5</code> in MetaEditor</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="text-green-400">✓</span>
+            <span>Attach EA to chart and set ports to match this instance</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="text-green-400">✓</span>
+            <span>Click <strong>Connect</strong> in the EA dialog</span>
+          </li>
+        </ul>
+      </div>
+    </div>
+    {% endif %}
 
 
   <!-- Trade Detail Modal -->

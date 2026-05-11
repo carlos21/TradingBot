@@ -77,10 +77,18 @@
            class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'settings' %}active{% endif %}">
           ⚙️ Settings
         </a>
+        {% if is_ninjatrader %}
         <a href="/admin/ninjatrader"
            class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'ninjatrader' %}active{% endif %}">
           📡 NinjaTrader
         </a>
+        {% endif %}
+        {% if is_metatrader %}
+        <a href="/admin/metatrader"
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'metatrader' %}active{% endif %}">
+          📡 MetaTrader
+        </a>
+        {% endif %}
       </div>
     </nav>
   </aside>

@@ -10,11 +10,13 @@
 {% endblock %}
 
 {% block content %}
+  {% if is_ninjatrader %}
   <!-- Warning banner for missing accounts -->
   <div id="ntAccountsWarning" class="hidden px-4 py-2 bg-red-700 text-white text-center font-bold text-sm">
     ⚠️ No NT accounts configured — live trading is disabled.
     <a href="/admin/settings" class="underline hover:text-yellow-300">Add accounts in Settings →</a>
   </div>
+  {% endif %}
 
   <!-- Connection Overlay (live mode only, shown until connected) -->
   <div id="connectionOverlay" class="hidden absolute inset-0 z-40 flex items-center justify-center bg-gray-900">
@@ -26,7 +28,7 @@
           </svg>
         </div>
         <h2 class="text-2xl font-bold text-white mb-2">Ready to Trade</h2>
-        <p class="text-gray-400 text-sm">Start streaming to connect with NinjaTrader and load live market data.</p>
+        <p class="text-gray-400 text-sm">Start streaming to connect with {{ platform_label }} and load live market data.</p>
       </div>
 
       <button
@@ -67,10 +69,12 @@
           <button data-timeframe="1h"  class="px-2 py-1 rounded bg-gray-900 text-white">1h</button>
           <button data-timeframe="4h"  class="px-2 py-1 rounded bg-gray-900 text-white">4h</button>
         </div>
+        {% if is_ninjatrader %}
         <!-- NT Accounts display -->
         <div id="ntAccountsDisplay" class="flex items-center space-x-1 ml-2 text-xs">
           <!-- Populated by JS -->
         </div>
+        {% endif %}
       </div>
 
       <div class="flex items-center space-x-4">

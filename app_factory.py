@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, List
 import os
+import sys
 import time
 
 from flask import Flask, jsonify
@@ -263,6 +264,7 @@ def create_app(
     analytics: AnalyticsReporter = None,
     logger: Optional[ILogger] = None,
     db: DatabaseProtocol | None = None,
+    app_config=None,
 ) -> AppWiring:
     """
     Build the whole application with injected dependencies.
@@ -272,6 +274,19 @@ def create_app(
     CORS(app)
     # Use threading async mode for better performance with local NinjaTrader
     socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+
+    # Make platform_type available to all templates
+    _platform_type = getattr(app_config, "platform_type", "ninjatrader") if app_config else "ninjatrader"
+    _platform_label = "NinjaTrader" if _platform_type == "ninjatrader" else "MetaTrader"
+
+    @app.context_processor
+    def inject_platform():
+        return {
+            "platform_type": _platform_type,
+            "platform_label": _platform_label,
+            "is_ninjatrader": _platform_type == "ninjatrader",
+            "is_metatrader": _platform_type == "metatrader",
+        }
 
     # Wire domain event bus → SocketIO bridge for decoupled notifications
     event_bus = EventBus()
@@ -559,7 +574,7 @@ def create_app(
     register_admin_routes(app, admin_controller, logger)
     register_settings_routes(app, settings_controller, logger)
     register_nt_routes(app, nt_service, logger)
-    register_stream_routes(app, data_source, nt_service, settings_service, socketio, logger)
+    register_stream_routes(app, data_source, nt_service, settings_service, socketio, logger, app_config=app_config)
     register_debug_routes(
         app, tstrategy, loader, trade_manager, repos.lines, repos.trades,
         data_source, pair, notifier, analytics, logger=logger

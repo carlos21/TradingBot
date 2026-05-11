@@ -131,6 +131,7 @@ class AppBuilder:
             bootstrap_existing_lines=cfg.bootstrap_existing_lines,
             notifier=_build_notifier(cfg),
             analytics=_build_analytics(cfg),
+            app_config=cfg,
         ), None
 
     # ------------------------------------------------------------------
@@ -218,5 +219,6 @@ class AppBuilder:
             notifier=notifier,
             analytics=analytics,
             logger=logger,
+            app_config=cfg,
         )
         return wiring, ds

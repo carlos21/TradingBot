@@ -17,7 +17,10 @@ def register_stream_routes(
     settings_service,
     socketio,
     logger: ILogger,
+    app_config=None,
 ):
+    platform_type = getattr(app_config, "platform_type", "ninjatrader") if app_config else "ninjatrader"
+    platform_label = "NinjaTrader" if platform_type == "ninjatrader" else "MetaTrader"
     """Register stream start/stop/status routes.
 
     Args:
@@ -30,14 +33,16 @@ def register_stream_routes(
     """
 
     def _maybe_launch_nt_after_delay():
-        """Background: wait a few seconds for NT to connect on its own,
-        then launch auto-login only if it hasn't."""
+        """Background: wait a few seconds for platform to connect on its own,
+        then launch auto-login only if it hasn't (NinjaTrader only)."""
+        if platform_type != "ninjatrader":
+            return
         time.sleep(4)
         if not isinstance(data_source, ZMQDataSource):
             return
         gateway = data_source.gateway
         if gateway and gateway.is_connected:
-            logger.info("[Stream] NinjaTrader connected on its own, skipping auto-login.")
+            logger.info(f"[Stream] {platform_label} connected on its own, skipping auto-login.")
             return
         try:
             settings = settings_service.get_full_settings()
@@ -46,14 +51,14 @@ def register_stream_routes(
             password = creds.get("password", "")
 
             if username and password:
-                logger.info(f"[Stream] NinjaTrader not detected after 4s, launching auto-login for {username}...")
+                logger.info(f"[Stream] {platform_label} not detected after 4s, launching auto-login for {username}...")
                 result = nt_service.open_nt_and_login(username, password)
                 if not result.get("success"):
                     logger.warning(f"[Stream] NT launch warning: {result.get('message')}")
             else:
-                logger.warning("[Stream] No NT credentials configured. Please connect NinjaTrader manually.")
+                logger.warning(f"[Stream] No NT credentials configured. Please connect {platform_label} manually.")
         except Exception as e:
-            logger.error(f"[Stream] Failed to launch NinjaTrader: {e}")
+            logger.error(f"[Stream] Failed to launch {platform_label}: {e}")
 
     @app.route("/api/stream/status", methods=["GET"])
     def api_stream_status():
@@ -85,7 +90,7 @@ def register_stream_routes(
         if gateway and gateway.is_connected:
             return jsonify({
                 "status": "already_connected",
-                "message": "NinjaTrader is already connected",
+                "message": f"{platform_label} is already connected",
             }), 200
 
         # Start gateway only if it's not already running
@@ -102,13 +107,14 @@ def register_stream_routes(
                     "message": f"Failed to start ZeroMQ gateway: {e}",
                 }), 500
 
-        # Always offer to launch NinjaTrader if it's not connected yet
-        thread = threading.Thread(target=_maybe_launch_nt_after_delay, daemon=True)
-        thread.start()
+        # Always offer to launch platform auto-login if it's not connected yet (NT only)
+        if platform_type == "ninjatrader":
+            thread = threading.Thread(target=_maybe_launch_nt_after_delay, daemon=True)
+            thread.start()
 
         return jsonify({
             "status": "starting",
-            "message": "ZeroMQ gateway started; waiting for NinjaTrader...",
+            "message": f"ZeroMQ gateway started; waiting for {platform_label}...",
         }), 200
 
     @app.route("/api/stream/stop", methods=["POST"])

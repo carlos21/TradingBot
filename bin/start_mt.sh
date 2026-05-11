@@ -15,6 +15,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 export MODE="live"
 export INSTANCE_NAME="${INSTANCE_NAME:-meta}"
+export PLATFORM_TYPE="${PLATFORM_TYPE:-metatrader}"
 export PAIR="${PAIR:-EURUSD}"
 
 # Isolation: separate DB, logs, and Flask port

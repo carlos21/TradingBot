@@ -7,7 +7,7 @@ from src.utils.app_logger import ILogger
 
 ADMIN_PAGES = {
     'overview', 'trades', 'lines', 'analytics',
-    'decisions', 'settings', 'ninjatrader',
+    'decisions', 'settings', 'ninjatrader', 'metatrader',
 }
 
 
