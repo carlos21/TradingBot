@@ -319,7 +319,7 @@ function Find-TryItDialog {
             $buttons = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond)
             for ($j = 0; $j -lt $buttons.Count; $j++) {
                 $btn = $buttons[$j]
-                if ($btn.Current.Name -match "Try it|Try It|TRY IT") {
+                if ($btn.Current.Name -match "Launch|LAUNCH|launch") {
                     return @{ Button = $btn; Window = $win; Hwnd = $winHandle }
                 }
             }
@@ -492,20 +492,20 @@ try {
         Write-Host "Login submitted via SendKeys." -ForegroundColor Green
     }
 
-    # -- Dismiss "Try it" post-login dialog if it appears --
+    # -- Dismiss "Launch" post-login dialog if it appears --
     Write-Host "Checking for post-login dialogs..." -ForegroundColor Yellow
-    $tryIt = Find-TryItDialog -ProcessId $ntProcess.Id -TimeoutSeconds 30
-    if ($tryIt) {
-        Write-Host "Found 'Try it' dialog. Clicking it..." -ForegroundColor Green
-        Set-ForegroundWindowRobust -hWnd $tryIt.Hwnd
+    $launchDlg = Find-TryItDialog -ProcessId $ntProcess.Id -TimeoutSeconds 30
+    if ($launchDlg) {
+        Write-Host "Found 'Launch' dialog. Clicking it..." -ForegroundColor Green
+        Set-ForegroundWindowRobust -hWnd $launchDlg.Hwnd
         Start-Sleep -Milliseconds 800
 
         # Focus the button itself so Enter will trigger it
-        try { $tryIt.Button.SetFocus() } catch {}
+        try { $launchDlg.Button.SetFocus() } catch {}
         Start-Sleep -Milliseconds 300
         [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
 
-        Write-Host "'Try it' dialog dismissed." -ForegroundColor Green
+        Write-Host "'Launch' dialog dismissed." -ForegroundColor Green
     }
 
     # -- Wait for exit if requested --
