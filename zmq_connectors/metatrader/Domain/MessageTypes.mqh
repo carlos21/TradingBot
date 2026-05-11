@@ -18,6 +18,9 @@
 #define MT_CONNECT        "connect"
 #define MT_POSITION_SYNC  "position_sync"
 #define MT_COMMAND_ACK    "command_ack"
+#define MT_ORDER_REJECTED "order_rejected"
+#define MT_DISCONNECT     "disconnect"
+#define MT_REFRESH_START  "refresh_start"
 
 // Python → Platform (commands)
 #define MT_ORDER_OPEN     "order_open"
@@ -29,6 +32,8 @@
 // Bidirectional queries (REQ/REP)
 #define MT_TEST_PING      "test_ping"
 #define MT_TEST_PONG      "test_pong"
+#define MT_TEST_STATUS    "test_status"
+#define MT_TEST_RESULT    "test_result"
 #define MT_POSITION_QUERY "position_query"
 #define MT_POSITION_RESPONSE "position_response"
 #define MT_CONFIG_QUERY   "config_query"

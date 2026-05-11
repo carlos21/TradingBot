@@ -138,6 +138,8 @@ public:
    virtual void SendConnect(string platform, string version, string account, string pair) = 0;
    virtual void SendCommandAck(string commandType, long seqNum, bool success, string tradeId, string message) = 0;
    virtual void SendPositionSync(JSONValue *positionsArray, JSONValue *untrackedArray) = 0;
+   virtual void SendTestStart(string scenario, double entryPrice, double riskPoints, double rrRatio) = 0;
+   virtual void SendTestResult(string scenario, bool passed, string tradeId, string message) = 0;
 
    // Receive methods (Python → Platform)
    virtual MessageEnvelope *ReceiveCommand(int timeoutMs) = 0;

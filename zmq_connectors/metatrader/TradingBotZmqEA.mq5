@@ -62,6 +62,8 @@ TestStartHandler     *_handlerTest;
 
 //--- State
 bool               _connected = false;
+bool               g_simulateTrades = false;   // Simulate mode: skip broker, send fake fills
+bool               g_e2eTestRunning = false;   // Forces simulate mode during E2E tests
 long               _seqNum = 0;
 datetime           _lastBarTime = 0;
 int                _heartbeatCounter = 0;
@@ -90,12 +92,6 @@ bool               g_dialogCreated = false;
 //+------------------------------------------------------------------+
 //| UI Callbacks                                                     |
 //+------------------------------------------------------------------+
-void LogToUI(string msg)
-{
-   if(g_dialog != NULL)
-      g_dialog.Log(msg);
-}
-
 void OnConnectClick(void)
 {
    ToggleConnection();
@@ -133,11 +129,13 @@ int OnInit()
 
    // 2. Create logger
    _logger = new MetaTraderLogger("[ZMQ]");
-   _logger.SetUICallback(LogToUI);
 
-   // 3. Create and show dialog
+   // 3. Clean up any orphaned dialog from previous runs (Destroy can fail during OnDeinit)
+   ForceRemoveOrphanedDialog();
+   
+   // 4. Create and show dialog
    g_dialog = new CConnectorDialog();
-   if(!g_dialog.Create(0, "TradingBotZmqDialog", 0, 100, 100, 660, 540))
+   if(!g_dialog.Create(0, "TradingBotZmqDialog", 0, 100, 100, 660, 460))
    {
       _logger.Error("Failed to create connector dialog");
       delete g_dialog;
@@ -147,7 +145,6 @@ int OnInit()
    }
    g_dialogCreated = true;
    g_dialog.SetHandlers(OnConnectClick, OnTestClick, OnE2EClick);
-   g_dialog.Log("Window opened. Click Connect to start ZMQ connection.");
 
    _logger.Info("Liquid ZMQ Connector UI ready");
    UpdatePanel();
@@ -225,6 +222,23 @@ void OnTrade()
 //+------------------------------------------------------------------+
 void OnChartEvent(const int id, const long &lparam, const double &dparam, const string &sparam)
 {
+   // Detect close-button click on the dialog caption (raw object click bypassing Controls event system)
+   if(id == CHARTEVENT_OBJECT_CLICK)
+   {
+      if(StringFind(sparam, "TradingBotZmqDialog") >= 0 && StringFind(sparam, "Close") >= 0)
+      {
+         if(g_dialog != NULL)
+         {
+            g_dialog.Destroy();              // may fail silently
+            ForceRemoveOrphanedDialog();     // brute-force remove any leftovers
+            delete g_dialog;
+            g_dialog = NULL;
+            g_dialogCreated = false;
+         }
+         return;
+      }
+   }
+   
    if(g_dialog == NULL) return;
    
    // Forward all chart events to the dialog for processing
@@ -259,20 +273,8 @@ void Connect()
       return;
    }
 
-   // Query config from Python (account name, etc.)
-   string configuredAccount = _network.QueryConfig("account", 2000);
-   if(StringLen(configuredAccount) > 0)
-   {
-      if(_logger != NULL)
-         _logger.Info("Python specified account: " + configuredAccount);
-   }
-   else
-   {
-      configuredAccount = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
-   }
-
-   // Send connect handshake
-   _network.SendConnect("metatrader5", _config.platformVersion, configuredAccount, _Symbol);
+   // Send connect handshake (minimal — account name not critical, mirroring NinjaTrader)
+   _network.SendConnect("metatrader5", _config.platformVersion, IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)), _Symbol);
    if(_logger != NULL)
       _logger.Success("Connected to Python TradingBot via ZeroMQ");
 
@@ -282,15 +284,22 @@ void Connect()
    // Report positions to Python (source of truth sync)
    ReportPositionsToPython();
 
-   // Send historical data
-   _historyProvider.SendHistory();
-
    // Setup command dispatcher
+   // NOTE: Historical data is NOT sent automatically on connect.
+   // Python requests it explicitly via REFRESH_REQUEST when needed.
    _dispatcher = new CommandDispatcher(_logger);
 
-   _handlerOpen = new OrderOpenHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
-   _handlerClose = new OrderCloseHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
-   _handlerModify = new OrderModifyHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol);
+   // Capture simulate mode from UI checkbox or config at connect time
+   bool simulate = g_simulateTrades;
+   if(g_dialog != NULL && g_dialog.IsSimulateChecked())
+      simulate = true;
+   if(_config.simulateTrades)
+      simulate = true;
+   g_simulateTrades = simulate;
+
+   _handlerOpen = new OrderOpenHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol, simulate);
+   _handlerClose = new OrderCloseHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol, simulate);
+   _handlerModify = new OrderModifyHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol, simulate);
    _handlerRefresh = new RefreshRequestHandler(_network, _logger, _historyProvider);
    _handlerTest = new TestStartHandler(_network, _logger);
 
@@ -395,8 +404,14 @@ void RunE2ETests()
    if(g_dialog != NULL)
       g_dialog.SetButtonEnabled(2, false);
    
+   // Force simulate mode during E2E tests (safety)
+   g_e2eTestRunning = true;
+   
    E2ETestRunner runner(_network, _logger);
    runner.RunAllScenarios();
+   
+   // Reset test flag
+   g_e2eTestRunning = false;
    
    if(g_dialog != NULL)
       g_dialog.SetButtonEnabled(2, true);
@@ -470,28 +485,41 @@ void PollCommands()
       MessageEnvelope *env = _network.ReceiveCommand(0);
       if(env == NULL) break;
 
-      // Duplicate detection
+      string msgType = env.MsgType();
       long seqNum = env.SeqNum();
+      string tradeId = env.PayloadString("trade_id");
+
+      // Duplicate detection
       if(seqNum > 0 && IsDuplicateCommand(seqNum))
       {
-         _logger.Warning("Duplicate command ignored: " + env.MsgType() + " seq=" + IntegerToString(seqNum));
-         _network.SendCommandAck(env.MsgType(), seqNum, true, "", "duplicate");
+         if(_logger != NULL)
+            _logger.Warning("Duplicate command ignored: " + msgType + " seq=" + IntegerToString(seqNum));
+         _network.SendCommandAck(msgType, seqNum, true, tradeId, "duplicate");
          delete env;
          continue;
       }
 
       _commandsReceived++;
 
-      // Extract trade_id for ack
-      string tradeId = env.PayloadString("trade_id");
-
-      // Dispatch command
+      // Dispatch command with detailed error handling
       bool success = _dispatcher.Dispatch(env);
 
-      // Send command ack
-      _network.SendCommandAck(env.MsgType(), seqNum, success, tradeId, success ? "" : "dispatch_failed");
+      if(success)
+      {
+         _network.SendCommandAck(msgType, seqNum, true, tradeId, "");
+      }
+      else
+      {
+         if(_logger != NULL)
+            _logger.Error("Command dispatch failed: " + msgType);
+         _network.SendCommandAck(msgType, seqNum, false, tradeId, "handler returned failure");
+         _network.SendError("metatrader5", "command_dispatch_failed", msgType + ": handler returned failure");
+      }
 
       delete env;
+
+      if(_commandsReceived % 10 == 0)
+         UpdatePanel();
    }
 }
 
@@ -553,6 +581,12 @@ void ReportPositionsToPython()
    JSONValue *positions = new JSONValue(JSON_ARRAY);
    JSONValue *untracked = new JSONValue(JSON_ARRAY);
    int count = 0;
+   int untrackedCount = 0;
+
+   // Build set of tracked trade IDs for orphan detection
+   string trackedTradeIds[];
+   if(_orderTracker != NULL)
+      _orderTracker.GetActiveTradeIds(trackedTradeIds);
 
    for(int i = 0; i < total; i++)
    {
@@ -571,17 +605,41 @@ void ReportPositionsToPython()
       pos["take_profit"]= new JSONValue(PositionGetDouble(POSITION_TP));
       pos["quantity"]   = new JSONValue(PositionGetDouble(POSITION_VOLUME));
 
-      positions.Add(pos);
+      // Check if this trade is tracked (orphan detection)
+      bool isTracked = false;
+      for(int j = 0; j < ArraySize(trackedTradeIds); j++)
+      {
+         if(trackedTradeIds[j] == tradeId)
+         {
+            isTracked = true;
+            break;
+         }
+      }
+
+      if(isTracked)
+      {
+         positions.Add(pos);
+         count++;
+      }
+      else
+      {
+         untracked.Add(pos);
+         untrackedCount++;
+      }
       // NOTE: Add() takes ownership — do NOT delete pos
-      count++;
    }
 
    _network.SendPositionSync(positions, untracked);
    // NOTE: SendPositionSync puts arrays into a payload tree which is then deleted.
    // Do NOT delete positions or untracked here.
 
-   if(count > 0)
-      _logger.Info("[Sync] Reported " + IntegerToString(count) + " position(s) to Python");
+   if(count > 0 || untrackedCount > 0)
+   {
+      if(_logger != NULL)
+         _logger.Info("[Sync] Reported " + IntegerToString(count) + " position(s) to Python (broker is source of truth)");
+      if(_logger != NULL && untrackedCount > 0)
+         _logger.Warning("[Sync] Found " + IntegerToString(untrackedCount) + " untracked position(s) on broker");
+   }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -703,6 +761,32 @@ void UpdatePanel()
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Brute-force dialog removal (Controls library objects resist batch delete)
+// ═══════════════════════════════════════════════════════════════════
+
+void ForceRemoveOrphanedDialog()
+{
+   long chartId = ChartID();
+   // First try batch delete
+   ObjectsDeleteAll(chartId, "TradingBotZmqDialog", -1, -1);
+   
+   // Then individually hunt down any survivors
+   for(int sub = 0; sub <= 1; sub++)
+   {
+      int total = ObjectsTotal(chartId, sub, -1);
+      for(int i = total - 1; i >= 0; i--)
+      {
+         string objName = ObjectName(chartId, i, sub, -1);
+         if(StringFind(objName, "TradingBotZmqDialog") >= 0)
+         {
+            ObjectDelete(chartId, objName);
+         }
+      }
+   }
+   ChartRedraw();
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Cleanup
 // ═══════════════════════════════════════════════════════════════════
 
@@ -713,7 +797,10 @@ void Cleanup(const int reason = 0)
    if(g_dialog != NULL)
    {
       if(g_dialogCreated)
-         g_dialog.Destroy(reason);
+      {
+         g_dialog.Destroy(reason);              // may fail silently
+         ForceRemoveOrphanedDialog();            // brute-force remove any leftovers
+      }
       delete g_dialog;
       g_dialog = NULL;
       g_dialogCreated = false;

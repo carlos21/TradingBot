@@ -25,6 +25,7 @@ public:
    int    batchSize;
    bool   autoConnectOnStartup;
    bool   autoShowPanel;
+   bool   simulateTrades;
    string platformVersion;
 
    // Default constructor
@@ -43,6 +44,7 @@ public:
       batchSize = 500;
       autoConnectOnStartup = true;
       autoShowPanel = true;
+      simulateTrades = false;
       platformVersion = "2.0.0";
    }
 };

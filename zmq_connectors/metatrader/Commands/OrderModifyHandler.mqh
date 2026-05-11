@@ -20,15 +20,17 @@ private:
    IOrderTracker *m_tracker;
    ulong          m_magicNumber;
    string         m_symbol;
+   bool           m_simulate;
 
 public:
-   OrderModifyHandler(IZmqNetwork *network, ILogger *logger, IOrderTracker *tracker, ulong magicNumber, string symbol)
+   OrderModifyHandler(IZmqNetwork *network, ILogger *logger, IOrderTracker *tracker, ulong magicNumber, string symbol, bool simulate = false)
    {
       m_network = network;
       m_logger = logger;
       m_tracker = tracker;
       m_magicNumber = magicNumber;
       m_symbol = symbol;
+      m_simulate = simulate;
    }
 
    ~OrderModifyHandler() {}
@@ -54,6 +56,17 @@ public:
          if(m_logger != NULL)
             m_logger.Error("OrderModifyHandler: missing trade_id");
          return false;
+      }
+
+      // --- SIMULATE MODE: Log and return success, NO broker interaction ---
+      if(m_simulate || g_e2eTestRunning)
+      {
+         double newSl = envelope.PayloadDouble("stop_loss");
+         double newTp = envelope.PayloadDouble("take_profit");
+         if(m_logger != NULL)
+            m_logger.Info("🧪 SIMULATE MODIFY: " + tradeId + " SL=" + DoubleToString(newSl, 5) + " TP=" + DoubleToString(newTp, 5));
+         m_network.SendTradeLog(tradeId, "MT5:SIMULATE", "Simulated modify SL=" + DoubleToString(newSl, 5) + " TP=" + DoubleToString(newTp, 5));
+         return true;
       }
 
       // Find ticket

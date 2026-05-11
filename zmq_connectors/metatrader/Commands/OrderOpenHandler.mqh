@@ -19,15 +19,17 @@ private:
    IOrderTracker *m_tracker;
    ulong         m_magicNumber;
    string        m_symbol;
+   bool          m_simulate;
 
 public:
-   OrderOpenHandler(IZmqNetwork *network, ILogger *logger, IOrderTracker *tracker, ulong magicNumber, string symbol)
+   OrderOpenHandler(IZmqNetwork *network, ILogger *logger, IOrderTracker *tracker, ulong magicNumber, string symbol, bool simulate = false)
    {
       m_network = network;
       m_logger = logger;
       m_tracker = tracker;
       m_magicNumber = magicNumber;
       m_symbol = symbol;
+      m_simulate = simulate;
    }
 
    ~OrderOpenHandler() {}
@@ -63,6 +65,41 @@ public:
          if(m_logger != NULL)
             m_logger.Error("OrderOpenHandler: missing trade_id or direction");
          return false;
+      }
+
+      // --- SIMULATE MODE: Send fake fill instantly, NO broker interaction ---
+      if(m_simulate || g_e2eTestRunning)
+      {
+         double simPrice = (entryPrice > 0) ? entryPrice : SymbolInfoDouble(m_symbol, SYMBOL_BID);
+         double simSl = sl;
+         double simTp = tp;
+         if(simSl == 0 && riskPoints > 0)
+            simSl = (direction == "long") ? (simPrice - riskPoints * _Point) : (simPrice + riskPoints * _Point);
+         if(simTp == 0 && riskPoints > 0 && rrRatio > 0)
+            simTp = (direction == "long") ? (simPrice + riskPoints * rrRatio * _Point) : (simPrice - riskPoints * rrRatio * _Point);
+         int digits = (int)SymbolInfoInteger(m_symbol, SYMBOL_DIGITS);
+         simSl = NormalizeDouble(simSl, digits);
+         simTp = NormalizeDouble(simTp, digits);
+
+         if(m_logger != NULL)
+            m_logger.Info("🧪 SIMULATE OPEN: " + tradeId + " " + direction + " " + m_symbol + " @ " + DoubleToString(simPrice, 5) + " SL=" + DoubleToString(simSl, 5) + " TP=" + DoubleToString(simTp, 5));
+         m_network.SendEntryFill(tradeId, simPrice, simSl, simTp);
+         m_network.SendTradeLog(tradeId, "MT5:SIMULATE", "Simulated entry fill " + direction + " @ " + DoubleToString(simPrice, 5));
+         return true;
+      }
+
+      // Guard: prevent duplicate open for same trade_id
+      if(m_tracker != NULL)
+      {
+         ulong existingTicket = 0;
+         double existingSl = 0, existingRr = 0;
+         if(m_tracker.TryGetEntry(tradeId, existingTicket, existingSl, existingRr))
+         {
+            if(m_logger != NULL)
+               m_logger.Warning("Duplicate place_order for " + tradeId + ", ignoring");
+            m_network.SendTradeLog(tradeId, "MT5:WARNING", "Duplicate place_order request ignored");
+            return true;
+         }
       }
 
       // Calculate dynamic lot size

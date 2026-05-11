@@ -19,15 +19,17 @@ private:
    IOrderTracker *m_tracker;
    ulong          m_magicNumber;
    string         m_symbol;
+   bool           m_simulate;
 
 public:
-   OrderCloseHandler(IZmqNetwork *network, ILogger *logger, IOrderTracker *tracker, ulong magicNumber, string symbol)
+   OrderCloseHandler(IZmqNetwork *network, ILogger *logger, IOrderTracker *tracker, ulong magicNumber, string symbol, bool simulate = false)
    {
       m_network = network;
       m_logger = logger;
       m_tracker = tracker;
       m_magicNumber = magicNumber;
       m_symbol = symbol;
+      m_simulate = simulate;
    }
 
    ~OrderCloseHandler() {}
@@ -55,6 +57,35 @@ public:
          return false;
       }
 
+      // --- SIMULATE MODE: Send fake exit fill instantly, NO broker interaction ---
+      if(m_simulate || g_e2eTestRunning)
+      {
+         if(m_logger != NULL)
+            m_logger.Info("🧪 SIMULATE CLOSE: " + tradeId);
+         m_network.SendExitFill(tradeId, SymbolInfoDouble(m_symbol, SYMBOL_BID), "CLOSE");
+         m_network.SendTradeLog(tradeId, "MT5:SIMULATE", "Simulated exit fill (close)");
+         return true;
+      }
+
+      // Guard: if trade is not tracked, it may already be closed
+      if(m_tracker != NULL)
+      {
+         ulong entryTicket = 0;
+         double slPoints, rrRatio;
+         bool hasEntry = m_tracker.TryGetEntry(tradeId, entryTicket, slPoints, rrRatio);
+         ulong stopTicket = 0, targetTicket = 0, closeTicket = 0;
+         bool hasStop = m_tracker.TryGetStopLoss(tradeId, stopTicket);
+         bool hasTarget = m_tracker.TryGetTakeProfit(tradeId, targetTicket);
+         bool hasClose = m_tracker.TryGetCloseOrder(tradeId, closeTicket);
+         if(!hasEntry && !hasStop && !hasTarget && !hasClose)
+         {
+            if(m_logger != NULL)
+               m_logger.Warning("[Close:" + tradeId + "] Trade not tracked — already closed or never opened. Ignoring.");
+            m_network.SendTradeLog(tradeId, "MT5:WARNING", "Close ignored: trade not tracked");
+            return true;
+         }
+      }
+
       // Find ticket from tracker
       ulong ticket = 0;
       if(m_tracker != NULL)
@@ -72,16 +103,20 @@ public:
       if(ticket == 0)
       {
          if(m_logger != NULL)
-            m_logger.Error("OrderCloseHandler: no open position for trade_id=" + tradeId);
-         m_network.SendError("metatrader5", "order_close_failed", "Position not found: " + tradeId);
-         return false;
+            m_logger.Warning("OrderCloseHandler: no open position for trade_id=" + tradeId + " — may already be closed");
+         // Remove from tracker since position is gone
+         if(m_tracker != NULL)
+            m_tracker.RemoveTrade(tradeId);
+         return true;
       }
 
       if(!PositionSelectByTicket(ticket))
       {
          if(m_logger != NULL)
-            m_logger.Error("OrderCloseHandler: PositionSelectByTicket failed for " + tradeId);
-         return false;
+            m_logger.Warning("OrderCloseHandler: PositionSelectByTicket failed for " + tradeId + " — may already be closed");
+         if(m_tracker != NULL)
+            m_tracker.RemoveTrade(tradeId);
+         return true;
       }
 
       // Build close request

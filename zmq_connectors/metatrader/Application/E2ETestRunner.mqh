@@ -1,13 +1,15 @@
 //+------------------------------------------------------------------+
 //|                                Application/E2ETestRunner.mqh     |
-//|  Basic end-to-end test scenarios.                                |
+//|  End-to-end test runner — orchestrates test scenarios.           |
+//|  Mirrors NinjaTrader ZmqE2ETestRunner behavior.                  |
 //+------------------------------------------------------------------+
 #property strict
 
 #include "../Domain/Contracts.mqh"
+#include "../Domain/MessageTypes.mqh"
 
 //+------------------------------------------------------------------+
-//| E2ETestRunner — runs connectivity and basic trade tests          |
+//| E2ETestRunner — runs full E2E test suite                         |
 //+------------------------------------------------------------------+
 class E2ETestRunner
 {
@@ -27,58 +29,97 @@ public:
    //--- Run all test scenarios
    void RunAllScenarios()
    {
-      if(m_logger != NULL)
-         m_logger.Info("=== E2E TESTS START ===");
-
-      TestPingPong();
-      TestSendTick();
-      TestSendBar();
-
-      if(m_logger != NULL)
-         m_logger.Info("=== E2E TESTS COMPLETE ===");
-   }
-
-   //--- Test 1: REQ/REP ping/pong
-   void TestPingPong()
-   {
-      if(m_logger != NULL)
-         m_logger.Info("[E2E] Testing ping/pong...");
-
-      bool ok = m_network.SendTestPingWithResponse(2000);
-      if(ok)
+      // Final safety validation
+      if(!ValidateSimulationEnvironment())
       {
          if(m_logger != NULL)
-            m_logger.Success("[E2E] Ping/Pong: PASSED");
+            m_logger.Error("E2E TESTS ABORTED: Simulation environment validation failed.");
+         return;
       }
-      else
+
+      if(m_logger != NULL)
+         m_logger.Info("=== E2E TESTS STARTING ===");
+
+      int passed = 0;
+
+      // Basic scenarios
+      string basicScenarios[3];
+      basicScenarios[0] = "tp_hit";
+      basicScenarios[1] = "sl_hit";
+      basicScenarios[2] = "session_end";
+
+      // Feature scenarios (multi_account skipped — single-account platform)
+      string featureScenarios[5];
+      featureScenarios[0] = "command_ack";
+      featureScenarios[1] = "duplicate_detection";
+      featureScenarios[2] = "position_sync";
+      featureScenarios[3] = "order_modify";
+      featureScenarios[4] = "multi_account";
+
+      // Run basic scenarios
+      for(int i = 0; i < ArraySize(basicScenarios); i++)
       {
+         string scenario = basicScenarios[i];
          if(m_logger != NULL)
-            m_logger.Warning("[E2E] Ping/Pong: FAILED");
+            m_logger.Info("--- Testing scenario: " + scenario + " ---");
+
+         m_network.SendTestStart(scenario, 21000.0, 80.0, 1.0);
+         Sleep(1500);
+
+         if(m_logger != NULL)
+            m_logger.Info("[TEST] Scenario " + scenario + ": Completed");
+         passed++;
+
+         Sleep(500);
+      }
+
+      // Run feature scenarios
+      for(int i = 0; i < ArraySize(featureScenarios); i++)
+      {
+         string scenario = featureScenarios[i];
+         if(m_logger != NULL)
+            m_logger.Info("--- Testing feature: " + scenario + " ---");
+
+         if(scenario == "multi_account")
+         {
+            if(m_logger != NULL)
+               m_logger.Warning("[TEST] multi_account: Skipped on MetaTrader (single-account platform)");
+            continue;
+         }
+
+         m_network.SendTestStart(scenario, 21000.0, 80.0, 1.0);
+         Sleep(1500);
+
+         if(m_logger != NULL)
+            m_logger.Info("[TEST] Feature " + scenario + ": Completed");
+         passed++;
+
+         Sleep(500);
+      }
+
+      int total = ArraySize(basicScenarios) + ArraySize(featureScenarios) - 1; // minus skipped multi_account
+      if(m_logger != NULL)
+      {
+         m_logger.Info("=== E2E TESTS COMPLETE: " + IntegerToString(passed) + "/" + IntegerToString(total) + " scenarios completed ===");
+         m_logger.Info("Note: Check logs above for any errors. 'Completed' means the scenario was orchestrated, not that all commands succeeded.");
       }
    }
 
-   //--- Test 2: Send a dummy tick
-   void TestSendTick()
+private:
+   //--- Validates that the account is a simulation/demo account
+   bool ValidateSimulationEnvironment()
    {
-      if(m_logger != NULL)
-         m_logger.Info("[E2E] Testing tick send...");
+      ENUM_ACCOUNT_TRADE_MODE tradeMode = (ENUM_ACCOUNT_TRADE_MODE)AccountInfoInteger(ACCOUNT_TRADE_MODE);
+      bool isDemo = (tradeMode == ACCOUNT_TRADE_MODE_DEMO);
+      bool isContest = (tradeMode == ACCOUNT_TRADE_MODE_CONTEST);
 
-      m_network.SendTick("TEST", 1.12345, 100, TimeCurrent());
-
-      if(m_logger != NULL)
-         m_logger.Success("[E2E] Tick send: PASSED");
-   }
-
-   //--- Test 3: Send a dummy bar
-   void TestSendBar()
-   {
-      if(m_logger != NULL)
-         m_logger.Info("[E2E] Testing bar send...");
-
-      datetime now = TimeCurrent();
-      m_network.SendBar("TEST", now, 1.12000, 1.12500, 1.11900, 1.12300, 500, false);
-
-      if(m_logger != NULL)
-         m_logger.Success("[E2E] Bar send: PASSED");
+      if(!isDemo && !isContest)
+      {
+         string login = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+         if(m_logger != NULL)
+            m_logger.Error("E2E SAFETY BLOCK: Account " + login + " is not a demo/contest account.");
+         return false;
+      }
+      return true;
    }
 };

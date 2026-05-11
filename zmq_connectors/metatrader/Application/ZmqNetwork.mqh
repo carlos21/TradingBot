@@ -221,6 +221,28 @@ public:
       // NOTE: arrays are deleted as part of the payload tree — caller must NOT delete them
    }
 
+   void SendTestStart(string scenario, double entryPrice, double riskPoints, double rrRatio) override
+   {
+      JSONValue *payload = new JSONValue(JSON_OBJECT);
+      payload["scenario"]    = new JSONValue(scenario);
+      payload["entry_price"] = new JSONValue(entryPrice);
+      payload["risk_points"] = new JSONValue(riskPoints);
+      payload["rr_ratio"]    = new JSONValue(rrRatio);
+      SendEnvelope(MT_TEST_START, payload, m_marketSocket);
+   }
+
+   void SendTestResult(string scenario, bool passed, string tradeId, string message) override
+   {
+      JSONValue *payload = new JSONValue(JSON_OBJECT);
+      payload["scenario"] = new JSONValue(scenario);
+      payload["passed"]   = new JSONValue(passed);
+      if(StringLen(tradeId) > 0)
+         payload["trade_id"] = new JSONValue(tradeId);
+      if(StringLen(message) > 0)
+         payload["message"] = new JSONValue(message);
+      SendEnvelope(MT_TEST_RESULT, payload, m_marketSocket);
+   }
+
    //--- Receive command (non-blocking)
    MessageEnvelope *ReceiveCommand(int timeoutMs) override
    {

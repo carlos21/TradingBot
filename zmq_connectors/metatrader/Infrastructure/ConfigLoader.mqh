@@ -63,6 +63,7 @@ public:
       if(root.HasKey("batchSize"))  cfg.batchSize  = (int)root["batchSize"].ToInt();
       if(root.HasKey("autoConnectOnStartup")) cfg.autoConnectOnStartup = root["autoConnectOnStartup"].ToBool();
       if(root.HasKey("autoShowPanel")) cfg.autoShowPanel = root["autoShowPanel"].ToBool();
+      if(root.HasKey("simulateTrades")) cfg.simulateTrades = root["simulateTrades"].ToBool();
       if(root.HasKey("platformVersion")) cfg.platformVersion = root["platformVersion"].ToString();
 
       delete root;

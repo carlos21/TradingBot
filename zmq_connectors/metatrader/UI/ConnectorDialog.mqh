@@ -8,13 +8,13 @@
 #include <Controls/Dialog.mqh>
 #include <Controls/Button.mqh>
 #include <Controls/Label.mqh>
-#include <Controls/ListView.mqh>
+#include <Controls/CheckBox.mqh>
 
 // Callback typedef for button clicks (global scope)
 typedef void (*ButtonCallback)(void);
 
 //+------------------------------------------------------------------+
-//| CConnectorDialog — MQL5 dialog with buttons and log view         |
+//| CConnectorDialog — compact MQL5 dialog for ZMQ connector         |
 //+------------------------------------------------------------------+
 class CConnectorDialog : public CAppDialog
 {
@@ -24,17 +24,17 @@ private:
    CButton       m_btnConnect;
    CButton       m_btnTest;
    CButton       m_btnE2E;
-   CListView     m_lstLog;
+   CCheckBox     m_chkSimulate;
    
    ButtonCallback m_onConnect;
    ButtonCallback m_onTest;
    ButtonCallback m_onE2E;
    
+   // Callback for simulate checkbox state change: param = new checked state
+   typedef void (*SimulateCallback)(bool);
+   
    bool          m_testEnabled;
    bool          m_e2eEnabled;
-   int           m_logCount;
-   
-   const int     MAX_LOG_LINES;
 
 public:
                      CConnectorDialog(void);
@@ -44,31 +44,30 @@ public:
                             const int x1, const int y1, const int x2, const int y2);
    
    void              SetHandlers(ButtonCallback onConnect, ButtonCallback onTest, ButtonCallback onE2E);
+   bool              IsSimulateChecked(void);
    
    // Event handler — standard Controls library pattern
    virtual bool      OnEvent(const int id, const long &lparam, const double &dparam, const string &sparam);
    
    void              UpdateStatus(bool connected, string statsText);
-   void              Log(string message);
    void              SetButtonEnabled(int btnIndex, bool enabled);
-   void              ClearLog(void);
+   void              SetSimulateChecked(bool checked);
 
 protected:
    bool              CreateStatusLabel(void);
    bool              CreateStatsLabel(void);
    bool              CreateButtons(void);
-   bool              CreateLogList(void);
+   bool              CreateSimulateCheckbox(void);
 };
 
 //+------------------------------------------------------------------+
-CConnectorDialog::CConnectorDialog(void) : MAX_LOG_LINES(200)
+CConnectorDialog::CConnectorDialog(void)
 {
    m_onConnect = NULL;
    m_onTest = NULL;
    m_onE2E = NULL;
    m_testEnabled = false;
    m_e2eEnabled = false;
-   m_logCount = 0;
 }
 
 //+------------------------------------------------------------------+
@@ -86,7 +85,7 @@ bool CConnectorDialog::Create(const long chart, const string name, const int sub
    if(!CreateStatusLabel()) return false;
    if(!CreateStatsLabel()) return false;
    if(!CreateButtons()) return false;
-   if(!CreateLogList()) return false;
+   if(!CreateSimulateCheckbox()) return false;
    
    if(!Run())
       return false;
@@ -167,16 +166,19 @@ bool CConnectorDialog::CreateButtons(void)
 }
 
 //+------------------------------------------------------------------+
-bool CConnectorDialog::CreateLogList(void)
+bool CConnectorDialog::CreateSimulateCheckbox(void)
 {
    int x1 = ClientAreaLeft() + 10;
-   int y1 = ClientAreaTop() + 96;
+   int y1 = ClientAreaTop() + 92;
    int x2 = ClientAreaRight() - 10;
-   int y2 = ClientAreaBottom() - 10;
+   int y2 = y1 + 20;
    
-   if(!m_lstLog.Create(0, m_name + "Log", 0, x1, y1, x2, y2))
+   if(!m_chkSimulate.Create(0, m_name + "ChkSimulate", 0, x1, y1, x2, y2))
       return false;
-   if(!Add(m_lstLog)) return false;
+   if(!Add(m_chkSimulate)) return false;
+   
+   m_chkSimulate.Text("Simulate Trades (No Orders)");
+   m_chkSimulate.Color(clrSilver);
    
    return true;
 }
@@ -242,26 +244,6 @@ void CConnectorDialog::UpdateStatus(bool connected, string statsText)
 }
 
 //+------------------------------------------------------------------+
-void CConnectorDialog::Log(string message)
-{
-   string line = TimeToString(TimeCurrent(), TIME_SECONDS) + "  " + message;
-   
-   m_lstLog.AddItem(line);
-   m_logCount++;
-   
-   // Keep only last MAX_LOG_LINES items
-   if(m_logCount > MAX_LOG_LINES)
-   {
-      m_lstLog.ItemDelete(0);
-      m_logCount--;
-   }
-   
-   // Scroll to bottom by selecting the last item
-   if(m_logCount > 0)
-      m_lstLog.Select(m_logCount - 1);
-}
-
-//+------------------------------------------------------------------+
 void CConnectorDialog::SetButtonEnabled(int btnIndex, bool enabled)
 {
    if(btnIndex == 0)
@@ -281,8 +263,16 @@ void CConnectorDialog::SetButtonEnabled(int btnIndex, bool enabled)
 }
 
 //+------------------------------------------------------------------+
-void CConnectorDialog::ClearLog(void)
+bool CConnectorDialog::IsSimulateChecked(void)
 {
-   m_lstLog.ItemsClear();
-   m_logCount = 0;
+   return m_chkSimulate.Checked();
 }
+
+//+------------------------------------------------------------------+
+void CConnectorDialog::SetSimulateChecked(bool checked)
+{
+   m_chkSimulate.Checked(checked);
+}
+
+//+------------------------------------------------------------------+
+
