@@ -84,10 +84,20 @@ def register_debug_routes(
                 except TypeError:
                     data_source.reset()
 
-            # 7. WARM UP STRATEGY (Without lines)
+            # 7. SEED LINES (if provided) so they are present during warmup
+            seed_lines = data.get('seed_lines', [])
+            for sl in seed_lines:
+                strategy.add_strategy_line(
+                    sl['id'],
+                    float(sl['price']),
+                    creation_timestamp=float(sl.get('creation_ts', 0.0))
+                )
+                lines_repo.insert_line(sl['id'], pair, float(sl['price']))
+
+            # 8. WARM UP STRATEGY (with lines present)
             played = data_source.load_historical_bars('1m')
             if played:
-                logger.info(f"[Reset] Warming up strategy with {len(played)} bars (No lines)...")
+                logger.info(f"[Reset] Warming up strategy with {len(played)} bars ({len(seed_lines)} lines)...")
                 for bar in played:
                     strategy.on_raw_bar(bar)
                 logger.info("[Reset] Warmup complete.")

@@ -253,10 +253,11 @@ def add_line_http(base_url: str, pair: str, price: float, creation_time: float =
         print(f"⚠️ Exception adding line {price}: {e}")
         return False
 
-def reset_app_state(base_url: str, start=None, end=None):
+def reset_app_state(base_url: str, start=None, end=None, seed_lines=None):
     payload = {}
     if start: payload['start_time'] = start
     if end:   payload['end_time'] = end
+    if seed_lines: payload['seed_lines'] = seed_lines
     try:
         r = requests.post(f"{base_url}/__reset_all", json=payload, timeout=10)
         return r.ok
@@ -569,16 +570,23 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 # Pre-seed 2 hours of warmup so 5m/15m TSI is fully warmed up by start
                 WARMUP_SECONDS = 2 * 3600
                 warmup_start_ts = start_ts - WARMUP_SECONDS
-                if not reset_app_state(base_url, start=warmup_start_ts, end=start_ts):
-                    print(f"❌ [{name}] Reset failed")
-                    continue
-                
+
+                # Parse scenario lines and prepare seed lines so they are present during warmup
                 lines = [parse_line_spec(l) for l in sc.get("lines", [])]
-                for l in lines:
-                    c_ts = None
+                seed_lines = []
+                for i, l in enumerate(lines):
+                    c_ts = 0.0
                     if l["at_raw"]:
                         c_ts = get_epoch(l["at_raw"])
-                    add_line_http(base_url, pair_name, l["level"], creation_time=c_ts)
+                    seed_lines.append({
+                        "id": f"sc_line_{i}",
+                        "price": float(l["level"]),
+                        "creation_ts": c_ts,
+                    })
+
+                if not reset_app_state(base_url, start=warmup_start_ts, end=start_ts, seed_lines=seed_lines):
+                    print(f"❌ [{name}] Reset failed")
+                    continue
 
                 show_tsi = "true" if sc.get("show_tsi", False) else "false"
                 await page.goto(f"{base_url}/?start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}&show_tsi={show_tsi}", wait_until="domcontentloaded")

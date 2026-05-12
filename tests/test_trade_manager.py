@@ -90,6 +90,18 @@ class TestSLTPDetection:
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
 
+    def test_skips_same_bar_sl_tp_check(self):
+        """Trades entered on a bar should not be checked for SL/TP on that same bar,
+        since entry happens at bar close in backtest."""
+        tm = _make_manager()
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=1000)
+        # Same bar as entry: low below SL, high above TP
+        bar = make_bar(time=1000, low=80, high=140, close=100, pair="MNQ")
+        tm.handle_new_1m_bar(bar)
+        # Trade should stay open; SL/TP checked on next bars only
+        assert len(tm.open_trades) == 1
+        assert len(tm.trade_repository.closed) == 0
+
     def test_skips_different_pair(self):
         tm = _make_manager()
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, pair="MNQ")

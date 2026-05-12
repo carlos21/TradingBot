@@ -171,6 +171,84 @@ class TestMaxBounceRemoval:
         assert "L1" not in strat.strategy_lines
 
 
+class TestWarmupLineTracking:
+
+    def test_line_latches_during_warmup(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
+        strat.is_warmup = True
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
+        bar = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="MNQ")
+        strat.on_raw_bar(bar)
+        assert strat.strategy_lines["L1"]["direction"] == "short"
+
+    def test_short_line_removed_for_max_bounce_during_warmup_with_real_ts(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
+        strat.is_warmup = True
+        # Line with a real creation timestamp (like scenarios) is removed during warmup
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
+        # Latch short
+        bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="MNQ")
+        strat.on_raw_bar(bar1)
+        # Price goes above max bounce during warmup
+        bar2 = make_bar(time=120, open_=111, high=112, low=110, close=111, pair="MNQ")
+        strat.on_raw_bar(bar2)
+        assert "L1" not in strat.strategy_lines
+
+    def test_long_line_removed_for_max_bounce_during_warmup_with_real_ts(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
+        strat.is_warmup = True
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
+        # Latch long
+        bar1 = make_bar(time=60, open_=101, high=103, low=100, close=102, pair="MNQ")
+        strat.on_raw_bar(bar1)
+        # Price goes below max bounce during warmup
+        bar2 = make_bar(time=120, open_=89, high=90, low=88, close=89, pair="MNQ")
+        strat.on_raw_bar(bar2)
+        assert "L1" not in strat.strategy_lines
+
+    def test_legacy_line_survives_warmup_but_removed_on_live_bar(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
+        strat.is_warmup = True
+        # Legacy DB line (creation_ts=0) survives max-bounce during warmup
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
+        bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="MNQ")
+        strat.on_raw_bar(bar1)
+        bar2 = make_bar(time=120, open_=111, high=112, low=110, close=111, pair="MNQ")
+        strat.on_raw_bar(bar2)
+        assert "L1" in strat.strategy_lines  # survived warmup
+        # First live bar removes it
+        strat.is_warmup = False
+        bar3 = make_bar(time=180, open_=111, high=112, low=110, close=111, pair="MNQ")
+        strat.on_raw_bar(bar3)
+        assert "L1" not in strat.strategy_lines
+
+    def test_extreme_tracks_during_warmup(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
+        strat.is_warmup = True
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
+        bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="MNQ")
+        strat.on_raw_bar(bar1)
+        assert strat.strategy_lines["L1"]["extreme"] == 99
+        bar2 = make_bar(time=120, open_=98, high=105, low=97, close=97, pair="MNQ")
+        strat.on_raw_bar(bar2)
+        assert strat.strategy_lines["L1"]["extreme"] == 105
+
+    def test_interaction_ts_set_during_warmup(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
+        strat.is_warmup = True
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
+        # Price below line, then high touches the line
+        bar1 = make_bar(time=60, open_=98, high=100, low=97, close=97, pair="MNQ")
+        strat.on_raw_bar(bar1)
+        assert strat.strategy_lines["L1"].get("interaction_ts") == 60
+
+
 class TestResetTriggerState:
 
     def test_resets_d5_stage(self):

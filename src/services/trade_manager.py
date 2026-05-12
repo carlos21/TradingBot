@@ -169,7 +169,7 @@ class TradeManager:
         for trade in list(self.open_trades):
             if trade['pair'] != bar['pair']:
                 continue
-            if trade['entry_time'] > bar['time']:
+            if trade['entry_time'] >= bar['time']:
                 continue
 
             if trade['trade_id'] not in self._monitored_trades:
