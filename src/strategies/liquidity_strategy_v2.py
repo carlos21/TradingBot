@@ -291,10 +291,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                         direction="long", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
 
                     elif line['direction'] == 'short':
-                        if bar['high'] > line['extreme']:
-                            line['extreme'] = bar['high']
-                            if line['extreme'] >= lvl and 'interaction_ts' not in line:
-                                line['interaction_ts'] = bar_time
                         if current_price > (line['level'] + self.max_bounce):
                             msg = f"Price {current_price} > {line['level'] + self.max_bounce} (Max Bounce)"
                             self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
@@ -303,10 +299,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             lines_to_remove.add(sid)
 
                     elif line['direction'] == 'long':
-                        if bar['low'] < line['extreme']:
-                            line['extreme'] = bar['low']
-                            if line['extreme'] <= lvl and 'interaction_ts' not in line:
-                                line['interaction_ts'] = bar_time
                         if current_price < (line['level'] - self.max_bounce):
                             msg = f"Price {current_price} < {line['level'] - self.max_bounce} (Max Bounce)"
                             self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
@@ -363,6 +355,29 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
                 state["buf"] = [bar]
                 state["start"] = window_start
+
+        # Update line extremes AFTER all trigger evaluation so that
+        # _on_strategy_bar only sees the state as of the bar being processed.
+        if not self.is_warmup:
+            for sid, line in self.strategy_lines.items():
+                creation_ts = line.get('creation_ts', 0)
+                if creation_ts > bar_time:
+                    continue
+                if sid in lines_to_remove:
+                    continue
+                lvl = line['level']
+                if line['direction'] == 'short':
+                    if bar['high'] > line['extreme']:
+                        line['extreme'] = bar['high']
+                        if line['extreme'] >= lvl and 'interaction_ts' not in line:
+                            line['interaction_ts'] = bar_time
+                            line['touch_bar_time'] = bar_time
+                elif line['direction'] == 'long':
+                    if bar['low'] < line['extreme']:
+                        line['extreme'] = bar['low']
+                        if line['extreme'] <= lvl and 'interaction_ts' not in line:
+                            line['interaction_ts'] = bar_time
+                            line['touch_bar_time'] = bar_time
 
         self._persist_all_line_states()
 

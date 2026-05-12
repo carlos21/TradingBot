@@ -532,6 +532,47 @@ class TestReentryOpportunities:
         strat._check_reentry_opportunities(bar)
         assert len(strat._reentry_opportunities) == 1
 
+    def test_reentry_skipped_on_same_bar_as_sl(self):
+        strat = _make_base(options=StrategyOptions(reentry_after_sl=True))
+        strat._reentry_opportunities.append({
+            "level": 100.0, "direction": "long", "pair": "MNQ",
+            "extreme_excursion": 100.0,
+            "sl_bar_time": 1000,
+        })
+        bar = make_bar(time=1000, close=101, high=102, low=99, pair="MNQ")
+        strat._check_reentry_opportunities(bar)
+        # Same bar as SL — opportunity stays alive
+        assert len(strat._reentry_opportunities) == 1
+        assert len(strat.open_trades) == 0
+
+    def test_reentry_long_requires_bullish_candle(self):
+        strat = _make_base(options=StrategyOptions(reentry_after_sl=True))
+        strat._reentry_opportunities.append({
+            "level": 100.0, "direction": "long", "pair": "MNQ",
+            "extreme_excursion": 100.0,
+            "sl_bar_time": 999,
+        })
+        # Bearish candle: close < open, but close > level
+        bar = make_bar(time=1000, open_=105, close=101, high=106, low=99, pair="MNQ")
+        strat._check_reentry_opportunities(bar)
+        # Not bullish — opportunity stays alive
+        assert len(strat._reentry_opportunities) == 1
+        assert len(strat.open_trades) == 0
+
+    def test_reentry_short_requires_bearish_candle(self):
+        strat = _make_base(options=StrategyOptions(reentry_after_sl=True))
+        strat._reentry_opportunities.append({
+            "level": 100.0, "direction": "short", "pair": "MNQ",
+            "extreme_excursion": 100.0,
+            "sl_bar_time": 999,
+        })
+        # Bullish candle: close > open, but close < level
+        bar = make_bar(time=1000, open_=95, close=99, high=101, low=94, pair="MNQ")
+        strat._check_reentry_opportunities(bar)
+        # Not bearish — opportunity stays alive
+        assert len(strat._reentry_opportunities) == 1
+        assert len(strat.open_trades) == 0
+
 
 # ---------------------------------------------------------------------------
 # Restore & Persist

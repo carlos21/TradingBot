@@ -9,7 +9,6 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app_factory import AppWiring, Repositories, create_app
 from src.analytics import AnalyticsReporter, NoOpReporter, SentryReporter
 from src.config.models import AppConfig
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
@@ -74,6 +73,8 @@ class AppBuilder:
     # Backtest
     # ------------------------------------------------------------------
     def _build_backtest(self) -> AppWiring:
+        from app_factory import create_app, Repositories
+
         cfg = self.config
         db = SQLiteDatabase(db_url=cfg.db_path)
         database.db = db
@@ -138,6 +139,8 @@ class AppBuilder:
     # Live
     # ------------------------------------------------------------------
     def _build_live(self) -> tuple[AppWiring, CombinedDataSource]:
+        from app_factory import create_app, Repositories
+
         cfg = self.config
         db = SQLiteDatabase(db_url=cfg.db_path)
         database.db = db

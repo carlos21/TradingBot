@@ -441,6 +441,11 @@ class BaseLiquidityStrategy:
 
             lid = f"reentry@{level:.2f}"
 
+            # Skip re-entry on the same bar as the SL hit
+            if bar["time"] <= opp.get("sl_bar_time", 0):
+                remaining.append(opp)
+                continue
+
             if direction == "long":
                 opp["extreme_excursion"] = min(opp["extreme_excursion"], bar["low"])
                 adverse = level - opp["extreme_excursion"]
@@ -449,10 +454,10 @@ class BaseLiquidityStrategy:
                     self.log_decision(bar["time"], "1m", lid, "REENTRY_CANCEL",
                                       f"Cancelled — price went {adverse:.1f}pts below line={level:.2f} (threshold={threshold:.0f}pts)")
                     continue  # drop opportunity
-                if bar["close"] > level and adverse >= 0:
-                    self.logger.info(f"[ReEntry] Triggering LONG re-entry at {bar['close']:.2f} (line={level:.2f})")
+                if bar["close"] > level and bar["close"] > bar["open"] and adverse >= 0:
+                    self.logger.info(f"[ReEntry] Triggering LONG re-entry at {bar['close']:.2f} (line={level:.2f}) — bullish candle")
                     self.log_decision(bar["time"], "1m", lid, "ENTRY",
-                                      f"Re-entry LONG @ {bar['close']:.2f} — close above line={level:.2f} (max adverse={adverse:.1f}pts)")
+                                      f"Re-entry LONG @ {bar['close']:.2f} — bullish close above line={level:.2f} (max adverse={adverse:.1f}pts)")
                     ctx = EntryContext(
                         strategy=self, line_id=None, direction=Direction.LONG, level=level,
                         bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
@@ -471,10 +476,10 @@ class BaseLiquidityStrategy:
                     self.log_decision(bar["time"], "1m", lid, "REENTRY_CANCEL",
                                       f"Cancelled — price went {adverse:.1f}pts above line={level:.2f} (threshold={threshold:.0f}pts)")
                     continue  # drop opportunity
-                if bar["close"] < level and adverse >= 0:
-                    self.logger.info(f"[ReEntry] Triggering SHORT re-entry at {bar['close']:.2f} (line={level:.2f})")
+                if bar["close"] < level and bar["close"] < bar["open"] and adverse >= 0:
+                    self.logger.info(f"[ReEntry] Triggering SHORT re-entry at {bar['close']:.2f} (line={level:.2f}) — bearish candle")
                     self.log_decision(bar["time"], "1m", lid, "ENTRY",
-                                      f"Re-entry SHORT @ {bar['close']:.2f} — close below line={level:.2f} (max adverse={adverse:.1f}pts)")
+                                      f"Re-entry SHORT @ {bar['close']:.2f} — bearish close below line={level:.2f} (max adverse={adverse:.1f}pts)")
                     ctx = EntryContext(
                         strategy=self, line_id=None, direction=Direction.SHORT, level=level,
                         bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
@@ -632,6 +637,7 @@ class BaseLiquidityStrategy:
                     "direction": direction,
                     "pair": trade["pair"],
                     "extreme_excursion": extreme,
+                    "sl_bar_time": payload.get("exit_time", 0),
                 })
                 self.logger.info(
                     f"[ReEntry] SL hit on {direction} @ {trade['pair']}. "
@@ -713,6 +719,7 @@ class BaseLiquidityStrategy:
                             "direction": t["type"],
                             "pair": t["pair"],
                             "extreme_excursion": extreme,
+                            "sl_bar_time": bar["time"],
                         })
             else:
                 remaining.append(t)

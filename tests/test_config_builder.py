@@ -17,7 +17,7 @@ class TestAppBuilderBacktest:
             patch("src.config.builder.SQLTradeRepository"),
             patch("src.config.builder.SQLiteLineTriggerStateRepository"),
             patch("src.config.builder.CSVDataSource"),
-            patch("src.config.builder.create_app"),
+            patch("app_factory.create_app"),
             patch("src.config.builder._build_notifier"),
             patch("src.config.builder._build_analytics"),
         ]
@@ -40,7 +40,7 @@ class TestAppBuilderBacktest:
         builder = AppBuilder(cfg)
         builder.build()
 
-        mock_create_app = __import__("src.config.builder", fromlist=["create_app"]).create_app
+        mock_create_app = __import__("app_factory", fromlist=["create_app"]).create_app
         numbers = mock_create_app.call_args.kwargs["numbers"]
         assert numbers.rr_ratio == 4.0
 
@@ -49,7 +49,7 @@ class TestAppBuilderBacktest:
         builder = AppBuilder(cfg)
         builder.build()
 
-        mock_create_app = __import__("src.config.builder", fromlist=["create_app"]).create_app
+        mock_create_app = __import__("app_factory", fromlist=["create_app"]).create_app
         numbers = mock_create_app.call_args.kwargs["numbers"]
         assert numbers.risk_per_trade == 100.0
 
@@ -68,7 +68,7 @@ class TestAppBuilderBacktest:
         builder = AppBuilder(cfg)
         builder.build()
 
-        mock_create_app = __import__("src.config.builder", fromlist=["create_app"]).create_app
+        mock_create_app = __import__("app_factory", fromlist=["create_app"]).create_app
         call_kwargs = mock_create_app.call_args.kwargs
         assert call_kwargs["timeframes"] == ["5m", "15m"]
 
@@ -81,7 +81,7 @@ class TestAppBuilderLive:
              patch("src.config.builder.SQLLineRepository"), \
              patch("src.config.builder.SQLTradeRepository"), \
              patch("src.config.builder.SQLiteLineTriggerStateRepository"), \
-             patch("src.config.builder.create_app"), \
+             patch("app_factory.create_app"), \
              patch("src.config.builder._build_notifier"), \
              patch("src.config.builder._build_analytics"), \
              patch("src.config.builder.FileAndConsoleLogger"), \
@@ -100,7 +100,7 @@ class TestAppBuilderLive:
              patch("src.config.builder.SQLLineRepository"), \
              patch("src.config.builder.SQLTradeRepository"), \
              patch("src.config.builder.SQLiteLineTriggerStateRepository"), \
-             patch("src.config.builder.create_app"), \
+             patch("app_factory.create_app"), \
              patch("src.config.builder._build_notifier"), \
              patch("src.config.builder._build_analytics"), \
              patch("src.config.builder.FileAndConsoleLogger"), \
@@ -125,7 +125,7 @@ class TestAppBuilderLive:
              patch("src.config.builder.SQLLineRepository"), \
              patch("src.config.builder.SQLTradeRepository"), \
              patch("src.config.builder.SQLiteLineTriggerStateRepository"), \
-             patch("src.config.builder.create_app"), \
+             patch("app_factory.create_app"), \
              patch("src.config.builder._build_notifier"), \
              patch("src.config.builder._build_analytics"), \
              patch("src.config.builder.FileAndConsoleLogger"), \

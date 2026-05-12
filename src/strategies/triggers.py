@@ -477,7 +477,12 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
 
         # Lock regime on first touch; reuse on all subsequent bars
         if 'vat_regime' not in line:
-            hist_1m = strategy.get_history("1m", config.lookback + 10)
+            hist_1m = strategy.get_history("1m", config.lookback + 20)
+            touch_time = line.get('touch_bar_time')
+            if touch_time:
+                # Velocity must be calculated from the perspective of the bar
+                # that actually touched the line, not from a future bar.
+                hist_1m = [b for b in hist_1m if b['time'] <= touch_time]
             velocity_score = _calculate_velocity_score(hist_1m, config.lookback)
             abs_vel = abs(velocity_score)
 
