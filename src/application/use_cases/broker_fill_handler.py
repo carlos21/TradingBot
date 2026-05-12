@@ -27,6 +27,7 @@ class BrokerFillHandler:
         risk_per_trade: float | None = None,
         risk_pct_per_trade: float | None = None,
         use_fractional_lots: bool = False,
+        accounts_repo=None,
     ):
         self._repo = trade_repository
         self._publisher = event_publisher
@@ -38,9 +39,22 @@ class BrokerFillHandler:
         self._risk_per_trade = risk_per_trade
         self._risk_pct_per_trade = risk_pct_per_trade
         self._use_fractional_lots = use_fractional_lots
+        self._accounts_repo = accounts_repo
 
     def update_balance(self, new_balance: float) -> None:
         self._account_balance = new_balance
+
+    def _get_current_risk(self) -> tuple[float | None, float | None]:
+        """Return (risk_per_trade, risk_pct_per_trade) from DB if available, else fallbacks."""
+        if self._accounts_repo is not None:
+            try:
+                accounts = self._accounts_repo.list_accounts()
+                if accounts:
+                    first = accounts[0]
+                    return first.risk_usd, first.risk_pct
+            except Exception:
+                pass
+        return self._risk_per_trade, self._risk_pct_per_trade
 
     def handle_entry_fill(
         self,
@@ -70,8 +84,9 @@ class BrokerFillHandler:
 
         # Recalculate contracts
         risk_per_contract = trade['risk'] * self._point_value
+        risk_usd, risk_pct = self._get_current_risk()
         risk_budget = FinancialCalc.risk_budget(
-            self._account_balance, self._risk_per_trade, self._risk_pct_per_trade
+            self._account_balance, risk_usd, risk_pct
         )
         if self._use_fractional_lots:
             contracts = FinancialCalc.lots(risk_budget, risk_per_contract) if risk_budget > 0 else 0.01

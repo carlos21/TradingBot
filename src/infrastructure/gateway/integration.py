@@ -108,6 +108,7 @@ def create_multi_account_live_components(
     command_port: int = 5556,
     query_port: int = 5557,
     heartbeat_port: int = 5558,
+    accounts_repo=None,
 ) -> tuple[ZMQDataSource, MultiAccountExecutor]:
     """
     Create ZeroMQ components for multi-account live trading.
@@ -155,6 +156,7 @@ def create_multi_account_live_components(
         account_configs=account_configs,
         gateway_executor=gateway_executor,
         logger=logger,
+        accounts_repo=accounts_repo,
     )
 
     logger.info(f"Created multi-account live components for {pair}")

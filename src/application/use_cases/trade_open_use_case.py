@@ -48,6 +48,7 @@ class TradeOpenUseCase:
         risk_per_trade: float | None = None,
         risk_pct_per_trade: float | None = None,
         use_fractional_lots: bool = False,
+        accounts_repo=None,
     ):
         self._repo = trade_repository
         self._executor = trade_executor
@@ -59,6 +60,19 @@ class TradeOpenUseCase:
         self._risk_per_trade = risk_per_trade
         self._risk_pct_per_trade = risk_pct_per_trade
         self._use_fractional_lots = use_fractional_lots
+        self._accounts_repo = accounts_repo
+
+    def _get_current_risk(self) -> tuple[float | None, float | None]:
+        """Return (risk_per_trade, risk_pct_per_trade) from DB if available, else fallbacks."""
+        if self._accounts_repo is not None:
+            try:
+                accounts = self._accounts_repo.list_accounts()
+                if accounts:
+                    first = accounts[0]
+                    return first.risk_usd, first.risk_pct
+            except Exception:
+                pass
+        return self._risk_per_trade, self._risk_pct_per_trade
 
     def _calc_contracts(self, risk_per_contract: float,
                         risk_per_trade_override: float | None = None,
@@ -66,11 +80,21 @@ class TradeOpenUseCase:
         """Calculate number of contracts/lots, matching NinjaTrader's logic."""
         if risk_per_contract <= 0:
             return 1.0 if not self._use_fractional_lots else 0.01
-        risk_budget = FinancialCalc.risk_budget(
-            self._account_balance,
-            risk_per_trade_override if risk_per_trade_override is not None else self._risk_per_trade,
-            risk_pct_per_trade_override if risk_pct_per_trade_override is not None else self._risk_pct_per_trade,
-        )
+
+        if risk_per_trade_override is not None or risk_pct_per_trade_override is not None:
+            risk_budget = FinancialCalc.risk_budget(
+                self._account_balance,
+                risk_per_trade_override,
+                risk_pct_per_trade_override,
+            )
+        else:
+            risk_usd, risk_pct = self._get_current_risk()
+            risk_budget = FinancialCalc.risk_budget(
+                self._account_balance,
+                risk_usd,
+                risk_pct,
+            )
+
         if risk_budget <= 0:
             return 1.0 if not self._use_fractional_lots else 0.01
         if self._use_fractional_lots:

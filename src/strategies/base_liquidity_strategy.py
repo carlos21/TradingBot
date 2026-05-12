@@ -96,6 +96,7 @@ class BaseLiquidityStrategy:
         logger: ILogger = None,
         decision_log_repository=None,
         account_configs: list | None = None,
+        accounts_repo=None,
     ):
         self.min_stop_loss = float(min_stop_loss)
         self.logger = logger
@@ -123,6 +124,7 @@ class BaseLiquidityStrategy:
         self.trigger_state_repo: LineTriggerStateRepository = trigger_state_repo or InMemoryLineTriggerStateRepository()
         self.decision_log_repository = decision_log_repository
         self._account_configs: list = list(account_configs) if account_configs else []
+        self._accounts_repo = accounts_repo
 
         self._trade_service = StrategyTradeService(
             trade_repository=trade_repository,
@@ -160,6 +162,25 @@ class BaseLiquidityStrategy:
         # Optional dependency for multi-TF checks
         self.htf_fetcher = htf_fetcher
         self.is_warmup = False
+
+    def _get_current_account_configs(self) -> list:
+        """Return fresh account configs from DB if available, else cached fallback."""
+        if self._accounts_repo is not None:
+            try:
+                accounts = self._accounts_repo.list_accounts()
+                if accounts:
+                    return accounts
+            except Exception:
+                pass
+        return self._account_configs
+
+    def _get_current_risk(self) -> tuple[float | None, float | None]:
+        """Return (risk_per_trade, risk_pct_per_trade) from DB if available, else fallbacks."""
+        accounts = self._get_current_account_configs()
+        if accounts:
+            first = accounts[0]
+            return first.risk_usd, first.risk_pct
+        return self.risk_per_trade, self.risk_pct_per_trade
 
     # ----- Decision log (no-op; subclass LiquidityStrategyV2 overrides this) -----
 
@@ -827,8 +848,9 @@ class BaseLiquidityStrategy:
         account_balance = self.account_balance
         if self.trade_manager is not None:
             account_balance = self.trade_manager.account_balance
+        risk_usd, risk_pct = self._get_current_risk()
         risk_budget = FinancialCalc.risk_budget(
-            account_balance, self.risk_per_trade, self.risk_pct_per_trade
+            account_balance, risk_usd, risk_pct
         )
         if risk_budget <= 0:
             return 1.0 if not self.use_fractional_lots else 0.01
@@ -873,7 +895,7 @@ class BaseLiquidityStrategy:
         trade_id = self._trade_service.open_trade(
             trade=trade,
             is_warmup=self.is_warmup,
-            account_configs=self._account_configs,
+            account_configs=self._get_current_account_configs(),
         )
         if trade_id is None:
             # Warmup or phantom — trade dict already mutated by service

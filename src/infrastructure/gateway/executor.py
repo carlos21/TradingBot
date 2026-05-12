@@ -152,17 +152,30 @@ class MultiAccountExecutor(TradeExecutor):
         account_configs,
         gateway_executor: ZMQTradeExecutor,
         logger: ILogger,
+        accounts_repo=None,
     ):
         self.trade_manager = trade_manager
         self.account_configs = account_configs
         self.gateway_executor = gateway_executor
         self.logger = logger
+        self._accounts_repo = accounts_repo
         self.signal_to_accounts: dict[str, list[str]] = {}
         self.account_to_signal: dict[str, str] = {}
         self._lock = threading.RLock()
         # Dedup recent close commands (same account trade closed twice within window)
         self._last_close_time: dict[str, float] = {}
         self._close_dedup_seconds = 5.0
+
+    def _get_current_account_configs(self):
+        """Return fresh account configs from DB if available, else cached fallback."""
+        if self._accounts_repo is not None:
+            try:
+                accounts = self._accounts_repo.list_accounts()
+                if accounts:
+                    return accounts
+            except Exception:
+                pass
+        return self.account_configs
 
     def on_trade_open(self, signal_trade: dict) -> None:
         # Guard: if this trade already has an account assigned, it's an
@@ -175,7 +188,7 @@ class MultiAccountExecutor(TradeExecutor):
         signal_id = signal_trade["trade_id"]
         account_trade_ids: list[str] = []
 
-        for acct in self.account_configs:
+        for acct in self._get_current_account_configs():
             try:
                 # Recalculate take_profit per account using account-specific rr_ratio
                 entry = signal_trade["entry"]

@@ -68,14 +68,25 @@ def register_stream_routes(
                 "gateway_running": False,
                 "platform_connected": False,
                 "platform_info": None,
+                "has_accounts": True,  # Not applicable in backtest mode
             }), 200
 
         gateway = data_source.gateway
+        has_accounts = True
+        if platform_type == "ninjatrader":
+            try:
+                accounts_repo = getattr(settings_service, '_accounts', None)
+                if accounts_repo is not None:
+                    has_accounts = bool(accounts_repo.list_accounts())
+            except Exception:
+                has_accounts = False
+
         return jsonify({
             "live_mode": True,
             "gateway_running": gateway.is_running if gateway else False,
             "platform_connected": gateway.is_connected if gateway else False,
             "platform_info": gateway.platform_info if gateway else None,
+            "has_accounts": has_accounts,
         }), 200
 
     @app.route("/api/stream/start", methods=["POST"])
@@ -85,6 +96,20 @@ def register_stream_routes(
                 "status": "error",
                 "message": "Streaming is only available in live mode with ZMQ data source",
             }), 400
+
+        # Dynamically check accounts from DB (for ninjatrader)
+        if platform_type == "ninjatrader":
+            try:
+                accounts_repo = getattr(settings_service, '_accounts', None)
+                if accounts_repo is not None:
+                    account_list = accounts_repo.list_accounts()
+                    if not account_list:
+                        return jsonify({
+                            "status": "error",
+                            "message": "No NinjaTrader accounts configured. Go to Admin → Settings and add at least one account before starting streaming.",
+                        }), 400
+            except Exception as e:
+                logger.error(f"[Stream] Failed to check accounts: {e}")
 
         gateway = data_source.gateway
         if gateway and gateway.is_connected:

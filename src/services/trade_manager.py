@@ -39,7 +39,8 @@ class TradeManager:
                  trade_executor: TradeExecutor = None,
                  trade_logger=None,
                  notifier: Notifier = None,
-                 analytics: AnalyticsReporter = None):
+                 analytics: AnalyticsReporter = None,
+                 accounts_repo=None):
         self.open_trades = []
         self.trade_repository = trade_repository
         self.socketio         = socketio
@@ -57,6 +58,7 @@ class TradeManager:
         self.risk_per_trade   = risk_per_trade
         self.risk_pct_per_trade = risk_pct_per_trade
         self.fee_per_rt       = fee_per_rt
+        self._accounts_repo   = accounts_repo
 
         # Session end close config
         self._session_end_time = None
@@ -80,6 +82,7 @@ class TradeManager:
             risk_per_trade=risk_per_trade,
             risk_pct_per_trade=risk_pct_per_trade,
             use_fractional_lots=use_fractional_lots,
+            accounts_repo=accounts_repo,
         )
         self._close_use_case = TradeCloseUseCase(
             trade_repository=trade_repository,
@@ -102,6 +105,7 @@ class TradeManager:
             risk_per_trade=risk_per_trade,
             risk_pct_per_trade=risk_pct_per_trade,
             use_fractional_lots=use_fractional_lots,
+            accounts_repo=accounts_repo,
         )
 
         # RESUME: Load any open trades from the DB

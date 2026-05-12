@@ -264,6 +264,7 @@ def create_app(
     analytics: AnalyticsReporter = None,
     logger: Optional[ILogger] = None,
     db: DatabaseProtocol | None = None,
+    accounts_repo=None,
     app_config=None,
 ) -> AppWiring:
     """
@@ -315,6 +316,9 @@ def create_app(
 
     trade_logger = TradeLogger(repos.trades)
 
+    if accounts_repo is None and db is not None:
+        accounts_repo = NtAccountRepository(db=db)
+
     trade_manager = TradeManager(
         trade_repository=repos.trades,
         socketio=event_publisher,
@@ -334,6 +338,7 @@ def create_app(
         risk_per_trade=numbers.risk_per_trade,
         risk_pct_per_trade=numbers.risk_pct_per_trade,
         logger=logger,
+        accounts_repo=accounts_repo,
     )
 
     # Inject trade_manager into MultiAccountExecutor (created before trade_manager existed)
@@ -371,6 +376,7 @@ def create_app(
         logger          = logger,
         decision_log_repository = repos.decision_logs,
         account_configs = numbers.account_configs,
+        accounts_repo=accounts_repo,
     )
 
     # Wire strategy to TRADE_CLOSED events so it updates state reactively

@@ -62,16 +62,22 @@ document.addEventListener("DOMContentLoaded", () => {
                 setConnectionStatus('Connected');
                 return;
             }
+            if (data.live_mode && data.has_accounts === false) {
+                // Live mode but no accounts configured
+                showOverlay();
+                setConnectionStatus('⚠️ No accounts configured. Go to Admin → Settings to add one.');
+                return;
+            }
             if (data.live_mode && !data.gateway_running) {
                 // Live mode but gateway not started — show overlay and wait for user to click Start Streaming
                 showOverlay();
-                setConnectionStatus('Waiting for NinjaTrader connection...');
+                setConnectionStatus('Waiting for platform connection...');
                 return;
             }
             if (data.gateway_running) {
-                // Gateway is bound but NT hasn't connected yet
+                // Gateway is bound but platform hasn't connected yet
                 showOverlay();
-                setConnectionStatus('Waiting for NinjaTrader connection...');
+                setConnectionStatus('Waiting for platform connection...');
             }
         })
         .catch(() => {

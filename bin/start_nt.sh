@@ -24,7 +24,8 @@ export LOG_DIR="${LOG_DIR:-logs/ninja}"
 export FLASK_PORT="${FLASK_PORT:-5001}"
 
 # Default ZMQ ports for NinjaTrader
-export ZMQ_HOST="${ZMQ_HOST:-127.0.0.1}"
+# Bind to 0.0.0.0 so Windows (NinjaTrader) can reach WSL2 via localhost forwarding
+export ZMQ_HOST="${ZMQ_HOST:-0.0.0.0}"
 export ZMQ_MARKET_PORT="${ZMQ_MARKET_PORT:-5555}"
 export ZMQ_COMMAND_PORT="${ZMQ_COMMAND_PORT:-5556}"
 export ZMQ_QUERY_PORT="${ZMQ_QUERY_PORT:-5557}"

@@ -72,7 +72,11 @@ export class ControlsView {
         try {
           const resp = await fetch('/api/stream/start', { method: 'POST' });
           const data = await resp.json();
-          if (statusEl) statusEl.textContent = data.message || 'Starting…';
+          if (!resp.ok) {
+            if (statusEl) statusEl.textContent = '⚠️ ' + (data.message || 'Error starting stream');
+          } else {
+            if (statusEl) statusEl.textContent = data.message || 'Starting…';
+          }
         } catch (err) {
           if (statusEl) statusEl.textContent = 'Error: ' + err.message;
         }
@@ -87,7 +91,12 @@ export class ControlsView {
         try {
           const resp = await fetch('/api/stream/start', { method: 'POST' });
           const data = await resp.json();
-          if (statusEl) statusEl.textContent = data.message || 'Starting…';
+          if (!resp.ok) {
+            if (statusEl) statusEl.textContent = '⚠️ ' + (data.message || 'Error starting stream');
+            this.reconnectBtn.classList.remove('hidden');
+          } else {
+            if (statusEl) statusEl.textContent = data.message || 'Starting…';
+          }
         } catch (err) {
           if (statusEl) statusEl.textContent = 'Error: ' + err.message;
           this.reconnectBtn.classList.remove('hidden');

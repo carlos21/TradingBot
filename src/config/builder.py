@@ -27,6 +27,7 @@ from src.infrastructure.repositories.line_trigger_state_repository import (
 )
 from src.infrastructure.repositories.lines_repository import SQLLineRepository
 from src.infrastructure.repositories.trades_repository import SQLTradeRepository
+from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.utils.app_logger import FileAndConsoleLogger
 
 
@@ -84,6 +85,7 @@ class AppBuilder:
             trades=SQLTradeRepository(db=db),
             trigger_state=SQLiteLineTriggerStateRepository(db=db),
         )
+        accounts_repo = NtAccountRepository(db=db)
 
         initial_start = _parse_input_to_epoch(cfg.start_str, cfg.input_tz)
         initial_end = _parse_input_to_epoch(cfg.end_str, cfg.input_tz)
@@ -133,6 +135,8 @@ class AppBuilder:
             notifier=_build_notifier(cfg),
             analytics=_build_analytics(cfg),
             app_config=cfg,
+            db=db,
+            accounts_repo=accounts_repo,
         ), None
 
     # ------------------------------------------------------------------
@@ -150,6 +154,7 @@ class AppBuilder:
             trades=SQLTradeRepository(db=db),
             trigger_state=SQLiteLineTriggerStateRepository(db=db),
         )
+        accounts_repo = NtAccountRepository(db=db)
 
         notifier = _build_notifier(cfg)
         analytics = _build_analytics(cfg)
@@ -175,6 +180,7 @@ class AppBuilder:
                 command_port=cfg.zmq_command_port,
                 query_port=cfg.zmq_query_port,
                 heartbeat_port=cfg.zmq_heartbeat_port,
+                accounts_repo=accounts_repo,
             )
         else:
             ds, executor = create_live_components(
@@ -223,5 +229,7 @@ class AppBuilder:
             analytics=analytics,
             logger=logger,
             app_config=cfg,
+            db=db,
+            accounts_repo=accounts_repo,
         )
         return wiring, ds

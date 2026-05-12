@@ -162,6 +162,11 @@ inference_result
 cdk.out/
 database.db
 database.db-*
+ninja.db
+ninja.db-*
+nonexistent.db
+*.db-shm
+*.db-wal
 csvs/*
 !csvs/NQ_live.csv
 scenarios_out/
