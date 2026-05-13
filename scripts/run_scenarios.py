@@ -823,12 +823,16 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         return txt
 
     def _calc_max_drawdown(balances):
-        """Calculate max drawdown (amount and %) from a list of balance values."""
+        """Calculate max drawdown from a list of balance values.
+        Returns (max_dd_usd, max_dd_pct, max_dd_from_start_usd, max_dd_from_start_pct)."""
         if not balances or len(balances) < 2:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0, 0.0
+        start = balances[0]
         peak = balances[0]
         max_dd_usd = 0.0
         max_dd_pct = 0.0
+        max_dd_from_start_usd = 0.0
+        max_dd_from_start_pct = 0.0
         for bal in balances[1:]:
             if bal > peak:
                 peak = bal
@@ -837,7 +841,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             if dd_usd > max_dd_usd:
                 max_dd_usd = dd_usd
                 max_dd_pct = dd_pct
-        return max_dd_usd, max_dd_pct
+            if bal < start:
+                dd_from_start_usd = start - bal
+                dd_from_start_pct = (dd_from_start_usd / start * 100) if start > 0 else 0.0
+                if dd_from_start_usd > max_dd_from_start_usd:
+                    max_dd_from_start_usd = dd_from_start_usd
+                    max_dd_from_start_pct = dd_from_start_pct
+        return max_dd_usd, max_dd_pct, max_dd_from_start_usd, max_dd_from_start_pct
 
     # pnl_fn parameter in _print_results is unused; keep a stub for compatibility
     _unused_pnl_fn = lambda r, balance=None: None
@@ -1130,7 +1140,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         equity_balances = [ACCT]
         for key in sorted(daily.keys()):
             equity_balances.append(equity_balances[-1] + daily[key]["usd"])
-        max_dd_usd, max_dd_pct = _calc_max_drawdown(equity_balances)
+        max_dd_usd, max_dd_pct, max_dd_start_usd, max_dd_start_pct = _calc_max_drawdown(equity_balances)
 
         # Calculate monthly average profit
         num_months = len(monthly) if monthly else 1
@@ -1145,7 +1155,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         print(f"  Win Rate: {_col(winrate - 50, f'{winrate:.1f}%')}  (excl. breakevens)")
         print(f"  Max consec. wins  : {GREEN}{BOLD}{max_consec_w}{RST}")
         print(f"  Max consec. losses: {RED}{BOLD}{max_consec_l}{RST}")
-        print(f"  Max Drawdown  : {_col(-max_dd_usd, f'${-max_dd_usd:,.0f}')} ({_col(-max_dd_pct, f'{-max_dd_pct:.2f}%')})")
+        print(f"  Max Drawdown (from peak) : {_col(-max_dd_usd, f'${-max_dd_usd:,.0f}')} ({_col(-max_dd_pct, f'{-max_dd_pct:.2f}%')})")
+        print(f"  Max Drawdown (from start): {_col(-max_dd_start_usd, f'${-max_dd_start_usd:,.0f}')} ({_col(-max_dd_start_pct, f'{-max_dd_start_pct:.2f}%')})")
         total_comm_all = sum(v.get("commission", 0.0) for v in daily.values())
         print(f"  Net P&L : {_col(total_usd_all, f'${total_usd_all:+,.0f}')}")
         print(f"  Commission: ${total_comm_all:,.2f}")

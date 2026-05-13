@@ -213,9 +213,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             # Real trades are monitored by TradeManager / broker fills.
             self._check_phantom_exits(bar)
 
-            if self.options.breakeven or self.options.reentry_breakeven:
-                self._check_breakeven(bar)
-
             if (self.options.reentry_after_sl or self.options.reentry_only) and self._reentry_opportunities:
                 self._check_reentry_opportunities(bar)
 
@@ -389,6 +386,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         self._persist_all_line_states()
 
     def _on_strategy_bar(self, bar: dict[str, Any]):
+        if self.is_warmup:
+            return
         with self.lock:
             # Calculate and Emit TSI for Visualization ---
             tf = bar.get('tf')

@@ -322,8 +322,10 @@ def generate_mode_comparison_report(
         ("Net PnL", [_fmt_usd(fut_stats["net_usd"]), _fmt_usd(cfd_stats["net_usd"])], "max_float"),
         ("Return", [_fmt_pct(fut_stats["net_pct"]), _fmt_pct(cfd_stats["net_pct"])], "max_float"),
         ("Total Commission", [f'${fut_stats["total_commission"]:,.2f}', f'${cfd_stats["total_commission"]:,.2f}'], "min_float"),
-        ("Max Drawdown", [f'${fut_stats["max_dd_usd"]:,.0f}', f'${cfd_stats["max_dd_usd"]:,.0f}'], "min_float"),
-        ("Max DD %", [f'{fut_stats["max_dd_pct"]:.2f}%', f'{cfd_stats["max_dd_pct"]:.2f}%'], "min_float"),
+        ("Max DD (from peak)", [f'${fut_stats["max_dd_usd"]:,.0f}', f'${cfd_stats["max_dd_usd"]:,.0f}'], "min_float"),
+        ("Max DD % (from peak)", [f'{fut_stats["max_dd_pct"]:.2f}%', f'{cfd_stats["max_dd_pct"]:.2f}%'], "min_float"),
+        ("Max DD (from start)", [f'${fut_stats.get("max_dd_from_start_usd", 0):,.0f}', f'${cfd_stats.get("max_dd_from_start_usd", 0):,.0f}'], "min_float"),
+        ("Max DD % (from start)", [f'{fut_stats.get("max_dd_from_start_pct", 0):.2f}%', f'{cfd_stats.get("max_dd_from_start_pct", 0):.2f}%'], "min_float"),
         ("Max Consec W", [str(fut_stats["max_cw"]), str(cfd_stats["max_cw"])], "max"),
         ("Max Consec L", [str(fut_stats["max_cl"]), str(cfd_stats["max_cl"])], "min"),
         ("Monthly Avg", [_fmt_usd(fut_stats["avg_monthly_usd"]), _fmt_usd(cfd_stats["avg_monthly_usd"])], "max_float"),
@@ -344,8 +346,8 @@ def generate_mode_comparison_report(
             elif rule in ("min", "min_float"):
                 if label == "Losses": nums.append(s["losses"])
                 elif label == "Total Commission": nums.append(s["total_commission"])
-                elif label == "Max Drawdown": nums.append(s["max_dd_usd"])
-                elif label == "Max DD %": nums.append(s["max_dd_pct"])
+                elif label in ("Max DD (from peak)", "Max DD (from start)"): nums.append(s["max_dd_usd"] if "peak" in label else s.get("max_dd_from_start_usd", 0))
+                elif label in ("Max DD % (from peak)", "Max DD % (from start)"): nums.append(s["max_dd_pct"] if "peak" in label else s.get("max_dd_from_start_pct", 0))
                 elif label == "Max Consec L": nums.append(s["max_cl"])
         if not nums:
             return -1

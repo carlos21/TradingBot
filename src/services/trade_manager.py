@@ -193,6 +193,8 @@ class TradeManager:
                     hit_sl = True
                 elif bar['low'] <= trade['take_profit']:
                     hit_tp = True
+            # NOTE: If both SL and TP are inside the same bar, SL always wins.
+            # This is a conservative assumption since intrabar sequence is unknown.
 
             if not hit_sl and not hit_tp:
                 continue
@@ -253,7 +255,7 @@ class TradeManager:
         for trade in list(self.open_trades):
             if trade['pair'] != bar['pair']:
                 continue
-            if trade['entry_time'] > bar['time']:
+            if trade['entry_time'] >= bar['time']:
                 continue
 
             try:
@@ -417,6 +419,8 @@ class TradeManager:
     def close_remaining_trades_at_stream_end(self, final_close_price: float, final_time: float):
         self.logger.info(f"[TradeManager] STREAM END CALLBACK FIRED! close_price={final_close_price}, time={final_time}")
         for trade in list(self.open_trades):
+            if trade['entry_time'] >= final_time:
+                continue
             result_type = FinancialCalc.calculate_session_end_result_type(
                 FinancialCalc.calculate_close_metrics(
                     direction=Direction.from_string(trade['type']),

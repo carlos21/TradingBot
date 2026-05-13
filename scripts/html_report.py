@@ -154,7 +154,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
 
     # Calculate max drawdown from equity curve
     equity_balances = [p["balance"] for p in equity_points]
-    max_dd_usd, max_dd_pct = calc_max_dd(equity_balances)
+    max_dd_usd, max_dd_pct, max_dd_start_usd, max_dd_start_pct = calc_max_dd(equity_balances)
 
     # ── 6. Build HTML ─────────────────────────────────────────────────────
     def outcome_badge(outcome):
@@ -840,12 +840,12 @@ footer {{
                 <div class="value"><span class="positive">{max_cw}</span> / <span class="negative">{max_cl}</span></div>
             </div>
             <div class="stat-box">
-                <div class="label">Max Drawdown</div>
-                <div class="value negative">${max_dd_usd:,.0f}</div>
+                <div class="label">Max Drawdown (from peak)</div>
+                <div class="value negative">${max_dd_usd:,.0f} ({max_dd_pct:.2f}%)</div>
             </div>
             <div class="stat-box">
-                <div class="label">Max Drawdown %</div>
-                <div class="value negative">{max_dd_pct:.2f}%</div>
+                <div class="label">Max Drawdown (from start)</div>
+                <div class="value negative">${max_dd_start_usd:,.0f} ({max_dd_start_pct:.2f}%)</div>
             </div>
             <div class="stat-box">
                 <div class="label">Monthly Avg</div>

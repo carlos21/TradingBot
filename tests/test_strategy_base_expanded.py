@@ -401,7 +401,10 @@ class TestEdgeCasesTradeManagement:
         assert len(processed) == 1
         assert processed[0]["close"] == 100
 
-    def test_on_raw_bar_calls_breakeven_before_aggregation(self):
+    def test_breakeven_called_after_trade_manager_in_pipeline(self):
+        """Breakeven is no longer inside on_raw_bar; it runs after TradeManager
+        in the backtest callback pipeline. Verify _check_breakeven works when
+        called explicitly."""
         strat = _make_base(
             options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=1.0, move_to_rr=0.0)),
         )
@@ -410,13 +413,8 @@ class TestEdgeCasesTradeManagement:
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "is_reentry": False,
         })
-        strat.strategy_window = 300
-        processed = []
-        original = strat._on_strategy_bar
-        strat._on_strategy_bar = lambda bar: processed.append(bar)
-
-        # Raw bar hits BE trigger before aggregation
-        strat.on_raw_bar(make_bar(time=0, close=110, high=110, low=110, pair="MNQ"))
+        bar = make_bar(time=0, close=110, high=110, low=110, pair="MNQ")
+        strat._check_breakeven(bar)
         assert strat.open_trades[0]["stop_loss"] == 100.0  # BE moved
 
     def test_invalid_strategy_tf_raises(self):

@@ -188,6 +188,18 @@ class TestSessionEndClose:
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 0
 
+    def test_skips_same_bar_session_end(self):
+        tm = _make_manager(session_end_time="15:00", session_tz="America/New_York")
+        from zoneinfo import ZoneInfo
+        ny = ZoneInfo("America/New_York")
+        bar_dt = datetime(2025, 6, 15, 15, 1, tzinfo=ny)
+        entry_time = int(bar_dt.timestamp())
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=entry_time)
+        bar = make_bar(time=entry_time, close=105, pair="MNQ")
+        tm.handle_new_1m_bar(bar)
+        # Trade opened on session-end bar should NOT be closed on same bar
+        assert len(tm.open_trades) == 1
+
     def test_does_not_close_before_session_end(self):
         tm = _make_manager(session_end_time="15:00", session_tz="America/New_York")
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500)
@@ -197,6 +209,22 @@ class TestSessionEndClose:
         bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
+
+
+class TestStreamEndClose:
+
+    def test_skips_same_bar_stream_end(self):
+        tm = _make_manager()
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=1000)
+        tm.close_remaining_trades_at_stream_end(105.0, 1000)
+        # Trade opened at stream-end time should NOT be closed on same bar
+        assert len(tm.open_trades) == 1
+
+    def test_closes_trades_at_stream_end(self):
+        tm = _make_manager()
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500)
+        tm.close_remaining_trades_at_stream_end(105.0, 1000)
+        assert len(tm.open_trades) == 0
 
 
 class TestSocketIOEmissions:

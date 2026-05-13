@@ -327,6 +327,7 @@ class BaseLiquidityStrategy:
                 "direction": t.trade_type,
                 "pair": pair,
                 "extreme_excursion": line_level,
+                "sl_bar_time": int(t.exit_time.timestamp()) if t.exit_time else 0,
             })
             restored += 1
             self.logger.info(f"[ReEntry] Restored re-entry watch: {t.trade_type} @ level={line_level:.2f}")
@@ -351,10 +352,6 @@ class BaseLiquidityStrategy:
         NOTE: Trade exits are handled by TradeManager (backtest) or broker fills (live).
         The strategy reacts to TRADE_CLOSED domain events instead of polling bars.
         """
-
-        # Check breakeven conditions on every raw bar before aggregation
-        if self.options.breakeven or self.options.reentry_breakeven:
-            self._check_breakeven(bar)
 
         ts = bar["time"]
         win = (ts // self.strategy_window) * self.strategy_window
@@ -455,14 +452,21 @@ class BaseLiquidityStrategy:
                                       f"Cancelled — price went {adverse:.1f}pts below line={level:.2f} (threshold={threshold:.0f}pts)")
                     continue  # drop opportunity
                 if bar["close"] > level and bar["close"] > bar["open"] and adverse >= 0:
-                    self.logger.info(f"[ReEntry] Triggering LONG re-entry at {bar['close']:.2f} (line={level:.2f}) — bullish candle")
-                    self.log_decision(bar["time"], "1m", lid, "ENTRY",
-                                      f"Re-entry LONG @ {bar['close']:.2f} — bullish close above line={level:.2f} (max adverse={adverse:.1f}pts)")
                     ctx = EntryContext(
                         strategy=self, line_id=None, direction=Direction.LONG, level=level,
                         bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
                         extreme=opp["extreme_excursion"], cross_depth=0.0,
                     )
+                    allow, reason, _ = self._filters_allow_reentry(ctx)
+                    if not allow:
+                        self.logger.info(f"[ReEntry] Filter blocked LONG re-entry at {bar['close']:.2f}: {reason}")
+                        self.log_decision(bar["time"], "1m", lid, "REENTRY_FILTER_BLOCK",
+                                          f"Filter blocked — {reason}")
+                        remaining.append(opp)
+                        continue  # keep opportunity alive for next bar
+                    self.logger.info(f"[ReEntry] Triggering LONG re-entry at {bar['close']:.2f} (line={level:.2f}) — bullish candle")
+                    self.log_decision(bar["time"], "1m", lid, "ENTRY",
+                                      f"Re-entry LONG @ {bar['close']:.2f} — bullish close above line={level:.2f} (max adverse={adverse:.1f}pts)")
                     trade = self._build_trade_from_context(ctx)
                     trade["is_reentry"] = True
                     self._store_and_emit_open(trade)
@@ -477,14 +481,21 @@ class BaseLiquidityStrategy:
                                       f"Cancelled — price went {adverse:.1f}pts above line={level:.2f} (threshold={threshold:.0f}pts)")
                     continue  # drop opportunity
                 if bar["close"] < level and bar["close"] < bar["open"] and adverse >= 0:
-                    self.logger.info(f"[ReEntry] Triggering SHORT re-entry at {bar['close']:.2f} (line={level:.2f}) — bearish candle")
-                    self.log_decision(bar["time"], "1m", lid, "ENTRY",
-                                      f"Re-entry SHORT @ {bar['close']:.2f} — bearish close below line={level:.2f} (max adverse={adverse:.1f}pts)")
                     ctx = EntryContext(
                         strategy=self, line_id=None, direction=Direction.SHORT, level=level,
                         bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
                         extreme=opp["extreme_excursion"], cross_depth=0.0,
                     )
+                    allow, reason, _ = self._filters_allow_reentry(ctx)
+                    if not allow:
+                        self.logger.info(f"[ReEntry] Filter blocked SHORT re-entry at {bar['close']:.2f}: {reason}")
+                        self.log_decision(bar["time"], "1m", lid, "REENTRY_FILTER_BLOCK",
+                                          f"Filter blocked — {reason}")
+                        remaining.append(opp)
+                        continue  # keep opportunity alive for next bar
+                    self.logger.info(f"[ReEntry] Triggering SHORT re-entry at {bar['close']:.2f} (line={level:.2f}) — bearish candle")
+                    self.log_decision(bar["time"], "1m", lid, "ENTRY",
+                                      f"Re-entry SHORT @ {bar['close']:.2f} — bearish close below line={level:.2f} (max adverse={adverse:.1f}pts)")
                     trade = self._build_trade_from_context(ctx)
                     trade["is_reentry"] = True
                     self._store_and_emit_open(trade)
@@ -577,6 +588,25 @@ class BaseLiquidityStrategy:
                 return False, f"{f.__name__}: {reason}", hold
         return True, "ok", False
 
+    def _filters_allow_reentry(self, ctx: EntryContext) -> tuple[bool, str, bool]:
+        """Run entry filters for re-entry trades.
+        Re-entries are a 'second chance' on the same setup, so they only
+        apply the filters that make sense for re-entries:
+        - time_range_filter (don't enter outside trading hours)
+        - open_trades_limit_filter (don't enter if max open trades reached)
+        - rollover_filter (don't enter during rollover)
+        Filters like daily_trades_limit, min_cross_depth, and max_bounce
+        are bypassed because they don't apply to re-entry context."""
+        reentry_filter_names = {"time_range", "open_trades_limit", "rollover"}
+        for f in self.entry_filters:
+            if f.__name__ not in reentry_filter_names:
+                continue
+            ok, reason = f(ctx)
+            if not ok:
+                hold = getattr(f, '_hold_on_block', False)
+                return False, f"{f.__name__}: {reason}", hold
+        return True, "ok", False
+
     def _reset_trigger_state(self, line_state: dict[str, Any]):
         """Reset only trigger-specific state, keeping direction and extreme intact.
         Overridden by subclasses that manage additional trigger state (tsi_stage etc.)."""
@@ -622,9 +652,8 @@ class BaseLiquidityStrategy:
         self.open_trades = [t for t in self.open_trades if t.get("trade_id") != trade_id]
 
         # Create re-entry opportunity on SL hit (mirrors old _check_open_trades logic)
-        is_phantom = payload.get("is_phantom", False)
         if (
-            (self.options.reentry_after_sl or is_phantom)
+            (self.options.reentry_after_sl or self.options.reentry_only)
             and payload.get("result_type") == "SL"
             and not payload.get("is_reentry", False)
         ):
@@ -657,6 +686,9 @@ class BaseLiquidityStrategy:
             if t.get("status") != "open" or not t.get("is_phantom"):
                 remaining.append(t)
                 continue
+            if t.get('entry_time', 0) >= bar['time']:
+                remaining.append(t)
+                continue
             low, high = bar["low"], bar["high"]
             closed = False
             exit_price = 0.0
@@ -680,6 +712,8 @@ class BaseLiquidityStrategy:
                     exit_price = t["take_profit"]
                     result_type = "TP"
                     closed = True
+            # NOTE: If both SL and TP are inside the same bar, SL always wins.
+            # This is a conservative assumption since intrabar sequence is unknown.
 
             if closed:
                 contracts = t.get("contracts") or 1

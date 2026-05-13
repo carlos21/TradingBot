@@ -104,12 +104,19 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
 
 
 def calc_max_dd(balances):
-    """Calculate max drawdown from equity curve. Returns (max_dd_usd, max_dd_pct)."""
+    """Calculate max drawdown from equity curve.
+    Returns (max_dd_usd, max_dd_pct, max_dd_from_start_usd, max_dd_from_start_pct).
+    - max_dd_*: drawdown from peak (running max)
+    - max_dd_from_start_*: drawdown from initial balance
+    """
     if not balances or len(balances) < 2:
-        return 0.0, 0.0
+        return 0.0, 0.0, 0.0, 0.0
+    start = balances[0]
     peak = balances[0]
     max_dd_usd = 0.0
     max_dd_pct = 0.0
+    max_dd_from_start_usd = 0.0
+    max_dd_from_start_pct = 0.0
     for bal in balances[1:]:
         if bal > peak:
             peak = bal
@@ -118,7 +125,14 @@ def calc_max_dd(balances):
         if dd_usd > max_dd_usd:
             max_dd_usd = dd_usd
             max_dd_pct = dd_pct
-    return max_dd_usd, max_dd_pct
+        # Drawdown from initial balance
+        if bal < start:
+            dd_from_start_usd = start - bal
+            dd_from_start_pct = (dd_from_start_usd / start * 100) if start > 0 else 0.0
+            if dd_from_start_usd > max_dd_from_start_usd:
+                max_dd_from_start_usd = dd_from_start_usd
+                max_dd_from_start_pct = dd_from_start_pct
+    return max_dd_usd, max_dd_pct, max_dd_from_start_usd, max_dd_from_start_pct
 
 
 def fmt_usd(val):

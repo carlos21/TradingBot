@@ -141,6 +141,8 @@ def _create_bar_callbacks(
         def combined_bar_callback(bar):
             # No trade_manager.handle_new_1m_bar — NinjaTrader handles SL/TP
             strategy.on_raw_bar(bar)
+            if strategy.options.breakeven or strategy.options.reentry_breakeven:
+                strategy._check_breakeven(bar)
             _check_live_session_end(bar)
         
         def stream_end_callback(close_price: float, final_time: float):
@@ -155,17 +157,15 @@ def _create_bar_callbacks(
                     _close_commands_sent.add(tid)
     else:
         def combined_bar_callback(bar):
-            # Strategy runs first (entry triggers, breakeven, line management)
+            # Strategy runs first (entry triggers, phantom exits, line management)
             strategy.on_raw_bar(bar)
             # TradeManager checks real trades for SL/TP and emits TRADE_CLOSED events
             trade_manager.handle_new_1m_bar(bar)
-            # After events are processed, check reentries created by closed trades
-            # so they can fire (and be checked for SL/TP) on the same bar
-            if (strategy.options.reentry_after_sl or strategy.options.reentry_only) and strategy._reentry_opportunities:
-                pre_reentry_trades = len(trade_manager.open_trades)
-                strategy._check_reentry_opportunities(bar)
-                if len(trade_manager.open_trades) > pre_reentry_trades:
-                    trade_manager.handle_new_1m_bar(bar)
+            # Breakeven is applied only after SL/TP is resolved for the bar
+            if strategy.options.breakeven or strategy.options.reentry_breakeven:
+                strategy._check_breakeven(bar)
+            # Reentries are handled inside strategy.on_raw_bar() on subsequent bars
+            # after the SL hit. Same-bar reentries are blocked by sl_bar_time guard.
         
         def stream_end_callback(close_price: float, final_time: float):
             trade_manager.close_remaining_trades_at_stream_end(close_price, final_time)

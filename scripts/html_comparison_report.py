@@ -92,7 +92,7 @@ def _compute_stats(enriched, account):
             running += sc_usd
             equity_points.append(running)
 
-    max_dd_usd, max_dd_pct = calc_max_dd(equity_points)
+    max_dd_usd, max_dd_pct, max_dd_start_usd, max_dd_start_pct = calc_max_dd(equity_points)
 
     # Monthly breakdown
     monthly = defaultdict(lambda: {"wins": 0, "losses": 0, "be": 0, "sp": 0, "usd": 0.0})
@@ -136,6 +136,8 @@ def _compute_stats(enriched, account):
         "max_cl": max_cl,
         "max_dd_usd": max_dd_usd,
         "max_dd_pct": max_dd_pct,
+        "max_dd_start_usd": max_dd_start_usd,
+        "max_dd_start_pct": max_dd_start_pct,
         "avg_monthly_usd": avg_monthly_usd,
         "monthly": dict(monthly),
         "equity_points": eq_dated,
@@ -181,8 +183,10 @@ def generate_comparison_report(all_data, output_path, be_threshold=0.5):
         ("Win Rate", [f'{s["winrate"]:.1f}%' for s in all_stats], "max_float"),
         ("Net PnL", [fmt_usd(s["net_usd"]) for s in all_stats], "max_float"),
         ("Return", [fmt_pct(s["net_pct"]) for s in all_stats], "max_float"),
-        ("Max Drawdown", [f'${s["max_dd_usd"]:,.0f}' for s in all_stats], "min_float"),
-        ("Max DD %", [f'{s["max_dd_pct"]:.2f}%' for s in all_stats], "min_float"),
+        ("Max DD (from peak)", [f'${s["max_dd_usd"]:,.0f}' for s in all_stats], "min_float"),
+        ("Max DD % (from peak)", [f'{s["max_dd_pct"]:.2f}%' for s in all_stats], "min_float"),
+        ("Max DD (from start)", [f'${s["max_dd_start_usd"]:,.0f}' for s in all_stats], "min_float"),
+        ("Max DD % (from start)", [f'{s["max_dd_start_pct"]:.2f}%' for s in all_stats], "min_float"),
         ("Max Consec W", [str(s["max_cw"]) for s in all_stats], "max"),
         ("Max Consec L", [str(s["max_cl"]) for s in all_stats], "min"),
         ("Monthly Avg", [fmt_usd(s["avg_monthly_usd"]) for s in all_stats], "max_float"),
@@ -210,10 +214,10 @@ def generate_comparison_report(all_data, output_path, be_threshold=0.5):
             elif rule in ("min", "min_float"):
                 if row_label == "Losses":
                     nums.append(s["losses"])
-                elif row_label == "Max Drawdown":
-                    nums.append(s["max_dd_usd"])
-                elif row_label == "Max DD %":
-                    nums.append(s["max_dd_pct"])
+                elif row_label in ("Max DD (from peak)", "Max DD (from start)"):
+                    nums.append(s["max_dd_usd"] if "peak" in row_label else s["max_dd_start_usd"])
+                elif row_label in ("Max DD % (from peak)", "Max DD % (from start)"):
+                    nums.append(s["max_dd_pct"] if "peak" in row_label else s["max_dd_start_pct"])
                 elif row_label == "Max Consec L":
                     nums.append(s["max_cl"])
         if not nums:

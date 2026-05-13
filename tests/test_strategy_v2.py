@@ -1,6 +1,10 @@
 """Tests for src/strategies/liquidity_strategy_v2.py — V2 strategy: latching, aggregation, reset, history."""
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from src.services.trade_manager import TradeManager
+from src.strategies.base_liquidity_strategy import StrategyOptions
 from tests.conftest import make_bar, make_strategy
 from tests.fakes import (
     DummySocketIO,
@@ -352,3 +356,105 @@ class TestMultiTimeframeAggregation:
         # After bar2, bar1's window should have produced an aggregated bar in 1m history
         hist = strat.get_history("1m", 10)
         assert len(hist) >= 1
+
+
+class TestPhantomAndReentryGuards:
+    """Tests for phantom same-bar exit guard and reentry filter behavior."""
+
+    def test_phantom_skips_same_bar_exit(self):
+        """A phantom trade opened on bar N should not exit on bar N."""
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm)
+        strat.is_warmup = False
+        bar = make_bar(time=1000, open_=100, close=105, high=110, low=95, pair="MNQ")
+        # Manually add a phantom trade with entry_time == bar time
+        strat.open_trades.append({
+            "trade_id": "P1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "is_phantom": True,
+            "entry_time": 1000,
+        })
+        strat._check_phantom_exits(bar)
+        # Should still be open because same-bar exits are skipped
+        assert len(strat.open_trades) == 1
+        assert strat.open_trades[0]["status"] == "open"
+
+    def test_phantom_exits_on_next_bar(self):
+        """A phantom trade should exit on the next bar if SL is hit."""
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm)
+        strat.is_warmup = False
+        entry_bar = make_bar(time=1000, open_=100, close=105, high=110, low=95, pair="MNQ")
+        sl_bar = make_bar(time=1060, open_=95, close=92, high=96, low=88, pair="MNQ")
+        strat.open_trades.append({
+            "trade_id": "P1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "is_phantom": True,
+            "entry_time": 1000,
+        })
+        strat._check_phantom_exits(entry_bar)
+        assert len(strat.open_trades) == 1
+        strat._check_phantom_exits(sl_bar)
+        # Should be closed on next bar
+        assert len(strat.open_trades) == 0
+
+    def test_reentry_respects_time_range_filter(self):
+        """Reentry should be blocked by time_range_filter outside RTH."""
+        from src.strategies.entry_context import time_range_filter
+        sio, lr, tr, tm = _deps()
+        options = StrategyOptions(
+            reentry_after_sl=True,
+            reentry_threshold=60.0,
+            entry_filters=[time_range_filter("08:00", "15:30")],
+        )
+        strat = make_strategy(sio, lr, tr, tm, options=options)
+        strat.is_warmup = False
+        # Add a reentry opportunity
+        strat._reentry_opportunities.append({
+            "level": 100.0, "direction": "long", "pair": "MNQ",
+            "extreme_excursion": 95.0, "sl_bar_time": 500,
+        })
+        # Bar at 07:59 NY (before RTH) — should be blocked
+        from zoneinfo import ZoneInfo
+        ny = ZoneInfo("America/New_York")
+        from datetime import datetime
+        dt = datetime(2025, 6, 15, 7, 59, tzinfo=ny)
+        bar = make_bar(time=int(dt.timestamp()), open_=96, close=101, high=102, low=96, pair="MNQ")
+        strat._check_reentry_opportunities(bar)
+        # Opportunity should still be there (blocked by filter, not consumed)
+        assert len(strat._reentry_opportunities) == 1
+
+    def test_reentry_bypasses_daily_limit_filter(self):
+        """Reentry should NOT be blocked by daily_trades_limit_filter."""
+        from src.strategies.entry_context import daily_trades_limit_filter, time_range_filter
+        sio, lr, tr, tm = _deps()
+        options = StrategyOptions(
+            reentry_after_sl=True,
+            reentry_threshold=60.0,
+            entry_filters=[
+                time_range_filter("08:00", "15:30"),
+                daily_trades_limit_filter(1),
+            ],
+        )
+        strat = make_strategy(sio, lr, tr, tm, options=options)
+        strat.is_warmup = False
+        # Seed a trade in the repo so daily limit is already at 1
+        tr.inserted.append({
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "closed", "result_type": "SL",
+            "entry_time": datetime(2025, 6, 15, 8, 0, tzinfo=ZoneInfo("America/New_York")),
+            "source": "strategy",
+        })
+        # Add a reentry opportunity
+        strat._reentry_opportunities.append({
+            "level": 100.0, "direction": "long", "pair": "MNQ",
+            "extreme_excursion": 95.0, "sl_bar_time": 500,
+        })
+        # Bar during RTH with bullish close above line
+        dt = datetime(2025, 6, 15, 10, 0, tzinfo=ZoneInfo("America/New_York"))
+        bar = make_bar(time=int(dt.timestamp()), open_=96, close=101, high=102, low=96, pair="MNQ")
+        strat._check_reentry_opportunities(bar)
+        # Reentry should have fired (daily limit bypassed)
+        assert len(strat._reentry_opportunities) == 0
+        assert any(t.get("is_reentry") for t in strat.open_trades)

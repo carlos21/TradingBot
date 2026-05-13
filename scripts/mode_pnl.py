@@ -440,9 +440,12 @@ def aggregate_breakdown(
     for key in sorted(daily.keys()):
         equity_balances.append(equity_balances[-1] + daily[key]["usd"])
 
+    start = account
     peak = account
     max_dd_usd = 0.0
     max_dd_pct = 0.0
+    max_dd_from_start_usd = 0.0
+    max_dd_from_start_pct = 0.0
     for bal in equity_balances[1:]:
         if bal > peak:
             peak = bal
@@ -451,6 +454,12 @@ def aggregate_breakdown(
         if dd_usd > max_dd_usd:
             max_dd_usd = dd_usd
             max_dd_pct = dd_pct
+        if bal < start:
+            dd_from_start_usd = start - bal
+            dd_from_start_pct = (dd_from_start_usd / start * 100) if start > 0 else 0.0
+            if dd_from_start_usd > max_dd_from_start_usd:
+                max_dd_from_start_usd = dd_from_start_usd
+                max_dd_from_start_pct = dd_from_start_pct
 
     num_months = len(monthly) if monthly else 1
     avg_monthly_usd = net_usd / num_months if num_months > 0 else 0.0
@@ -469,6 +478,8 @@ def aggregate_breakdown(
         "max_cl": max_cl,
         "max_dd_usd": max_dd_usd,
         "max_dd_pct": max_dd_pct,
+        "max_dd_from_start_usd": max_dd_from_start_usd,
+        "max_dd_from_start_pct": max_dd_from_start_pct,
         "avg_monthly_usd": avg_monthly_usd,
         "total_commission": total_commission,
         "equity_balances": equity_balances,
