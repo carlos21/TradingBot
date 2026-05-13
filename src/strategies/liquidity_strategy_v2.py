@@ -316,6 +316,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             for sid, line in self.strategy_lines.items():
                 if sid in lines_to_remove:
                     continue
+                # Skip lines created after this bar — same guard as main loop
+                if line.get('creation_ts', 0) > bar_time:
+                    continue
                 # Same guard for cross-line hits during warmup
                 if self.is_warmup and line.get('creation_ts', 0) == 0:
                     continue
