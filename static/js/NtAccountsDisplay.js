@@ -19,11 +19,6 @@ export class NtAccountsDisplay {
 
   init() {
     this.loadAccounts();
-    this.socket.on('stream_status', data => {
-      if (data.nt_accounts !== undefined) {
-        this.render(data.nt_accounts, data.streaming_disabled_reason);
-      }
-    });
   }
 
   async loadAccounts() {

@@ -19,8 +19,8 @@ from src.config import (
     DbConfigLoader,
     EnvConfigLoader,
     CliConfigLoader,
-    AppBuilder,
 )
+from src.config.builder import AppBuilder
 
 
 def main():

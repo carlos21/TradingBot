@@ -125,7 +125,6 @@ class TestConnectHandler:
             data_source=data_source,
             live_mode=False,
             _logger=logger,
-            nt_account_names=[],
         )
         handler = socketio.handlers["connect"]
         handler(None)
@@ -135,10 +134,8 @@ class TestConnectHandler:
         assert event == "stream_status"
         assert payload["playing"] is False
         assert payload["live_mode"] is False
-        assert payload["nt_accounts"] == []
         assert payload["gateway_running"] is False
         assert payload["platform_connected"] is False
-        assert payload["streaming_disabled_reason"] is None
 
     @patch("src.routes.socketio_handlers.emit")
     def test_connect_live_mode_with_gateway(self, mock_emit, socketio, loader, logger):
@@ -150,7 +147,6 @@ class TestConnectHandler:
             data_source=data_source,
             live_mode=True,
             _logger=logger,
-            nt_account_names=["Sim101"],
         )
         handler = socketio.handlers["connect"]
         handler(None)
@@ -160,28 +156,8 @@ class TestConnectHandler:
         assert event == "stream_status"
         assert payload["playing"] is False
         assert payload["live_mode"] is True
-        assert payload["nt_accounts"] == ["Sim101"]
         assert payload["gateway_running"] is True
         assert payload["platform_connected"] is True
-        assert payload["streaming_disabled_reason"] is None
-
-    @patch("src.routes.socketio_handlers.emit")
-    def test_connect_live_mode_no_accounts_shows_disabled_reason(self, mock_emit, socketio, loader, logger):
-        data_source = FakeZMQDataSource()
-        register_socketio_handlers(
-            socketio=socketio,
-            loader=loader,
-            data_source=data_source,
-            live_mode=True,
-            _logger=logger,
-            nt_account_names=[],
-        )
-        handler = socketio.handlers["connect"]
-        handler(None)
-
-        mock_emit.assert_called_once()
-        event, payload = mock_emit.call_args[0]
-        assert payload["streaming_disabled_reason"] == "No NT accounts configured"
 
     @patch("src.routes.socketio_handlers.emit")
     def test_connect_requests_refresh_when_not_refreshing(self, mock_emit, socketio, loader, logger):

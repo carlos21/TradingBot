@@ -74,6 +74,14 @@ if (-not ("Win32HelperV2" -as [Type])) {
 # Helpers
 # =============================================================================
 
+function Disable-CapsLockIfOn {
+    if ([System.Windows.Forms.Control]::IsKeyLocked('CapsLock')) {
+        [System.Windows.Forms.SendKeys]::SendWait('{CAPSLOCK}')
+        Start-Sleep -Milliseconds 100
+        Write-Host 'Caps Lock was ON — toggled it off before typing credentials.' -ForegroundColor Yellow
+    }
+}
+
 function Find-NinjaTraderExe {
     $regPaths = @(
         "HKLM:\SOFTWARE\NinjaTrader, LLC\NinjaTrader 8",
@@ -448,6 +456,8 @@ try {
         Set-ForegroundWindowRobust -hWnd $foundDialog.Hwnd
         Start-Sleep -Milliseconds 300
 
+        Disable-CapsLockIfOn
+
         $uiaSuccess = Set-TextBoxValue -Element $foundDialog.Edits[0] -Value $username
         if ($uiaSuccess) {
             Start-Sleep -Milliseconds 200
@@ -475,6 +485,8 @@ try {
         $targetHwnd = if ($foundDialog) { $foundDialog.Hwnd } else { $hwnd }
         Set-ForegroundWindowRobust -hWnd $targetHwnd
         Start-Sleep -Milliseconds 800
+
+        Disable-CapsLockIfOn
 
         $safeUser = Escape-SendKeys -Text $username
         $safePass = Escape-SendKeys -Text $password
