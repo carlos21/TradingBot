@@ -74,10 +74,11 @@ def trigger_with_timeframes(trigger_func: EntryTrigger, timeframes: list[str]) -
 
 def _calculate_velocity_score(history_1m: list[dict[str, Any]], lookback: int) -> float:
     """
-    Calculates velocity as points-per-minute using 1m bars.
+    Calculates directional velocity as points-per-minute using 1m bars.
 
-    Measures how fast price is moving by looking at the net displacement
-    over the last *lookback* 1-minute bars, divided by the number of minutes.
+    Measures net displacement over the last *lookback* 1-minute bars,
+    divided by the number of minutes.  Useful when the sign (direction)
+    matters — e.g. TSI fast-move protection.
     Positive = price moving up, negative = price moving down.
     """
     if len(history_1m) < lookback:
@@ -89,6 +90,24 @@ def _calculate_velocity_score(history_1m: list[dict[str, Any]], lookback: int) -
     displacement = end_price - start_price
 
     return displacement / lookback
+
+
+def _calculate_volatility_score(history_1m: list[dict[str, Any]], lookback: int) -> float:
+    """
+    Calculates volatility as average bar-range per minute using 1m bars.
+
+    Measures how much price is *moving* (regardless of direction) by
+    summing each bar's high-low range over the last *lookback* bars and
+    dividing by the number of minutes.  This captures whipsaws that
+    net-displacement velocity hides.
+    """
+    if len(history_1m) < lookback:
+        return 0.0
+
+    subset = history_1m[-lookback:]
+    total_range = sum(b['high'] - b['low'] for b in subset)
+
+    return total_range / lookback
 
 def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig, tf):
     """
@@ -483,8 +502,8 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
                 # Velocity must be calculated from the perspective of the bar
                 # that actually touched the line, not from a future bar.
                 hist_1m = [b for b in hist_1m if b['time'] <= touch_time]
-            velocity_score = _calculate_velocity_score(hist_1m, config.lookback)
-            abs_vel = abs(velocity_score)
+            velocity_score = _calculate_volatility_score(hist_1m, config.lookback)
+            abs_vel = velocity_score  # volatility score is always non-negative
 
             is_fast     = abs_vel > config.fast_threshold
             is_moderate = not is_fast and abs_vel > config.slow_threshold

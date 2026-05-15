@@ -11,6 +11,7 @@ from src.strategies.triggers import (
     _calculate_ema,
     _calculate_tsi_series,
     _calculate_velocity_score,
+    _calculate_volatility_score,
     _check_tsi_condition,
     _handle_double_tsi_cross,
     _handle_single_tsi_cross,
@@ -109,6 +110,32 @@ class TestCalculateVelocityScore:
     def test_insufficient_history(self):
         bars = [_bar() for _ in range(3)]
         score = _calculate_velocity_score(bars, 10)
+        assert score == 0.0
+
+
+class TestCalculateVolatilityScore:
+
+    def test_flat_market(self):
+        bars = [_bar(close=100, high=100, low=100) for _ in range(30)]
+        score = _calculate_volatility_score(bars, 10)
+        assert score == 0.0
+
+    def test_whipsaw_captured(self):
+        """Bars that churn back and forth should show high volatility even with zero net displacement."""
+        bars = [_bar(open_=100, high=110, low=90, close=100) for _ in range(30)]
+        score = _calculate_volatility_score(bars, 10)
+        # each bar has range 20, 10-bar volatility = 200 / 10 = 20.0
+        assert score == 20.0
+
+    def test_uptrend_with_ranges(self):
+        bars = [_bar(open_=100 + i, high=102 + i, low=98 + i, close=101 + i) for i in range(30)]
+        score = _calculate_volatility_score(bars, 10)
+        # each bar has range 4, so 10-bar volatility = 40 / 10 = 4.0
+        assert score == 4.0
+
+    def test_insufficient_history(self):
+        bars = [_bar() for _ in range(3)]
+        score = _calculate_volatility_score(bars, 10)
         assert score == 0.0
 
 
