@@ -92,7 +92,7 @@ def register_debug_routes(
                     float(sl['price']),
                     creation_timestamp=float(sl.get('creation_ts', 0.0))
                 )
-                lines_repo.insert_line(sl['id'], pair, float(sl['price']))
+                lines_repo.insert_line(pair, float(sl['price']))
 
             # 8. WARM UP STRATEGY (with lines present)
             played = data_source.load_historical_bars('1m')
