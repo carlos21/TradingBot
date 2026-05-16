@@ -187,6 +187,8 @@ def _setup_live_mode_callbacks(
         """Background task: process historical bars."""
         try:
             strategy.is_warmup = True
+            strategy.warmup_start_ts = bars[0]['time'] if bars else 0.0
+            strategy._warmup_crossed_lines.clear()
             start = __import__('time').monotonic()
             for i, bar in enumerate(bars):
                 strategy.on_raw_bar(bar)

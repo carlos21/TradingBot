@@ -108,6 +108,7 @@ def make_strategy(
     trade_logger=None,
     logger=None,
     decision_log_repository=None,
+    trigger_state_repo=None,
 ):
     return LiquidityStrategyV2(
         min_stop_loss=min_stop_loss,
@@ -130,6 +131,7 @@ def make_strategy(
         account_balance=100000.0,
         logger=logger or FakeLogger(),
         decision_log_repository=decision_log_repository,
+        trigger_state_repo=trigger_state_repo,
     )
 
 

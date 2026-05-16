@@ -162,6 +162,8 @@ class BaseLiquidityStrategy:
         # Optional dependency for multi-TF checks
         self.htf_fetcher = htf_fetcher
         self.is_warmup = False
+        self.warmup_start_ts = 0.0
+        self._warmup_crossed_lines: set[Any] = set()
 
     def _get_current_account_configs(self) -> list:
         """Return fresh account configs from DB if available, else cached fallback."""
@@ -256,11 +258,17 @@ class BaseLiquidityStrategy:
                 )
 
     def restore_trigger_states(self, pair: str):
-        """Overlay persisted trigger states onto bootstrapped lines."""
+        """Overlay persisted trigger states onto bootstrapped lines.
+
+        Lines that were crossed during warm-up keep their warm-up state; restoring
+        stale persisted state would incorrectly reset direction/extreme/trigger stages.
+        """
         with self.lock:
             saved = self.trigger_state_repo.load_all(pair)
             restored = 0
             for line_id, line_state in self.strategy_lines.items():
+                if line_id in self._warmup_crossed_lines:
+                    continue
                 persisted = saved.get(str(line_id))
                 if persisted:
                     # Keep level/creation_ts from fresh bootstrap (authoritative for geometry),
@@ -634,15 +642,13 @@ class BaseLiquidityStrategy:
 
     def _maybe_remove_line(self, line_id: Any, opened: bool):
         """Remove the evaluated strategy line depending on removal mode."""
-        if self.is_warmup:
-            return
         mode = self.options.line_removal_mode
         if mode == LineRemovalMode.NEVER:
             # keep the line and reset state, so it can re-trigger
             if line_id in self.strategy_lines:
                 self._reset_line_state(self.strategy_lines[line_id])
             return
-        if mode == LineRemovalMode.ON_EVALUATE or mode == LineRemovalMode.ON_ENTER and opened:
+        if mode == LineRemovalMode.ON_EVALUATE or (mode == LineRemovalMode.ON_ENTER and opened):
             self.remove_strategy_line(line_id)
 
     # ------------------------------------------------------------------

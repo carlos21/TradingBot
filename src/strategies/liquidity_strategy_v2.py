@@ -252,6 +252,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                 f"Latched short @ {current_price} (depth={depth:.2f})",
                                 direction="short", reason=f"depth={depth:.2f}")
                             self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "short", "level": lvl, "depth": depth})
+                            if self.is_warmup and creation_ts < getattr(self, 'warmup_start_ts', 0):
+                                self._warmup_crossed_lines.add(sid)
                         else:
                             if entered_pending:
                                 depth = pending_ext - lvl if pending_ext > lvl else 0.0
@@ -281,6 +283,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                 f"Latched long @ {current_price} (depth={depth:.2f})",
                                 direction="long", reason=f"depth={depth:.2f}")
                             self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "long", "level": lvl, "depth": depth})
+                            if self.is_warmup and creation_ts < getattr(self, 'warmup_start_ts', 0):
+                                self._warmup_crossed_lines.add(sid)
                         else:
                             if entered_pending:
                                 depth = lvl - pending_ext if pending_ext < lvl else 0.0
@@ -390,8 +394,42 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
         self._persist_all_line_states()
 
+    def _warmup_removal_pass(self, bar: dict[str, Any]):
+        """During warm-up, evaluate old crossed lines using existing trigger/filter logic
+        to decide whether they should be removed. No trades are opened."""
+        with self.lock:
+            for sid, line in list(self.strategy_lines.items()):
+                creation_ts = line.get('creation_ts', 0)
+                if creation_ts > bar['time']:
+                    continue
+                # Only old lines that were crossed during warm-up
+                if creation_ts >= getattr(self, 'warmup_start_ts', 0):
+                    continue
+                if sid not in self._warmup_crossed_lines:
+                    continue
+                if line.get('direction') is None:
+                    continue
+
+                proposed_ctx = None
+                for trig in self.triggers:
+                    proposed_ctx = trig(self, sid, line, bar)
+                    if proposed_ctx is not None:
+                        break
+
+                if proposed_ctx is None:
+                    continue
+
+                allow, reason, hold = self._filters_allow_entry(proposed_ctx)
+                if not allow and hold:
+                    self._reset_trigger_state(line)
+                    continue
+
+                # Don't open trades during warm-up, but run removal logic
+                self._maybe_remove_line(sid, opened=False)
+
     def _on_strategy_bar(self, bar: dict[str, Any]):
         if self.is_warmup:
+            self._warmup_removal_pass(bar)
             return
         with self.lock:
             # Calculate and Emit TSI for Visualization ---

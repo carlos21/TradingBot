@@ -841,11 +841,18 @@ class TestMiscMethods:
         strat._check_phantom_exits(bar)
         assert len(strat.open_trades) == 1
 
-    def test_maybe_remove_line_warmup_skips(self):
+    def test_maybe_remove_line_warmup_on_evaluate_removes(self):
         strat = _make_base(options=StrategyOptions(line_removal_mode=LineRemovalMode.ON_EVALUATE))
         strat.is_warmup = True
         strat.add_strategy_line("L1", 100.0)
-        strat._maybe_remove_line("L1", opened=True)
+        strat._maybe_remove_line("L1", opened=False)
+        assert "L1" not in strat.strategy_lines
+
+    def test_maybe_remove_line_warmup_on_enter_keeps(self):
+        strat = _make_base(options=StrategyOptions(line_removal_mode=LineRemovalMode.ON_ENTER))
+        strat.is_warmup = True
+        strat.add_strategy_line("L1", 100.0)
+        strat._maybe_remove_line("L1", opened=False)
         assert "L1" in strat.strategy_lines
 
     def test_on_strategy_bar_warmup_skips_exits(self):
