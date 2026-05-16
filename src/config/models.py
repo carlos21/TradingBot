@@ -116,7 +116,7 @@ class AppConfig:
     """Trading session start time (HH:MM, in ``America/New_York`` by default).
     Entry filters block signals outside this window."""
 
-    session_end: str = "17:00"
+    session_end: str = "16:58"
     """Trading session end time (HH:MM). Open trades are closed at this time
     in live mode to avoid overnight exposure."""
 

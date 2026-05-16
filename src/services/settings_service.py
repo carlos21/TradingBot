@@ -79,6 +79,7 @@ class SettingsService:
             "trading": {
                 "pair": all_settings.get("pair", "MNQ"),
                 "instrument": all_settings.get("instrument", "MNQ 06-26"),
+                "session_end": all_settings.get("session_end", "16:58"),
             },
             "network": {
                 "flask_port": all_settings.get("flask_port", "5001"),

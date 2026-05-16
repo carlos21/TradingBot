@@ -137,6 +137,7 @@ class AppBuilder:
             app_config=cfg,
             db=db,
             accounts_repo=accounts_repo,
+            session_end_time=cfg.session_end,
         ), None
 
     # ------------------------------------------------------------------
@@ -231,5 +232,6 @@ class AppBuilder:
             app_config=cfg,
             db=db,
             accounts_repo=accounts_repo,
+            session_end_time=cfg.session_end,
         )
         return wiring, ds

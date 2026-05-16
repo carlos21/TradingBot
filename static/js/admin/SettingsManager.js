@@ -19,6 +19,7 @@ export class SettingsManager {
     this.el = {
       pair: document.getElementById('settings-pair'),
       instrument: document.getElementById('settings-instrument'),
+      sessionEnd: document.getElementById('settings-session-end'),
       // Global risk/rr removed — now per-account
       flaskPort: document.getElementById('settings-flask-port'),
       zmqHost: document.getElementById('settings-zmq-host'),
@@ -59,6 +60,7 @@ export class SettingsManager {
       const n = data.network || {};
       this.el.pair.value = t.pair || 'MNQ';
       this.el.instrument.value = t.instrument || '';
+      this.el.sessionEnd.value = t.session_end || '16:58';
       // Risk/RR are now per-account only
       this.el.flaskPort.value = n.flask_port || '5001';
       this.el.zmqHost.value = n.zmq_host || '127.0.0.1';
@@ -217,6 +219,7 @@ export class SettingsManager {
         trading: {
           pair: this.el.pair.value,
           instrument: this.el.instrument.value,
+          session_end: this.el.sessionEnd.value,
         },
         network: {
           flask_port: this.el.flaskPort.value,

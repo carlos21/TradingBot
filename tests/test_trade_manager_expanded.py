@@ -486,12 +486,12 @@ class TestSessionEndCloseExpanded:
     def test_zmq_failure_keeps_trade_open(self):
         tm = _make_manager(
             trade_executor=ExplodingExecutor(),
-            session_end_time="15:00",
+            session_end_time="16:58",
             session_tz="America/New_York",
         )
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500)
         ny = __import__('zoneinfo').ZoneInfo("America/New_York")
-        bar_dt = datetime(2025, 6, 15, 15, 1, tzinfo=ny)
+        bar_dt = datetime(2025, 6, 15, 16, 59, tzinfo=ny)
         bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
@@ -502,12 +502,12 @@ class TestSessionEndCloseExpanded:
         tm = _make_manager(
             trade_repository=repo,
             analytics=analytics,
-            session_end_time="15:00",
+            session_end_time="16:58",
             session_tz="America/New_York",
         )
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500)
         ny = __import__('zoneinfo').ZoneInfo("America/New_York")
-        bar_dt = datetime(2025, 6, 15, 15, 1, tzinfo=ny)
+        bar_dt = datetime(2025, 6, 15, 16, 59, tzinfo=ny)
         bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(analytics.exceptions) == 1
@@ -515,21 +515,21 @@ class TestSessionEndCloseExpanded:
         assert len(tm.open_trades) == 0
 
     def test_skips_different_pair_at_session_end(self):
-        tm = _make_manager(session_end_time="15:00", session_tz="America/New_York")
+        tm = _make_manager(session_end_time="16:58", session_tz="America/New_York")
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500, pair="ES")
         ny = __import__('zoneinfo').ZoneInfo("America/New_York")
-        bar_dt = datetime(2025, 6, 15, 15, 1, tzinfo=ny)
+        bar_dt = datetime(2025, 6, 15, 16, 59, tzinfo=ny)
         bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
 
     def test_skips_entry_time_after_bar_at_session_end(self):
-        tm = _make_manager(session_end_time="15:00", session_tz="America/New_York")
+        tm = _make_manager(session_end_time="16:58", session_tz="America/New_York")
         # entry_time far in the future relative to the bar timestamp
         future_entry = int(datetime(2030, 1, 1, 0, 0, tzinfo=timezone.utc).timestamp())
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=future_entry)
         ny = __import__('zoneinfo').ZoneInfo("America/New_York")
-        bar_dt = datetime(2025, 6, 15, 15, 1, tzinfo=ny)
+        bar_dt = datetime(2025, 6, 15, 16, 59, tzinfo=ny)
         bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1

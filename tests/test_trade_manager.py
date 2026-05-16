@@ -178,21 +178,21 @@ class TestCFDMode:
 class TestSessionEndClose:
 
     def test_closes_at_session_end(self):
-        tm = _make_manager(session_end_time="15:00", session_tz="America/New_York")
+        tm = _make_manager(session_end_time="16:58", session_tz="America/New_York")
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500)
-        # 15:01 NY -> should close
+        # 16:59 NY -> should close
         from zoneinfo import ZoneInfo
         ny = ZoneInfo("America/New_York")
-        bar_dt = datetime(2025, 6, 15, 15, 1, tzinfo=ny)
+        bar_dt = datetime(2025, 6, 15, 16, 59, tzinfo=ny)
         bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 0
 
     def test_skips_same_bar_session_end(self):
-        tm = _make_manager(session_end_time="15:00", session_tz="America/New_York")
+        tm = _make_manager(session_end_time="16:58", session_tz="America/New_York")
         from zoneinfo import ZoneInfo
         ny = ZoneInfo("America/New_York")
-        bar_dt = datetime(2025, 6, 15, 15, 1, tzinfo=ny)
+        bar_dt = datetime(2025, 6, 15, 16, 58, tzinfo=ny)
         entry_time = int(bar_dt.timestamp())
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=entry_time)
         bar = make_bar(time=entry_time, close=105, pair="MNQ")
@@ -201,11 +201,11 @@ class TestSessionEndClose:
         assert len(tm.open_trades) == 1
 
     def test_does_not_close_before_session_end(self):
-        tm = _make_manager(session_end_time="15:00", session_tz="America/New_York")
+        tm = _make_manager(session_end_time="16:58", session_tz="America/New_York")
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500)
         from zoneinfo import ZoneInfo
         ny = ZoneInfo("America/New_York")
-        bar_dt = datetime(2025, 6, 15, 14, 59, tzinfo=ny)
+        bar_dt = datetime(2025, 6, 15, 16, 57, tzinfo=ny)
         bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1

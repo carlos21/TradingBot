@@ -111,16 +111,16 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 # Server Process Logic
 # -------------------------------------------------------------------------
 
-def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT):
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT, session_end: str = "16:58", session_tz: str = "America/New_York"):
     try:
-        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist, risk_per_trade, risk_pct_per_trade, account_balance, use_fractional_lots, fee_per_rt)
+        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist, risk_per_trade, risk_pct_per_trade, account_balance, use_fractional_lots, fee_per_rt, session_end, session_tz)
     except Exception as e:
         import traceback
         sys.stderr.write(f"\n❌ Server process crashed: {e}\n")
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
 
-def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT):
+def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT, session_end: str = "16:58", session_tz: str = "America/New_York"):
     if quiet:
         sys.stdout = open(os.devnull, 'w')
         import logging
@@ -174,6 +174,8 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
         broker_spread=broker_spread,
         use_fractional_lots=use_fractional_lots,
         fee_per_rt=fee_per_rt,
+        session_end_time=session_end,
+        session_tz=session_tz,
     )
 
     ready_event.set()
@@ -497,9 +499,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
     # When risk_pct is set, pass None for risk_per_trade so percentage takes precedence
     risk_per_trade = None if getattr(args, 'risk_pct', None) is not None else args.risk
+    session_end = getattr(args, 'session_end', '16:58')
+    session_tz = getattr(args, 'session_tz', 'America/New_York')
     server_proc = Process(
         target=run_test_server,
-        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr, args.persist, risk_per_trade, getattr(args, 'risk_pct', None), args.account, use_fractional_lots, fee_per_rt)
+        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr, args.persist, risk_per_trade, getattr(args, 'risk_pct', None), args.account, use_fractional_lots, fee_per_rt, session_end, session_tz)
     )
     server_proc.start()
 
@@ -628,10 +632,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     sock.on('stream_end', () => { window.__done = true; });
                 """)
 
-                # Extend stream to NY session end (15:00) so open trades get closed
-                ny_tz = ZoneInfo("America/New_York")
+                # Extend stream to session end so open trades get closed
                 scenario_date = dtparser.parse(sc["start"]).date()
-                session_end_dt = datetime.combine(scenario_date, dtime(15, 0), tzinfo=ny_tz)
+                session_end_time = dtime.fromisoformat(getattr(args, 'session_end', '16:58'))
+                session_end_tz = ZoneInfo(getattr(args, 'session_tz', 'America/New_York'))
+                session_end_dt = datetime.combine(scenario_date, session_end_time, tzinfo=session_end_tz)
                 session_end_ts = int(session_end_dt.timestamp())
                 stream_stop_at = max(end_ts, session_end_ts)
 
@@ -1308,6 +1313,10 @@ def main():
                     help="Risk:Reward ratio for TP calculation (default: 4.0)")
     ap.add_argument("--persist", action="store_true", default=False,
                     help="Persist scenario trades to the database (default: false, uses in-memory storage)")
+    ap.add_argument("--session-end", type=str, default="16:58",
+                    help="Session end time HH:MM for closing open trades (default: 16:58)")
+    ap.add_argument("--session-tz", type=str, default="America/New_York",
+                    help="Timezone for session end time (default: America/New_York)")
     args = ap.parse_args()
 
     yaml_path = Path(args.yaml)

@@ -266,6 +266,8 @@ def create_app(
     db: DatabaseProtocol | None = None,
     accounts_repo=None,
     app_config=None,
+    session_end_time: str | None = None,
+    session_tz: str = "America/New_York",
 ) -> AppWiring:
     """
     Build the whole application with injected dependencies.
@@ -319,12 +321,14 @@ def create_app(
     if accounts_repo is None and db is not None:
         accounts_repo = NtAccountRepository(db=db)
 
+    _resolved_session_end = session_end_time or (getattr(app_config, "session_end", None) if app_config else None) or "16:58"
+
     trade_manager = TradeManager(
         trade_repository=repos.trades,
         socketio=event_publisher,
         pair=pair,
-        session_end_time="17:00",
-        session_tz="America/New_York",
+        session_end_time=_resolved_session_end,
+        session_tz=session_tz,
         broker_mode=broker_mode,
         broker_spread=broker_spread,
         use_fractional_lots=use_fractional_lots,
