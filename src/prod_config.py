@@ -60,11 +60,11 @@ def get_prod_strategy_options(max_bounce: float,
         triggers=[
             make_velocity_adaptive_tsi_trigger(VelocityTriggerConfig(
                 fast_threshold=28.0,   # avg bar-range > 5.0 pts/min  -> need 2 TSI crosses on 5m
-                slow_threshold=28.0,   # avg bar-range <= 5.0 pts/min -> considered SLOW
+                slow_threshold=15.0,   # avg bar-range <= 5.0 pts/min -> considered SLOW
                 lookback=30,
                 fast=    [TsiCrossCondition("5m", 2)],
-                moderate=[TsiCrossCondition("1m", 1), TsiCrossCondition("3m", 1)],
-                slow=    [TsiCrossCondition("1m", 1), TsiCrossCondition("3m", 1)],
+                moderate=[TsiCrossCondition("3m", 1)],
+                slow=    [TsiCrossCondition("1m", 1)],
                 post_cross1_max_dist=80.0,  # invalidate if price moves >80pts from line after 1st cross
             )),
             # trigger_with_timeframes(tsi_cross_trigger, ['5m', '15m']),

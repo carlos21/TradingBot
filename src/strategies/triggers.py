@@ -96,16 +96,21 @@ def _calculate_volatility_score(history_1m: list[dict[str, Any]], lookback: int)
     """
     Calculates volatility as average bar-range per minute using 1m bars.
 
-    Measures how much price is *moving* (regardless of direction) by
-    summing each bar's high-low range over the last *lookback* bars and
-    dividing by the number of minutes.  This captures whipsaws that
-    net-displacement velocity hides.
+    Groups the last *lookback* 1m bars into 5-minute chunks and sums each
+    chunk's max(high) - min(low).  Dividing by the number of minutes gives
+    a 5m-equivalent volatility that aligns with what traders see on a 5m
+    chart, smoothing out intra-bar wicks that the old 1m-sum method
+    exaggerated.
     """
     if len(history_1m) < lookback:
         return 0.0
 
     subset = history_1m[-lookback:]
-    total_range = sum(b['high'] - b['low'] for b in subset)
+    total_range = 0.0
+    chunk_size = 5
+    for i in range(0, len(subset), chunk_size):
+        chunk = subset[i:i + chunk_size]
+        total_range += max(b['high'] for b in chunk) - min(b['low'] for b in chunk)
 
     return total_range / lookback
 

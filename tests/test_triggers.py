@@ -120,18 +120,20 @@ class TestCalculateVolatilityScore:
         score = _calculate_volatility_score(bars, 10)
         assert score == 0.0
 
-    def test_whipsaw_captured(self):
-        """Bars that churn back and forth should show high volatility even with zero net displacement."""
+    def test_whipsaw_smoothed(self):
+        """Bars that churn back and forth inside a 5m window are smoothed out."""
         bars = [_bar(open_=100, high=110, low=90, close=100) for _ in range(30)]
         score = _calculate_volatility_score(bars, 10)
-        # each bar has range 20, 10-bar volatility = 200 / 10 = 20.0
-        assert score == 20.0
+        # 10 bars = 2 chunks of 5; each chunk range = 110 - 90 = 20
+        # total = 40; score = 40 / 10 = 4.0
+        assert score == 4.0
 
     def test_uptrend_with_ranges(self):
         bars = [_bar(open_=100 + i, high=102 + i, low=98 + i, close=101 + i) for i in range(30)]
         score = _calculate_volatility_score(bars, 10)
-        # each bar has range 4, so 10-bar volatility = 40 / 10 = 4.0
-        assert score == 4.0
+        # 10 bars = 2 chunks; chunk 1 range = 106-98 = 8, chunk 2 range = 111-103 = 8
+        # total = 16; score = 16 / 10 = 1.6
+        assert score == 1.6
 
     def test_insufficient_history(self):
         bars = [_bar() for _ in range(3)]
