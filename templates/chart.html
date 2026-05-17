@@ -19,7 +19,7 @@
   {% endif %}
 
   <!-- Connection Overlay (live mode only, shown until connected) -->
-  <div id="connectionOverlay" class="hidden absolute inset-0 z-40 flex items-center justify-center bg-gray-900">
+  <div id="connectionOverlay" data-platform-label="{{ platform_label }}" class="hidden absolute inset-0 z-40 flex items-center justify-center bg-gray-900">
     <div class="bg-gray-800 border border-gray-700 rounded-xl p-8 max-w-md w-full text-center shadow-2xl">
       <div class="mb-6">
         <div class="w-16 h-16 bg-blue-500/20 rounded-full flex items-center justify-center mx-auto mb-4">

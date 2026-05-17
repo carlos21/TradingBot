@@ -566,9 +566,11 @@ to be:
                 self._handle_command_ack(envelope.payload)
 
         except json.JSONDecodeError as e:
-            self.logger.error(f"Invalid JSON received: {e} | Raw: {json_msg[:200]}")
+            raw_bytes = json_msg.encode('utf-8', errors='replace')
+            self.logger.error(f"Invalid JSON received: {e} | Raw: {json_msg[:200]} | Hex: {raw_bytes[:200].hex()}")
         except Exception as e:
-            self.logger.error(f"Error handling message: {e} | Raw: {json_msg[:200]}")
+            raw_bytes = json_msg.encode('utf-8', errors='replace')
+            self.logger.error(f"Error handling message: {e} | Raw: {json_msg[:200]} | Hex: {raw_bytes[:200].hex()}")
 
     def _handle_heartbeat(self, json_msg: str) -> None:
         """Process heartbeat from platform."""
@@ -586,7 +588,8 @@ to be:
                         except Exception:
                             pass
         except Exception as e:
-            self.logger.debug(f"Error handling heartbeat: {e}")
+            raw_bytes = json_msg.encode('utf-8', errors='replace') if isinstance(json_msg, str) else json_msg
+            self.logger.debug(f"Error handling heartbeat: {e} | Hex: {raw_bytes[:200].hex() if isinstance(raw_bytes, bytes) else raw_bytes}")
 
     def _handle_connect(self, payload: dict[str, Any]) -> None:
         """Handle initial connection from platform."""

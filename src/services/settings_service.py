@@ -99,6 +99,7 @@ class SettingsService:
                 "password": self._decrypt(cred[1]) if cred else "",
                 "stored_usernames": [c["username"] for c in all_creds if c["service"] == self._SERVICE_KEY],
             },
+            "mt_terminal_path": all_settings.get("mt_terminal_path", ""),
         }
 
     def save_full_settings(self, payload: dict) -> None:
@@ -130,6 +131,10 @@ class SettingsService:
                 username,
                 self._encrypt(password),
             )
+
+        mt_terminal_path = payload.get("mt_terminal_path", "")
+        if mt_terminal_path:
+            self._settings.set("mt_terminal_path", mt_terminal_path)
 
     def to_app_config_overrides(self) -> dict:
         """Return a flat dict suitable for DbConfigLoader."""

@@ -1,0 +1,1 @@
+{"host":"127.0.0.1","marketPort":5565,"commandPort":5566,"queryPort":5567,"heartbeatPort":5568,"pair":"NAS100","autoConnectOnStartup":true,"autoShowPanel":true,"platformVersion":"2.0.0"}

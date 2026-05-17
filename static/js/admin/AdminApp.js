@@ -11,6 +11,7 @@ import { LineManager } from './LineManager.js';
 import { DecisionLogs } from './DecisionLogs.js';
 import { SettingsManager } from './SettingsManager.js';
 import { NtManager } from './NtManager.js';
+import { MtManager } from './MtManager.js';
 
 class AdminApp {
   constructor() {
@@ -23,6 +24,7 @@ class AdminApp {
     this.decisionLogs = new DecisionLogs(this.api);
     this.settingsManager = new SettingsManager(this.api);
     this.ntManager = new NtManager(this.api);
+    this.mtManager = new MtManager(this.api);
 
     this.currentTab = 'overview';
     this.analyticsData = null;
@@ -82,7 +84,12 @@ class AdminApp {
 
       // Initialize new manager panels
       this.settingsManager.init();
-      this.ntManager.init();
+      if (document.getElementById('ninjatrader-tab')) {
+        this.ntManager.init();
+      }
+      if (document.getElementById('metatrader-tab')) {
+        this.mtManager.init();
+      }
 
       // Determine initial tab from server-rendered attribute or URL
       const rootEl = document.getElementById('admin-root');
@@ -192,6 +199,9 @@ class AdminApp {
         break;
       case 'ninjatrader':
         // NT panel is event-driven; no auto-load needed
+        break;
+      case 'metatrader':
+        // MT panel is event-driven; no auto-load needed
         break;
     }
   }

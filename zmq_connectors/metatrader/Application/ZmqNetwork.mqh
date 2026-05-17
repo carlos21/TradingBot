@@ -42,6 +42,8 @@ public:
       m_commandSocket = NULL;
       m_querySocket = NULL;
       m_heartbeatSocket = NULL;
+      
+      // Context is default-constructed; MQL5 ZMQ uses its own default I/O thread count
    }
 
    ~ZmqNetwork()
@@ -63,13 +65,36 @@ public:
       string queryAddr     = StringFormat("tcp://%s:%d", m_cfg.host, m_cfg.queryPort);
       string heartbeatAddr = StringFormat("tcp://%s:%d", m_cfg.host, m_cfg.heartbeatPort);
 
-      m_marketSocket.connect(marketAddr);
-      m_commandSocket.connect(commandAddr);
-      m_querySocket.connect(queryAddr);
-      m_heartbeatSocket.connect(heartbeatAddr);
+      bool ok1 = m_marketSocket.connect(marketAddr);
+      int err1 = GetLastError();
+      bool ok2 = m_commandSocket.connect(commandAddr);
+      int err2 = GetLastError();
+      bool ok3 = m_querySocket.connect(queryAddr);
+      int err3 = GetLastError();
+      bool ok4 = m_heartbeatSocket.connect(heartbeatAddr);
+      int err4 = GetLastError();
 
-      // Slow-joiner protection for PUB sockets
-      Sleep(300);
+      bool allOk = ok1 && ok2 && ok3 && ok4;
+      if(m_logger != NULL)
+      {
+         m_logger.Info("ZMQ connect results: market=" + (ok1 ? "OK" : "FAIL") + "(err=" + IntegerToString(err1) + ")" +
+                       " cmd=" + (ok2 ? "OK" : "FAIL") + "(err=" + IntegerToString(err2) + ")" +
+                       " query=" + (ok3 ? "OK" : "FAIL") + "(err=" + IntegerToString(err3) + ")" +
+                       " hb=" + (ok4 ? "OK" : "FAIL") + "(err=" + IntegerToString(err4) + ")");
+      }
+
+      if(!allOk)
+      {
+         if(m_logger != NULL)
+            m_logger.Error("ZMQ connect failed. Ensure MetaTrader 'Allow DLL imports' is enabled.");
+         Dispose();
+         return false;
+      }
+
+      // Slow-joiner protection for PUB sockets.
+      // 3000ms to allow WSL2 localhost forwarding rule to become active.
+      // Also gives MQL5 ZMQ I/O thread time to establish TCP.
+      Sleep(3000);
 
       if(m_logger != NULL)
       {
@@ -359,6 +384,8 @@ private:
       delete root; // Deletes entire tree including payload
 
       ZmqMsg msg(json);
-      socket.send(msg);
+      bool sent = socket.send(msg);
+      if(!sent && m_logger != NULL)
+         m_logger.Warning("ZMQ send failed on " + msgType);
    }
 };

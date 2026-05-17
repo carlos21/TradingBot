@@ -148,6 +148,10 @@ int OnInit()
 
    _logger.Info("Liquid ZMQ Connector UI ready");
    UpdatePanel();
+
+   if(_config.autoConnectOnStartup)
+      Connect();
+
    return INIT_SUCCEEDED;
 }
 
@@ -194,11 +198,14 @@ void OnTick()
 }
 
 //+------------------------------------------------------------------+
-//| Timer function (heartbeat)                                       |
+//| Timer function (heartbeat + command poll when market closed)     |
 //+------------------------------------------------------------------+
 void OnTimer()
 {
    if(!_connected) return;
+
+   // Poll for commands even when market is closed (OnTick not firing)
+   PollCommands();
 
    _heartbeatCounter++;
    if(_heartbeatCounter >= _config.heartbeatSec)

@@ -32,10 +32,18 @@ export class NtManager {
   }
 
   bindEvents() {
-    this.el.installNetmqBtn.addEventListener('click', () => this.installNetmq());
-    this.el.credsTogglePass.addEventListener('click', () => this.togglePassword());
-    this.el.saveCredsBtn.addEventListener('click', () => this.saveCredentials());
-    this.el.openBtn.addEventListener('click', () => this.openNt());
+    if (this.el.installNetmqBtn) {
+      this.el.installNetmqBtn.addEventListener('click', () => this.installNetmq());
+    }
+    if (this.el.credsTogglePass) {
+      this.el.credsTogglePass.addEventListener('click', () => this.togglePassword());
+    }
+    if (this.el.saveCredsBtn) {
+      this.el.saveCredsBtn.addEventListener('click', () => this.saveCredentials());
+    }
+    if (this.el.openBtn) {
+      this.el.openBtn.addEventListener('click', () => this.openNt());
+    }
   }
 
   async loadCredentials() {

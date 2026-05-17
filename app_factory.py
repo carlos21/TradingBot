@@ -55,6 +55,7 @@ from src.routes import (
     register_debug_routes,
     register_socketio_handlers,
     register_settings_routes,
+    register_mt_routes,
     register_nt_routes,
     register_stream_routes,
 )
@@ -570,6 +571,16 @@ def create_app(
     settings_controller = SettingsController(settings_service)
     nt_service = NtManagerService()
 
+    # Build platform-specific lifecycle service (SOLID: one implementation per platform)
+    if _platform_type == "ninjatrader":
+        from src.services.platform_lifecycle.nt_lifecycle_service import NinjaTraderLifecycleService
+        platform_lifecycle = NinjaTraderLifecycleService(nt_service, settings_service, logger)
+    else:
+        from src.services.platform_lifecycle.mt_lifecycle_service import MetaTraderLifecycleService
+        from src.services.mt_manager_service import MetaTraderManagerService
+        mt_service = MetaTraderManagerService()
+        platform_lifecycle = MetaTraderLifecycleService(mt_service, logger, settings_service=settings_service)
+
     # Optionally load any preexisting lines from repo into the in-memory strategy
     if bootstrap_existing_lines:
         for l in repos.lines.list_lines(pair):
@@ -586,7 +597,9 @@ def create_app(
     register_admin_routes(app, admin_controller, logger)
     register_settings_routes(app, settings_controller, logger)
     register_nt_routes(app, nt_service, logger)
-    register_stream_routes(app, data_source, nt_service, settings_service, socketio, logger, app_config=app_config)
+    if _platform_type == "metatrader":
+        register_mt_routes(app, mt_service, logger)
+    register_stream_routes(app, data_source, platform_lifecycle, socketio, logger)
     register_debug_routes(
         app, tstrategy, loader, trade_manager, repos.lines, repos.trades,
         data_source, pair, notifier, analytics, logger=logger

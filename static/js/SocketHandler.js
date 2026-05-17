@@ -17,6 +17,11 @@ export class SocketHandler {
     if (el) el.textContent = text;
   }
 
+  _getPlatformLabel() {
+    const overlay = document.getElementById('connectionOverlay');
+    return overlay?.dataset.platformLabel || 'NinjaTrader';
+  }
+
   _showReconnectButton(visible) {
     const btn = document.getElementById('reconnectBtn');
     const startBtn = document.getElementById('startStreamingBtn');
@@ -140,7 +145,7 @@ export class SocketHandler {
           this._showReconnectButton(false);
         } else {
           this._setOverlayVisible(true);
-          this._setConnectionStatus('Waiting for NinjaTrader connection...');
+          this._setConnectionStatus(`Waiting for ${this._getPlatformLabel()} connection...`);
         }
       } else {
         // Backtest mode — never show overlay
@@ -149,7 +154,7 @@ export class SocketHandler {
     });
 
     this.socket.on('gateway_started', () => {
-      this._setConnectionStatus('ZeroMQ gateway started. Launching NinjaTrader...');
+      this._setConnectionStatus(`ZeroMQ gateway started. Launching ${this._getPlatformLabel()}...`);
     });
 
     this.socket.on('platform_connected', () => {
@@ -160,7 +165,7 @@ export class SocketHandler {
 
     this.socket.on('platform_disconnected', () => {
       this._setOverlayVisible(true);
-      this._setConnectionStatus('Lost connection — NinjaTrader disconnected');
+      this._setConnectionStatus(`Lost connection — ${this._getPlatformLabel()} disconnected`);
       this._showReconnectButton(true);
     });
 

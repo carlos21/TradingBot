@@ -37,22 +37,22 @@ class FakeNonZMQDataSource:
     pass
 
 
-class FakeNtService:
-    def __init__(self, success=True):
-        self._success = success
-        self.calls = []
+class FakePlatformLifecycleService:
+    """Satisfies PlatformLifecycleService Protocol for tests."""
 
-    def open_nt_and_login(self, username, password):
-        self.calls.append((username, password))
-        return {"success": self._success, "message": "ok" if self._success else "failed"}
+    def __init__(self, validation_result=(True, None), has_accounts=True):
+        self._validation_result = validation_result
+        self._has_accounts = has_accounts
+        self.launch_calls = []
 
+    def validate_before_start(self, data_source):
+        return self._validation_result
 
-class FakeSettingsService:
-    def __init__(self, settings=None):
-        self._settings = settings or {}
+    def maybe_launch_after_delay(self, data_source):
+        self.launch_calls.append(data_source)
 
-    def get_full_settings(self):
-        return self._settings
+    def has_accounts_configured(self):
+        return self._has_accounts
 
 
 class FakeSocketIO:
@@ -73,16 +73,14 @@ def app():
 def make_registered_app(
     app,
     data_source=None,
-    nt_service=None,
-    settings_service=None,
+    platform_lifecycle=None,
     socketio=None,
     logger=None,
 ):
     register_stream_routes(
         app=app,
         data_source=data_source or FakeZMQDataSource(),
-        nt_service=nt_service or FakeNtService(),
-        settings_service=settings_service or FakeSettingsService(),
+        platform_lifecycle=platform_lifecycle or FakePlatformLifecycleService(),
         socketio=socketio or FakeSocketIO(),
         logger=logger or FakeLogger(),
     )
@@ -92,7 +90,8 @@ def make_registered_app(
 class TestStreamStatus:
 
     def test_status_not_live_mode(self, app):
-        make_registered_app(app, data_source=FakeNonZMQDataSource())
+        lifecycle = FakePlatformLifecycleService(has_accounts=True)
+        make_registered_app(app, data_source=FakeNonZMQDataSource(), platform_lifecycle=lifecycle)
         with app.test_client() as client:
             resp = client.get("/api/stream/status")
             assert resp.status_code == 200
@@ -103,7 +102,8 @@ class TestStreamStatus:
             assert data["platform_info"] is None
 
     def test_status_live_mode_disconnected(self, app):
-        make_registered_app(app, data_source=FakeZMQDataSource(running=False, connected=False))
+        lifecycle = FakePlatformLifecycleService(has_accounts=False)
+        make_registered_app(app, data_source=FakeZMQDataSource(running=False, connected=False), platform_lifecycle=lifecycle)
         with app.test_client() as client:
             resp = client.get("/api/stream/status")
             assert resp.status_code == 200
@@ -111,9 +111,11 @@ class TestStreamStatus:
             assert data["live_mode"] is True
             assert data["gateway_running"] is False
             assert data["platform_connected"] is False
+            assert data["has_accounts"] is False
 
     def test_status_live_mode_connected(self, app):
-        make_registered_app(app, data_source=FakeZMQDataSource(running=True, connected=True))
+        lifecycle = FakePlatformLifecycleService(has_accounts=True)
+        make_registered_app(app, data_source=FakeZMQDataSource(running=True, connected=True), platform_lifecycle=lifecycle)
         with app.test_client() as client:
             resp = client.get("/api/stream/status")
             assert resp.status_code == 200
@@ -122,11 +124,13 @@ class TestStreamStatus:
             assert data["gateway_running"] is True
             assert data["platform_connected"] is True
             assert data["platform_info"] == {"platform": "ninjatrader"}
+            assert data["has_accounts"] is True
 
     def test_status_no_gateway(self, app):
         ds = FakeZMQDataSource()
         ds._gateway = None
-        make_registered_app(app, data_source=ds)
+        lifecycle = FakePlatformLifecycleService(has_accounts=True)
+        make_registered_app(app, data_source=ds, platform_lifecycle=lifecycle)
         with app.test_client() as client:
             resp = client.get("/api/stream/status")
             assert resp.status_code == 200
@@ -147,6 +151,16 @@ class TestStreamStart:
             assert data["status"] == "error"
             assert "ZMQ" in data["message"]
 
+    def test_start_validation_fails(self, app):
+        lifecycle = FakePlatformLifecycleService(validation_result=(False, "No accounts configured"))
+        make_registered_app(app, data_source=FakeZMQDataSource(running=False, connected=False), platform_lifecycle=lifecycle)
+        with app.test_client() as client:
+            resp = client.post("/api/stream/start")
+            assert resp.status_code == 400
+            data = resp.get_json()
+            assert data["status"] == "error"
+            assert "No accounts configured" in data["message"]
+
     def test_start_already_connected(self, app):
         make_registered_app(app, data_source=FakeZMQDataSource(running=True, connected=True))
         with app.test_client() as client:
@@ -158,7 +172,8 @@ class TestStreamStart:
     def test_start_starts_gateway(self, app):
         ds = FakeZMQDataSource(running=False, connected=False)
         socketio = FakeSocketIO()
-        make_registered_app(app, data_source=ds, socketio=socketio)
+        lifecycle = FakePlatformLifecycleService()
+        make_registered_app(app, data_source=ds, socketio=socketio, platform_lifecycle=lifecycle)
         with app.test_client() as client:
             resp = client.post("/api/stream/start")
             assert resp.status_code == 200
@@ -166,11 +181,14 @@ class TestStreamStart:
             assert data["status"] == "starting"
             assert ds._started is True
             assert ("gateway_started", (), {}) in socketio.emitted
+            # Background thread should have been spawned
+            assert len(lifecycle.launch_calls) == 1
 
     def test_start_gateway_running_not_connected(self, app):
         ds = FakeZMQDataSource(running=True, connected=False)
         socketio = FakeSocketIO()
-        make_registered_app(app, data_source=ds, socketio=socketio)
+        lifecycle = FakePlatformLifecycleService()
+        make_registered_app(app, data_source=ds, socketio=socketio, platform_lifecycle=lifecycle)
         with app.test_client() as client:
             resp = client.post("/api/stream/start")
             assert resp.status_code == 200
@@ -178,6 +196,8 @@ class TestStreamStart:
             assert data["status"] == "starting"
             # Should not call start() since already running
             assert ds._started is False
+            # Background thread should still be spawned
+            assert len(lifecycle.launch_calls) == 1
 
     def test_start_start_failure(self, app):
         class BrokenZMQDataSource(FakeZMQDataSource):
