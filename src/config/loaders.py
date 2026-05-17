@@ -311,6 +311,7 @@ class DbConfigLoader:
             "reentry_threshold": "reentry_threshold",
             "broker_mode": "broker_mode",
             "broker_spread": "broker_spread",
+            "history_days": "history_days",
         }
         return mapping.get(key)
 
@@ -321,6 +322,6 @@ class DbConfigLoader:
                     "sl_level_tolerance", "min_cross_depth", "reentry_threshold", "broker_spread"):
             return float(value)
         if attr in ("flask_port", "zmq_market_port", "zmq_command_port", "zmq_query_port",
-                    "zmq_heartbeat_port", "daily_trades_limit", "max_open_trades"):
+                    "zmq_heartbeat_port", "daily_trades_limit", "max_open_trades", "history_days"):
             return int(value)
         return value

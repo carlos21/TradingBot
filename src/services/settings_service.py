@@ -7,7 +7,7 @@ from typing import Protocol
 
 from cryptography.fernet import Fernet
 
-from src.config.models import AccountConfig, AppConfig
+from src.config.models import DEFAULT_HISTORY_DAYS, AccountConfig, AppConfig
 from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.infrastructure.repositories.credentials_repository import CredentialRepository
 from src.infrastructure.repositories.settings_repository import SettingsRepository
@@ -80,6 +80,7 @@ class SettingsService:
                 "pair": all_settings.get("pair", "MNQ"),
                 "instrument": all_settings.get("instrument", "MNQ 06-26"),
                 "session_end": all_settings.get("session_end", "16:58"),
+                "history_days": all_settings.get("history_days", str(DEFAULT_HISTORY_DAYS)),
             },
             "network": {
                 "flask_port": all_settings.get("flask_port", "5001"),

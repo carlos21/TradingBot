@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+DEFAULT_HISTORY_DAYS = 30
+
 
 @dataclass
 class AccountConfig:
@@ -192,6 +194,9 @@ class AppConfig:
     platform_type: str = "ninjatrader"
     """Platform this instance connects to: ``"ninjatrader"`` or ``"metatrader"``.
     Drives UI labels, auto-launch behaviour, and admin tabs."""
+
+    history_days: int = DEFAULT_HISTORY_DAYS
+    """Number of days of historical bars to load from the platform on connect."""
 
     # ------------------------------------------------------------------
     # Infra

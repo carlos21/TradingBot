@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 import pytest
 
-from src.infrastructure.gateway.datasource import ZMQDataSource
+from src.config.models import DEFAULT_HISTORY_DAYS
+from src.infrastructure.gateway.datasource import DataSourceState, ZMQDataSource
 from src.routes.socketio_handlers import register_socketio_handlers
 from tests.fakes import FakeDataSource, FakeLogger
 
@@ -85,19 +86,22 @@ class FakeGateway:
 class FakeZMQDataSource(ZMQDataSource):
     """Lightweight ZMQDataSource that skips the heavy __init__."""
 
-    def __init__(self, gateway=None, refreshing=False):
+    def __init__(self, gateway=None, state=DataSourceState.CONNECTED):
         # Do NOT call ZMQDataSource.__init__ to avoid side effects.
         self._gateway = gateway
-        self._refreshing = refreshing
+        self._state = state
         self._refresh_calls = []
         self.pair = "MNQ"
+        self.history_days = DEFAULT_HISTORY_DAYS
 
     @property
-    def is_refreshing(self):
-        return self._refreshing
+    def state(self):
+        return self._state
 
-    def request_refresh(self, days=1):
-        self._refresh_calls.append(days)
+    def request_refresh(self, days=None):
+        if self._state == DataSourceState.REFRESHING:
+            return
+        self._refresh_calls.append(days or self.history_days)
 
 
 @pytest.fixture
@@ -162,7 +166,7 @@ class TestConnectHandler:
     @patch("src.routes.socketio_handlers.emit")
     def test_connect_requests_refresh_when_not_refreshing(self, mock_emit, socketio, loader, logger):
         gateway = FakeGateway()
-        data_source = FakeZMQDataSource(gateway=gateway, refreshing=False)
+        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.CONNECTED)
         register_socketio_handlers(
             socketio=socketio,
             loader=loader,
@@ -173,12 +177,12 @@ class TestConnectHandler:
         handler = socketio.handlers["connect"]
         handler(None)
 
-        assert data_source._refresh_calls == [1]
+        assert data_source._refresh_calls == [30]
 
     @patch("src.routes.socketio_handlers.emit")
     def test_connect_skips_refresh_when_already_refreshing(self, mock_emit, socketio, loader, logger):
         gateway = FakeGateway()
-        data_source = FakeZMQDataSource(gateway=gateway, refreshing=True)
+        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.REFRESHING)
         register_socketio_handlers(
             socketio=socketio,
             loader=loader,
@@ -478,3 +482,35 @@ class TestConnectionChangeCallback:
             _logger=logger,
         )
         assert "connect" in socketio.handlers
+
+    def test_conn_change_emits_connected(self, socketio, loader, logger):
+        gateway = FakeGateway()
+        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.CONNECTED)
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=True,
+            _logger=logger,
+        )
+
+        callback = gateway._conn_listeners[0]
+        callback(True)
+        assert data_source._refresh_calls == []  # socketio_handlers no longer drives refresh
+        assert ("platform_connected", (), {}) in socketio.emitted
+
+    def test_conn_change_emits_disconnected(self, socketio, loader, logger):
+        gateway = FakeGateway()
+        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.CONNECTED)
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=True,
+            _logger=logger,
+        )
+
+        callback = gateway._conn_listeners[0]
+        callback(False)
+        assert data_source._refresh_calls == []
+        assert ("platform_disconnected", (), {}) in socketio.emitted

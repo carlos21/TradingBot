@@ -14,14 +14,24 @@ import time
 from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timezone
+from enum import Enum, auto
 
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.utils.app_logger import ILogger
+
+from src.config.models import DEFAULT_HISTORY_DAYS
 
 from .gateway import GatewayConfig, TradingGateway
 from .protocol import MessageType
 
 logger = logging.getLogger(__name__)
+
+
+class DataSourceState(Enum):
+    DISCONNECTED = auto()
+    CONNECTED = auto()
+    REFRESHING = auto()
+    LIVE = auto()
 
 
 class ZMQDataSource(CombinedDataSource):
@@ -59,6 +69,7 @@ class ZMQDataSource(CombinedDataSource):
         gateway: TradingGateway | None = None,
         gateway_config: GatewayConfig | None = None,
         pair: str = "MNQ",
+        history_days: int = DEFAULT_HISTORY_DAYS,
     ):
         """
         Initialize the ZMQ data source.
@@ -71,6 +82,7 @@ class ZMQDataSource(CombinedDataSource):
         """
         self.logger = logger
         self.pair = pair
+        self.history_days = history_days
         self._gateway = gateway
         self._gateway_config = gateway_config or GatewayConfig()
         self._owns_gateway = gateway is None
@@ -78,8 +90,7 @@ class ZMQDataSource(CombinedDataSource):
         # Data storage
         self._historical_bars: list[dict] = []
         self._bars_lock = threading.RLock()
-        self._live = False
-        self._refreshing = False
+        self._state = DataSourceState.DISCONNECTED
         self._last_history_time: int = 0
 
         # Buffer for live bars received during refresh
@@ -226,13 +237,16 @@ class ZMQDataSource(CombinedDataSource):
         """Start receiving data (call after setting up callbacks)."""
         gateway = self._ensure_gateway()
 
-        # Register callbacks
+        # Register data callbacks
         gateway.on(MessageType.TICK, self._on_tick)
         gateway.on(MessageType.BAR, self._on_bar)
         gateway.on(MessageType.PARTIAL_BAR, self._on_partial_bar)
         gateway.on(MessageType.HISTORY_BATCH, self._on_history_batch)
         gateway.on(MessageType.HISTORY_END, self._on_history_end)
         gateway.on(MessageType.REFRESH_START, self._on_refresh_start)
+
+        # Register connection-state callback so ZMQDataSource manages its own lifecycle
+        gateway.on_connection_change(self._on_gateway_connection_change)
 
         # Start the gateway
         gateway.start()
@@ -243,6 +257,7 @@ class ZMQDataSource(CombinedDataSource):
         """Stop receiving data."""
         if self._owns_gateway and self._gateway:
             self._gateway.stop()
+        self._state = DataSourceState.DISCONNECTED
         self.logger.info("ZMQDataSource stopped")
 
     def _on_tick(self, payload: dict) -> None:
@@ -305,7 +320,7 @@ class ZMQDataSource(CombinedDataSource):
             "pair": payload.get("pair", self.pair),
         }
 
-        if self._refreshing:
+        if self._state == DataSourceState.REFRESHING:
             self._refresh_buffer.append(bar)
             return  # Buffer live bars during refresh
 
@@ -331,13 +346,13 @@ class ZMQDataSource(CombinedDataSource):
                 self._detect_gap(
                     self._historical_bars[inserted_idx - 1]["time"],
                     bar["time"],
-                    "LIVE" if self._live else "INGEST"
+                    "LIVE" if self._state == DataSourceState.LIVE else "INGEST"
                 )
             if inserted_idx < len(self._historical_bars) - 1:
                 self._detect_gap(
                     bar["time"],
                     self._historical_bars[inserted_idx + 1]["time"],
-                    "LIVE" if self._live else "INGEST"
+                    "LIVE" if self._state == DataSourceState.LIVE else "INGEST"
                 )
 
         if self.on_live_bar:
@@ -413,8 +428,7 @@ class ZMQDataSource(CombinedDataSource):
 
     def _on_history_end(self, _payload: dict = None) -> None:
         """Handle end of historical data."""
-        self._live = True
-        self._refreshing = False  # Resume accepting live bars
+        self._state = DataSourceState.LIVE
 
         with self._bars_lock:
             if self._historical_bars:
@@ -444,6 +458,10 @@ class ZMQDataSource(CombinedDataSource):
 
     def _on_refresh_start(self, _payload: dict = None) -> None:
         """Handle refresh start - clear recent data."""
+        if self._state == DataSourceState.REFRESHING:
+            self.logger.info("Refresh start ignored: already refreshing")
+            return
+
         self.logger.info("Refresh start - clearing recent data")
 
         if self.on_before_refresh:
@@ -460,9 +478,8 @@ class ZMQDataSource(CombinedDataSource):
             self._historical_bars = preserved
             self._last_history_time = preserved[-1]["time"] if preserved else 0
 
-        self._live = False
+        self._state = DataSourceState.REFRESHING
         self._current_bar = None
-        self._refreshing = True
         self._refresh_buffer.clear()
 
         self.logger.info(f"Refresh start: preserved {len(preserved)} historical bars, removed {removed} recent bars")
@@ -471,25 +488,53 @@ class ZMQDataSource(CombinedDataSource):
     # Public API
     # -------------------------------------------------------------------------
 
-    def request_refresh(self, days: int = 1) -> None:
+    def request_refresh(self, days: int = None) -> None:
         """Request historical data refresh from platform."""
+        if self._state == DataSourceState.REFRESHING:
+            self.logger.info("Refresh request ignored: already refreshing")
+            return
+        if self._state == DataSourceState.DISCONNECTED:
+            self.logger.info("Refresh request ignored: platform not connected")
+            return
         gateway = self._ensure_gateway()
-        gateway.send_refresh_request(days=days)
+        gateway.send_refresh_request(days=days or self.history_days)
 
     @property
     def is_live(self) -> bool:
         """Check if receiving live data."""
-        return self._live
+        return self._state == DataSourceState.LIVE
 
     @property
-    def is_refreshing(self) -> bool:
-        """Check if a historical data refresh is in progress."""
-        return self._refreshing
+    def state(self) -> DataSourceState:
+        """Current data source state."""
+        return self._state
 
     @property
     def is_connected(self) -> bool:
         """Check if connected to platform."""
         return self._gateway is not None and self._gateway.is_connected
+
+    def on_platform_connected(self) -> None:
+        """Called when the platform connects. Auto-request refresh if needed."""
+        if self._state == DataSourceState.DISCONNECTED:
+            self._state = DataSourceState.CONNECTED
+            self.logger.info("Platform connected, requesting historical data refresh")
+            self.request_refresh()
+        else:
+            self.logger.debug(f"Platform connected ignored: state={self._state.name}")
+
+    def on_platform_disconnected(self) -> None:
+        """Called when the platform disconnects."""
+        if self._state != DataSourceState.DISCONNECTED:
+            self._state = DataSourceState.DISCONNECTED
+            self.logger.info("Platform disconnected")
+
+    def _on_gateway_connection_change(self, connected: bool) -> None:
+        """Internal callback registered with the gateway."""
+        if connected:
+            self.on_platform_connected()
+        else:
+            self.on_platform_disconnected()
 
     @property
     def gateway(self) -> TradingGateway | None:

@@ -40,10 +40,9 @@ def register_socketio_handlers(
             'platform_connected': platform_connected,
         })
         if live_mode and isinstance(data_source, ZMQDataSource):
-            # Always request a refresh on browser connect so the chart gets
-            # fresh historical data. NT no longer auto-sends history on connect.
-            if not data_source.is_refreshing:
-                data_source.request_refresh(days=1)
+            # Request a refresh on browser connect. The state machine inside
+            # ZMQDataSource guards against duplicates and disconnected state.
+            data_source.request_refresh()
 
     @socketio.on('start_stream')
     def on_start_stream(payload):

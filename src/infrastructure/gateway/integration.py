@@ -22,6 +22,8 @@ Usage:
 
 from src.utils.app_logger import ILogger
 
+from src.config.models import DEFAULT_HISTORY_DAYS
+
 from .datasource import ZMQDataSource
 from .executor import MultiAccountExecutor, ZMQTradeExecutor
 from .gateway import GatewayConfig, TradingGateway
@@ -39,6 +41,7 @@ def create_live_components(
     command_port: int = 5556,
     query_port: int = 5557,
     heartbeat_port: int = 5558,
+    history_days: int = DEFAULT_HISTORY_DAYS,
 ) -> tuple[ZMQDataSource, ZMQTradeExecutor]:
     """
     Create ZeroMQ-based data source and trade executor for live trading.
@@ -77,7 +80,7 @@ def create_live_components(
     gateway._account_names = account_names or []
 
     # Create data source that uses the gateway (logger is required first param)
-    data_source = ZMQDataSource(logger, gateway=gateway, pair=pair)
+    data_source = ZMQDataSource(logger, gateway=gateway, pair=pair, history_days=history_days)
 
     # Create trade executor that uses the same gateway (logger is required)
     trade_executor = ZMQTradeExecutor(
@@ -109,6 +112,7 @@ def create_multi_account_live_components(
     query_port: int = 5557,
     heartbeat_port: int = 5558,
     accounts_repo=None,
+    history_days: int = DEFAULT_HISTORY_DAYS,
 ) -> tuple[ZMQDataSource, MultiAccountExecutor]:
     """
     Create ZeroMQ components for multi-account live trading.
@@ -146,6 +150,7 @@ def create_multi_account_live_components(
         command_port=command_port,
         query_port=query_port,
         heartbeat_port=heartbeat_port,
+        history_days=history_days,
     )
 
     # MultiAccountExecutor will be wired with TradeManager inside app_factory

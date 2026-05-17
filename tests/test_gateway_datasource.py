@@ -12,7 +12,8 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from src.infrastructure.gateway.datasource import ZMQDataSource
+from src.config.models import DEFAULT_HISTORY_DAYS
+from src.infrastructure.gateway.datasource import DataSourceState, ZMQDataSource
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
 from src.infrastructure.gateway.protocol import MessageType
 from tests.fakes import FakeLogger
@@ -89,12 +90,12 @@ class TestInitialization:
     def test_init_defaults(self, logger):
         ds = ZMQDataSource(logger=logger)
         assert ds.pair == "MNQ"
+        assert ds.history_days == DEFAULT_HISTORY_DAYS
         assert ds.logger is logger
         assert ds._gateway is None
         assert ds._owns_gateway is True
         assert ds._historical_bars == []
-        assert ds._live is False
-        assert ds._refreshing is False
+        assert ds.state == DataSourceState.DISCONNECTED
         assert ds._last_history_time == 0
         assert ds._refresh_buffer == []
         assert ds.on_history_complete is None
@@ -151,13 +152,13 @@ class TestProperties:
 
     def test_is_live(self, data_source):
         assert data_source.is_live is False
-        data_source._live = True
+        data_source._state = DataSourceState.LIVE
         assert data_source.is_live is True
 
-    def test_is_refreshing(self, data_source):
-        assert data_source.is_refreshing is False
-        data_source._refreshing = True
-        assert data_source.is_refreshing is True
+    def test_state(self, data_source):
+        assert data_source.state == DataSourceState.DISCONNECTED
+        data_source._state = DataSourceState.REFRESHING
+        assert data_source.state == DataSourceState.REFRESHING
 
     def test_is_connected_with_gateway(self, data_source, mock_gateway):
         mock_gateway.is_connected = True
@@ -346,7 +347,7 @@ class TestBarHandling:
         assert len(data_source._historical_bars) == 1
 
     def test_on_bar_during_refresh_buffers(self, data_source):
-        data_source._refreshing = True
+        data_source._state = DataSourceState.REFRESHING
         bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
         data_source._on_bar(bar)
         assert len(data_source._historical_bars) == 0
@@ -459,8 +460,7 @@ class TestHistoryEndHandling:
 
     def test_on_history_end_sets_live_mode(self, data_source):
         data_source._on_history_end()
-        assert data_source.is_live is True
-        assert data_source.is_refreshing is False
+        assert data_source.state == DataSourceState.LIVE
 
     def test_on_history_end_calls_callback(self, data_source):
         called_with = []
@@ -478,7 +478,7 @@ class TestHistoryEndHandling:
         assert data_source.is_live is True
 
     def test_on_history_end_flushes_refresh_buffer(self, data_source):
-        data_source._refreshing = True
+        data_source._state = DataSourceState.REFRESHING
         data_source._refresh_buffer = [
             make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
@@ -519,17 +519,15 @@ class TestRefreshStartHandling:
         old_bar = make_bar(time_val=now - 90000, open_=10.0, high=11.0, low=9.0, close=10.5)
         new_bar = make_bar(time_val=now - 100, open_=11.0, high=12.0, low=10.0, close=11.5)
         data_source._historical_bars = [old_bar, new_bar]
-        data_source._live = True
+        data_source._state = DataSourceState.LIVE
         data_source._current_bar = {"time": now}
-        data_source._refreshing = False
 
         data_source._on_refresh_start()
 
         assert len(data_source._historical_bars) == 1
         assert data_source._historical_bars[0]["time"] == old_bar["time"]
-        assert data_source._live is False
+        assert data_source.state == DataSourceState.REFRESHING
         assert data_source._current_bar is None
-        assert data_source._refreshing is True
 
     def test_on_refresh_start_calls_before_refresh_callback(self, data_source):
         called = []
@@ -541,7 +539,7 @@ class TestRefreshStartHandling:
         data_source.on_before_refresh = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
         # Should not raise
         data_source._on_refresh_start()
-        assert data_source._refreshing is True
+        assert data_source.state == DataSourceState.REFRESHING
 
     def test_on_refresh_start_sets_last_history_time(self, data_source):
         now = int(time.time())
@@ -739,11 +737,13 @@ class TestSubscribePause:
 class TestRequestRefresh:
 
     def test_request_refresh(self, data_source, mock_gateway):
+        data_source._state = DataSourceState.CONNECTED
         data_source.request_refresh(days=5)
         mock_gateway.send_refresh_request.assert_called_once_with(days=5)
 
     def test_request_refresh_ensures_gateway(self, logger):
         ds = ZMQDataSource(logger=logger)
+        ds._state = DataSourceState.CONNECTED
         with patch("src.infrastructure.gateway.datasource.TradingGateway") as MockGW:
             mock_gw = MagicMock(spec=TradingGateway)
             MockGW.return_value = mock_gw
@@ -771,12 +771,12 @@ class TestErrorHandling:
         data_source.on_history_complete = lambda bars: (_ for _ in ()).throw(RuntimeError("boom"))
         data_source._historical_bars = [make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)]
         data_source._on_history_end()
-        assert data_source.is_live is True
+        assert data_source.state == DataSourceState.LIVE
 
     def test_on_refresh_start_callback_error_does_not_abort(self, data_source):
         data_source.on_before_refresh = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
         data_source._on_refresh_start()
-        assert data_source._refreshing is True
+        assert data_source.state == DataSourceState.REFRESHING
 
     def test_on_history_batch_empty_bars(self, data_source):
         payload = {"bars": [], "days": 1}
@@ -818,7 +818,7 @@ class TestEndToEndFlow:
 
         # 1. Refresh starts
         data_source._on_refresh_start()
-        assert data_source.is_refreshing is True
+        assert data_source.state == DataSourceState.REFRESHING
 
         # 2. History batch arrives
         data_source._on_history_batch({
@@ -837,8 +837,7 @@ class TestEndToEndFlow:
 
         # 4. History end arrives
         data_source._on_history_end()
-        assert data_source.is_live is True
-        assert data_source.is_refreshing is False
+        assert data_source.state == DataSourceState.LIVE
         assert len(history_complete) == 1
         assert len(history_complete[0]) == 2
         # Buffered bar should have been flushed
@@ -869,9 +868,9 @@ class TestEndToEndFlow:
         # Simulate history end through gateway
         for cb in callbacks[MessageType.HISTORY_END]:
             cb({})
-        assert data_source.is_live is True
+        assert data_source.state == DataSourceState.LIVE
 
         # Simulate refresh start through gateway
         for cb in callbacks[MessageType.REFRESH_START]:
             cb({})
-        assert data_source.is_refreshing is True
+        assert data_source.state == DataSourceState.REFRESHING
