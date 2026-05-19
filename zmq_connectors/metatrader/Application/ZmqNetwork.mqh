@@ -157,6 +157,22 @@ public:
       // NOTE: barsArray is deleted as part of the payload tree — caller must NOT delete it
    }
 
+   void SendRawHistoryBatch(string pair, string barsJson, int days) override
+   {
+      // Build envelope JSON manually to bypass MQL5 JSON library stack issues
+      string json = "{\"msg_type\":\"history_batch\",\"timestamp\":"
+                  + IntegerToString((long)TimeCurrent())
+                  + ",\"seq_num\":" + IntegerToString(++m_seqNum)
+                  + ",\"payload\":{\"pair\":\"" + pair + "\",\"days\":"
+                  + IntegerToString(days) + ",\"bars\":[" + barsJson + "]}}";
+      if(m_logger != NULL)
+         m_logger.Info("SendRawHistoryBatch: jsonLen=" + IntegerToString(StringLen(json)) + " barsLen=" + IntegerToString(StringLen(barsJson)));
+      ZmqMsg msg(json);
+      bool sent = m_marketSocket.send(msg);
+      if(m_logger != NULL)
+         m_logger.Info("SendRawHistoryBatch: sent=" + (sent ? "OK" : "FAIL"));
+   }
+
    void SendHistoryEnd(string pair) override
    {
       JSONValue *payload = new JSONValue(JSON_OBJECT);
@@ -272,19 +288,38 @@ public:
    MessageEnvelope *ReceiveCommand(int timeoutMs) override
    {
       ZmqMsg msg;
-      if(!m_commandSocket.recv(msg, ZMQ_DONTWAIT))
+      bool recvOk = m_commandSocket.recv(msg, ZMQ_DONTWAIT);
+      if(!recvOk)
+      {
+         if(m_logger != NULL)
+            m_logger.Debug("ReceiveCommand: recv returned false");
          return NULL;
+      }
 
       string json = msg.getData();
-      if(StringLen(json) == 0)
+      int jsonLen = StringLen(json);
+      if(jsonLen == 0)
+      {
+         if(m_logger != NULL)
+            m_logger.Warning("ReceiveCommand: empty JSON received");
          return NULL;
+      }
+
+      if(m_logger != NULL)
+         m_logger.Debug("ReceiveCommand: raw JSON (len=" + IntegerToString(jsonLen) + "): " + StringSubstr(json, 0, 200));
 
       JSONValue *root = m_serializer.Deserialize(json);
       if(root == NULL)
+      {
+         if(m_logger != NULL)
+            m_logger.Error("ReceiveCommand: JSON deserialization failed");
          return NULL;
+      }
 
       MessageEnvelope *env = new MessageEnvelope();
       env.root = root;
+      if(m_logger != NULL)
+         m_logger.Info("ReceiveCommand: msg_type=" + env.MsgType() + " seq=" + IntegerToString(env.SeqNum()));
       return env;
    }
 

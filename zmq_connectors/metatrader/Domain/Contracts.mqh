@@ -110,7 +110,7 @@ class IHistoryProvider
 {
 public:
    virtual ~IHistoryProvider() {}
-   virtual void SendHistory() = 0;
+   virtual void SendHistory(int days = 0) = 0;
 };
 
 //+------------------------------------------------------------------+
@@ -129,6 +129,7 @@ public:
    virtual void SendTick(string pair, double price, long volume, datetime tickTime) = 0;
    virtual void SendBar(string pair, datetime barTime, double open, double high, double low, double close, long volume, bool isPartial) = 0;
    virtual void SendHistoryBatch(string pair, JSONValue *barsArray, int days) = 0;
+   virtual void SendRawHistoryBatch(string pair, string barsJson, int days) = 0;
    virtual void SendHistoryEnd(string pair) = 0;
    virtual void SendEntryFill(string tradeId, double entryPrice, double stopLoss, double takeProfit) = 0;
    virtual void SendExitFill(string tradeId, double exitPrice, string resultType) = 0;

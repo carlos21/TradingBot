@@ -89,6 +89,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         private DateTime _lastFormingBarTime = DateTime.MinValue;
         private readonly object _barSendLock = new object();
         private TickRateLimiter _partialBarRateLimiter;
+        private System.Timers.Timer _liveBarsDelayTimer;  // Fallback: creates BarsRequest if no tick arrives within 10s
+        private volatile bool _liveBarsSubscribed;
 
         // Duplicate command detection (track processed seq_nums)
         private readonly HashSet<int> _processedSeqNums = new HashSet<int>();
@@ -270,7 +272,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 ReportPositionsToPython();
                 
                 SubscribeToMarketData();
-                SubscribeToLiveBars();
+                // BarsRequest is created on first tick (or 10s timer fallback)
+                // to ensure NinjaTrader's data connection is fully established.
+                StartLiveBarsDelayTimer();
 
                 // Historical data is NOT sent automatically on connect.
                 // Python requests it explicitly via REFRESH_REQUEST when needed.
@@ -614,10 +618,18 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _logger.Error("Cannot subscribe to live bars, instrument is null");
                 return;
             }
-
-            _liveBarsRequest = new BarsRequest(_subscribedInstrument, DateTime.Now.AddMinutes(-1), DateTime.Now)
+            if (_liveBarsSubscribed)
             {
-                BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 }
+                return;
+            }
+            _liveBarsSubscribed = true;
+
+            // Use barsBack overload to avoid cached-data issues with DateTime range.
+            // 2 bars is enough to establish the _lastSentBarTime baseline.
+            _liveBarsRequest = new BarsRequest(_subscribedInstrument, 2)
+            {
+                BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 },
+                TradingHours = TradingHours.Get("Default 24 x 7")
             };
             _liveBarsRequest.Update += OnLiveBarsUpdate;
             _liveBarsRequest.Request((bars, errorCode, errorMessage) =>
@@ -627,6 +639,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     if (errorCode != ErrorCode.NoError)
                     {
                         _logger.Error($"Live bars request failed: {errorMessage}");
+                        _liveBarsSubscribed = false;
                         return;
                     }
                     if (bars?.Bars != null && bars.Bars.Count > 0)
@@ -645,18 +658,49 @@ namespace NinjaTrader.NinjaScript.AddOns
                 catch (Exception callbackEx)
                 {
                     _logger.Error("Live bars request callback error", callbackEx);
+                    _liveBarsSubscribed = false;
                 }
             });
+
             _logger.Info("Subscribed to live 1m bars");
+        }
+
+        private void StartLiveBarsDelayTimer()
+        {
+            StopLiveBarsDelayTimer();
+            _liveBarsDelayTimer = new System.Timers.Timer(10000);
+            _liveBarsDelayTimer.Elapsed += (s, e) =>
+            {
+                StopLiveBarsDelayTimer();
+                if (!_liveBarsSubscribed && _connected)
+                {
+                    _logger.Info("[LiveBars] No tick received within 10s, creating BarsRequest anyway");
+                    SubscribeToLiveBars();
+                }
+            };
+            _liveBarsDelayTimer.AutoReset = false;
+            _liveBarsDelayTimer.Start();
+        }
+
+        private void StopLiveBarsDelayTimer()
+        {
+            if (_liveBarsDelayTimer != null)
+            {
+                _liveBarsDelayTimer.Stop();
+                _liveBarsDelayTimer.Dispose();
+                _liveBarsDelayTimer = null;
+            }
         }
 
         private void UnsubscribeFromLiveBars()
         {
+            StopLiveBarsDelayTimer();
             if (_liveBarsRequest != null)
             {
                 _liveBarsRequest.Update -= OnLiveBarsUpdate;
                 _liveBarsRequest.Dispose();
                 _liveBarsRequest = null;
+                _liveBarsSubscribed = false;
                 _logger.Info("Unsubscribed from live 1m bars");
             }
         }
@@ -679,6 +723,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     if (_lastFormingBarTime != DateTime.MinValue && formingBarTime > _lastFormingBarTime)
                     {
+                        int sent = 0;
+                        int skipped = 0;
                         // Walk backwards from the bar before the forming bar
                         for (int i = series.Count - 2; i >= 0; i--)
                         {
@@ -686,11 +732,17 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                             // Stop once we reach already-sent bars
                             if (barTime <= _lastSentBarTime)
+                            {
+                                skipped++;
                                 break;
+                            }
 
                             // Stop once we pass the previous forming bar (safety)
                             if (barTime < _lastFormingBarTime)
+                            {
+                                skipped++;
                                 break;
+                            }
 
                             var open   = series.GetOpen(i);
                             var high   = series.GetHigh(i);
@@ -701,7 +753,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                             _network?.SendBar(pair, barTime, open, high, low, close, volume, isPartial: false);
                             _barsSent++;
                             _lastSentBarTime = barTime;
+                            sent++;
                         }
+                        if (sent > 1 || skipped > 0)
+                            _logger.Info($"[CatchUp] sent={sent} skipped={skipped} forming={formingBarTime:HH:mm:ss} lastForming={_lastFormingBarTime:HH:mm:ss} lastSent={_lastSentBarTime:HH:mm:ss} seriesCount={series.Count}");
                     }
 
                     _lastFormingBarTime = formingBarTime;
@@ -756,6 +811,16 @@ namespace NinjaTrader.NinjaScript.AddOns
             try
             {
                 if (!_connected || e.MarketDataType != MarketDataType.Last) return;
+
+                // Create BarsRequest on the first tick after connect.
+                // This ensures NinjaTrader's data connection is fully established
+                // before we request bars, which prevents the Update event from stalling.
+                if (!_liveBarsSubscribed)
+                {
+                    StopLiveBarsDelayTimer();
+                    SubscribeToLiveBars();
+                }
+
                 if (!_tickRateLimiter.TryAllow()) return;
 
                 _network?.SendTick(
@@ -790,6 +855,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 {
                     BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 }
                 };
+
+                // Notify Python that a refresh is starting so it buffers live bars
+                _network?.SendRefreshStart();
+                _logger.Info("Sending refresh_start");
 
                 try
                 {

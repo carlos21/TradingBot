@@ -56,6 +56,7 @@ cfg = {
     'queryPort': $ZMQ_QUERY_PORT,
     'heartbeatPort': $ZMQ_HEARTBEAT_PORT,
     'pair': '$PAIR',
+    'historyDays': 30,
     'autoConnectOnStartup': True,
     'autoShowPanel': True,
     'platformVersion': '2.0.0'

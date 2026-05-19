@@ -110,6 +110,14 @@ public:
       return root["payload"][key].ToDouble();
    }
 
+   //--- Accessor: int field from payload (safe)
+   int PayloadInt(string key, int defaultValue = 0)
+   {
+      if(root == NULL || !root.HasKey("payload")) return defaultValue;
+      if(!root["payload"].HasKey(key)) return defaultValue;
+      return (int)root["payload"][key].ToInt();
+   }
+
    //--- Accessor: bool field from payload (safe)
    bool PayloadBool(string key, bool defaultValue = false)
    {

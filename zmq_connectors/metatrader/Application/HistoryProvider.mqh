@@ -7,10 +7,11 @@
 #include "../Domain/Contracts.mqh"
 #include "../Domain/MessageTypes.mqh"
 #include "../Domain/ValueObjects.mqh"
-#include <JSON/JSON.mqh>
 
 //+------------------------------------------------------------------+
 //| HistoryProvider — sends historical bars in batches               |
+//|  Uses raw JSON string building to bypass MQL5 JSON library       |
+//|  stack-overflow issues with large object trees.                  |
 //+------------------------------------------------------------------+
 class HistoryProvider : public IHistoryProvider
 {
@@ -32,60 +33,74 @@ public:
    ~HistoryProvider() {}
 
    //--- IHistoryProvider implementation
-   void SendHistory() override
+   void SendHistory(int days = 0) override
    {
       if(m_network == NULL) return;
 
-      datetime end = TimeCurrent();
-      datetime start = end - m_config.historyDays * 86400;
+      int historyDays = (days > 0) ? days : m_config.historyDays;
+      if(historyDays <= 0) historyDays = 1;
 
-      MqlRates rates[];
-      int total = CopyRates(m_symbol, PERIOD_M1, start, end, rates);
+      datetime end = TimeCurrent();
+      datetime start = end - historyDays * 86400;
+
+      int total = Bars(m_symbol, PERIOD_M1, start, end);
       if(total <= 0)
       {
          if(m_logger != NULL)
-            m_logger.Warning("HistoryProvider: CopyRates returned " + IntegerToString(total));
+            m_logger.Warning("HistoryProvider: Bars() returned " + IntegerToString(total));
          m_network.SendHistoryEnd(m_symbol);
          return;
       }
 
       if(m_logger != NULL)
-         m_logger.Info("HistoryProvider: sending " + IntegerToString(total) + " bars (" + IntegerToString(m_config.historyDays) + " days)");
+         m_logger.Info("HistoryProvider: sending " + IntegerToString(total) + " bars (" + IntegerToString(historyDays) + " days)");
 
-      // Send in batches
-      int batchSize = (m_config.batchSize > 0) ? m_config.batchSize : 500;
-      for(int i = 0; i < total; i += batchSize)
+      // Use a small static array to avoid stack overflow.
+      MqlRates rates[10];
+      const int BATCH = 10;
+      int totalSent = 0;
+
+      for(int pos = total - 1; pos >= 0; )
       {
-         int endIdx = MathMin(i + batchSize, total);
-         JSONValue *barsArray = new JSONValue(JSON_ARRAY);
+         int count = MathMin(BATCH, pos + 1);
+         int startPos = pos - count + 1;
 
-         for(int j = i; j < endIdx; j++)
+         int copied = CopyRates(m_symbol, PERIOD_M1, startPos, count, rates);
+         if(copied <= 0) break;
+
+         // Build bars JSON manually — bypasses MQL5 JSON library completely
+         string barsJson = "";
+         for(int j = 0; j < copied; j++)
          {
-            JSONValue *bar = new JSONValue(JSON_OBJECT);
-            bar["time"]   = new JSONValue((long)rates[j].time);
-            bar["open"]   = new JSONValue(rates[j].open);
-            bar["high"]   = new JSONValue(rates[j].high);
-            bar["low"]    = new JSONValue(rates[j].low);
-            bar["close"]  = new JSONValue(rates[j].close);
-            bar["volume"] = new JSONValue((long)rates[j].tick_volume);
-            bar["pair"]   = new JSONValue(m_symbol);
-
-            barsArray.Add(bar);
-            // NOTE: Add() takes ownership — do NOT delete bar
+            if(j > 0) barsJson += ",";
+            string sOpen  = DoubleToString(rates[j].open, 5);
+            string sHigh  = DoubleToString(rates[j].high, 5);
+            string sLow   = DoubleToString(rates[j].low, 5);
+            string sClose = DoubleToString(rates[j].close, 5);
+            // Ensure dot decimal separator regardless of locale
+            StringReplace(sOpen,  ",", ".");
+            StringReplace(sHigh,  ",", ".");
+            StringReplace(sLow,   ",", ".");
+            StringReplace(sClose, ",", ".");
+            barsJson += "{\"time\":" + IntegerToString((long)rates[j].time)
+                      + ",\"open\":" + sOpen
+                      + ",\"high\":" + sHigh
+                      + ",\"low\":" + sLow
+                      + ",\"close\":" + sClose
+                      + ",\"volume\":" + IntegerToString((long)rates[j].tick_volume)
+                      + ",\"pair\":\"" + m_symbol + "\"}";
          }
 
-         m_network.SendHistoryBatch(m_symbol, barsArray, m_config.historyDays);
-         // NOTE: SendHistoryBatch puts barsArray into a payload tree which is then deleted.
-         // Do NOT delete barsArray here.
+         m_network.SendRawHistoryBatch(m_symbol, barsJson, historyDays);
+         totalSent += copied;
+         pos -= count;
 
-         // Small yield to prevent blocking OnTick for too long
-         if(i + m_config.batchSize < total)
-            Sleep(5);
+         Sleep(5);
       }
 
       m_network.SendHistoryEnd(m_symbol);
 
       if(m_logger != NULL)
-         m_logger.Info("HistoryProvider: history send complete");
+         m_logger.Info("HistoryProvider: history send complete, " + IntegerToString(totalSent) + " bars sent");
    }
 };

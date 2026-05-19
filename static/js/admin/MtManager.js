@@ -20,6 +20,9 @@ export class MtManager {
       launchBtn: document.getElementById('mt-launch-btn'),
       launchResult: document.getElementById('mt-launch-result'),
       pathStatus: document.getElementById('mt-path-status'),
+      deployBtn: document.getElementById('mt-deploy-btn'),
+      deployResult: document.getElementById('mt-deploy-result'),
+      detectedDir: document.getElementById('mt-detected-dir'),
     };
   }
 
@@ -29,6 +32,9 @@ export class MtManager {
     }
     if (this.el.launchBtn) {
       this.el.launchBtn.addEventListener('click', () => this.launch());
+    }
+    if (this.el.deployBtn) {
+      this.el.deployBtn.addEventListener('click', () => this.deploy());
     }
   }
 
@@ -97,6 +103,35 @@ export class MtManager {
       this.el.launchResult.className = 'mt-3 text-sm text-red-400';
     } else {
       this.el.launchResult.className = 'mt-3 text-sm text-gray-300';
+    }
+  }
+
+  async deploy() {
+    if (this.el.deployResult) {
+      this.el.deployResult.textContent = 'Deploying...';
+      this.el.deployResult.className = 'mt-2 text-sm text-gray-300';
+    }
+    try {
+      const data = await this.api.deployMt();
+      if (this.el.detectedDir && data.target_dir) {
+        this.el.detectedDir.textContent = 'Target: ' + data.target_dir;
+      }
+      if (this.el.deployResult) {
+        let msg = data.message;
+        if (data.copied && data.copied.length) {
+          msg += '\nCopied: ' + data.copied.join(', ');
+        }
+        if (data.errors && data.errors.length) {
+          msg += '\nErrors: ' + data.errors.join('; ');
+        }
+        this.el.deployResult.textContent = msg;
+        this.el.deployResult.className = data.success ? 'mt-2 text-sm text-green-400 whitespace-pre-line' : 'mt-2 text-sm text-red-400 whitespace-pre-line';
+      }
+    } catch (e) {
+      if (this.el.deployResult) {
+        this.el.deployResult.textContent = 'Error: ' + e.message;
+        this.el.deployResult.className = 'mt-2 text-sm text-red-400';
+      }
     }
   }
 }

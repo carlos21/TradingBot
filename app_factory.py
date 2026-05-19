@@ -214,12 +214,22 @@ def _setup_live_mode_callbacks(
             logger.error(traceback.format_exc())
     
     import threading
+    _warmup_running = threading.Event()
     
     def _on_history_complete(bars):
         """Return immediately, process bars in background thread."""
+        if _warmup_running.is_set():
+            logger.warning(f"[LiveMode] Warmup already in progress, ignoring duplicate history_end ({len(bars)} bars)")
+            return
+        _warmup_running.set()
         logger.info(f"[LiveMode] Received {len(bars)} historical bars, starting background warmup...")
         # Start background thread to process bars - don't block HTTP response
-        thread = threading.Thread(target=_do_warmup, args=(bars,), name="HistoryWarmup")
+        def _do_warmup_guarded(bars):
+            try:
+                _do_warmup(bars)
+            finally:
+                _warmup_running.clear()
+        thread = threading.Thread(target=_do_warmup_guarded, args=(bars,), name="HistoryWarmup")
         thread.daemon = True
         thread.start()
     
@@ -561,6 +571,7 @@ def create_app(
     from src.infrastructure.repositories.accounts_repository import NtAccountRepository
     from src.infrastructure.repositories.credentials_repository import CredentialRepository
     from src.services.nt_manager_service import NtManagerService
+    from src.services.platform_deploy_service import PlatformDeployService
     from src.controllers.settings_controller import SettingsController
 
     secret_key = os.environ.get("SECRET_KEY")
@@ -570,6 +581,7 @@ def create_app(
     settings_service = SettingsService(settings_repo, accounts_repo, creds_repo, secret_key=secret_key)
     settings_controller = SettingsController(settings_service)
     nt_service = NtManagerService()
+    deploy_service = PlatformDeployService()
 
     # Build platform-specific lifecycle service (SOLID: one implementation per platform)
     if _platform_type == "ninjatrader":
@@ -584,9 +596,9 @@ def create_app(
     # Optionally load any preexisting lines from repo into the in-memory strategy
     if bootstrap_existing_lines:
         for l in repos.lines.list_lines(pair):
-            # FIX: Force timestamp to 0 for existing DB lines so they are valid for ALL history.
-            # This prevents "future" creation dates (e.g. 2025) from blocking trades on 2024 data.
-            tstrategy.add_strategy_line(l.line_id, l.price, creation_timestamp=0)
+            # Use the line's actual creation date so historical bars from BEFORE
+            # the line was drawn are correctly skipped during warmup.
+            tstrategy.add_strategy_line(l.line_id, l.price, creation_timestamp=l.creation_date.timestamp())
         if live_mode:
             tstrategy.restore_open_trades()
 
@@ -596,9 +608,9 @@ def create_app(
     register_trades_routes(app, trades_controller, repos.trades, pair, trade_logger, logger)
     register_admin_routes(app, admin_controller, logger)
     register_settings_routes(app, settings_controller, logger)
-    register_nt_routes(app, nt_service, logger)
+    register_nt_routes(app, nt_service, deploy_service, logger)
     if _platform_type == "metatrader":
-        register_mt_routes(app, mt_service, logger)
+        register_mt_routes(app, mt_service, deploy_service, logger)
     register_stream_routes(app, data_source, platform_lifecycle, socketio, logger)
     register_debug_routes(
         app, tstrategy, loader, trade_manager, repos.lines, repos.trades,

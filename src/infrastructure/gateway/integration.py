@@ -20,6 +20,7 @@ Usage:
 """
 
 
+from src.notifier import Notifier, NoOpNotifier
 from src.utils.app_logger import ILogger
 
 from src.config.models import DEFAULT_HISTORY_DAYS
@@ -42,6 +43,7 @@ def create_live_components(
     query_port: int = 5557,
     heartbeat_port: int = 5558,
     history_days: int = DEFAULT_HISTORY_DAYS,
+    notifier: Notifier | None = None,
 ) -> tuple[ZMQDataSource, ZMQTradeExecutor]:
     """
     Create ZeroMQ-based data source and trade executor for live trading.
@@ -80,7 +82,7 @@ def create_live_components(
     gateway._account_names = account_names or []
 
     # Create data source that uses the gateway (logger is required first param)
-    data_source = ZMQDataSource(logger, gateway=gateway, pair=pair, history_days=history_days)
+    data_source = ZMQDataSource(logger, gateway=gateway, pair=pair, history_days=history_days, notifier=notifier)
 
     # Create trade executor that uses the same gateway (logger is required)
     trade_executor = ZMQTradeExecutor(
@@ -113,6 +115,7 @@ def create_multi_account_live_components(
     heartbeat_port: int = 5558,
     accounts_repo=None,
     history_days: int = DEFAULT_HISTORY_DAYS,
+    notifier: Notifier | None = None,
 ) -> tuple[ZMQDataSource, MultiAccountExecutor]:
     """
     Create ZeroMQ components for multi-account live trading.

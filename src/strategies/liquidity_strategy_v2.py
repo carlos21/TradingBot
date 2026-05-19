@@ -381,16 +381,24 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             lvl = line['level']
             if line['direction'] == 'short':
                 if bar['high'] > line['extreme']:
+                    old_ext = line['extreme']
                     line['extreme'] = bar['high']
                     if line['extreme'] >= lvl and 'interaction_ts' not in line:
                         line['interaction_ts'] = bar_time
                         line['touch_bar_time'] = bar_time
+                        self.log_decision(bar_time, "1m", sid, "TOUCH",
+                            f"Short line touched @ {bar['high']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
+                            direction="short")
             elif line['direction'] == 'long':
                 if bar['low'] < line['extreme']:
+                    old_ext = line['extreme']
                     line['extreme'] = bar['low']
                     if line['extreme'] <= lvl and 'interaction_ts' not in line:
                         line['interaction_ts'] = bar_time
                         line['touch_bar_time'] = bar_time
+                        self.log_decision(bar_time, "1m", sid, "TOUCH",
+                            f"Long line touched @ {bar['low']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
+                            direction="long")
 
         self._persist_all_line_states()
 

@@ -105,6 +105,14 @@ export class ApiClient {
     return this.post('/api/mt/launch', { exe_path: exePath });
   }
 
+  async deployMt() {
+    return this.post('/api/mt/deploy', {});
+  }
+
+  async deployNt() {
+    return this.post('/api/nt/deploy', {});
+  }
+
   // Admin API Methods
   async getStats() {
     return this.get(`/api/admin/stats?pair=${this.pair}`);

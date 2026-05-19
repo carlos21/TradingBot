@@ -15,8 +15,9 @@ export class NtManager {
 
   bindElements() {
     this.el = {
-      installNetmqBtn: document.getElementById('nt-install-netmq-btn'),
-      installNetmqResult: document.getElementById('nt-install-netmq-result'),
+      deployBtn: document.getElementById('nt-deploy-btn'),
+      deployResult: document.getElementById('nt-deploy-result'),
+      detectedDir: document.getElementById('nt-detected-dir'),
       // Credentials
       credsUser: document.getElementById('nt-creds-user'),
       credsUserList: document.getElementById('nt-creds-user-list'),
@@ -32,8 +33,8 @@ export class NtManager {
   }
 
   bindEvents() {
-    if (this.el.installNetmqBtn) {
-      this.el.installNetmqBtn.addEventListener('click', () => this.installNetmq());
+    if (this.el.deployBtn) {
+      this.el.deployBtn.addEventListener('click', () => this.deploy());
     }
     if (this.el.credsTogglePass) {
       this.el.credsTogglePass.addEventListener('click', () => this.togglePassword());
@@ -112,15 +113,32 @@ export class NtManager {
     }
   }
 
-  async installNetmq() {
-    this.el.installNetmqResult.textContent = 'Installing...';
+  async deploy() {
+    if (this.el.deployResult) {
+      this.el.deployResult.textContent = 'Deploying...';
+      this.el.deployResult.className = 'mt-2 text-sm text-gray-300';
+    }
     try {
-      const data = await this.api.installNtNetmq();
-      this.el.installNetmqResult.textContent = data.message;
-      this.el.installNetmqResult.className = data.success ? 'mt-2 text-sm text-green-400' : 'mt-2 text-sm text-red-400';
+      const data = await this.api.deployNt();
+      if (this.el.detectedDir && data.target_dir) {
+        this.el.detectedDir.textContent = 'Target: ' + data.target_dir;
+      }
+      if (this.el.deployResult) {
+        let msg = data.message;
+        if (data.copied && data.copied.length) {
+          msg += '\nCopied: ' + data.copied.join(', ');
+        }
+        if (data.errors && data.errors.length) {
+          msg += '\nErrors: ' + data.errors.join('; ');
+        }
+        this.el.deployResult.textContent = msg;
+        this.el.deployResult.className = data.success ? 'mt-2 text-sm text-green-400 whitespace-pre-line' : 'mt-2 text-sm text-red-400 whitespace-pre-line';
+      }
     } catch (e) {
-      this.el.installNetmqResult.textContent = 'Error: ' + e.message;
-      this.el.installNetmqResult.className = 'mt-2 text-sm text-red-400';
+      if (this.el.deployResult) {
+        this.el.deployResult.textContent = 'Error: ' + e.message;
+        this.el.deployResult.className = 'mt-2 text-sm text-red-400';
+      }
     }
   }
 

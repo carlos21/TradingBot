@@ -64,8 +64,10 @@ if (-not ("Win32HelperV2" -as [Type])) {
         [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
         [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
         [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam);
         public const int SW_RESTORE = 9;
         public const int SW_SHOW = 5;
+        public const uint WM_SETTEXT = 0x000C;
     }
 "@
 }
@@ -257,8 +259,21 @@ function Set-TextBoxValue {
         }
     } catch {}
 
-    # 2. Fallback: focus the control and SendKeys into it
+    # 2. Fallback: use WM_SETTEXT via the native window handle.
+    #    This bypasses all keystroke simulation (no Caps Lock / Shift issues).
     try {
+        $hWnd = [IntPtr]$Element.Current.NativeWindowHandle
+        if ($hWnd -ne [IntPtr]::Zero) {
+            [Win32HelperV2]::SendMessage($hWnd, [Win32HelperV2]::WM_SETTEXT, [IntPtr]::Zero, $Value)
+            return $true
+        }
+    } catch {}
+
+    # 3. Last resort: SendKeys. Force Caps Lock OFF right before typing
+    #    because SendKeys sends uppercase as Shift+key, which inverts case
+    #    when Caps Lock is ON.
+    try {
+        Disable-CapsLockIfOn
         $Element.SetFocus()
         Start-Sleep -Milliseconds 150
         [System.Windows.Forms.SendKeys]::SendWait("^a")

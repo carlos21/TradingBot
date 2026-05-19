@@ -25,13 +25,19 @@ class FakeNtService:
         return {"success": True, "message": f"Launched for {username}"}
 
 
+class FakeDeployService:
+    def deploy_ninjatrader(self, target_dir=None):
+        return {"success": True, "message": "Deployed", "copied": []}
+
+
 @pytest.fixture
 def app():
     app = Flask(__name__)
     app.config["TESTING"] = True
     svc = FakeNtService()
+    deploy = FakeDeployService()
     logger = FakeLogger()
-    register_nt_routes(app, svc, logger)
+    register_nt_routes(app, svc, deploy, logger)
     return app
 
 

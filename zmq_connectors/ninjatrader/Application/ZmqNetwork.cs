@@ -126,6 +126,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             Send(MessageType.Tick, payload);
         }
 
+        private static int _completedBarsSent = 0;
+        private static int _partialBarsSent = 0;
+
         public void SendBar(string pair, DateTime time, double open, double high, double low, double close, long volume, bool isPartial = false)
         {
             var payload = new JObject
@@ -138,7 +141,20 @@ namespace NinjaTrader.NinjaScript.AddOns
                 ["close"] = close,
                 ["volume"] = volume
             };
-            Send(isPartial ? MessageType.PartialBar : MessageType.Bar, payload);
+            if (isPartial)
+            {
+                int count = Interlocked.Increment(ref _partialBarsSent);
+                if (count % 50 == 0)
+                    _logger.Info($"[ZMQ] Sent {count} partial bars (latest {pair} @{close:F2})");
+                Send(MessageType.PartialBar, payload);
+            }
+            else
+            {
+                int count = Interlocked.Increment(ref _completedBarsSent);
+                if (count % 50 == 0)
+                    _logger.Info($"[ZMQ] Sent {count} completed bars (latest {pair} @{close:F2} time={ToUnixSeconds(time)})");
+                Send(MessageType.Bar, payload);
+            }
         }
 
         public void SendHistoryBatch(string pair, List<JObject> bars, int days)
@@ -152,6 +168,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         public void SendHistoryEnd() => Send(MessageType.HistoryEnd, new JObject());
+
+        public void SendRefreshStart() => Send(MessageType.RefreshStart, new JObject());
 
         public void SendEntryFill(string tradeId, double entryPrice, double? stopLoss = null, double? takeProfit = null, double? slippage = null, string account = null)
         {

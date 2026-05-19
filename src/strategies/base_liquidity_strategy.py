@@ -271,6 +271,11 @@ class BaseLiquidityStrategy:
                     continue
                 persisted = saved.get(str(line_id))
                 if persisted:
+                    # Discard stale persisted state if creation_ts mismatch —
+                    # the line was re-added or its creation time changed.
+                    persisted_ts = persisted.get("creation_ts")
+                    if persisted_ts is not None and persisted_ts != line_state.get("creation_ts"):
+                        continue
                     # Keep level/creation_ts from fresh bootstrap (authoritative for geometry),
                     # restore everything else (direction, extreme, trigger stages, etc.)
                     level = line_state["level"]

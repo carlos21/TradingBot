@@ -485,19 +485,27 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
         dir_ = Direction.from_string(dir_str) if isinstance(dir_str, str) else dir_str
 
         lvl = line["level"]
-        if not bar.get('tf'):
+        tf = bar.get('tf')
+        if not tf:
             return None
 
         # Interaction check: price must have touched the line on or before this bar
         interaction_ts = line.get('interaction_ts')
         if interaction_ts is not None and interaction_ts > bar['time']:
+            strategy.log_decision(bar['time'], tf, line_id, "TRIGGER_SKIP",
+                f"interaction_ts {interaction_ts} > bar_time {bar['time']}",
+                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_))
             return None
-        if dir_ == Direction.LONG  and line['extreme'] > lvl:
+        if dir_ == Direction.LONG and line['extreme'] > lvl:
+            strategy.log_decision(bar['time'], tf, line_id, "TRIGGER_SKIP",
+                f"extreme {line['extreme']:.2f} > lvl {lvl:.2f} (long: price never touched line)",
+                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_))
             return None
         if dir_ == Direction.SHORT and line['extreme'] < lvl:
+            strategy.log_decision(bar['time'], tf, line_id, "TRIGGER_SKIP",
+                f"extreme {line['extreme']:.2f} < lvl {lvl:.2f} (short: price never touched line)",
+                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_))
             return None
-
-        tf = bar['tf']
 
         # Lock regime on first touch; reuse on all subsequent bars
         if 'vat_regime' not in line:

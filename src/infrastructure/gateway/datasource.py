@@ -20,6 +20,7 @@ from src.infrastructure.data_sources.combined_datasource import CombinedDataSour
 from src.utils.app_logger import ILogger
 
 from src.config.models import DEFAULT_HISTORY_DAYS
+from src.notifier import NoOpNotifier, Notifier
 
 from .gateway import GatewayConfig, TradingGateway
 from .protocol import MessageType
@@ -70,6 +71,7 @@ class ZMQDataSource(CombinedDataSource):
         gateway_config: GatewayConfig | None = None,
         pair: str = "MNQ",
         history_days: int = DEFAULT_HISTORY_DAYS,
+        notifier: Notifier | None = None,
     ):
         """
         Initialize the ZMQ data source.
@@ -124,6 +126,17 @@ class ZMQDataSource(CombinedDataSource):
 
         # Gap detection threshold (seconds). For 1m bars, anything > 2 min is a hole.
         self._gap_threshold: int = 120
+
+        # Notifier for alerts when bar stream dies
+        self._notifier = notifier or NoOpNotifier()
+
+        # Heartbeat: track last completed bar time and monitor for stalls
+        self._last_completed_bar_time: float = 0.0
+        self._heartbeat_thread: threading.Thread | None = None
+        self._heartbeat_stop_event = threading.Event()
+        self._heartbeat_alert_sent: bool = False
+        self._heartbeat_check_interval_sec: float = 30.0
+        self._heartbeat_alert_threshold_sec: float = 90.0
 
     def _ensure_gateway(self) -> TradingGateway:
         """Get or create the gateway."""
@@ -251,14 +264,69 @@ class ZMQDataSource(CombinedDataSource):
         # Start the gateway
         gateway.start()
 
+        # Start heartbeat monitor
+        self._start_heartbeat_monitor()
+
         self.logger.info("ZMQDataSource started")
 
     def stop(self) -> None:
         """Stop receiving data."""
+        self._stop_heartbeat_monitor()
         if self._owns_gateway and self._gateway:
             self._gateway.stop()
         self._state = DataSourceState.DISCONNECTED
         self.logger.info("ZMQDataSource stopped")
+
+    def _start_heartbeat_monitor(self) -> None:
+        """Start background thread that watches for stalled completed-bar stream."""
+        self._heartbeat_stop_event.clear()
+        self._heartbeat_alert_sent = False
+        self._last_completed_bar_time = time.monotonic()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name="ZMQ-HeartbeatMonitor",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+        self.logger.info("[Heartbeat] Started monitoring completed-bar stream (alert after 90s)")
+
+    def _stop_heartbeat_monitor(self) -> None:
+        """Stop the heartbeat monitor thread."""
+        if self._heartbeat_thread is not None:
+            self._heartbeat_stop_event.set()
+            self._heartbeat_thread.join(timeout=2.0)
+            self._heartbeat_thread = None
+
+    def _heartbeat_loop(self) -> None:
+        """Background thread: alert if no completed bar received for too long."""
+        while not self._heartbeat_stop_event.is_set():
+            self._heartbeat_stop_event.wait(self._heartbeat_check_interval_sec)
+            if self._heartbeat_stop_event.is_set():
+                break
+
+            # Only alert when we are in LIVE state (market should be streaming)
+            if self._state != DataSourceState.LIVE:
+                continue
+
+            elapsed = time.monotonic() - self._last_completed_bar_time
+            if elapsed >= self._heartbeat_alert_threshold_sec:
+                if not self._heartbeat_alert_sent:
+                    self._heartbeat_alert_sent = True
+                    msg = (
+                        f"🚨 ALERT: No completed bar received for {self.pair} "
+                        f"in {int(elapsed)}s. Strategy is blind. "
+                        f"Check NinjaTrader ZMQ connector."
+                    )
+                    self.logger.error(f"[Heartbeat] {msg}")
+                    try:
+                        self._notifier.send(msg)
+                    except Exception as e:
+                        self.logger.error(f"[Heartbeat] FAILED to send notification: {type(e).__name__}: {e}")
+            else:
+                # Reset alert flag once bars resume
+                if self._heartbeat_alert_sent:
+                    self._heartbeat_alert_sent = False
+                    self.logger.info(f"[Heartbeat] Completed-bar stream resumed for {self.pair}")
 
     def _on_tick(self, payload: dict) -> None:
         """Handle incoming tick."""
@@ -309,6 +377,22 @@ class ZMQDataSource(CombinedDataSource):
     def _on_bar(self, payload: dict) -> None:
         """Handle completed bar from platform."""
         self._stats["bars_received"] += 1
+
+        # DEBUG: Log every bar for the first 100 live bars, then every 50th
+        is_live = self._state == DataSourceState.LIVE
+        if is_live:
+            if self._stats["bars_received"] <= 100 or self._stats["bars_received"] % 50 == 0:
+                self.logger.info(
+                    f"[LIVE BAR #{self._stats['bars_received']}] "
+                    f"time={payload.get('time')} close={payload.get('close')} pair={payload.get('pair', self.pair)}"
+                )
+
+        if is_live:
+            self._last_completed_bar_time = time.monotonic()
+            # Reset alert flag when a bar arrives
+            if self._heartbeat_alert_sent:
+                self._heartbeat_alert_sent = False
+                self.logger.info(f"[Heartbeat] Completed-bar stream resumed for {self.pair}")
 
         bar = {
             "time": int(payload["time"]),
@@ -429,6 +513,8 @@ class ZMQDataSource(CombinedDataSource):
     def _on_history_end(self, _payload: dict = None) -> None:
         """Handle end of historical data."""
         self._state = DataSourceState.LIVE
+        # Reset heartbeat baseline so the first live bar has a full grace period
+        self._last_completed_bar_time = time.monotonic()
 
         with self._bars_lock:
             if self._historical_bars:
