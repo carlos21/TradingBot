@@ -29,7 +29,7 @@ from src.infrastructure.gateway.executor import MultiAccountExecutor
 from src.services.trade_logger import TradeLogger
 from src.services.analytics_service import AnalyticsService
 from src.financial_calc import FinancialCalc
-from src.strategies.base_liquidity_strategy import StrategyOptions
+from src.strategies.base_liquidity_strategy import StrategyOptions, LineRemovalMode
 from src.domain.repositories import (
     LineRepository,
     TradeRepository,
@@ -188,7 +188,6 @@ def _setup_live_mode_callbacks(
         """Background task: process historical bars."""
         try:
             strategy.is_warmup = True
-            strategy.warmup_start_ts = bars[0]['time'] if bars else 0.0
             strategy._warmup_crossed_lines.clear()
             start = __import__('time').monotonic()
             for i, bar in enumerate(bars):
@@ -198,6 +197,23 @@ def _setup_live_mode_callbacks(
             strategy.restore_trigger_states(pair)
             strategy.restore_open_trades()
             strategy.restore_reentry_opportunities(pair)
+
+            # Remove lines that were touched during warmup. A touched line is a stale
+            # setup — the bounce already happened and the opportunity has passed.
+            stale_count = 0
+            for sid in list(strategy._warmup_crossed_lines):
+                line = strategy.strategy_lines.get(sid)
+                if line is None:
+                    continue
+                # Only remove if the line was actually touched (interaction_ts set)
+                if line.get('interaction_ts') is None:
+                    continue
+                if strategy.options.line_removal_mode != LineRemovalMode.NEVER:
+                    strategy.remove_strategy_line(sid)
+                    stale_count += 1
+                strategy._warmup_crossed_lines.discard(sid)
+            if stale_count:
+                logger.info(f"[LiveMode] Removed {stale_count} stale line(s) touched during warmup")
             
             elapsed = __import__('time').monotonic() - start
             logger.info(f"[LiveMode] Warmup complete in {elapsed:.1f}s, ready for live bars.")

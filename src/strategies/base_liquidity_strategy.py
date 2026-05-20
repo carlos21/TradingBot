@@ -162,7 +162,6 @@ class BaseLiquidityStrategy:
         # Optional dependency for multi-TF checks
         self.htf_fetcher = htf_fetcher
         self.is_warmup = False
-        self.warmup_start_ts = 0.0
         self._warmup_crossed_lines: set[Any] = set()
 
     def _get_current_account_configs(self) -> list:

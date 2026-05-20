@@ -255,59 +255,77 @@ class TestWarmupLineTracking:
         assert strat.strategy_lines["L1"].get("interaction_ts") == 60
 
 
-    def test_old_crossed_line_removed_by_trigger_on_evaluate_during_warmup(self):
+    def test_touched_line_added_to_warmup_crossed_lines(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0)
+        strat.is_warmup = True
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
+        bar1 = make_bar(time=60, open_=98, high=101, low=97, close=97, pair="MNQ")
+        strat.on_raw_bar(bar1)
+        assert "L1" in strat._warmup_crossed_lines
+
+    def test_touched_line_removed_after_warmup_on_evaluate(self):
         sio, lr, tr, tm = _deps()
         strat = make_strategy(
-            sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=1000.0,
+            sio, lr, tr, tm, min_cross_depth=0.0,
             options=StrategyOptions(line_removal_mode=LineRemovalMode.ON_EVALUATE),
         )
-        strat.warmup_start_ts = 60
         strat.is_warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
-        strat.triggers = [lambda s, sid, line, bar: EntryContext(
-            strategy=s, line_id=sid, direction=Direction.LONG, level=100.0,
-            bar=bar, close=bar['close'], low=bar['low'], high=bar['high'],
-            extreme=90.0, cross_depth=10.0,
-        )]
-        strat.entry_filters = []
-        bar1 = make_bar(time=60, open_=101, high=103, low=100, close=102, pair="MNQ")
+        bar1 = make_bar(time=60, open_=98, high=101, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar1)
-        assert "L1" in strat.strategy_lines
-        assert strat.strategy_lines["L1"]["direction"] == "long"
-        # Feed bars to complete first 5m window so _on_strategy_bar fires
-        for t in range(120, 361, 60):
-            bar = make_bar(time=t, open_=102, high=103, low=101, close=102, pair="MNQ")
-            strat.on_raw_bar(bar)
+        strat.is_warmup = False
+        # Simulate post-warmup cleanup
+        for sid in list(strat._warmup_crossed_lines):
+            if sid in strat.strategy_lines:
+                if strat.options.line_removal_mode != LineRemovalMode.NEVER:
+                    strat.remove_strategy_line(sid)
+                strat._warmup_crossed_lines.discard(sid)
         assert "L1" not in strat.strategy_lines
 
-    def test_old_crossed_line_kept_by_trigger_on_enter_during_warmup(self):
+    def test_touched_line_removed_after_warmup_on_enter(self):
         sio, lr, tr, tm = _deps()
         strat = make_strategy(
-            sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=1000.0,
+            sio, lr, tr, tm, min_cross_depth=0.0,
             options=StrategyOptions(line_removal_mode=LineRemovalMode.ON_ENTER),
         )
-        strat.warmup_start_ts = 60
         strat.is_warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
-        strat.triggers = [lambda s, sid, line, bar: EntryContext(
-            strategy=s, line_id=sid, direction=Direction.LONG, level=100.0,
-            bar=bar, close=bar['close'], low=bar['low'], high=bar['high'],
-            extreme=90.0, cross_depth=10.0,
-        )]
-        strat.entry_filters = []
-        bar1 = make_bar(time=60, open_=101, high=103, low=100, close=102, pair="MNQ")
+        bar1 = make_bar(time=60, open_=98, high=101, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar1)
-        for t in range(120, 361, 60):
-            bar = make_bar(time=t, open_=102, high=103, low=101, close=102, pair="MNQ")
-            strat.on_raw_bar(bar)
-        assert "L1" in strat.strategy_lines  # ON_ENTER keeps it because no trade opened
+        strat.is_warmup = False
+        # Simulate post-warmup cleanup
+        for sid in list(strat._warmup_crossed_lines):
+            if sid in strat.strategy_lines:
+                if strat.options.line_removal_mode != LineRemovalMode.NEVER:
+                    strat.remove_strategy_line(sid)
+                strat._warmup_crossed_lines.discard(sid)
+        assert "L1" not in strat.strategy_lines  # ON_ENTER also removed by post-warmup cleanup
+
+    def test_touched_line_kept_after_warmup_on_never(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(
+            sio, lr, tr, tm, min_cross_depth=0.0,
+            options=StrategyOptions(line_removal_mode=LineRemovalMode.NEVER),
+        )
+        strat.is_warmup = True
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
+        bar1 = make_bar(time=60, open_=98, high=101, low=97, close=97, pair="MNQ")
+        strat.on_raw_bar(bar1)
+        strat.is_warmup = False
+        # Simulate post-warmup cleanup
+        for sid in list(strat._warmup_crossed_lines):
+            if sid in strat.strategy_lines:
+                if strat.options.line_removal_mode != LineRemovalMode.NEVER:
+                    strat.remove_strategy_line(sid)
+                strat._warmup_crossed_lines.discard(sid)
+        assert "L1" in strat.strategy_lines  # NEVER mode preserves touched lines
 
     def test_old_uncrossed_line_restores_persisted_state_after_warmup(self):
         sio, lr, tr, tm = _deps()
         from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
         repo = InMemoryLineTriggerStateRepository()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, trigger_state_repo=repo)
-        strat.warmup_start_ts = 60
         strat.is_warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
         # Price equals line level — line never gets crossed (direction stays None)
@@ -328,7 +346,6 @@ class TestWarmupLineTracking:
         from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
         repo = InMemoryLineTriggerStateRepository()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, trigger_state_repo=repo)
-        strat.warmup_start_ts = 60
         strat.is_warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
         # Price crosses the line during warmup
@@ -336,6 +353,7 @@ class TestWarmupLineTracking:
         strat.on_raw_bar(bar1)
         assert strat.strategy_lines["L1"]["direction"] == "short"
         assert strat.strategy_lines["L1"]["extreme"] == 99
+        assert "L1" in strat._warmup_crossed_lines
         strat.is_warmup = False
         # Inject stale persisted state (direction=None) — restore should NOT overwrite
         repo.save("L1", "MNQ", {"direction": None, "extreme": 0.0})
