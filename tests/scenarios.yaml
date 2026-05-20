@@ -3055,3 +3055,41 @@ scenarios:
       - { price: 28638.25, at: "2026-05-07 06:00:00" }
     expect:
       none: true
+
+  - name: "MNQ - 2026-05-18"
+    pair: "MNQ"
+    tf: "1m"
+    start: "2026-05-18 06:00:00Z"
+    end:   "2026-05-18 16:00:00Z"
+    lines:
+      - { price: 28923.50, at: "2026-05-18 06:00:00" }
+    expect:
+      entry: 28883.50
+      sl:    28843.50
+      tp:    29083.50
+
+  - name: "MNQ - 2026-05-19"
+    pair: "MNQ"
+    tf: "3m"
+    start: "2026-05-19 06:00:00Z"
+    end:   "2026-05-19 16:00:00Z"
+    lines:
+      - { price: 28742.00, at: "2026-05-19 06:00:00" }
+    expect:
+      entry: 28739.75
+      sl:    28699.75
+      tp:    28939.75
+      reentry:
+        entry: 28748.75
+        sl:    28708.75
+        tp:    28948.75
+
+  - name: "MNQ - 2026-05-20"
+    pair: "MNQ"
+    tf: "5m"
+    start: "2026-05-20 06:00:00Z"
+    end:   "2026-05-20 16:00:00Z"
+    lines:
+      - { price: 29016.00, at: "2026-05-20 06:00:00" }
+    expect:
+      none: true

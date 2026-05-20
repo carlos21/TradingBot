@@ -84,6 +84,7 @@ class BaseLiquidityStrategy:
         options: StrategyOptions | None = None,
         htf_fetcher: Callable[..., dict | None] | None = None,
         sl_levels: list[float] | None = None,
+        max_entry_distance: float | None = None,
         sl_level_tolerance: float = 5.0,
         min_cross_depth: float = 0.0,
         rr_ratio: float = 5.0,
@@ -118,6 +119,7 @@ class BaseLiquidityStrategy:
         self.fixed_stop_loss = fixed_stop_loss
         self.max_stop_loss = max_stop_loss
         self.sl_levels = sorted(sl_levels) if sl_levels else None
+        self.max_entry_distance = max_entry_distance
         self.trade_logger = trade_logger
         self.analytics = analytics or NoOpReporter()
         self.sl_level_tolerance = float(sl_level_tolerance)

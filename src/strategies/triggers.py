@@ -559,17 +559,20 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
 
 def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val):
     entry_price = bar['close']
-    # Prevent entries too far from the line level (entry price farther than max SL tier)
-    sl_levels = getattr(strategy, 'sl_levels', None)
-    if sl_levels:
-        max_sl = max(sl_levels)
-        if dir_ == Direction.LONG and entry_price > lvl + max_sl:
+    # Prevent entries too far from the line level
+    max_dist = getattr(strategy, 'max_entry_distance', None)
+    if max_dist is None:
+        sl_levels = getattr(strategy, 'sl_levels', None)
+        if sl_levels:
+            max_dist = max(sl_levels)
+    if max_dist is not None and max_dist > 0:
+        if dir_ == Direction.LONG and entry_price > lvl + max_dist:
             strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_DIST",
-                f"Entry {entry_price:.2f} is {entry_price - lvl:.1f}pts above line (max allowed={max_sl}). Skipping.")
+                f"Entry {entry_price:.2f} is {entry_price - lvl:.1f}pts above line (max allowed={max_dist}). Skipping.")
             return None
-        if dir_ == Direction.SHORT and entry_price < lvl - max_sl:
+        if dir_ == Direction.SHORT and entry_price < lvl - max_dist:
             strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_DIST",
-                f"Entry {entry_price:.2f} is {lvl - entry_price:.1f}pts below line (max allowed={max_sl}). Skipping.")
+                f"Entry {entry_price:.2f} is {lvl - entry_price:.1f}pts below line (max allowed={max_dist}). Skipping.")
             return None
 
     if dir_ == Direction.LONG:

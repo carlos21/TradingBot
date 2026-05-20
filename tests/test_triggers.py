@@ -37,6 +37,7 @@ def _make_strategy_mock(history_map=None):
     """Create a mock strategy with configurable history per timeframe."""
     s = MagicMock()
     s.candle_config = CandleConfig()
+    s.max_entry_distance = None
     _map = history_map or {}
 
     def get_history(tf, count):
@@ -403,6 +404,7 @@ class TestBuildTsiContext:
     def _make_strategy_with_sl(self, sl_levels):
         s = _make_strategy_mock()
         s.sl_levels = sl_levels
+        s.max_entry_distance = None
         return s
 
     def test_long_entry_too_far_above_line(self):
@@ -445,6 +447,7 @@ class TestBuildTsiContext:
     def test_no_sl_levels_allows_any_distance(self):
         s = _make_strategy_mock()
         s.sl_levels = None
+        s.max_entry_distance = None
         line = {"level": 100.0, "extreme": 95.0}
         bar = _bar(close=200.0)
         result = _build_tsi_context(s, "L1", line, bar, 100.0, Direction.LONG, 10.0, 5.0)
