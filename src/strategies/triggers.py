@@ -542,15 +542,21 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
             regime_conditions = config.slow
 
         # Try each condition in order; return the first that fires
+        any_attempted = False
         for cond in regime_conditions:
+            if bar.get('tf') == cond.timeframe:
+                any_attempted = True
             result = _check_tsi_condition(strategy, line_id, line, bar, lvl, dir_, cond, config.post_cross1_max_dist)
             if result is not None:
                 return result
-        # None of the conditions fired — log why
-        conds_str = " OR ".join(f"{c.timeframe}×{c.count}" for c in regime_conditions)
-        strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TRIGGER_SKIP",
-            f"VAT {regime_label}: no TSI cross for [{conds_str}]",
-            trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_))
+        # Only log TRIGGER_SKIP when no condition even attempted to evaluate
+        # (wrong timeframe). On matching timeframes _handle_single_tsi_cross
+        # already logged TSI_CHECK with detailed values.
+        if not any_attempted:
+            conds_str = " OR ".join(f"{c.timeframe}×{c.count}" for c in regime_conditions)
+            strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TRIGGER_SKIP",
+                f"VAT {regime_label}: no TSI cross for [{conds_str}]",
+                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_))
         return None
 
     trigger.__name__ = "velocity_adaptive_tsi_trigger"
