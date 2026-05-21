@@ -184,6 +184,47 @@ class TestProperties:
 
 
 # ---------------------------------------------------------------------------
+# Platform connection / disconnection
+# ---------------------------------------------------------------------------
+
+
+class TestPlatformConnection:
+
+    def test_on_platform_connected_schedules_delayed_refresh(self, data_source, mock_gateway):
+        data_source._history_request_delay_sec = 0.1  # 100ms for test speed
+        data_source.on_platform_connected()
+        assert data_source.state == DataSourceState.CONNECTED
+        assert data_source._pending_refresh_timer is not None
+        # Wait for the timer to fire
+        data_source._pending_refresh_timer.join()
+        mock_gateway.send_refresh_request.assert_called_once()
+
+    def test_on_platform_connected_ignored_if_not_disconnected(self, data_source, mock_gateway):
+        data_source._state = DataSourceState.CONNECTED
+        data_source.on_platform_connected()
+        mock_gateway.send_refresh_request.assert_not_called()
+
+    def test_on_platform_disconnected_cancels_pending_timer(self, data_source):
+        data_source._history_request_delay_sec = 10.0
+        data_source.on_platform_connected()
+        assert data_source._pending_refresh_timer is not None
+        data_source.on_platform_disconnected()
+        assert data_source._pending_refresh_timer is None
+        assert data_source.state == DataSourceState.DISCONNECTED
+
+    def test_delayed_refresh_aborted_if_disconnected(self, data_source, mock_gateway):
+        data_source._history_request_delay_sec = 0.1
+        data_source.on_platform_connected()
+        timer = data_source._pending_refresh_timer
+        assert timer is not None
+        # Disconnect before timer fires
+        data_source.on_platform_disconnected()
+        # Wait to ensure the timer callback does not run (or aborts cleanly)
+        timer.join(timeout=0.5)
+        mock_gateway.send_refresh_request.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Start / Stop / Lifecycle
 # ---------------------------------------------------------------------------
 
@@ -465,14 +506,14 @@ class TestHistoryEndHandling:
     def test_on_history_end_calls_callback(self, data_source):
         called_with = []
         data_source.on_history_complete = lambda bars: called_with.append(bars)
-        data_source._historical_bars = [make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)]
+        data_source._historical_bars = [make_bar(time_val=int(time.time()) - 300, open_=10.0, high=11.0, low=9.0, close=10.5)]
         data_source._on_history_end()
         assert len(called_with) == 1
         assert len(called_with[0]) == 1
 
     def test_on_history_end_callback_error_logged(self, data_source, logger):
         data_source.on_history_complete = lambda bars: (_ for _ in ()).throw(RuntimeError("boom"))
-        data_source._historical_bars = [make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)]
+        data_source._historical_bars = [make_bar(time_val=int(time.time()) - 300, open_=10.0, high=11.0, low=9.0, close=10.5)]
         # Should not raise
         data_source._on_history_end()
         assert data_source.is_live is True
@@ -491,17 +532,19 @@ class TestHistoryEndHandling:
         assert len(live_bars) == 2
 
     def test_on_history_end_sets_last_history_time(self, data_source):
+        now = int(time.time())
         data_source._historical_bars = [
-            make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
-            make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
+            make_bar(time_val=now - 400, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=now - 300, open_=11.0, high=12.0, low=10.0, close=11.5),
         ]
         data_source._on_history_end()
-        assert data_source._last_history_time == 200
+        assert data_source._last_history_time == now - 300
 
     def test_on_history_end_scans_for_gaps(self, data_source):
+        now = int(time.time())
         data_source._historical_bars = [
-            make_bar(time_val=0, open_=10.0, high=11.0, low=9.0, close=10.5),
-            make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
+            make_bar(time_val=now - 400, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=now - 200, open_=11.0, high=12.0, low=10.0, close=11.5),
         ]
         data_source._on_history_end()
         assert data_source.is_live is True
@@ -769,7 +812,7 @@ class TestErrorHandling:
 
     def test_on_history_end_callback_error_does_not_abort(self, data_source):
         data_source.on_history_complete = lambda bars: (_ for _ in ()).throw(RuntimeError("boom"))
-        data_source._historical_bars = [make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)]
+        data_source._historical_bars = [make_bar(time_val=int(time.time()) - 300, open_=10.0, high=11.0, low=9.0, close=10.5)]
         data_source._on_history_end()
         assert data_source.state == DataSourceState.LIVE
 
@@ -811,6 +854,7 @@ class TestErrorHandling:
 class TestEndToEndFlow:
 
     def test_full_refresh_cycle(self, data_source, mock_gateway):
+        now = int(time.time())
         live_bars = []
         history_complete = []
         data_source.on_live_bar = lambda bar: live_bars.append(bar)
@@ -823,15 +867,15 @@ class TestEndToEndFlow:
         # 2. History batch arrives
         data_source._on_history_batch({
             "bars": [
-                {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100},
-                {"time": 200, "open": 10.5, "high": 12.0, "low": 10.0, "close": 11.5, "volume": 200},
+                {"time": now - 400, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100},
+                {"time": now - 300, "open": 10.5, "high": 12.0, "low": 10.0, "close": 11.5, "volume": 200},
             ],
             "days": 1,
         })
         assert len(data_source._historical_bars) == 2
 
         # 3. A live bar arrives during refresh (should be buffered)
-        data_source._on_bar(make_bar(time_val=300, open_=11.5, high=13.0, low=11.0, close=12.5))
+        data_source._on_bar(make_bar(time_val=now - 200, open_=11.5, high=13.0, low=11.0, close=12.5))
         assert len(data_source._historical_bars) == 2  # not yet added
         assert len(data_source._refresh_buffer) == 1
 
@@ -861,8 +905,9 @@ class TestEndToEndFlow:
         assert data_source._stats["bars_received"] == 1
 
         # Simulate history batch through gateway
+        fresh_time = int(time.time()) - 300
         for cb in callbacks[MessageType.HISTORY_BATCH]:
-            cb({"bars": [{"time": 50, "open": 9.0, "high": 10.0, "low": 8.0, "close": 9.5, "volume": 50}], "days": 1})
+            cb({"bars": [{"time": fresh_time, "open": 9.0, "high": 10.0, "low": 8.0, "close": 9.5, "volume": 50}], "days": 1})
         assert data_source._stats["history_batches"] == 1
 
         # Simulate history end through gateway

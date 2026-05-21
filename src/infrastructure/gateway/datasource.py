@@ -127,6 +127,14 @@ class ZMQDataSource(CombinedDataSource):
         # Gap detection threshold (seconds). For 1m bars, anything > 2 min is a hole.
         self._gap_threshold: int = 120
 
+        # Retry counter for stale history auto-refresh
+        self._max_stale_history_retries: int = 3
+        self._stale_history_retry_count: int = 0
+
+        # Delay before first history request to let NinjaTrader populate its cache
+        self._history_request_delay_sec: float = 3.0
+        self._pending_refresh_timer: threading.Timer | None = None
+
         # Notifier for alerts when bar stream dies
         self._notifier = notifier or NoOpNotifier()
 
@@ -512,10 +520,6 @@ class ZMQDataSource(CombinedDataSource):
 
     def _on_history_end(self, _payload: dict = None) -> None:
         """Handle end of historical data."""
-        self._state = DataSourceState.LIVE
-        # Reset heartbeat baseline so the first live bar has a full grace period
-        self._last_completed_bar_time = time.monotonic()
-
         with self._bars_lock:
             if self._historical_bars:
                 self._last_history_time = self._historical_bars[-1]["time"]
@@ -523,6 +527,36 @@ class ZMQDataSource(CombinedDataSource):
 
             # Scan loaded history for gaps so we know if the source already had holes
             gap_count = self._scan_for_gaps(self._historical_bars, "HISTORY")
+
+        # NinjaTrader's BarsRequest(DateTime, DateTime) can return partial cached
+        # data on the first call after connection. If the last bar is far behind
+        # now, re-request a refresh instead of switching to LIVE with stale data.
+        if bars_copy:
+            last_bar_time = bars_copy[-1]["time"]
+            now = time.time()
+            gap_to_now = now - last_bar_time
+            if gap_to_now > 600:  # > 10 minutes stale
+                self._stale_history_retry_count += 1
+                if self._stale_history_retry_count <= self._max_stale_history_retries:
+                    dt_str = datetime.fromtimestamp(last_bar_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                    self.logger.warning(
+                        f"🕳️  History ends {gap_to_now:.0f}s ago ({dt_str} UTC), "
+                        f"re-requesting refresh (attempt {self._stale_history_retry_count}/{self._max_stale_history_retries})..."
+                    )
+                    self._state = DataSourceState.CONNECTED
+                    self.request_refresh()
+                    return
+                else:
+                    self.logger.error(
+                        f"🕳️  History still ends {gap_to_now:.0f}s ago after "
+                        f"{self._max_stale_history_retries} refresh attempts. "
+                        f"Proceeding with stale data — large gap warnings expected."
+                    )
+
+        self._state = DataSourceState.LIVE
+        self._stale_history_retry_count = 0
+        # Reset heartbeat baseline so the first live bar has a full grace period
+        self._last_completed_bar_time = time.monotonic()
 
         self.logger.info(f"History complete: {len(bars_copy)} bars cached, switching to LIVE mode")
         if gap_count > 0:
@@ -600,12 +634,31 @@ class ZMQDataSource(CombinedDataSource):
         """Check if connected to platform."""
         return self._gateway is not None and self._gateway.is_connected
 
+    def _cancel_pending_refresh_timer(self) -> None:
+        """Cancel any pending delayed refresh request."""
+        if self._pending_refresh_timer is not None:
+            self._pending_refresh_timer.cancel()
+            self._pending_refresh_timer = None
+
+    def _do_delayed_refresh(self) -> None:
+        """Execute the delayed refresh request."""
+        self._pending_refresh_timer = None
+        if self._state == DataSourceState.DISCONNECTED:
+            self.logger.info("Delayed refresh aborted: platform disconnected")
+            return
+        self.logger.info("Requesting historical data refresh after delay")
+        self.request_refresh()
+
     def on_platform_connected(self) -> None:
         """Called when the platform connects. Auto-request refresh if needed."""
         if self._state == DataSourceState.DISCONNECTED:
             self._state = DataSourceState.CONNECTED
-            self.logger.info("Platform connected, requesting historical data refresh")
-            self.request_refresh()
+            self._stale_history_retry_count = 0
+            delay = self._history_request_delay_sec
+            self.logger.info(f"Platform connected, requesting historical data refresh in {delay}s")
+            self._cancel_pending_refresh_timer()
+            self._pending_refresh_timer = threading.Timer(delay, self._do_delayed_refresh)
+            self._pending_refresh_timer.start()
         else:
             self.logger.debug(f"Platform connected ignored: state={self._state.name}")
 
@@ -613,6 +666,7 @@ class ZMQDataSource(CombinedDataSource):
         """Called when the platform disconnects."""
         if self._state != DataSourceState.DISCONNECTED:
             self._state = DataSourceState.DISCONNECTED
+            self._cancel_pending_refresh_timer()
             self.logger.info("Platform disconnected")
 
     def _on_gateway_connection_change(self, connected: bool) -> None:
