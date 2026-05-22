@@ -3093,3 +3093,19 @@ scenarios:
       - { price: 29016.00, at: "2026-05-20 06:00:00" }
     expect:
       none: true
+
+  - name: "MNQ - 2026-05-21"
+    pair: "MNQ"
+    tf: "1m"
+    start: "2026-05-21 06:00:00Z"
+    end:   "2026-05-21 16:00:00Z"
+    lines:
+      - { price: 29296.75, at: "2026-05-21 07:00:00" }
+    expect:
+      entry: 29272.00
+      sl:    29312.00
+      tp:    29072.00
+      reentry:
+        entry: 29292.50
+        sl:    29332.50
+        tp:    29092.50

@@ -124,6 +124,10 @@ class ZMQDataSource(CombinedDataSource):
             "history_batches": 0,
         }
 
+        # Health tracking
+        self._duplicate_count = 0
+        self._gap_count = 0
+
         # Gap detection threshold (seconds). For 1m bars, anything > 2 min is a hole.
         self._gap_threshold: int = 120
 
@@ -427,7 +431,8 @@ class ZMQDataSource(CombinedDataSource):
                 times = [b["time"] for b in self._historical_bars]
                 idx = bisect.bisect_left(times, bar["time"])
                 if idx < len(times) and times[idx] == bar["time"]:
-                    self.logger.warning(f"Duplicate bar at time {bar['time']}")
+                    self._duplicate_count += 1
+                    self.logger.warning(f"Duplicate bar at time {bar['time']} (total={self._duplicate_count})")
                     return
                 self._historical_bars.insert(idx, bar)
                 inserted_idx = idx
@@ -496,6 +501,7 @@ class ZMQDataSource(CombinedDataSource):
         """Log a warning if there is a gap between two bar timestamps."""
         gap = curr_time - prev_time
         if gap > self._gap_threshold:
+            self._gap_count += 1
             dt_prev = datetime.fromtimestamp(prev_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             dt_curr = datetime.fromtimestamp(curr_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
             self.logger.warning(
@@ -680,6 +686,28 @@ class ZMQDataSource(CombinedDataSource):
     def gateway(self) -> TradingGateway | None:
         """Access the underlying TradingGateway for advanced configuration."""
         return self._gateway
+
+    def get_health(self) -> dict:
+        """Get current stream health snapshot."""
+        with self._bars_lock:
+            bars_cached = len(self._historical_bars)
+            last_bar_time = self._historical_bars[-1]["time"] if self._historical_bars else None
+
+        heartbeat_age = time.monotonic() - self._last_completed_bar_time if self._last_completed_bar_time > 0 else None
+
+        return {
+            "state": self._state.name,
+            "bars_cached": bars_cached,
+            "last_bar_time": last_bar_time,
+            "heartbeat_age_sec": round(heartbeat_age, 1) if heartbeat_age is not None else None,
+            "duplicate_count": self._duplicate_count,
+            "gap_count": self._gap_count,
+            "ticks_received": self._stats["ticks_received"],
+            "bars_received": self._stats["bars_received"],
+            "history_batches": self._stats["history_batches"],
+            "platform_connected": self.is_connected,
+            "pair": self.pair,
+        }
 
     @property
     def stats(self) -> dict[str, int]:

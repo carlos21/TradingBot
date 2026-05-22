@@ -2,6 +2,7 @@ import { ChartViewer } from './ChartViewer.js';
 import { DataService } from './DataService.js';
 import { ControlsView } from './ControlsView.js';
 import { NtAccountsDisplay } from './NtAccountsDisplay.js';
+import { StreamHealthPanel } from './StreamHealthPanel.js';
 
 function hideOverlay() {
     const overlay = document.getElementById('connectionOverlay');
@@ -50,6 +51,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const accountsDisplay = new NtAccountsDisplay(socket);
     accountsDisplay.init();
+
+    const healthPanel = new StreamHealthPanel(socket);
+    window.healthPanel = healthPanel;
 
     // On page load, immediately check if we're already connected.
     // This prevents the overlay from flashing when refreshing while

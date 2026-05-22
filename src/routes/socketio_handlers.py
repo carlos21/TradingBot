@@ -1,5 +1,8 @@
 """Socket.IO event handlers."""
 
+import threading
+import time
+
 from flask_socketio import SocketIO, emit
 
 from src.bars_loader import BarsLoader
@@ -25,6 +28,14 @@ def register_socketio_handlers(
     """
 
 
+    def _emit_health():
+        """Emit current health snapshot if ZMQDataSource is available."""
+        if isinstance(data_source, ZMQDataSource):
+            try:
+                socketio.emit('health_update', data_source.get_health())
+            except Exception:
+                pass
+
     @socketio.on('connect')
     def on_connect(_auth):
         gateway_running = False
@@ -39,6 +50,7 @@ def register_socketio_handlers(
             'gateway_running': gateway_running,
             'platform_connected': platform_connected,
         })
+        _emit_health()
         if live_mode and isinstance(data_source, ZMQDataSource):
             # Request a refresh on browser connect. The state machine inside
             # ZMQDataSource guards against duplicates and disconnected state.
@@ -103,9 +115,39 @@ def register_socketio_handlers(
         ts = loader.jump_day(direction=direction, fast=fast)
         emit('jump_result', {'to': ts})
 
+    @socketio.on('request_health')
+    def on_request_health():
+        _emit_health()
+
+    @socketio.on('request_refresh')
+    def on_request_refresh(payload=None):
+        if not isinstance(data_source, ZMQDataSource):
+            emit('refresh_result', {'ok': False, 'error': 'Not a ZMQ data source'})
+            return
+        days = (payload or {}).get('days')
+        try:
+            data_source.request_refresh(days=days)
+            emit('refresh_result', {'ok': True, 'days': days})
+        except Exception as e:
+            _logger.error(f"request_refresh failed: {e}")
+            emit('refresh_result', {'ok': False, 'error': str(e)})
+
     # Wire up platform connection state changes
     if isinstance(data_source, ZMQDataSource) and data_source.gateway:
         def _on_conn_change(connected: bool):
             event_name = 'platform_connected' if connected else 'platform_disconnected'
             socketio.emit(event_name)
+            _emit_health()
         data_source.gateway.on_connection_change(_on_conn_change)
+
+    # Start periodic health emission (every 2 seconds)
+    _health_stop_event = threading.Event()
+
+    def _health_loop():
+        while not _health_stop_event.is_set():
+            _health_stop_event.wait(2.0)
+            if not _health_stop_event.is_set():
+                _emit_health()
+
+    _health_thread = threading.Thread(target=_health_loop, name="SocketIO-Health", daemon=True)
+    _health_thread.start()
