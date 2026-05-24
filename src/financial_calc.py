@@ -151,12 +151,12 @@ class FinancialCalc:
         if FinancialCalc.is_breakeven(exit_price, entry_price, be_threshold_points):
             return "BE"
 
-        # Check SL proximity
-        if abs(exit_price - stop_loss) < sl_tp_tolerance:
+        # Check SL proximity (skip if no stop-loss is set)
+        if stop_loss is not None and abs(exit_price - stop_loss) < sl_tp_tolerance:
             return "SL"
 
-        # Check TP proximity
-        if abs(exit_price - take_profit) < sl_tp_tolerance:
+        # Check TP proximity (skip if no take-profit is set)
+        if take_profit is not None and abs(exit_price - take_profit) < sl_tp_tolerance:
             return "TP"
 
         # Default: manual close or session end

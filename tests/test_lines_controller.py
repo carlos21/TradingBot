@@ -3,7 +3,7 @@
 import pytest
 from flask import Flask
 
-from src.controllers.lines_controller import LinesController
+from src.strategies.liquidity_v2.controllers.lines_controller import LinesController
 from tests.fakes import FakeDataSource, FakeLineRepository, FakeLogger
 
 

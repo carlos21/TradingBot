@@ -42,7 +42,10 @@ export class MarkerManager {
 
       if (entryTime && entryTime <= lastTime) {
         const regime = t.velocity_regime || '';
-        const entryText = regime ? `Entry \u00b7 ${regime}` : 'Entry';
+        let entryText = regime ? `Entry \u00b7 ${regime}` : 'Entry';
+        if (t.close_on_opposite_cross) {
+          entryText = 'Entry → OppCross';
+        }
         markers.push({
           time: entryTime,
           position: isLong ? 'belowBar' : 'aboveBar',

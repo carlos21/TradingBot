@@ -2,9 +2,9 @@
 
 from unittest.mock import MagicMock
 
-from src.strategies.strategy_config import CandleConfig
+from src.strategies.liquidity_v2.config import CandleConfig
 from src.domain.types import Direction
-from src.strategies.triggers import (
+from src.strategies.liquidity_v2.triggers import (
     TsiCrossCondition,
     VelocityTriggerConfig,
     _build_tsi_context,
@@ -475,7 +475,7 @@ class TestProcessTsiRescue:
         line = {"level": 100.0, "extreme": 95.0}
         bar = _bar(tf="5m")
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, -1], [0, 0]),
         )
         result = _process_tsi_rescue(s, "L1", line, bar, 100.0, Direction.LONG, 0, 0, "5m")
@@ -485,7 +485,7 @@ class TestProcessTsiRescue:
 
         # Now rescue cross: prev_tsi <= prev_sig and curr_tsi > curr_sig
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([-1, 1], [0, 0]),
         )
         result = _process_tsi_rescue(s, "L1", line, bar, 100.0, Direction.LONG, 0, 0, "5m")
@@ -499,7 +499,7 @@ class TestProcessTsiRescue:
         line = {"level": 100.0, "extreme": 105.0}
         bar = _bar(tf="5m")
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, 1], [0, 0]),
         )
         result = _process_tsi_rescue(s, "L1", line, bar, 100.0, Direction.SHORT, 0, 0, "5m")
@@ -507,7 +507,7 @@ class TestProcessTsiRescue:
         assert line.get("tsi_reset_occurred") is True
 
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([1, -1], [0, 0]),
         )
         result = _process_tsi_rescue(s, "L1", line, bar, 100.0, Direction.SHORT, 0, 0, "5m")
@@ -519,7 +519,7 @@ class TestProcessTsiRescue:
         line = {"level": 100.0, "extreme": 95.0, "tsi_reset_occurred": False}
         bar = _bar(tf="5m")
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, 1], [0, 0]),
         )
         result = _process_tsi_rescue(s, "L1", line, bar, 100.0, Direction.LONG, 0, 0, "5m")
@@ -661,7 +661,7 @@ class TestCheckTsiCondition:
         bar = _bar(tf="5m")
         cond = TsiCrossCondition("5m", 1)
         monkeypatch.setattr(
-            "src.strategies.triggers._handle_single_tsi_cross",
+            "src.strategies.liquidity_v2.triggers._handle_single_tsi_cross",
             lambda *args, **kwargs: "single_result",
         )
         result = _check_tsi_condition(s, "L1", line, bar, 100.0, Direction.LONG, cond)
@@ -673,7 +673,7 @@ class TestCheckTsiCondition:
         bar = _bar(tf="5m")
         cond = TsiCrossCondition("5m", 2)
         monkeypatch.setattr(
-            "src.strategies.triggers._handle_double_tsi_cross",
+            "src.strategies.liquidity_v2.triggers._handle_double_tsi_cross",
             lambda *args, **kwargs: "double_result",
         )
         result = _check_tsi_condition(s, "L1", line, bar, 100.0, Direction.LONG, cond)
@@ -726,7 +726,7 @@ class TestTsiCrossTrigger:
         s.sl_levels = None
         line = {"level": 100, "extreme": 95, "direction": "long"}
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, 1], [1, 0]),
         )
         result = tsi_cross_trigger(s, "L1", line, _bar(tf="5m"))
@@ -738,7 +738,7 @@ class TestTsiCrossTrigger:
         s.sl_levels = None
         line = {"level": 100, "extreme": 105, "direction": "short"}
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([1, 0], [0, 1]),
         )
         result = tsi_cross_trigger(s, "L1", line, _bar(tf="5m"))
@@ -752,7 +752,7 @@ class TestTsiCrossTrigger:
         s = _make_strategy_mock({"5m": [_bar(tf="5m")] * 50, "1m": hist_1m})
         line = {"level": 100, "extreme": 95, "direction": "long"}
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, 1], [1, 0]),
         )
         bar = _bar(tf="5m", low=90.0)
@@ -767,7 +767,7 @@ class TestTsiCrossTrigger:
         s = _make_strategy_mock({"5m": [_bar(tf="5m")] * 50, "1m": hist_1m})
         line = {"level": 100, "extreme": 105, "direction": "short"}
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([1, 0], [0, 1]),
         )
         bar = _bar(tf="5m", high=110.0)
@@ -780,7 +780,7 @@ class TestTsiCrossTrigger:
         s = _make_strategy_mock({"5m": [_bar(tf="5m")] * 50})
         line = {"level": 100, "extreme": 95, "direction": "long", "tsi_stage": 1, "tsi_ref_price": 90.0}
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, 0], [0, 0]),
         )
         bar = _bar(tf="5m", close=50.0)  # far below line
@@ -792,7 +792,7 @@ class TestTsiCrossTrigger:
         s = _make_strategy_mock({"5m": [_bar(tf="5m")] * 50})
         line = {"level": 100, "extreme": 105, "direction": "short", "tsi_stage": 1, "tsi_ref_price": 110.0}
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, 0], [0, 0]),
         )
         bar = _bar(tf="5m", close=150.0)  # far above line
@@ -804,7 +804,7 @@ class TestTsiCrossTrigger:
         s = _make_strategy_mock({"5m": [_bar(tf="5m")] * 50})
         line = {"level": 100, "extreme": 95, "direction": "long", "tsi_stage": 1, "tsi_ref_price": 90.0}
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, 0], [0, 0]),
         )
         bar = _bar(tf="5m", low=89.0, close=99.0)  # low < ref_price, close not invalidated
@@ -817,7 +817,7 @@ class TestTsiCrossTrigger:
         s = _make_strategy_mock({"5m": [_bar(tf="5m")] * 50})
         line = {"level": 100, "extreme": 105, "direction": "short", "tsi_stage": 1, "tsi_ref_price": 110.0}
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, 0], [0, 0]),
         )
         bar = _bar(tf="5m", high=111.0, close=101.0)
@@ -829,7 +829,7 @@ class TestTsiCrossTrigger:
         s = _make_strategy_mock({"5m": [_bar(tf="5m")] * 50})
         line = {"level": 100, "extreme": 95, "direction": "long", "tsi_stage": 2}
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, 0], [0, 0]),
         )
         bar = _bar(tf="5m", close=50.0)
@@ -842,7 +842,7 @@ class TestTsiCrossTrigger:
         s.sl_levels = None
         line = {"level": 100, "extreme": 95, "direction": "long", "tsi_stage": 2, "tsi_reset_occurred": True}
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([-1, 1], [0, 0]),
         )
         bar = _bar(tf="5m")
@@ -1117,7 +1117,7 @@ class TestVelocityAdaptiveTsiTriggerAdditional:
         line = {"level": 100, "extreme": 95, "direction": "long"}
         # First call: first cross → stage 1
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, 1], [1, 0]),
         )
         trigger(s, "L1", line, _bar(tf="1m"))
@@ -1147,7 +1147,7 @@ class TestVelocityAdaptiveTsiTriggerAdditional:
         # count=2 will be checked first and not match (no stage set)
         # count=1 should match
         monkeypatch.setattr(
-            "src.strategies.triggers._calculate_tsi_series",
+            "src.strategies.liquidity_v2.triggers._calculate_tsi_series",
             lambda *args: ([0, 1], [1, 0]),
         )
         result = trigger(s, "L1", line, _bar(tf="1m"))

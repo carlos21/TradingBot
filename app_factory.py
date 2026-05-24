@@ -11,7 +11,7 @@ from flask_cors import CORS
 from flask_socketio import SocketIO
 
 from src.bars_loader import BarsLoader
-from src.controllers.lines_controller import LinesController
+from src.strategies.liquidity_v2.controllers.lines_controller import LinesController
 from src.controllers.trades_controller import TradesController
 from src.controllers.admin_controller import AdminController
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
@@ -29,7 +29,7 @@ from src.infrastructure.gateway.executor import MultiAccountExecutor
 from src.services.trade_logger import TradeLogger
 from src.services.analytics_service import AnalyticsService
 from src.financial_calc import FinancialCalc
-from src.strategies.base_liquidity_strategy import StrategyOptions, LineRemovalMode
+from src.strategies.liquidity_v2.base_strategy import StrategyOptions, LineRemovalMode
 from src.domain.repositories import (
     LineRepository,
     TradeRepository,
@@ -40,8 +40,9 @@ from src.infrastructure.repositories.decision_log_repository import DecisionLogR
 from src.infrastructure.repositories.settings_repository import SettingsRepository
 from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.infrastructure.repositories.credentials_repository import CredentialRepository
-from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
-from src.strategies.strategy_config import CandleConfig, StrategyNumbers
+from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
+from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
+from src.strategies.strategy_factory import StrategyFactory
 from src.notifier import Notifier, NoOpNotifier
 from src.analytics import AnalyticsReporter, NoOpReporter
 from src.utils.app_logger import ILogger, ConsoleLogger, FileAndConsoleLogger
@@ -80,7 +81,7 @@ class AppWiring:
     app: Flask
     socketio: SocketIO
     loader: BarsLoader
-    strategy: LiquidityStrategyV2
+    strategy: Any
     trade_manager: TradeManager
     lines_controller: LinesController
     trades_controller: TradesController
@@ -142,7 +143,8 @@ def _create_bar_callbacks(
         def combined_bar_callback(bar):
             # No trade_manager.handle_new_1m_bar — NinjaTrader handles SL/TP
             strategy.on_raw_bar(bar)
-            if strategy.options.breakeven or strategy.options.reentry_breakeven:
+            options = getattr(strategy, 'options', None)
+            if options and (options.breakeven or options.reentry_breakeven):
                 strategy._check_breakeven(bar)
             _check_live_session_end(bar)
         
@@ -163,7 +165,8 @@ def _create_bar_callbacks(
             # TradeManager checks real trades for SL/TP and emits TRADE_CLOSED events
             trade_manager.handle_new_1m_bar(bar)
             # Breakeven is applied only after SL/TP is resolved for the bar
-            if strategy.options.breakeven or strategy.options.reentry_breakeven:
+            options = getattr(strategy, 'options', None)
+            if options and (options.breakeven or options.reentry_breakeven):
                 strategy._check_breakeven(bar)
             # Reentries are handled inside strategy.on_raw_bar() on subsequent bars
             # after the SL hit. Same-bar reentries are blocked by sl_bar_time guard.
@@ -282,6 +285,8 @@ def create_app(
     options: Optional[StrategyOptions] = None,
     candle_config: Optional[CandleConfig] = None,
     timeframes: Optional[List[str]] = None,
+    strategy_name: str = "liquidity_v2",
+    strategy_config=None,
     bootstrap_existing_lines: bool = True,
     broker_mode: str = 'futures',
     broker_spread: float = 0.0,
@@ -379,9 +384,10 @@ def create_app(
         trade_executor.trade_manager = trade_manager
     
     # Initialize strategy BEFORE registering ZMQ callbacks so closures can reference it safely
-    tstrategy = LiquidityStrategyV2(
+    tstrategy = StrategyFactory.create(
+        strategy_name,
         min_stop_loss   = numbers.min_stop_loss,
-        max_bounce      = numbers.max_bounce,
+        max_bounce      = getattr(numbers, 'max_bounce', 90.0),
         socketio        = event_publisher,
         line_repository = repos.lines,
         trade_repository= repos.trades,
@@ -390,18 +396,20 @@ def create_app(
         fixed_stop_loss = numbers.fixed_stop_loss,
         max_stop_loss   = numbers.max_stop_loss,
         sl_levels       = numbers.sl_levels,
-        max_entry_distance = numbers.max_entry_distance,
-        sl_level_tolerance = numbers.sl_level_tolerance,
-        min_cross_depth = numbers.min_cross_depth,
+        max_entry_distance = getattr(numbers, 'max_entry_distance', 50.0),
+        sl_level_tolerance = getattr(numbers, 'sl_level_tolerance', 3.0),
+        min_cross_depth = getattr(numbers, 'min_cross_depth', 5.0),
         rr_ratio        = numbers.rr_ratio,
         point_value     = numbers.point_value,
         account_balance = numbers.account_balance,
         risk_per_trade  = numbers.risk_per_trade,
         risk_pct_per_trade = numbers.risk_pct_per_trade,
+        close_on_opposite_cross = getattr(numbers, 'close_on_opposite_cross', False),
         use_fractional_lots = use_fractional_lots,
         fee_per_rt = fee_per_rt,
         broker_spread = broker_spread,
         options         = options,
+        config          = strategy_config,
         timeframes      = timeframes,
         candle_config   = candle_config,
         trade_logger    = trade_logger,
@@ -409,7 +417,7 @@ def create_app(
         trigger_state_repo = repos.trigger_state,
         logger          = logger,
         decision_log_repository = repos.decision_logs,
-        account_configs = numbers.account_configs,
+        account_configs = getattr(numbers, 'account_configs', []),
         accounts_repo=accounts_repo,
     )
 

@@ -318,10 +318,17 @@ export class ChartViewer {
       [this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine].forEach(h => h && h.applyOptions({ lineStyle: LightweightCharts.LineStyle.Dashed, lineWidth: 1 }));
     }
     const n = this.allTrades.findIndex(t => t.trade_id === trade.trade_id) + 1;
-    const entryLabel = n > 1 ? 'Re-entry #' + n : 'Entry #' + n;
+    const isOppCross = trade.close_on_opposite_cross;
+    // TSI cross strategy has no re-entry concept — every trade is an independent entry
+    const entryLabel = (isOppCross ? 'Entry #' + n : (n > 1 ? 'Re-entry #' + n : 'Entry #' + n)) + (isOppCross ? ' → OppCross' : '');
     this.tradeEntryLine = this.series.createPriceLine({ price: trade.entry, color: 'yellow', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: entryLabel });
     this.tradeSLLine = this.series.createPriceLine({ price: trade.stop_loss || trade.stopLoss, color: 'red', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'SL #' + n });
-    this.tradeTPLine = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP #' + n });
+    if (isOppCross) {
+      // No fixed TP — draw a faint "floating" label line instead
+      this.tradeTPLine = this.series.createPriceLine({ price: trade.entry, color: '#4CAF50', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Exit: next opp. cross' });
+    } else {
+      this.tradeTPLine = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP #' + n });
+    }
     this.allTradeLines.push(this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine);
   }
 
@@ -338,18 +345,29 @@ export class ChartViewer {
     const trade = this.allTrades.find(t => t.trade_id === tradeId);
     if (!trade) return;
     const n = this.allTrades.findIndex(t => t.trade_id === tradeId) + 1;
-    const entryLabel = n > 1 ? 'Re-entry #' + n : 'Entry #' + n;
+    const isOppCross = trade.close_on_opposite_cross;
+    // TSI cross strategy has no re-entry concept — every trade is an independent entry
+    const entryLabel = (isOppCross ? 'Entry #' + n : (n > 1 ? 'Re-entry #' + n : 'Entry #' + n)) + (isOppCross ? ' → OppCross' : '');
     this.tradeEntryLine = this.series.createPriceLine({ price: trade.entry, color: 'yellow', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: entryLabel });
     // Always show the ORIGINAL SL as the primary line
     const origSL = trade.orig_sl || trade.stop_loss || trade.stopLoss;
     this.tradeSLLine = this.series.createPriceLine({ price: origSL, color: 'red', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'SL #' + n });
-    this.tradeTPLine = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP #' + n });
+    if (isOppCross) {
+      this.tradeTPLine = this.series.createPriceLine({ price: trade.entry, color: '#4CAF50', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Exit: next opp. cross' });
+    } else {
+      this.tradeTPLine = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP #' + n });
+    }
     this.allTradeLines.push(this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine);
     // If SL was moved, show the adjusted SL as a thin dashed line
     const currSL = trade.stop_loss || trade.stopLoss;
     if (currSL && origSL && Math.abs(currSL - origSL) > 0.01) {
       this.allTradeLines.push(this.series.createPriceLine({ price: currSL, color: '#ff5252', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Adj SL #' + n }));
     }
+    // Hide markers from other trades so the snapshot shows only this trade
+    const validTimes = this.historicalBars && this.historicalBars.length > 0
+      ? new Set(this.historicalBars.map(b => b.time))
+      : null;
+    this.markers.update([trade], this.lastTime, validTimes);
   }
 
   // --- Interaction ---

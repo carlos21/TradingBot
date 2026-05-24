@@ -1,6 +1,6 @@
 """Tests for src/strategies/strategy_config.py — StrategyNumbers and CandleConfig dataclasses."""
 
-from src.strategies.strategy_config import CandleConfig, StrategyNumbers
+from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 
 
 class TestStrategyNumbers:

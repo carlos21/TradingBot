@@ -40,6 +40,15 @@ class AppConfig:
     Passed to data sources, strategies, and repositories."""
 
     # ------------------------------------------------------------------
+    # Strategy selection
+    # ------------------------------------------------------------------
+    strategy_name: str = "liquidity_v2"
+    """Which strategy to run.
+    ``"liquidity_v2"`` = existing LiquidityStrategyV2 (default).
+    ``"tsi_cross"``    = new line-less TSI cross strategy.
+    """
+
+    # ------------------------------------------------------------------
     # Data source (backtest only)
     # ------------------------------------------------------------------
     csv_file: str = "csvs/NQ_live.csv"

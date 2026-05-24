@@ -20,7 +20,7 @@ class Trade(Base):
     pair         = Column(String(10), nullable=False)
     trade_type   = Column(String(10), nullable=False)   # "long" or "short"
     entry_price  = Column(Float,   nullable=False)
-    stop_loss    = Column(Float,   nullable=False)
+    stop_loss    = Column(Float,   nullable=True)
     take_profit  = Column(Float,   nullable=False)
     risk         = Column(Float,   nullable=False)
     risk_dollars = Column(Float,   nullable=True)

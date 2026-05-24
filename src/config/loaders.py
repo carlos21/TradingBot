@@ -139,6 +139,7 @@ class CliConfigLoader:
             description="Liquid — Live & Backtest Mode",
         )
         p.add_argument("--mode", choices=["live", "backtest"], help="Run mode")
+        p.add_argument("--strategy-name", dest="strategy_name", choices=["liquidity_v2", "tsi_cross"], help="Strategy to run")
         p.add_argument("--pair", help="Trading pair (e.g. MNQ)")
         p.add_argument("--csv-file", dest="csv_file", help="CSV file for backtest")
         p.add_argument("--bars-per-second", dest="bars_per_second", type=float, help="Replay speed")

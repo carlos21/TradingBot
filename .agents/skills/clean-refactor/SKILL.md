@@ -12,7 +12,8 @@ Refactor code using SOLID principles, design patterns, and clean architecture to
 1. **Analyze** the current code for violations (see [references/solid-principles.md](references/solid-principles.md))
 2. **Plan** refactoring steps - identify interfaces to extract, dependencies to invert
 3. **Apply** patterns incrementally - one principle at a time
-4. **Test** thoroughly after each change
+4. **Type** all public interfaces — add type hints where missing
+5. **Test** thoroughly after each change
 
 ## Core Workflow
 
@@ -52,7 +53,51 @@ class OrderService:
         self._payment = payment
 ```
 
-### Step 3: Apply Design Patterns
+### Step 3: Add Type Safety
+
+Add type hints to all public functions, method signatures, and class attributes:
+
+```python
+# Before: untyped, fragile
+class TradeService:
+    def __init__(self, db, api):
+        self.db = db
+        self.api = api
+
+    def execute(self, symbol, qty):
+        price = self.api.get_price(symbol)
+        return self.db.save({"symbol": symbol, "qty": qty, "price": price})
+
+# After: fully typed
+from decimal import Decimal
+from typing import Protocol
+
+class TradeRepository(Protocol):
+    def save(self, trade: Trade) -> Trade: ...
+
+class PriceFeed(Protocol):
+    def get_price(self, symbol: str) -> Decimal: ...
+
+class TradeService:
+    def __init__(self, db: TradeRepository, api: PriceFeed) -> None:
+        self._db = db
+        self._api = api
+
+    def execute(self, symbol: str, qty: int) -> Trade:
+        price = self._api.get_price(symbol)
+        return self._db.save(Trade(symbol=symbol, quantity=qty, price=price))
+```
+
+**Type safety rules**:
+- Every public method must have type hints on parameters and return types
+- Use `Protocol` instead of abstract base classes for flexibility
+- Use `@dataclass(frozen=True)` for value objects
+- Use `Literal[...]` for constrained string/enums instead of raw `str`
+- Use `NewType` to distinguish domain primitives (e.g., `Symbol = NewType("Symbol", str)`)
+- Never use `Any` as a crutch — use `TypeVar`/`Generic` for reusable abstractions
+- Run `mypy` or `pyright` after each refactor step and resolve all errors
+
+### Step 4: Apply Design Patterns
 
 Choose patterns based on the problem:
 
@@ -67,8 +112,9 @@ Choose patterns based on the problem:
 | Simplify complex subsystems | Facade | `TradingFacade` |
 
 See [references/design-patterns.md](references/design-patterns.md) for detailed patterns.
+See [references/type-safety.md](references/type-safety.md) for advanced typing patterns.
 
-### Step 4: Structure by Layer (Clean Architecture)
+### Step 5: Structure by Layer (Clean Architecture)
 
 ```
 ┌─────────────────────────────────────┐
@@ -90,7 +136,7 @@ Dependencies point INWARD. Domain knows nothing of infrastructure.
 
 See [references/clean-architecture.md](references/clean-architecture.md) for folder structure and examples.
 
-### Step 5: Make It Testable
+### Step 6: Make It Testable
 
 Ensure every component can be unit tested:
 
@@ -150,6 +196,8 @@ After refactoring:
 - [ ] All external dependencies injected
 - [ ] High test coverage (>80%)
 - [ ] No global state mutations
+- [ ] All public methods fully typed (no missing hints, no `Any`)
+- [ ] Static type checker passes with zero errors
 
 ## Anti-Patterns to Avoid
 
@@ -170,6 +218,7 @@ See [references/before-after-example.md](references/before-after-example.md) for
 - Use `@dataclass` for value objects
 - Use dependency injection containers sparingly (prefer explicit)
 - Use `pytest` fixtures for test dependencies
+- Run `mypy --strict` or `pyright` as part of the refactor workflow
 
 ### TypeScript
 - Use interfaces for dependency contracts

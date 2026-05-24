@@ -186,16 +186,18 @@ class TradeManager:
 
             hit_sl = False
             hit_tp = False
+            sl = trade.get('stop_loss')
+            tp = trade.get('take_profit')
 
             if is_long:
-                if bar['low'] <= trade['stop_loss']:
+                if sl is not None and bar['low'] <= sl:
                     hit_sl = True
-                elif bar['high'] >= trade['take_profit']:
+                elif tp is not None and bar['high'] >= tp:
                     hit_tp = True
             elif is_short:
-                if bar['high'] >= trade['stop_loss']:
+                if sl is not None and bar['high'] >= sl:
                     hit_sl = True
-                elif bar['low'] <= trade['take_profit']:
+                elif tp is not None and bar['low'] <= tp:
                     hit_tp = True
             # NOTE: If both SL and TP are inside the same bar, SL always wins.
             # This is a conservative assumption since intrabar sequence is unknown.
@@ -203,7 +205,7 @@ class TradeManager:
             if not hit_sl and not hit_tp:
                 continue
 
-            exit_price = trade['stop_loss'] if hit_sl else trade['take_profit']
+            exit_price = sl if hit_sl else tp
             result_type_override = "SL" if hit_sl else "TP"
             log_event = "SL_HIT" if hit_sl else "TP_HIT"
             analytics_event = "SL_HIT" if hit_sl else "TP_HIT"

@@ -5,9 +5,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.services.trade_manager import TradeManager
-from src.strategies.base_liquidity_strategy import (
+from src.strategies.base_strategy import BreakevenConfig
+from src.strategies.liquidity_v2.base_strategy import (
     BaseLiquidityStrategy,
-    BreakevenConfig,
     LineRemovalMode,
     StrategyOptions,
 )

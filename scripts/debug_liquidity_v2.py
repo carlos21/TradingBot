@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
+from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
 
 # --------------------------------------------------------------------
 # Mocks

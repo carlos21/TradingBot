@@ -3,7 +3,7 @@
 import pytest
 from flask import Flask
 
-from src.routes.debug_routes import register_debug_routes
+from src.strategies.liquidity_v2.routes.debug_routes import register_debug_routes
 from tests.fakes import (
     FakeAnalyticsReporter,
     FakeDataSource,

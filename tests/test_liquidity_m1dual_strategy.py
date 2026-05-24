@@ -2,7 +2,7 @@
 
 import pytest
 
-from src.strategies.liquidity_m1dual_strategy import LiquidityDualM1Strategy
+from src.strategies.liquidity_m1dual.strategy import LiquidityDualM1Strategy
 from tests.fakes import FakeLineRepository, FakeLogger, FakeTradeRepository
 
 

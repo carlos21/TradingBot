@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, Any, Optional
 from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
-    from src.strategies.base_liquidity_strategy import BaseLiquidityStrategy
+    from src.strategies.liquidity_v2.base_strategy import BaseLiquidityStrategy as _BaseLiquidityStrategy
+    from src.strategies.base_strategy import BaseStrategy as _BaseStrategy
+    _StrategyType = _BaseLiquidityStrategy | _BaseStrategy
 
 from src.domain.types import Direction
 
@@ -26,7 +28,7 @@ PAIR_TIMEZONES = {
 
 @dataclass
 class EntryContext:
-    strategy: BaseLiquidityStrategy
+    strategy: _StrategyType
     line_id: Any
     direction: Direction      # Direction enum (LONG or SHORT)
     level: float

@@ -2,7 +2,7 @@
 
 from flask import Flask, abort, request
 
-from src.controllers.lines_controller import LinesController
+from src.strategies.liquidity_v2.controllers.lines_controller import LinesController
 from src.utils.app_logger import ILogger
 
 

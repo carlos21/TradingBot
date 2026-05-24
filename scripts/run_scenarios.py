@@ -38,12 +38,12 @@ from src.financial_calc import FinancialCalc
 
 # Use unified BE threshold from FinancialCalc
 BE_THRESHOLD = FinancialCalc.DEFAULT_BE_THRESHOLD_R  # Threshold for considering a trade as breakeven (in R)
-from src.prod_config import (
+from src.strategies.liquidity_v2.prod_config import (
     get_prod_strategy_numbers,
     get_prod_candle_config,
     get_prod_strategy_options,
 )
-from src.strategies.base_liquidity_strategy import LineRemovalMode
+from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
 from tests.fakes import FakeLineRepository, FakeTradeRepository
 from src.infrastructure.repositories.lines_repository import SQLLineRepository
 from src.infrastructure.repositories.trades_repository import SQLTradeRepository

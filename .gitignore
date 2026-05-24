@@ -170,3 +170,4 @@ nonexistent.db
 csvs/*
 !csvs/NQ_live.csv
 scenarios_out/
+tsi_test_out/

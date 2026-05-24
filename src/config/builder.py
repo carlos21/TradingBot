@@ -17,7 +17,7 @@ from src.infrastructure.database import database
 from src.infrastructure.database.database_protocol import SQLiteDatabase
 from src.infrastructure.gateway import create_live_components, create_multi_account_live_components
 from src.notifier import NoOpNotifier, Notifier, TelegramNotifier
-from src.prod_config import (
+from src.strategies.liquidity_v2.prod_config import (
     get_prod_candle_config,
     get_prod_strategy_numbers,
     get_prod_strategy_options,
@@ -131,6 +131,7 @@ class AppBuilder:
             options=options,
             candle_config=candle_config,
             timeframes=cfg.timeframes,
+            strategy_name=cfg.strategy_name,
             bootstrap_existing_lines=cfg.bootstrap_existing_lines,
             notifier=_build_notifier(cfg),
             analytics=_build_analytics(cfg),
@@ -138,7 +139,7 @@ class AppBuilder:
             db=db,
             accounts_repo=accounts_repo,
             session_end_time=cfg.session_end,
-        ), None
+        )
 
     # ------------------------------------------------------------------
     # Live
@@ -227,6 +228,7 @@ class AppBuilder:
             options=options,
             candle_config=candle_config,
             timeframes=cfg.timeframes,
+            strategy_name=cfg.strategy_name,
             bootstrap_existing_lines=cfg.bootstrap_existing_lines,
             live_mode=True,
             trade_executor=executor,

@@ -4,7 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from src.services.trade_manager import TradeManager
-from src.strategies.base_liquidity_strategy import StrategyOptions, LineRemovalMode
+from src.strategies.liquidity_v2.base_strategy import StrategyOptions, LineRemovalMode
 from src.strategies.entry_context import EntryContext
 from src.domain.types import Direction
 from tests.conftest import make_bar, make_strategy

@@ -1,6 +1,6 @@
 """Tests for ExitStrategy implementations."""
 
-from src.strategies.exits import (
+from src.strategies.liquidity_v2.exits import (
     CompositeExitStrategy,
     ExitType,
     NoExitStrategy,
