@@ -26,9 +26,9 @@ from tests.fakes import (
 )
 
 
-def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=None,
+def _make_base(event_publisher=None, line_repo=None, trade_repo=None, trade_manager=None,
                options=None, fixed_stop_loss=20, sl_levels=None, logger=None, **kwargs):
-    sio = socketio or DummySocketIO()
+    sio = event_publisher or DummySocketIO()
     lr = line_repo or FakeLineRepository()
     tr = trade_repo or FakeTradeRepository()
     tm = trade_manager or TradeManager(
@@ -42,7 +42,7 @@ def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=Non
     return BaseLiquidityStrategy(
         min_stop_loss=10.0,
         max_bounce=90.0,
-        socketio=sio,
+        event_publisher=sio,
         line_repository=lr,
         trade_repository=tr,
         trade_manager=tm,
@@ -71,7 +71,7 @@ class TestLineManagement:
         sio = DummySocketIO()
         lr = FakeLineRepository()
         lr.insert_line("MNQ", 100.0)
-        strat = _make_base(socketio=sio, line_repo=lr)
+        strat = _make_base(event_publisher=sio, line_repo=lr)
         strat.add_strategy_line("L1", 100.0)
         strat.remove_strategy_line("L1")
         assert "L1" not in strat.strategy_lines
@@ -334,7 +334,7 @@ class TestBreakeven:
             logger=FakeLogger(),
         )
         strat = _make_base(
-            socketio=sio, trade_repo=tr, trade_manager=tm,
+            event_publisher=sio, trade_repo=tr, trade_manager=tm,
             options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
         )
         strat.open_trades.append({
@@ -344,7 +344,7 @@ class TestBreakeven:
         })
         # High reaches trigger_price = 100 + 10*2 = 120
         bar = make_bar(time=1000, high=121, low=100, pair="MNQ")
-        strat._check_breakeven(bar)
+        strat.check_breakeven(bar)
         # SL should move to entry + risk * 0.05 = 100.5
         assert strat.open_trades[0]["stop_loss"] == pytest.approx(100.5, abs=0.01)
 
@@ -358,7 +358,7 @@ class TestBreakeven:
             "risk": 10, "status": "open", "is_reentry": False,
         })
         bar = make_bar(time=1000, high=115, low=100, pair="MNQ")
-        strat._check_breakeven(bar)
+        strat.check_breakeven(bar)
         assert strat.open_trades[0]["stop_loss"] == 90  # unchanged
 
 
@@ -375,7 +375,7 @@ class TestStoreAndEmitOpen:
             account_balance=100000.0,
             logger=FakeLogger(),
         )
-        strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
+        strat = _make_base(event_publisher=sio, trade_repo=tr, trade_manager=tm)
         trade = {
             "pair": "MNQ", "type": "long", "entry": 100,
             "stop_loss": 90, "take_profit": 130, "risk": 10,

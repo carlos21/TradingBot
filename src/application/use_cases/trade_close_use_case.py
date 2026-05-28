@@ -86,6 +86,7 @@ class TradeCloseUseCase:
         analytics_event: str = "CLOSE",
         raise_on_db_error: bool = True,
         extreme_excursion: float | None = None,
+        skip_executor: bool = False,
     ) -> CloseResult | None:
         """Execute the full close flow for a single trade.
 
@@ -126,14 +127,17 @@ class TradeCloseUseCase:
         result_type = result_type_override or detected_result_type
 
         # 2. Call executor FIRST (safety: don't persist if ZMQ fails)
-        try:
-            self._executor.on_trade_close(trade_id, exit_price)
-        except Exception as e:
-            if self._logger:
-                self._logger.error(f"[TradeCloseUseCase] Executor failed for {trade_id}: {e}")
-            if self._trade_logger:
-                self._trade_logger.log(trade_id, "ERROR", f"Executor close failed: {e}")
-            raise
+        # Skip when broker already closed the position (broker fill) to avoid
+        # sending a redundant close command back to the platform.
+        if not skip_executor:
+            try:
+                self._executor.on_trade_close(trade_id, exit_price)
+            except Exception as e:
+                if self._logger:
+                    self._logger.error(f"[TradeCloseUseCase] Executor failed for {trade_id}: {e}")
+                if self._trade_logger:
+                    self._trade_logger.log(trade_id, "ERROR", f"Executor close failed: {e}")
+                raise
 
         # 3. Persist to DB
         close_db_time = (

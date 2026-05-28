@@ -60,7 +60,7 @@ def _make_strategy():
             tsi_short_len=13,
             tsi_signal_len=4,
         ),
-        socketio=DummySocketIO(),
+        event_publisher=DummySocketIO(),
         trade_repository=FakeTradeRepository(),
         trade_manager=FakeTradeManager(),
         logger=FakeLogger(),

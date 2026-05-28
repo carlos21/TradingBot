@@ -919,3 +919,91 @@ class TestEndToEndFlow:
         for cb in callbacks[MessageType.REFRESH_START]:
             cb({})
         assert data_source.state == DataSourceState.REFRESHING
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat monitoring
+# ---------------------------------------------------------------------------
+
+
+class RecordingLogger(FakeLogger):
+    """Fake logger that records all messages for test assertions."""
+
+    def __init__(self):
+        self.messages = []
+
+    def debug(self, message: str) -> None:
+        self.messages.append(message)
+
+    def info(self, message: str) -> None:
+        self.messages.append(message)
+
+    def warning(self, message: str) -> None:
+        self.messages.append(message)
+
+    def error(self, message: str) -> None:
+        self.messages.append(message)
+
+
+class TestHeartbeatMonitoring:
+
+    def test_start_heartbeat_monitor_sets_baseline(self, data_source):
+        data_source._start_heartbeat_monitor()
+        assert data_source._heartbeat_thread is not None
+        assert data_source._heartbeat_thread.is_alive()
+        assert data_source._heartbeat_alert_sent is False
+        assert data_source._last_completed_bar_time > 0
+        data_source._stop_heartbeat_monitor()
+
+    def test_stop_heartbeat_monitor_cleans_up(self, data_source):
+        data_source._start_heartbeat_monitor()
+        data_source._stop_heartbeat_monitor()
+        assert data_source._heartbeat_thread is None
+
+    def test_heartbeat_alert_fires_when_bars_stall(self, data_source):
+        logger = RecordingLogger()
+        data_source.logger = logger
+        mock_notifier = MagicMock()
+        data_source._notifier = mock_notifier
+        data_source._heartbeat_check_interval_sec = 0.01
+        data_source._heartbeat_alert_threshold_sec = 0.05
+        data_source._state = DataSourceState.LIVE
+        data_source._last_completed_bar_time = time.monotonic() - 0.1
+        data_source._start_heartbeat_monitor()
+        time.sleep(0.15)
+        data_source._stop_heartbeat_monitor()
+        assert any("🚨 ALERT: No completed bar received" in m for m in logger.messages)
+        mock_notifier.send.assert_called_once()
+
+    def test_heartbeat_alert_resets_when_bars_resume(self, data_source):
+        logger = RecordingLogger()
+        data_source.logger = logger
+        data_source._heartbeat_check_interval_sec = 0.01
+        data_source._heartbeat_alert_threshold_sec = 0.05
+        data_source._state = DataSourceState.LIVE
+        data_source._last_completed_bar_time = time.monotonic() - 0.1
+        data_source._start_heartbeat_monitor()
+        time.sleep(0.15)
+        # Now send a bar to resume
+        data_source._on_bar(make_bar(time_val=1000, open_=10.0, high=11.0, low=9.0, close=10.5))
+        time.sleep(0.05)
+        data_source._stop_heartbeat_monitor()
+        assert any("Completed-bar stream resumed" in m for m in logger.messages)
+
+    def test_heartbeat_no_alert_when_not_live(self, data_source):
+        logger = RecordingLogger()
+        data_source.logger = logger
+        data_source._heartbeat_check_interval_sec = 0.01
+        data_source._heartbeat_alert_threshold_sec = 0.05
+        data_source._state = DataSourceState.CONNECTED
+        data_source._last_completed_bar_time = time.monotonic() - 0.1
+        data_source._start_heartbeat_monitor()
+        time.sleep(0.15)
+        data_source._stop_heartbeat_monitor()
+        assert not any("🚨 ALERT" in m for m in logger.messages)
+
+    def test_on_bar_updates_last_completed_bar_time(self, data_source):
+        data_source._state = DataSourceState.LIVE
+        before = time.monotonic()
+        data_source._on_bar(make_bar(time_val=1000, open_=10.0, high=11.0, low=9.0, close=10.5))
+        assert data_source._last_completed_bar_time >= before

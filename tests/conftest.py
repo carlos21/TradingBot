@@ -61,7 +61,7 @@ def logger():
 def trade_manager(trade_repo, socketio, trade_executor, analytics, logger):
     return TradeManager(
         trade_repository=trade_repo,
-        socketio=socketio,
+        event_publisher=socketio,
         pair="MNQ",
         trade_executor=trade_executor,
         analytics=analytics,
@@ -113,7 +113,7 @@ def make_strategy(
     return LiquidityStrategyV2(
         min_stop_loss=min_stop_loss,
         max_bounce=max_bounce,
-        socketio=socketio,
+        event_publisher=socketio,
         line_repository=line_repo,
         trade_repository=trade_repo,
         trade_manager=trade_manager,
@@ -138,7 +138,7 @@ def make_strategy(
 @pytest.fixture
 def strategy(socketio, line_repo, trade_repo, trade_manager, candle_config):
     return make_strategy(
-        socketio=socketio,
+        event_publisher=socketio,
         line_repo=line_repo,
         trade_repo=trade_repo,
         trade_manager=trade_manager,

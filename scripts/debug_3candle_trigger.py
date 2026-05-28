@@ -230,7 +230,7 @@ def main():
     strategy = LiquidityStrategyV2(
         min_stop_loss=1.0,
         max_bounce=10.0,
-        socketio=DummySocketIO(),
+        event_publisher=DummySocketIO(),
         line_repository=DummyRepo(),
         trade_repository=DummyRepo(),
         extra_sl_space=0.0,

@@ -24,7 +24,7 @@ def strategy():
     strat = LiquidityDualM1Strategy(
         min_stop_loss=10.0,
         max_bounce=50.0,
-        socketio=socketio,
+        event_publisher=socketio,
         line_repository=line_repo,
         trade_repository=trade_repo,
         extra_sl_space={"MNQ": 0.0},

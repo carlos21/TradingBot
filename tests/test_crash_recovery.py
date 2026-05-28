@@ -110,7 +110,7 @@ def make_recovery_strategy(
     return LiquidityStrategyV2(
         min_stop_loss=10.0,
         max_bounce=90.0,
-        socketio=sio,
+        event_publisher=sio,
         line_repository=lr,
         trade_repository=trade_repo,
         trade_manager=tm,

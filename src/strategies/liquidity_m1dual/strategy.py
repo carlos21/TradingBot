@@ -21,7 +21,7 @@ class LiquidityDualM1Strategy:
         self,
         min_stop_loss: float,
         max_bounce: float,
-        socketio: EventPublisher | None,
+        event_publisher: EventPublisher | None,
         line_repository: LineRepository,
         trade_repository: TradeRepository,
         extra_sl_space: dict[str, float],
@@ -29,7 +29,7 @@ class LiquidityDualM1Strategy:
     ):
         self.min_stop_loss = min_stop_loss
         self.max_bounce = max_bounce
-        self.socketio = socketio
+        self.event_publisher = event_publisher
         self.line_repository = line_repository
         self.trade_repository = trade_repository
         self.extra_sl_space = extra_sl_space
@@ -60,7 +60,7 @@ class LiquidityDualM1Strategy:
             self.strategy_lines.pop(id, None)
         with contextlib.suppress(DBNotFoundException):
             self.line_repository.delete_line(id)
-        self.socketio.emit('line_removed', {'id': id})
+        self.event_publisher.emit('line_removed', {'id': id})
 
     def on_raw_bar(self, bar: dict):
         """
@@ -188,7 +188,7 @@ class LiquidityDualM1Strategy:
                     fee_per_rt=self.fee_per_rt,
                 )
                 t.update(status='closed', result=r_result, exit_time=bar['time'], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, result_type=result_type)
-                self.socketio.emit('trade_close', t)
+                self.event_publisher.emit('trade_close', t)
                 try:
                     self.trade_repository.close_trade(
                         trade_id=t['trade_id'],
@@ -238,7 +238,7 @@ class LiquidityDualM1Strategy:
         )
         trade['trade_id'] = td.trade_id
         self.open_trades.append(trade)
-        self.socketio.emit('trade_open', trade)
+        self.event_publisher.emit('trade_open', trade)
 
     def _store_and_emit_close(self, trade: dict):
         # Determine result_type if not already set
@@ -258,7 +258,7 @@ class LiquidityDualM1Strategy:
             else:
                 result_type = "SP"
             trade['result_type'] = result_type
-        self.socketio.emit('trade_close', trade)
+        self.event_publisher.emit('trade_close', trade)
         self.trade_repository.close_trade(
             trade_id=trade['trade_id'],
             exit_price=trade['exit_price'],

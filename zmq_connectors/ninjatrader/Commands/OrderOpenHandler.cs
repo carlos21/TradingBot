@@ -61,6 +61,21 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (account == null)
                     throw new InvalidOperationException($"No account available (requested: {accountName ?? "(default)"})");
 
+                // Defensive: NinjaTrader throws NullReferenceException from CreateOrder
+                // if the account's broker Connection is null. Log all accounts for diagnosis.
+                if (account.Connection == null)
+                {
+                    var sb = new System.Text.StringBuilder();
+                    sb.AppendLine($"Account '{account.Name}' has no broker Connection. Available accounts:");
+                    foreach (var a in Account.All)
+                    {
+                        string connState = a.Connection != null ? a.Connection.Status.ToString() : "NO CONNECTION";
+                        sb.AppendLine($"  - {a.Name}: {connState}");
+                    }
+                    _logger.Error(sb.ToString());
+                    throw new InvalidOperationException($"Account '{account.Name}' has no broker connection. Fix the account name in Settings.");
+                }
+
                 if (_orderTracker.TryGetPendingEntry(tradeId, out _) || _orderTracker.TryGetEntry(tradeId, out _))
                 {
                     _logger.Warning($"Duplicate place_order for {tradeId}, ignoring");
@@ -80,13 +95,26 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 // Embed trade_id in order name for recovery after crash
                 string entryOrderName = $"Entry_{tradeId}";
-                
-                var entryOrder = account.CreateOrder(
-                    instrument, orderAction, OrderType.Market, OrderEntry.Automated, TimeInForce.Gtc,
-                    qty, 0, 0, string.Empty, entryOrderName, DateTime.MinValue, null);
+
+                // Defensive diagnostics: log every parameter going into CreateOrder
+                _logger.Info($"[DIAG] CreateOrder params: instrument={instrument.MasterInstrument.Name} action={orderAction} type={OrderType.Market} entry={OrderEntry.Automated} tif={TimeInForce.Gtc} qty={qty} limit=0 stop=0 oco=(null) name={entryOrderName} expiry={DateTime.MinValue} brokerOrder=null");
+                _logger.Info($"[DIAG] Account state: name={account.Name} connection={(account.Connection != null ? account.Connection.ToString() : "NULL")}");
+
+                Order entryOrder;
+                try
+                {
+                    entryOrder = account.CreateOrder(
+                        instrument, orderAction, OrderType.Market, OrderEntry.Automated, TimeInForce.Gtc,
+                        qty, 0, 0, null, entryOrderName, DateTime.MinValue, null);
+                }
+                catch (Exception createEx)
+                {
+                    _logger.Error($"[DIAG] account.CreateOrder threw for {tradeId}", createEx);
+                    throw new InvalidOperationException($"CreateOrder failed: {createEx.Message}", createEx);
+                }
 
                 if (entryOrder == null)
-                    throw new InvalidOperationException("Failed to create entry order");
+                    throw new InvalidOperationException("Failed to create entry order (returned null)");
 
                 _orderTracker.TrackEntry(tradeId, entryOrder);
                 _orderTracker.TrackPendingEntry(tradeId, new PendingEntryInfo(direction, slPoints, rrRatio));

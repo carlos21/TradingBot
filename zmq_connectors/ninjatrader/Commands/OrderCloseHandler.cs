@@ -58,6 +58,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (account == null)
                     throw new InvalidOperationException($"No account available (requested: {accountName ?? "(default)"})");
 
+                if (account.Connection == null)
+                    throw new InvalidOperationException($"Account '{account.Name}' has no broker connection. Fix the account name in Settings.");
+
                 // Guard: if trade is not tracked, it may already be closed
                 bool hasTrackedEntry = _orderTracker.TryGetEntry(tradeId, out _);
                 bool hasTrackedStop = _orderTracker.TryGetStopLoss(tradeId, out _);
@@ -160,7 +163,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         OrderEntry.Automated,
                         TimeInForce.Gtc,
                         closeQty,
-                        0, 0, string.Empty, $"Close_{tradeId}", DateTime.MinValue, null);
+                        0, 0, null, $"Close_{tradeId}", DateTime.MinValue, null);
                     
                     if (closeOrder != null)
                     {

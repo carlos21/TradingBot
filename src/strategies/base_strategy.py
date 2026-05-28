@@ -51,7 +51,7 @@ class BaseStrategy:
     def __init__(
         self,
         min_stop_loss: float,
-        socketio: EventPublisher | None,
+        event_publisher: EventPublisher | None,
         trade_repository: TradeRepository,
         trade_manager: TradeManager,
         extra_sl_space: float,
@@ -83,7 +83,7 @@ class BaseStrategy:
         self.account_balance = float(account_balance)
         self.risk_per_trade = risk_per_trade
         self.risk_pct_per_trade = risk_pct_per_trade
-        self.socketio = socketio
+        self.event_publisher = event_publisher
         self.trade_repository = trade_repository
         self.trade_manager = trade_manager
         self.extra_sl_space = float(extra_sl_space)
@@ -99,7 +99,7 @@ class BaseStrategy:
         self._trade_service = StrategyTradeService(
             trade_repository=trade_repository,
             trade_executor=executor,
-            event_publisher=socketio,
+            event_publisher=event_publisher,
             logger=logger,
             trade_logger=trade_logger,
             point_value=point_value,
@@ -301,7 +301,7 @@ class BaseStrategy:
             self.trade_logger.log(trade['trade_id'], "SL_UPDATE", f"{old_sl:.2f} → {new_sl:.2f}")
             self.trade_logger.log(trade['trade_id'], "CMD_SENT", f"modify_order SL={new_sl:.2f} → NinjaTrader")
 
-        self.socketio.emit("trade_update", {
+        self.event_publisher.emit("trade_update", {
             "trade_id": trade['trade_id'],
             "stop_loss": new_sl,
             "pair": trade['pair']
@@ -393,7 +393,7 @@ class BaseStrategy:
                     exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd,
                     result_type=result_type,
                 )
-                self.socketio.emit("trade_close", t)
+                self.event_publisher.emit("trade_close", t)
             else:
                 remaining.append(t)
         self.open_trades = remaining

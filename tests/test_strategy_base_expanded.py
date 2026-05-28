@@ -36,11 +36,11 @@ from tests.fakes import (
 )
 
 
-def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=None,
+def _make_base(event_publisher=None, line_repo=None, trade_repo=None, trade_manager=None,
                options=None, fixed_stop_loss=20, sl_levels=None, logger=None,
                account_configs=None, broker_spread=0.0, use_fractional_lots=False,
                risk_pct_per_trade=None, account_balance=100000.0, **kwargs):
-    sio = socketio or DummySocketIO()
+    sio = event_publisher or DummySocketIO()
     lr = line_repo or FakeLineRepository()
     tr = trade_repo or FakeTradeRepository()
     tm = trade_manager or TradeManager(
@@ -54,7 +54,7 @@ def _make_base(socketio=None, line_repo=None, trade_repo=None, trade_manager=Non
     return BaseLiquidityStrategy(
         min_stop_loss=10.0,
         max_bounce=90.0,
-        socketio=sio,
+        event_publisher=sio,
         line_repository=lr,
         trade_repository=tr,
         trade_manager=tm,
@@ -106,7 +106,7 @@ class TestMultiAccountExpansion:
             logger=FakeLogger(),
         )
         strat = _make_base(
-            socketio=sio, trade_repo=tr, trade_manager=tm,
+            event_publisher=sio, trade_repo=tr, trade_manager=tm,
             account_configs=[{"name": "A1"}],
         )
         trade = {
@@ -134,7 +134,7 @@ class TestMultiAccountExpansion:
             account_balance=100000.0,
             logger=FakeLogger(),
         )
-        strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm, account_configs=[{"name": "A1"}])
+        strat = _make_base(event_publisher=sio, trade_repo=tr, trade_manager=tm, account_configs=[{"name": "A1"}])
         # Seed trade_manager with account trades referencing a signal
         tm.open_trades.append({
             "trade_id": "AT1", "pair": "MNQ", "type": "long",
@@ -164,7 +164,7 @@ class TestMultiAccountExpansion:
             account_balance=100000.0,
             logger=FakeLogger(),
         )
-        strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
+        strat = _make_base(event_publisher=sio, trade_repo=tr, trade_manager=tm)
         tm.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
@@ -185,7 +185,7 @@ class TestMultiAccountExpansion:
             account_balance=100000.0,
             logger=FakeLogger(),
         )
-        strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
+        strat = _make_base(event_publisher=sio, trade_repo=tr, trade_manager=tm)
         strat.open_trades.append({"trade_id": "X1", "status": "open"})
         tm.open_trades.append({"trade_id": "T1", "status": "open"})
         strat.restore_open_trades()
@@ -211,7 +211,7 @@ class TestTrailingSL:
             account_balance=100000.0,
             logger=FakeLogger(),
         )
-        strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
+        strat = _make_base(event_publisher=sio, trade_repo=tr, trade_manager=tm)
         trade = {
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
@@ -245,7 +245,7 @@ class TestTrailingSL:
             logger=FakeLogger(),
         )
         strat = _make_base(
-            socketio=sio, trade_repo=tr, trade_manager=tm,
+            event_publisher=sio, trade_repo=tr, trade_manager=tm,
             options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
         )
         strat.open_trades.append({
@@ -255,7 +255,7 @@ class TestTrailingSL:
         })
         # trigger_price = 100 - 10*2 = 80
         bar = make_bar(time=1000, high=100, low=79, pair="MNQ")
-        strat._check_breakeven(bar)
+        strat.check_breakeven(bar)
         # proposed_sl = 100 - 10*0.05 = 99.5, which is < current_sl=110
         assert strat.open_trades[0]["stop_loss"] == pytest.approx(99.5, abs=0.01)
 
@@ -270,7 +270,7 @@ class TestTrailingSL:
             "risk": 10, "status": "open", "is_reentry": False,
         })
         bar = make_bar(time=1000, high=121, low=100, pair="MNQ")
-        strat._check_breakeven(bar)
+        strat.check_breakeven(bar)
         assert strat.open_trades[0]["stop_loss"] == 90
 
     def test_reentry_breakeven_uses_separate_config(self):
@@ -286,7 +286,7 @@ class TestTrailingSL:
             "risk": 10, "status": "open", "is_reentry": True,
         })
         bar = make_bar(time=1000, high=115, low=100, pair="MNQ")
-        strat._check_breakeven(bar)
+        strat.check_breakeven(bar)
         # trigger = 100 + 10*1.5 = 115, high=115 >= 115 → move SL to entry
         assert strat.open_trades[0]["stop_loss"] == pytest.approx(100.0, abs=0.01)
 
@@ -414,7 +414,7 @@ class TestEdgeCasesTradeManagement:
             "risk": 10, "status": "open", "is_reentry": False,
         })
         bar = make_bar(time=0, close=110, high=110, low=110, pair="MNQ")
-        strat._check_breakeven(bar)
+        strat.check_breakeven(bar)
         assert strat.open_trades[0]["stop_loss"] == 100.0  # BE moved
 
     def test_invalid_strategy_tf_raises(self):
@@ -422,7 +422,7 @@ class TestEdgeCasesTradeManagement:
             BaseLiquidityStrategy(
                 min_stop_loss=10.0,
                 max_bounce=90.0,
-                socketio=DummySocketIO(),
+                event_publisher=DummySocketIO(),
                 line_repository=FakeLineRepository(),
                 trade_repository=FakeTradeRepository(),
                 trade_manager=TradeManager(
@@ -746,7 +746,7 @@ class TestMiscMethods:
 
     def test_update_strategy_line(self):
         sio = DummySocketIO()
-        strat = _make_base(socketio=sio)
+        strat = _make_base(event_publisher=sio)
         strat.add_strategy_line("L1", 100.0)
         strat.update_strategy_line("L1", 105.0)
         assert strat.strategy_lines["L1"]["level"] == 105.0
@@ -811,7 +811,7 @@ class TestMiscMethods:
             account_balance=100000.0,
             logger=FakeLogger(),
         )
-        strat = _make_base(socketio=sio, trade_repo=tr, trade_manager=tm)
+        strat = _make_base(event_publisher=sio, trade_repo=tr, trade_manager=tm)
         # Seed a closed trade
         td = tr.insert_trade(
             pair="MNQ", trade_type="long", entry_price=100,

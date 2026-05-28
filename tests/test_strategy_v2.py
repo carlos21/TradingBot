@@ -262,7 +262,7 @@ class TestWarmupLineTracking:
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
         bar1 = make_bar(time=60, open_=98, high=101, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar1)
-        assert "L1" in strat._warmup_crossed_lines
+        assert "L1" in strat.warmup_crossed_lines
 
     def test_touched_line_removed_after_warmup_on_evaluate(self):
         sio, lr, tr, tm = _deps()
@@ -276,11 +276,11 @@ class TestWarmupLineTracking:
         strat.on_raw_bar(bar1)
         strat.is_warmup = False
         # Simulate post-warmup cleanup
-        for sid in list(strat._warmup_crossed_lines):
+        for sid in list(strat.warmup_crossed_lines):
             if sid in strat.strategy_lines:
                 if strat.options.line_removal_mode != LineRemovalMode.NEVER:
                     strat.remove_strategy_line(sid)
-                strat._warmup_crossed_lines.discard(sid)
+                strat.warmup_crossed_lines.discard(sid)
         assert "L1" not in strat.strategy_lines
 
     def test_touched_line_removed_after_warmup_on_enter(self):
@@ -295,11 +295,11 @@ class TestWarmupLineTracking:
         strat.on_raw_bar(bar1)
         strat.is_warmup = False
         # Simulate post-warmup cleanup
-        for sid in list(strat._warmup_crossed_lines):
+        for sid in list(strat.warmup_crossed_lines):
             if sid in strat.strategy_lines:
                 if strat.options.line_removal_mode != LineRemovalMode.NEVER:
                     strat.remove_strategy_line(sid)
-                strat._warmup_crossed_lines.discard(sid)
+                strat.warmup_crossed_lines.discard(sid)
         assert "L1" not in strat.strategy_lines  # ON_ENTER also removed by post-warmup cleanup
 
     def test_touched_line_kept_after_warmup_on_never(self):
@@ -314,11 +314,11 @@ class TestWarmupLineTracking:
         strat.on_raw_bar(bar1)
         strat.is_warmup = False
         # Simulate post-warmup cleanup
-        for sid in list(strat._warmup_crossed_lines):
+        for sid in list(strat.warmup_crossed_lines):
             if sid in strat.strategy_lines:
                 if strat.options.line_removal_mode != LineRemovalMode.NEVER:
                     strat.remove_strategy_line(sid)
-                strat._warmup_crossed_lines.discard(sid)
+                strat.warmup_crossed_lines.discard(sid)
         assert "L1" in strat.strategy_lines  # NEVER mode preserves touched lines
 
     def test_old_uncrossed_line_restores_persisted_state_after_warmup(self):
@@ -353,7 +353,7 @@ class TestWarmupLineTracking:
         strat.on_raw_bar(bar1)
         assert strat.strategy_lines["L1"]["direction"] == "short"
         assert strat.strategy_lines["L1"]["extreme"] == 99
-        assert "L1" in strat._warmup_crossed_lines
+        assert "L1" in strat.warmup_crossed_lines
         strat.is_warmup = False
         # Inject stale persisted state (direction=None) — restore should NOT overwrite
         repo.save("L1", "MNQ", {"direction": None, "extreme": 0.0})

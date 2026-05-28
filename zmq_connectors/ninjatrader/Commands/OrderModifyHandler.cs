@@ -58,6 +58,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (account == null)
                     throw new InvalidOperationException($"No account available (requested: {accountName ?? "(default)"})");
 
+                if (account.Connection == null)
+                    throw new InvalidOperationException($"Account '{account.Name}' has no broker connection. Fix the account name in Settings.");
+
                 _logger.Info($"MODIFY ORDER: {tradeId} new SL={newSl} new TP={newTp} account={account.Name}");
 
                 bool modifiedAny = false;

@@ -23,7 +23,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         self,
         min_stop_loss: float,
         max_bounce: float,
-        socketio: EventPublisher | None,
+        event_publisher: EventPublisher | None,
         line_repository,
         trade_repository,
         trade_manager: TradeManager,
@@ -67,7 +67,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         super().__init__(
             min_stop_loss=min_stop_loss,
             max_bounce=max_bounce,
-            socketio=socketio,
+            event_publisher=event_publisher,
             line_repository=line_repository,
             trade_repository=trade_repository,
             trade_manager=trade_manager,
@@ -255,7 +255,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                 direction="short", reason=f"depth={depth:.2f}")
                             self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "short", "level": lvl, "depth": depth})
                             if self.is_warmup:
-                                self._warmup_crossed_lines.add(sid)
+                                self.warmup_crossed_lines.add(sid)
                         else:
                             if entered_pending:
                                 depth = pending_ext - lvl if pending_ext > lvl else 0.0
@@ -286,7 +286,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                 direction="long", reason=f"depth={depth:.2f}")
                             self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "long", "level": lvl, "depth": depth})
                             if self.is_warmup:
-                                self._warmup_crossed_lines.add(sid)
+                                self.warmup_crossed_lines.add(sid)
                         else:
                             if entered_pending:
                                 depth = lvl - pending_ext if pending_ext < lvl else 0.0
@@ -389,7 +389,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         line['interaction_ts'] = bar_time
                         line['touch_bar_time'] = bar_time
                         if self.is_warmup:
-                            self._warmup_crossed_lines.add(sid)
+                            self.warmup_crossed_lines.add(sid)
                         self.log_decision(bar_time, "1m", sid, "TOUCH",
                             f"Short line touched @ {bar['high']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
                             direction="short")
@@ -401,7 +401,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         line['interaction_ts'] = bar_time
                         line['touch_bar_time'] = bar_time
                         if self.is_warmup:
-                            self._warmup_crossed_lines.add(sid)
+                            self.warmup_crossed_lines.add(sid)
                         self.log_decision(bar_time, "1m", sid, "TOUCH",
                             f"Long line touched @ {bar['low']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
                             direction="long")
@@ -435,7 +435,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         elif prev_tsi >= prev_sig and curr_tsi < curr_sig:
                             cross_type = 'bearish'
 
-                    self.socketio.emit('indicator_update', {
+                    self.event_publisher.emit('indicator_update', {
                         'tf': tf,
                         'time': bar['time'],
                         'tsi': tsi_vals[-1],

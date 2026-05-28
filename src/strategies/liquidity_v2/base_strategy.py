@@ -63,7 +63,7 @@ class BaseLiquidityStrategy:
         self,
         min_stop_loss: float,
         max_bounce: float,
-        socketio: EventPublisher | None,
+        event_publisher: EventPublisher | None,
         line_repository: LineRepository,
         trade_repository: TradeRepository,
         trade_manager: TradeManager,
@@ -105,7 +105,7 @@ class BaseLiquidityStrategy:
         self.account_balance = float(account_balance)
         self.risk_per_trade = risk_per_trade
         self.risk_pct_per_trade = risk_pct_per_trade
-        self.socketio      = socketio
+        self.event_publisher = event_publisher
         self.line_repository  = line_repository
         self.trade_repository = trade_repository
         self.trade_manager = trade_manager
@@ -125,7 +125,7 @@ class BaseLiquidityStrategy:
         self._trade_service = StrategyTradeService(
             trade_repository=trade_repository,
             trade_executor=trade_manager.trade_executor if trade_manager else NoOpExecutor(),
-            event_publisher=socketio,
+            event_publisher=event_publisher,
             logger=logger,
             trade_logger=trade_logger,
             point_value=point_value,
@@ -158,7 +158,7 @@ class BaseLiquidityStrategy:
         # Optional dependency for multi-TF checks
         self.htf_fetcher = htf_fetcher
         self.is_warmup = False
-        self._warmup_crossed_lines: set[Any] = set()
+        self.warmup_crossed_lines: set[Any] = set()
 
     def _get_current_account_configs(self) -> list:
         """Return fresh account configs from DB if available, else cached fallback."""
@@ -229,7 +229,7 @@ class BaseLiquidityStrategy:
                 self.logger.warning(f"[RemoveLine] Failed to delete trigger state for {id}: {e}")
         with contextlib.suppress(DBNotFoundException):
             self.line_repository.delete_line(id)
-        self.socketio.emit("line_removed", {"id": id})
+        self.event_publisher.emit("line_removed", {"id": id})
 
     def update_strategy_line(self, id: Any, level: float):
         """Update an existing strategy line's price level."""
@@ -237,7 +237,7 @@ class BaseLiquidityStrategy:
             if id in self.strategy_lines:
                 self.strategy_lines[id]["level"] = float(level)
                 self.logger.info(f"[Strategy] update_strategy_line id={id} new_level={level}")
-        self.socketio.emit("line_updated", {"id": id, "level": level})
+        self.event_publisher.emit("line_updated", {"id": id, "level": level})
 
     def _persist_all_line_states(self):
         """Write current trigger state for every active line to the repo."""
@@ -262,7 +262,7 @@ class BaseLiquidityStrategy:
             saved = self.trigger_state_repo.load_all(pair)
             restored = 0
             for line_id, line_state in self.strategy_lines.items():
-                if line_id in self._warmup_crossed_lines:
+                if line_id in self.warmup_crossed_lines:
                     continue
                 persisted = saved.get(str(line_id))
                 if persisted:
@@ -393,7 +393,7 @@ class BaseLiquidityStrategy:
             self._buf, self._group_start = [bar], win
             self._on_strategy_bar(agg)
 
-    def _check_breakeven(self, bar: dict[str, Any]):
+    def check_breakeven(self, bar: dict[str, Any]):
         if self.is_warmup:
             return
         for trade in self.open_trades:
@@ -558,7 +558,7 @@ class BaseLiquidityStrategy:
 
         # 3. Notify Frontend
         # We emit a 'trade_update' event. You might need to handle this in JS.
-        self.socketio.emit("trade_update", {
+        self.event_publisher.emit("trade_update", {
             "trade_id": trade['trade_id'],
             "stop_loss": new_sl,
             "pair": trade['pair']
@@ -765,7 +765,7 @@ class BaseLiquidityStrategy:
                     exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd,
                     result_type=result_type,
                 )
-                self.socketio.emit("trade_close", t)
+                self.event_publisher.emit("trade_close", t)
                 # Reentry logic for phantom SL hits
                 if (
                     (self.options.reentry_after_sl or self.options.reentry_only)

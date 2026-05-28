@@ -51,7 +51,7 @@ class StrategyFactory:
         use_fractional_lots: bool = False,
         fee_per_rt: float = 4.24,
         broker_spread: float = 0.0,
-        socketio=None,
+        event_publisher=None,
         trade_repository=None,
         trade_manager=None,
         trade_logger=None,
@@ -92,7 +92,7 @@ class StrategyFactory:
         return TsiCrossStrategy(
             numbers=numbers,
             config=config,
-            socketio=socketio,
+            event_publisher=event_publisher,
             trade_repository=trade_repository,
             trade_manager=trade_manager,
             trade_logger=trade_logger,

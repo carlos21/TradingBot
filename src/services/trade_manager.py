@@ -509,6 +509,7 @@ class TradeManager:
                 log_event="NT_FILL",
                 log_message=f"{result_type or 'FILL'} @ {exit_price:.2f}",
                 analytics_event="BROKER_FILL",
+                skip_executor=True,
             )
         except Exception as e:
             self.logger.error(f"[TradeManager] DB error on broker fill for {trade_id}: {e}")

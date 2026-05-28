@@ -43,6 +43,7 @@ from src.infrastructure.repositories.credentials_repository import CredentialRep
 from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
 from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from src.strategies.strategy_factory import StrategyFactory
+from src.strategies.protocols import LiquidityStrategy
 from src.notifier import Notifier, NoOpNotifier
 from src.analytics import AnalyticsReporter, NoOpReporter
 from src.utils.app_logger import ILogger, ConsoleLogger, FileAndConsoleLogger
@@ -81,7 +82,7 @@ class AppWiring:
     app: Flask
     socketio: SocketIO
     loader: BarsLoader
-    strategy: Any
+    strategy: LiquidityStrategy
     trade_manager: TradeManager
     lines_controller: LinesController
     trades_controller: TradesController
@@ -106,7 +107,7 @@ def _setup_logging(app: Flask):
 def _create_bar_callbacks(
     live_mode: bool,
     trade_manager: TradeManager,
-    strategy: LiquidityStrategyV2,
+    strategy: LiquidityStrategy,
     loader: BarsLoader,
     data_source: CombinedDataSource,
     repos: Repositories,
@@ -143,9 +144,8 @@ def _create_bar_callbacks(
         def combined_bar_callback(bar):
             # No trade_manager.handle_new_1m_bar — NinjaTrader handles SL/TP
             strategy.on_raw_bar(bar)
-            options = getattr(strategy, 'options', None)
-            if options and (options.breakeven or options.reentry_breakeven):
-                strategy._check_breakeven(bar)
+            if strategy.options.breakeven or strategy.options.reentry_breakeven:
+                strategy.check_breakeven(bar)
             _check_live_session_end(bar)
         
         def stream_end_callback(close_price: float, final_time: float):
@@ -165,9 +165,8 @@ def _create_bar_callbacks(
             # TradeManager checks real trades for SL/TP and emits TRADE_CLOSED events
             trade_manager.handle_new_1m_bar(bar)
             # Breakeven is applied only after SL/TP is resolved for the bar
-            options = getattr(strategy, 'options', None)
-            if options and (options.breakeven or options.reentry_breakeven):
-                strategy._check_breakeven(bar)
+            if strategy.options.breakeven or strategy.options.reentry_breakeven:
+                strategy.check_breakeven(bar)
             # Reentries are handled inside strategy.on_raw_bar() on subsequent bars
             # after the SL hit. Same-bar reentries are blocked by sl_bar_time guard.
         
@@ -179,7 +178,7 @@ def _create_bar_callbacks(
 
 def _setup_live_mode_callbacks(
     data_source: CombinedDataSource,
-    strategy: LiquidityStrategyV2,
+    strategy: LiquidityStrategy,
     loader: BarsLoader,
     repos: Repositories,
     pair: str,
@@ -191,7 +190,7 @@ def _setup_live_mode_callbacks(
         """Background task: process historical bars."""
         try:
             strategy.is_warmup = True
-            strategy._warmup_crossed_lines.clear()
+            strategy.warmup_crossed_lines.clear()
             start = __import__('time').monotonic()
             for i, bar in enumerate(bars):
                 strategy.on_raw_bar(bar)
@@ -204,7 +203,7 @@ def _setup_live_mode_callbacks(
             # Remove lines that were touched during warmup. A touched line is a stale
             # setup — the bounce already happened and the opportunity has passed.
             stale_count = 0
-            for sid in list(strategy._warmup_crossed_lines):
+            for sid in list(strategy.warmup_crossed_lines):
                 line = strategy.strategy_lines.get(sid)
                 if line is None:
                     continue
@@ -214,7 +213,7 @@ def _setup_live_mode_callbacks(
                 if strategy.options.line_removal_mode != LineRemovalMode.NEVER:
                     strategy.remove_strategy_line(sid)
                     stale_count += 1
-                strategy._warmup_crossed_lines.discard(sid)
+                strategy.warmup_crossed_lines.discard(sid)
             if stale_count:
                 logger.info(f"[LiveMode] Removed {stale_count} stale line(s) touched during warmup")
             
@@ -388,7 +387,7 @@ def create_app(
         strategy_name,
         min_stop_loss   = numbers.min_stop_loss,
         max_bounce      = getattr(numbers, 'max_bounce', 90.0),
-        socketio        = event_publisher,
+        event_publisher = event_publisher,
         line_repository = repos.lines,
         trade_repository= repos.trades,
         trade_manager   = trade_manager,
@@ -541,17 +540,7 @@ def create_app(
             result_type = payload.get('result_type', 'CLOSE')
             if trade_id and exit_price is not None:
                 trade_manager.handle_broker_fill(trade_id, exit_price, result_type)
-                # For multi-account: only notify strategy when ALL account trades closed
-                if isinstance(trade_executor, MultiAccountExecutor):
-                    signal_id = trade_executor.get_signal_id(trade_id)
-                    if signal_id and trade_executor.all_account_trades_closed(signal_id):
-                        tstrategy.handle_broker_exit_fill(signal_id, exit_price, result_type)
-                        logger.info(f"[BrokerFill] Exit fill handled for signal {signal_id} (all accounts closed)")
-                    else:
-                        logger.info(f"[BrokerFill] Exit fill handled for account trade {trade_id} @ {exit_price} ({result_type})")
-                else:
-                    tstrategy.handle_broker_exit_fill(trade_id, exit_price, result_type)
-                    logger.info(f"[BrokerFill] Exit fill handled for {trade_id} @ {exit_price} ({result_type})")
+                logger.info(f"[BrokerFill] Exit fill for {trade_id} @ {exit_price} ({result_type})")
 
         data_source.gateway.on_entry_fill(_handle_entry_fill)
         data_source.gateway.on_exit_fill(_handle_exit_fill)

@@ -26,6 +26,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         public void Error(string message, Exception ex = null)
         {
             var fullMessage = ex != null ? $"{message} - {ex.Message}" : message;
+            if (ex != null)
+            {
+                fullMessage += " | STACK: " + ex.StackTrace?.Replace("\n", " | ");
+            }
             Log("ERROR", fullMessage, isError: true);
         }
         public void Success(string message) => Log("SUCCESS", message, isSuccess: true);

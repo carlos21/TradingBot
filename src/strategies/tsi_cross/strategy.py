@@ -40,7 +40,7 @@ class TsiCrossStrategy(BaseStrategy):
         numbers: TsiCrossNumbers,
         config: TsiCrossConfig | None = None,
         bounce_detector: BounceDetector | None = None,
-        socketio: EventPublisher | None = None,
+        event_publisher: EventPublisher | None = None,
         trade_repository=None,
         trade_manager: TradeManager | None = None,
         trade_logger=None,
@@ -54,7 +54,7 @@ class TsiCrossStrategy(BaseStrategy):
 
         super().__init__(
             min_stop_loss=numbers.min_stop_loss,
-            socketio=socketio,
+            event_publisher=event_publisher,
             trade_repository=trade_repository,
             trade_manager=trade_manager,
             extra_sl_space=numbers.extra_sl_space,

@@ -91,6 +91,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private TickRateLimiter _partialBarRateLimiter;
         private System.Timers.Timer _liveBarsDelayTimer;  // Fallback: creates BarsRequest if no tick arrives within 10s
         private volatile bool _liveBarsSubscribed;
+        private System.Timers.Timer _barsRequestWatchdog; // Recreates BarsRequest if completed bars stall
 
         // Duplicate command detection (track processed seq_nums)
         private readonly HashSet<int> _processedSeqNums = new HashSet<int>();
@@ -663,6 +664,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             });
 
             _logger.Info("Subscribed to live 1m bars");
+            StartBarsRequestWatchdog();
         }
 
         private void StartLiveBarsDelayTimer()
@@ -692,9 +694,51 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        private void StartBarsRequestWatchdog()
+        {
+            StopBarsRequestWatchdog();
+            _barsRequestWatchdog = new System.Timers.Timer(30000); // Check every 30s
+            _barsRequestWatchdog.Elapsed += OnBarsRequestWatchdogTick;
+            _barsRequestWatchdog.AutoReset = true;
+            _barsRequestWatchdog.Start();
+        }
+
+        private void StopBarsRequestWatchdog()
+        {
+            if (_barsRequestWatchdog != null)
+            {
+                _barsRequestWatchdog.Stop();
+                _barsRequestWatchdog.Elapsed -= OnBarsRequestWatchdogTick;
+                _barsRequestWatchdog.Dispose();
+                _barsRequestWatchdog = null;
+            }
+        }
+
+        private void OnBarsRequestWatchdogTick(object sender, System.Timers.ElapsedEventArgs e)
+        {
+            try
+            {
+                if (!_connected || !_liveBarsSubscribed) return;
+                if (_lastSentBarTime == DateTime.MinValue) return;
+
+                var elapsed = DateTime.Now - _lastSentBarTime;
+                if (elapsed.TotalSeconds > 75)
+                {
+                    _logger.Warning($"[BarsRequestWatchdog] No completed bar sent in {elapsed.TotalSeconds:F0}s (threshold=75s). Recreating BarsRequest...");
+                    UnsubscribeFromLiveBars();
+                    SubscribeToLiveBars();
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("[BarsRequestWatchdog] Error in watchdog tick", ex);
+            }
+        }
+
         private void UnsubscribeFromLiveBars()
         {
             StopLiveBarsDelayTimer();
+            StopBarsRequestWatchdog();
             if (_liveBarsRequest != null)
             {
                 _liveBarsRequest.Update -= OnLiveBarsUpdate;
