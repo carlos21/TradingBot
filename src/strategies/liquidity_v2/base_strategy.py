@@ -667,7 +667,12 @@ class BaseLiquidityStrategy:
         - Live: TradeManager.handle_broker_fill emits event after NT fill
         """
         trade_id = payload.get("trade_id")
-        trade = next((t for t in self.open_trades if t.get("trade_id") == trade_id), None)
+        signal_id = payload.get("signal_id")
+        trade = next(
+            (t for t in self.open_trades
+             if t.get("trade_id") == trade_id or t.get("trade_id") == signal_id),
+            None,
+        )
         if not trade or trade.get("status") != "open":
             return
 
@@ -676,7 +681,7 @@ class BaseLiquidityStrategy:
         trade["result_type"] = payload.get("result_type")
 
         # Remove from strategy's open list so has_open becomes False
-        self.open_trades = [t for t in self.open_trades if t.get("trade_id") != trade_id]
+        self.open_trades = [t for t in self.open_trades if t is not trade]
 
         # Create re-entry opportunity on SL hit (mirrors old _check_open_trades logic)
         if (

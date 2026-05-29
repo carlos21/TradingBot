@@ -318,7 +318,12 @@ class BaseStrategy:
 
     def _on_trade_closed(self, payload: dict[str, Any]) -> None:
         trade_id = payload.get("trade_id")
-        trade = next((t for t in self.open_trades if t.get("trade_id") == trade_id), None)
+        signal_id = payload.get("signal_id")
+        trade = next(
+            (t for t in self.open_trades
+             if t.get("trade_id") == trade_id or t.get("trade_id") == signal_id),
+            None,
+        )
         if not trade or trade.get("status") != "open":
             return
 
@@ -326,7 +331,7 @@ class BaseStrategy:
         trade["exit_price"] = payload.get("exit_price")
         trade["result_type"] = payload.get("result_type")
 
-        self.open_trades = [t for t in self.open_trades if t.get("trade_id") != trade_id]
+        self.open_trades = [t for t in self.open_trades if t is not trade]
 
     # ------------------------------------------------------------------
     # Phantom trade checks

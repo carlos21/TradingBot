@@ -328,6 +328,26 @@ class TestEdgeCasesTradeManagement:
         assert strat._reentry_opportunities[0]["level"] == 100
         assert strat._reentry_opportunities[0]["direction"] == "long"
 
+    def test_sl_event_with_signal_id_creates_reentry(self):
+        """Multi-account: account trade ID in payload, signal trade in strategy."""
+        strat = _make_base(options=StrategyOptions(reentry_after_sl=True))
+        strat.open_trades.append({
+            "trade_id": "S1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "line_level": 100,
+        })
+        # Payload has account trade ID, but signal_id matches strategy's trade
+        strat._on_trade_closed({
+            "trade_id": "AT1", "signal_id": "S1", "result_type": "SL",
+            "exit_price": 90.0, "line_level": 100,
+            "is_reentry": False, "is_phantom": False,
+        })
+        assert len(strat._reentry_opportunities) == 1
+        assert strat._reentry_opportunities[0]["level"] == 100
+        assert strat._reentry_opportunities[0]["direction"] == "long"
+        # Strategy's trade should be removed from open_trades
+        assert len(strat.open_trades) == 0
+
     def test_tp_event_does_not_create_reentry(self):
         strat = _make_base(options=StrategyOptions(reentry_after_sl=True))
         strat.open_trades.append({

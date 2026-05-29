@@ -191,6 +191,7 @@ class TradeCloseUseCase:
             'is_reentry': trade.get('is_reentry', False),
             'is_phantom': trade.get('is_phantom', False),
             'extreme_excursion': extreme_excursion if extreme_excursion is not None else exit_price,
+            'signal_id': trade.get('signal_id'),
         }
         if self._publisher:
             self._publisher.emit('trade_close', payload)
