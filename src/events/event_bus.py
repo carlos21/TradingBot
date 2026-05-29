@@ -112,8 +112,13 @@ class EventBus:
         """
         event_type = event.event_type
 
+        # Snapshot lists to avoid "changed during iteration" if subscribe/unsubscribe
+        # is called concurrently on another thread.
+        handlers = list(self._handlers[event_type])
+        subscribers = list(self._subscribers[event_type])
+
         # Call function handlers
-        for handler in self._handlers[event_type]:
+        for handler in handlers:
             try:
                 handler(event)
             except Exception as e:
@@ -121,7 +126,7 @@ class EventBus:
                 print(f"[EventBus] Handler error for {event_type}: {e}")
 
         # Call subscriber objects
-        for subscriber in self._subscribers[event_type]:
+        for subscriber in subscribers:
             try:
                 subscriber.on_event(event)
             except Exception as e:

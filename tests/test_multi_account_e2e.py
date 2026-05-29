@@ -22,6 +22,7 @@ from src.domain.types import Direction
 from src.domain.events import DomainEvent, EventType
 from src.events.event_bus import EventBus
 from src.infrastructure.event_publisher import DomainEventBusPublisher
+from src.strategies.base_strategy import BreakevenConfig
 from src.strategies.liquidity_v2.base_strategy import BaseLiquidityStrategy, StrategyOptions
 from tests.fakes import (
     FakeAnalyticsReporter,
@@ -715,7 +716,7 @@ class TestFullE2EFlow:
 class TestMultiAccountReentryIntegration:
     """End-to-end: broker SL fill → TradeManager → EventBus → Strategy → reentry."""
 
-    def _make_strategy(self, event_bus, trade_manager, trade_repo):
+    def _make_strategy(self, event_bus, trade_manager, trade_repo, options=None, account_configs=None):
         """Helper to create a strategy wired to the event bus."""
         publisher = DomainEventBusPublisher(event_bus)
         strategy = BaseLiquidityStrategy(
@@ -727,12 +728,13 @@ class TestMultiAccountReentryIntegration:
             trade_manager=trade_manager,
             extra_sl_space=0.0,
             fixed_stop_loss=20,
-            options=StrategyOptions(reentry_after_sl=True),
+            options=options or StrategyOptions(reentry_after_sl=True),
             sl_levels=None,
             rr_ratio=3.3,
             point_value=2.0,
             account_balance=100000.0,
             logger=FakeLogger(),
+            account_configs=account_configs,
         )
         event_bus.add_subscriber(EventType.TRADE_CLOSED, strategy)
         return strategy
@@ -898,6 +900,333 @@ class TestMultiAccountReentryIntegration:
 
         assert len(strategy.open_trades) == 0
         assert len(strategy._reentry_opportunities) == 0
+
+    def test_duplicate_exit_fill_does_not_double_count(self):
+        """Two SL fills for the same account trade must be idempotent."""
+        event_bus = EventBus()
+        publisher = DomainEventBusPublisher(event_bus)
+        tr = FakeTradeRepository()
+        tm = TradeManager(
+            trade_repository=tr,
+            socketio=publisher,
+            trade_executor=FakeTradeExecutor(),
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+        )
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+        executor = MultiAccountExecutor(
+            trade_manager=tm,
+            account_configs=[AccountConfig("Sim101")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+        strategy = self._make_strategy(event_bus, tm, tr)
+
+        signal_trade = {
+            "trade_id": "S1",
+            "pair": "MNQ",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 130.0,
+            "risk": 10.0,
+            "status": "open",
+            "line_level": 95.0,
+            "is_reentry": False,
+            "entry_time": 1000.0,
+            "rr_ratio": 5.0,
+        }
+        strategy.open_trades.append(signal_trade)
+        executor.on_trade_open(signal_trade)
+        aid = executor.signal_to_accounts["S1"][0]
+
+        balance_before = tm.account_balance
+
+        # First SL fill
+        tm.handle_broker_fill(aid, exit_price=90.0, result_type="SL")
+        balance_after_first = tm.account_balance
+
+        # Duplicate SL fill (NT retry / network duplicate)
+        tm.handle_broker_fill(aid, exit_price=90.0, result_type="SL")
+        balance_after_second = tm.account_balance
+
+        # Balance must not change on the duplicate
+        assert balance_after_first == balance_after_second
+        # Trade should be closed in DB exactly once
+        assert len(tr.closed) == 1
+        # Strategy should have exactly one reentry opportunity
+        assert len(strategy._reentry_opportunities) == 1
+
+    def test_unknown_trade_id_fill_is_graceful(self):
+        """An EXIT_FILL for a trade ID Python has never seen must not crash."""
+        event_bus = EventBus()
+        publisher = DomainEventBusPublisher(event_bus)
+        tr = FakeTradeRepository()
+        tm = TradeManager(
+            trade_repository=tr,
+            socketio=publisher,
+            trade_executor=FakeTradeExecutor(),
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+        )
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+        executor = MultiAccountExecutor(
+            trade_manager=tm,
+            account_configs=[AccountConfig("Sim101")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+        strategy = self._make_strategy(event_bus, tm, tr)
+
+        # No trades opened — simulate orphaned fill from a previous session
+        tm.handle_broker_fill("UNKNOWN-TRADE-123", exit_price=90.0, result_type="SL")
+
+        assert len(strategy.open_trades) == 0
+        assert len(strategy._reentry_opportunities) == 0
+        assert tm.account_balance == 100000.0  # unchanged
+
+    def test_breakeven_live_end_to_end(self):
+        """Bar → check_breakeven → SL update → ZMQ modify command to NT."""
+        event_bus = EventBus()
+        publisher = DomainEventBusPublisher(event_bus)
+        tr = FakeTradeRepository()
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+        executor = MultiAccountExecutor(
+            trade_manager=None,  # set after tm is created
+            account_configs=[AccountConfig("Sim101")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+        tm = TradeManager(
+            trade_repository=tr,
+            socketio=publisher,
+            trade_executor=executor,
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+        )
+        executor.trade_manager = tm
+        strategy = self._make_strategy(
+            event_bus, tm, tr,
+            options=StrategyOptions(
+                reentry_after_sl=True,
+                breakeven=BreakevenConfig(trigger_rr=1.0, move_to_rr=0.0),
+            ),
+        )
+
+        signal_trade = {
+            "trade_id": "S1",
+            "pair": "MNQ",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 130.0,
+            "risk": 10.0,
+            "status": "open",
+            "line_level": 95.0,
+            "is_reentry": False,
+            "entry_time": 1000.0,
+            "rr_ratio": 5.0,
+        }
+        strategy.open_trades.append(signal_trade)
+        executor.on_trade_open(signal_trade)
+        aid = executor.signal_to_accounts["S1"][0]
+
+        # Bar that triggers breakeven (high >= entry + risk * trigger_rr = 100 + 10*1.0 = 110)
+        bar = {
+            "time": 2000.0,
+            "pair": "MNQ",
+            "open": 100.0,
+            "high": 110.0,
+            "low": 100.0,
+            "close": 105.0,
+        }
+        strategy.check_breakeven(bar)
+
+        # Verify gateway received an SL modify command
+        assert len(gateway.modify_orders) == 1
+        assert gateway.modify_orders[0]["trade_id"] == aid
+        # New SL should be moved to entry (breakeven)
+        assert gateway.modify_orders[0]["stop_loss"] == 100.0
+
+    def test_session_end_close_live_end_to_end(self):
+        """Session-end bar triggers close commands to all account trades."""
+        event_bus = EventBus()
+        publisher = DomainEventBusPublisher(event_bus)
+        tr = FakeTradeRepository()
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+        executor = MultiAccountExecutor(
+            trade_manager=None,
+            account_configs=[AccountConfig("A1"), AccountConfig("A2")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+        tm = TradeManager(
+            trade_repository=tr,
+            socketio=publisher,
+            trade_executor=executor,
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+        )
+        executor.trade_manager = tm
+        strategy = self._make_strategy(event_bus, tm, tr)
+
+        signal_trade = {
+            "trade_id": "S1",
+            "pair": "MNQ",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 130.0,
+            "risk": 10.0,
+            "status": "open",
+            "line_level": 95.0,
+            "is_reentry": False,
+            "entry_time": 1000.0,
+            "rr_ratio": 5.0,
+        }
+        strategy.open_trades.append(signal_trade)
+        executor.on_trade_open(signal_trade)
+        aid1, aid2 = executor.signal_to_accounts["S1"]
+
+        # Simulate session-end close via TradeManager (mimics app_factory logic)
+        tm.close_trade(aid1, exit_price=105.0, exit_time=2000.0)
+        tm.close_trade(aid2, exit_price=105.0, exit_time=2000.0)
+
+        # Gateway should receive close commands
+        assert len(gateway.close_orders) == 2
+        closed_ids = {c["trade_id"] for c in gateway.close_orders}
+        assert closed_ids == {aid1, aid2}
+
+    def test_strategy_close_while_nt_closing_dedup(self):
+        """
+        If NT already sent EXIT_FILL and strategy then tries to close,
+        the dedup window in MultiAccountExecutor suppresses the redundant command
+        ONLY if the previous close went through the executor (not via broker fill).
+
+        This test verifies the dedup window works when two strategy-driven closes
+        happen in rapid succession.
+        """
+        event_bus = EventBus()
+        publisher = DomainEventBusPublisher(event_bus)
+        tr = FakeTradeRepository()
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+        executor = MultiAccountExecutor(
+            trade_manager=None,
+            account_configs=[AccountConfig("Sim101")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+        tm = TradeManager(
+            trade_repository=tr,
+            socketio=publisher,
+            trade_executor=executor,
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+        )
+        executor.trade_manager = tm
+        strategy = self._make_strategy(event_bus, tm, tr)
+
+        signal_trade = {
+            "trade_id": "S1",
+            "pair": "MNQ",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 130.0,
+            "risk": 10.0,
+            "status": "open",
+            "line_level": 95.0,
+            "is_reentry": False,
+            "entry_time": 1000.0,
+            "rr_ratio": 5.0,
+        }
+        strategy.open_trades.append(signal_trade)
+        executor.on_trade_open(signal_trade)
+
+        # First strategy-driven close (e.g. session end)
+        executor.on_trade_close("S1", 90.0)
+        assert len(gateway.close_orders) == 1
+
+        # Second strategy-driven close within 5-second dedup window
+        gateway.close_orders.clear()
+        executor.on_trade_close("S1", 90.0)
+
+        # Dedup window should suppress the redundant close command
+        assert len(gateway.close_orders) == 0
+
+    def test_restore_open_trades_preserves_reentry_state(self):
+        """Crash recovery must preserve line_level and is_reentry from DB."""
+        event_bus = EventBus()
+        publisher = DomainEventBusPublisher(event_bus)
+        tr = FakeTradeRepository()
+        tm = TradeManager(
+            trade_repository=tr,
+            socketio=publisher,
+            trade_executor=FakeTradeExecutor(),
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+        )
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+        executor = MultiAccountExecutor(
+            trade_manager=tm,
+            account_configs=[AccountConfig("Sim101")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+        strategy = self._make_strategy(event_bus, tm, tr, account_configs=[AccountConfig("Sim101")])
+
+        # Seed DB with a signal trade that has line_level and is_reentry in params
+        tr.insert_trade(
+            pair="MNQ",
+            trade_type="long",
+            entry_price=100.0,
+            stop_loss=90.0,
+            take_profit=130.0,
+            risk=10.0,
+            entry_time=datetime.now(),
+            params={"line_level": 95.0, "is_reentry": True},
+            source="strategy",
+            trade_id="S1",
+        )
+        # Seed TradeManager with the corresponding account trade
+        tm.open_trade(
+            pair="MNQ",
+            trade_type="long",
+            entry_price=100.0,
+            stop_loss=90.0,
+            take_profit=130.0,
+            risk=10.0,
+            entry_time=1000.0,
+            rr_ratio=5.0,
+            account="Sim101",
+            signal_id="S1",
+        )
+
+        strategy.restore_open_trades()
+
+        assert len(strategy.open_trades) == 1
+        restored = strategy.open_trades[0]
+        assert restored["trade_id"] == "S1"
+        assert restored["line_level"] == 95.0
+        assert restored["is_reentry"] is True
 
 
 if __name__ == "__main__":

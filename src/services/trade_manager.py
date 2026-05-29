@@ -69,6 +69,8 @@ class TradeManager:
 
         # Track which trades we have already logged as "Active"
         self._monitored_trades = set()
+        # Guard against duplicate broker fills for the same trade (NT retries, network duplicates)
+        self._closing_trades = set()
 
         # Use cases
         self._open_use_case = TradeOpenUseCase(
@@ -348,6 +350,7 @@ class TradeManager:
             'rr_ratio':   rr_ratio,
             'account':    result.account,
             'signal_id':  result.signal_id,
+            'status':     'open',
         }
         self.open_trades.append(trade)
         self._monitored_trades.add(result.trade_id)
@@ -520,6 +523,12 @@ class TradeManager:
         if not trade:
             print(f"[TradeManager] ⚠️ Broker fill for {trade_id} but trade not in memory")
             return
+
+        # Atomic guard: prevent duplicate fills from double-counting PnL
+        if trade_id in self._closing_trades:
+            self.logger.warning(f"[TradeManager] Duplicate broker fill ignored for {trade_id}")
+            return
+        self._closing_trades.add(trade_id)
 
         try:
             result = self._close_use_case.execute(
