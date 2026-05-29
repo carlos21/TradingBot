@@ -19,7 +19,18 @@ import pytest
 from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
 from src.services.trade_manager import TradeManager
 from src.domain.types import Direction
-from tests.fakes import FakeLogger, FakeTradeExecutor, FakeTradeRepository, DummySocketIO
+from src.domain.events import DomainEvent, EventType
+from src.events.event_bus import EventBus
+from src.infrastructure.event_publisher import DomainEventBusPublisher
+from src.strategies.liquidity_v2.base_strategy import BaseLiquidityStrategy, StrategyOptions
+from tests.fakes import (
+    FakeAnalyticsReporter,
+    FakeLogger,
+    FakeLineRepository,
+    FakeTradeExecutor,
+    FakeTradeRepository,
+    DummySocketIO,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -695,6 +706,198 @@ class TestFullE2EFlow:
         # Net balance change depends on sizing, but both should be recorded
         assert tm.account_balance != balance_before
         assert executor.all_account_trades_closed("S1")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Reentry Integration Tests
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestMultiAccountReentryIntegration:
+    """End-to-end: broker SL fill → TradeManager → EventBus → Strategy → reentry."""
+
+    def _make_strategy(self, event_bus, trade_manager, trade_repo):
+        """Helper to create a strategy wired to the event bus."""
+        publisher = DomainEventBusPublisher(event_bus)
+        strategy = BaseLiquidityStrategy(
+            min_stop_loss=10.0,
+            max_bounce=90.0,
+            event_publisher=publisher,
+            line_repository=FakeLineRepository(),
+            trade_repository=trade_repo,
+            trade_manager=trade_manager,
+            extra_sl_space=0.0,
+            fixed_stop_loss=20,
+            options=StrategyOptions(reentry_after_sl=True),
+            sl_levels=None,
+            rr_ratio=3.3,
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+        )
+        event_bus.add_subscriber(EventType.TRADE_CLOSED, strategy)
+        return strategy
+
+    def test_broker_sl_fill_creates_reentry_via_event_bus(self):
+        """
+        Regression test for live multi-account reentry bug.
+
+        When an account trade hits SL, the TradeCloseUseCase emits a
+        TRADE_CLOSED event via the EventBus. The strategy receives it,
+        looks up the signal trade by signal_id, and must create a reentry
+        opportunity even though the account trade payload lacks line_level.
+        """
+        # 1. Set up EventBus + TradeManager with real domain publisher
+        event_bus = EventBus()
+        publisher = DomainEventBusPublisher(event_bus)
+        tr = FakeTradeRepository()
+        tm = TradeManager(
+            trade_repository=tr,
+            socketio=publisher,
+            trade_executor=FakeTradeExecutor(),
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+        )
+
+        # 2. Set up MultiAccountExecutor
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+        executor = MultiAccountExecutor(
+            trade_manager=tm,
+            account_configs=[AccountConfig("Sim101")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+
+        # 3. Create strategy subscribed to TRADE_CLOSED
+        strategy = self._make_strategy(event_bus, tm, tr)
+
+        # 4. Seed the strategy with a signal trade that has line_level
+        signal_trade = {
+            "trade_id": "S1",
+            "pair": "MNQ",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 130.0,
+            "risk": 10.0,
+            "status": "open",
+            "line_level": 95.0,
+            "is_reentry": False,
+            "entry_time": 1000.0,
+            "rr_ratio": 5.0,
+        }
+        strategy.open_trades.append(signal_trade)
+
+        # 5. Expand to account trade
+        executor.on_trade_open(signal_trade)
+        aid = executor.signal_to_accounts["S1"][0]
+
+        # 6. Simulate broker SL fill
+        tm.handle_broker_fill(aid, exit_price=90.0, result_type="SL")
+
+        # 7. Assert strategy created reentry opportunity
+        assert len(strategy.open_trades) == 0, "Signal trade should be removed from open_trades"
+        assert len(strategy._reentry_opportunities) == 1, "Reentry opportunity should be created"
+        opp = strategy._reentry_opportunities[0]
+        assert opp["level"] == 95.0
+        assert opp["direction"] == "long"
+        assert opp["pair"] == "MNQ"
+
+    def test_broker_tp_fill_does_not_create_reentry(self):
+        """TP hits should not create reentry opportunities."""
+        event_bus = EventBus()
+        publisher = DomainEventBusPublisher(event_bus)
+        tr = FakeTradeRepository()
+        tm = TradeManager(
+            trade_repository=tr,
+            socketio=publisher,
+            trade_executor=FakeTradeExecutor(),
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+        )
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+        executor = MultiAccountExecutor(
+            trade_manager=tm,
+            account_configs=[AccountConfig("Sim101")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+        strategy = self._make_strategy(event_bus, tm, tr)
+
+        signal_trade = {
+            "trade_id": "S1",
+            "pair": "MNQ",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 130.0,
+            "risk": 10.0,
+            "status": "open",
+            "line_level": 95.0,
+            "is_reentry": False,
+            "entry_time": 1000.0,
+            "rr_ratio": 5.0,
+        }
+        strategy.open_trades.append(signal_trade)
+        executor.on_trade_open(signal_trade)
+        aid = executor.signal_to_accounts["S1"][0]
+
+        tm.handle_broker_fill(aid, exit_price=130.0, result_type="TP")
+
+        assert len(strategy.open_trades) == 0
+        assert len(strategy._reentry_opportunities) == 0
+
+    def test_reentry_trade_does_not_chain(self):
+        """A trade that is already a reentry should not spawn another reentry."""
+        event_bus = EventBus()
+        publisher = DomainEventBusPublisher(event_bus)
+        tr = FakeTradeRepository()
+        tm = TradeManager(
+            trade_repository=tr,
+            socketio=publisher,
+            trade_executor=FakeTradeExecutor(),
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+        )
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+        executor = MultiAccountExecutor(
+            trade_manager=tm,
+            account_configs=[AccountConfig("Sim101")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+        strategy = self._make_strategy(event_bus, tm, tr)
+
+        signal_trade = {
+            "trade_id": "S1",
+            "pair": "MNQ",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 130.0,
+            "risk": 10.0,
+            "status": "open",
+            "line_level": 95.0,
+            "is_reentry": True,  # already a reentry
+            "entry_time": 1000.0,
+            "rr_ratio": 5.0,
+        }
+        strategy.open_trades.append(signal_trade)
+        executor.on_trade_open(signal_trade)
+        aid = executor.signal_to_accounts["S1"][0]
+
+        tm.handle_broker_fill(aid, exit_price=90.0, result_type="SL")
+
+        assert len(strategy.open_trades) == 0
+        assert len(strategy._reentry_opportunities) == 0
 
 
 if __name__ == "__main__":

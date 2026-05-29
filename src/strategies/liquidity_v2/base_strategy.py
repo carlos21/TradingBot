@@ -719,12 +719,20 @@ class BaseLiquidityStrategy:
         self.open_trades = [t for t in self.open_trades if t is not trade]
 
         # Create re-entry opportunity on SL hit (mirrors old _check_open_trades logic)
+        level = payload.get("line_level")
+        if level is None:
+            level = trade.get("line_level")
+        # Prefer strategy trade's is_reentry (authoritative) over payload,
+        # because multi-account account trades lack this field.
+        is_reentry = trade.get("is_reentry")
+        if is_reentry is None:
+            is_reentry = payload.get("is_reentry", False)
+
         if (
             (self.options.reentry_after_sl or self.options.reentry_only)
             and payload.get("result_type") == "SL"
-            and not payload.get("is_reentry", False)
+            and not is_reentry
         ):
-            level = payload.get("line_level")
             if level is not None:
                 direction = trade["type"]
                 extreme = payload.get("extreme_excursion", payload.get("exit_price"))

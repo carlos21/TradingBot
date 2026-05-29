@@ -220,6 +220,47 @@ class TestOnTradeClosed:
         assert len(strat.open_trades) == 0
         assert len(strat._reentry_opportunities) == 0
 
+    def test_sl_creates_reentry_when_payload_lacks_line_level(self):
+        """Live multi-account: account trade payload lacks line_level,
+        but strategy trade still has it — fallback must create reentry."""
+        strat = _make_base()
+        strat.options.reentry_after_sl = True
+        strat.open_trades.append({
+            "trade_id": "signal-abc", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "line_level": 95.0,
+            "is_reentry": False,
+        })
+        # Payload mimics what arrives from TradeCloseUseCase for an account trade
+        strat._on_trade_closed({
+            "trade_id": "account1-xyz", "result_type": "SL",
+            "exit_price": 90.0,
+            # line_level omitted (None from account trade)
+            # is_reentry omitted (None from account trade)
+            "signal_id": "signal-abc", "is_phantom": False,
+        })
+        assert len(strat.open_trades) == 0
+        assert len(strat._reentry_opportunities) == 1
+        assert strat._reentry_opportunities[0]["level"] == 95.0
+
+    def test_reentry_suppressed_when_payload_and_trade_both_flag_reentry(self):
+        """If both payload and strategy trade mark it as reentry, do not chain."""
+        strat = _make_base()
+        strat.options.reentry_after_sl = True
+        strat.open_trades.append({
+            "trade_id": "signal-abc", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "line_level": 95.0,
+            "is_reentry": True,
+        })
+        strat._on_trade_closed({
+            "trade_id": "account1-xyz", "result_type": "SL",
+            "exit_price": 90.0,
+            "signal_id": "signal-abc", "is_phantom": False,
+        })
+        assert len(strat.open_trades) == 0
+        assert len(strat._reentry_opportunities) == 0
+
 
 class TestPhantomExits:
     """Tests for _check_phantom_exits (strategy-only trades with no DB/broker)."""
