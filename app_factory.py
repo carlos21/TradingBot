@@ -424,6 +424,7 @@ def create_app(
     # (same code path for live and backtest — broker is source of truth for exits)
     from src.domain.events import EventType
     event_bus.add_subscriber(EventType.TRADE_CLOSED, tstrategy)
+    event_bus.add_subscriber(EventType.TRADE_UPDATED, tstrategy)
     
     # Wire up position sync handler for crash recovery (ZeroMQ only)
     # Broker (NinjaTrader) is the source of truth - it reports actual positions to Python

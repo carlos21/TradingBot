@@ -343,6 +343,12 @@ class BaseLiquidityStrategy:
             if t.params and t.params.get("is_reentry"):
                 continue
             line_level = t.params.get("line_level") if t.params else None
+            # Multi-account: account trades may not have line_level in params;
+            # look it up from the parent signal trade
+            if line_level is None and t.signal_id:
+                signal_trade = self.trade_repository.get_trade(t.signal_id)
+                if signal_trade and signal_trade.params:
+                    line_level = signal_trade.params.get("line_level")
             if line_level is None:
                 continue
             already_watching = any(

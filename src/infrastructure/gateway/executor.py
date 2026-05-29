@@ -216,7 +216,10 @@ class MultiAccountExecutor(TradeExecutor):
                     risk_pct_per_trade_override=acct.risk_pct,
                 )
                 account_trade_ids.append(account_trade["trade_id"])
-                self.gateway_executor.on_trade_open(account_trade)
+                # Only send via gateway if trade_manager's executor won't do it
+                # (avoids double-send when TradeManager uses this same MultiAccountExecutor)
+                if self.trade_manager.trade_executor is not self:
+                    self.gateway_executor.on_trade_open(account_trade)
             except Exception as e:
                 self.logger.error(f"MultiAccount: failed to open trade for account {acct.name} (signal {signal_id}): {e}")
 
@@ -301,7 +304,7 @@ class MultiAccountExecutor(TradeExecutor):
             return trade.account
         # Fallback: try to infer from config names
         for acct in self.account_configs:
-            if acct.name in account_trade_id:
+            if account_trade_id.startswith(acct.name + "-") or account_trade_id.endswith("-" + acct.name):
                 return acct.name
         return self.account_configs[0].name if self.account_configs else ""
 
