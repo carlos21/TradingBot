@@ -136,6 +136,7 @@ class BrokerFillHandler:
         if self._publisher:
             self._publisher.emit('trade_entry_update', {
                 'trade_id': trade['trade_id'],
+                'signal_id': trade.get('signal_id'),
                 'entry_price': entry_price,
                 'stop_loss': trade['stop_loss'],
                 'take_profit': trade['take_profit'],

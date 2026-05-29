@@ -545,6 +545,11 @@ class BaseLiquidityStrategy:
         try:
             self.trade_repository.update_stop_loss(trade['trade_id'], new_sl)
             self.trade_manager.update_local_trade_sl(trade['trade_id'], new_sl)
+            # Multi-account: also update account trade DB records
+            if self._account_configs and self.trade_manager:
+                for t in self.trade_manager.open_trades:
+                    if t.get('signal_id') == trade['trade_id']:
+                        self.trade_repository.update_stop_loss(t['trade_id'], new_sl)
         except Exception as e:
             self.logger.error(f"[Strategy] Failed to update SL in DB: {e}")
             self.analytics.capture_exception(e, {"op": "update_sl", "trade_id": trade['trade_id']})
@@ -655,9 +660,33 @@ class BaseLiquidityStrategy:
     # Event-driven trade close (replaces _check_open_trades / handle_broker_exit_fill)
     # ------------------------------------------------------------------
     def on_event(self, event: DomainEvent) -> None:
-        """EventSubscriber protocol: react to TRADE_CLOSED domain events."""
+        """EventSubscriber protocol: react to TRADE_CLOSED and TRADE_UPDATED domain events."""
         if event.event_type == EventType.TRADE_CLOSED:
             self._on_trade_closed(event.payload)
+        elif event.event_type == EventType.TRADE_UPDATED:
+            self._on_trade_updated(event.payload)
+
+    def _on_trade_updated(self, payload: dict[str, Any]) -> None:
+        """Sync strategy trade dict with broker-reported updates (entry fill, SL move, etc.)."""
+        trade_id = payload.get("trade_id")
+        signal_id = payload.get("signal_id")
+        trade = next(
+            (t for t in self.open_trades
+             if t.get("trade_id") == trade_id or t.get("trade_id") == signal_id),
+            None,
+        )
+        if not trade or trade.get("status") != "open":
+            return
+        if "entry_price" in payload:
+            trade["entry"] = payload["entry_price"]
+        if "stop_loss" in payload:
+            trade["stop_loss"] = payload["stop_loss"]
+        if "take_profit" in payload:
+            trade["take_profit"] = payload["take_profit"]
+        if "risk" in payload:
+            trade["risk"] = payload["risk"]
+        if "contracts" in payload:
+            trade["contracts"] = payload["contracts"]
 
     def _on_trade_closed(self, payload: dict[str, Any]) -> None:
         """Update strategy state when a trade close event is published.

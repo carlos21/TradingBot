@@ -119,10 +119,12 @@ class TradesController:
         return jsonify(trade), 201
 
     def close_trade(self, trade_id):
-        if not any(t['trade_id'] == trade_id for t in self.trade_manager.open_trades):
+        if not any(t['trade_id'] == trade_id or t.get('signal_id') == trade_id
+                   for t in self.trade_manager.open_trades):
             abort(404, f"Trade id={trade_id} not found or already closed")
 
-        trade = next(t for t in self.trade_manager.open_trades if t['trade_id'] == trade_id)
+        trade = next(t for t in self.trade_manager.open_trades
+                     if t['trade_id'] == trade_id or t.get('signal_id') == trade_id)
         pair = trade['pair']
 
         exit_price = self._resolve_price()

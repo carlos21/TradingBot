@@ -364,6 +364,12 @@ class TradeManager:
             (t for t in self.open_trades if t['trade_id'] == trade_id), None
         )
 
+        # Multi-account: trade_id may be a signal_id
+        if not trade:
+            trade = next(
+                (t for t in self.open_trades if t.get('signal_id') == trade_id), None
+            )
+
         if not trade:
             self.logger.warning(f"[TradeManager] Trade {trade_id} not in memory, fetching from DB.")
             trade_data = self.trade_repository.get_trade(trade_id)
@@ -394,6 +400,11 @@ class TradeManager:
                     result=0.0,
                     result_type="SP"
                 )
+                # Clean up any zombie account trades with this signal_id
+                self.open_trades = [
+                    t for t in self.open_trades
+                    if t.get('signal_id') != trade_id
+                ]
                 return {'trade_id': trade_id, 'exit_price': exit_price, 'result': 0.0}
 
         result = self._close_use_case.execute(
@@ -407,7 +418,15 @@ class TradeManager:
 
         self.account_balance += result.pnl_usd
         self._open_use_case.update_account_balance(self.account_balance)
-        if trade in self.open_trades:
+
+        # Remove the closed trade AND any sibling account trades with the same signal_id
+        signal_id = trade.get('signal_id')
+        if signal_id:
+            self.open_trades = [
+                t for t in self.open_trades
+                if t['trade_id'] != trade['trade_id'] and t.get('signal_id') != signal_id
+            ]
+        elif trade in self.open_trades:
             self.open_trades.remove(trade)
 
         return {
@@ -473,13 +492,15 @@ class TradeManager:
                 })
 
     def update_local_trade_sl(self, trade_id: str, new_sl: float):
+        found = False
         for t in self.open_trades:
-            if t['trade_id'] == trade_id:
+            if t['trade_id'] == trade_id or t.get('signal_id') == trade_id:
                 old_sl = t['stop_loss']
                 t['stop_loss'] = new_sl
-                self.logger.info(f"[TradeManager] Synced SL for {trade_id}: {old_sl} -> {new_sl}")
-                return
-        self.logger.warning(f"[TradeManager] Could not find trade {trade_id} to update SL")
+                self.logger.info(f"[TradeManager] Synced SL for {t['trade_id']} (signal={trade_id}): {old_sl} -> {new_sl}")
+                found = True
+        if not found:
+            self.logger.warning(f"[TradeManager] Could not find trade {trade_id} to update SL")
 
     # ------------------------------------------------------------------
     # Broker fills

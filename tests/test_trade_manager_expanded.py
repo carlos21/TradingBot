@@ -214,6 +214,22 @@ class TestOpenTradeExpanded:
 
 class TestCloseTradeExpanded:
 
+    def test_close_trade_by_signal_id_removes_all_account_trades(self):
+        tm = _make_manager()
+        tm.open_trades.append({
+            "trade_id": "AT1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "entry_time": 500, "signal_id": "S1",
+        })
+        tm.open_trades.append({
+            "trade_id": "AT2", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "entry_time": 500, "signal_id": "S1",
+        })
+        result = tm.close_trade("S1", 110, 2000.0)
+        assert len(tm.open_trades) == 0
+        assert result["result"] == 1.0
+
     def test_close_trade_not_in_memory_fetches_from_db(self):
         repo = FakeTradeRepository()
         tm = _make_manager(trade_repository=repo)
@@ -606,6 +622,22 @@ class TestNotifyStrategyCloseEventTypes:
 # ============================================================================
 
 class TestUpdateLocalTradeSLExpanded:
+
+    def test_updates_by_signal_id(self):
+        tm = _make_manager()
+        tm.open_trades.append({
+            "trade_id": "AT1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "entry_time": 500, "signal_id": "S1",
+        })
+        tm.open_trades.append({
+            "trade_id": "AT2", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "entry_time": 500, "signal_id": "S1",
+        })
+        tm.update_local_trade_sl("S1", 85.0)
+        assert tm.open_trades[0]["stop_loss"] == 85.0
+        assert tm.open_trades[1]["stop_loss"] == 85.0
 
     def test_logs_warning_for_unknown_trade(self):
         logger = FakeLogger()
