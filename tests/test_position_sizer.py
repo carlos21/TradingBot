@@ -1,6 +1,5 @@
 """Tests for src/services/position_sizing/position_sizer.py."""
 
-import pytest
 
 from src.services.position_sizing.position_sizer import (
     FixedRiskPositionSizer,

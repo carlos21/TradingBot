@@ -3,7 +3,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from src.services.mt_manager_service import MetaTraderManagerService
 

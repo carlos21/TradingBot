@@ -7,7 +7,11 @@ containing *only* the "how do I assemble the app?" logic.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
+
+if TYPE_CHECKING:
+    from app_factory import AppWiring
 
 from src.analytics import AnalyticsReporter, NoOpReporter, SentryReporter
 from src.config.models import AppConfig

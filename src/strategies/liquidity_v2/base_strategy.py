@@ -25,8 +25,8 @@ from src.strategies.entry_context import (
 )
 from src.domain.types import Direction
 from src.domain.events import DomainEvent, EventType
-from src.events.event_bus import EventSubscriber
-from src.strategies.base_strategy import DecisionEventCategory
+from src.services.trade_executor import NoOpExecutor
+from src.strategies.base_strategy import BreakevenConfig, DecisionEventCategory
 from src.utils.app_logger import ILogger
 
 class LineRemovalMode(str, Enum):
@@ -185,7 +185,8 @@ class BaseLiquidityStrategy:
     def log_decision(self, bar_time: int, tf: str, line_id: str, event: str,
                      details: str = "", *, direction: str = None,
                      trigger_name: str = None, filter_name: str = None,
-                     reason: str = None, extra: dict = None):
+                     reason: str = None, extra: dict = None,
+                     category: DecisionEventCategory = DecisionEventCategory.TRADE_ACTION):
         pass  # overridden by LiquidityStrategyV2 to write to self.decision_logs
 
     # ----- Public small API for runtime tweaks -----
@@ -394,7 +395,7 @@ class BaseLiquidityStrategy:
         """
         Feed raw stream bars (assumed 1s or tick granularity).
         We aggregate to the configured TF and then process strategy logic on each completed bar.
-        
+
         NOTE: Trade exits are handled by TradeManager (backtest) or broker fills (live).
         The strategy reacts to TRADE_CLOSED domain events instead of polling bars.
         """
@@ -600,7 +601,7 @@ class BaseLiquidityStrategy:
         """
         1) for each strategy line, run triggers → may propose an EntryContext
         2) if proposed, run filters; if allowed, open trade and maybe remove the line
-        
+
         NOTE: Trade exits are handled by TradeManager (backtest) or broker fills (live).
         The strategy reacts to TRADE_CLOSED domain events instead of polling bars.
         """
@@ -753,27 +754,26 @@ class BaseLiquidityStrategy:
             (self.options.reentry_after_sl or self.options.reentry_only)
             and payload.get("result_type") == "SL"
             and not is_reentry
-        ):
-            if level is not None:
-                direction = trade["type"]
-                # Guard against duplicate opportunities (duplicate events, retries, etc.)
-                already_watching = any(
-                    o["level"] == level and o["direction"] == direction
-                    for o in self._reentry_opportunities
+        ) and level is not None:
+            direction = trade["type"]
+            # Guard against duplicate opportunities (duplicate events, retries, etc.)
+            already_watching = any(
+                o["level"] == level and o["direction"] == direction
+                for o in self._reentry_opportunities
+            )
+            if not already_watching:
+                extreme = payload.get("extreme_excursion", payload.get("exit_price"))
+                self._reentry_opportunities.append({
+                    "level": level,
+                    "direction": direction,
+                    "pair": trade["pair"],
+                    "extreme_excursion": extreme,
+                    "sl_bar_time": payload.get("exit_time", 0),
+                })
+                self.logger.info(
+                    f"[ReEntry] SL hit on {direction} @ {trade['pair']}. "
+                    f"Watching level={level} for re-entry."
                 )
-                if not already_watching:
-                    extreme = payload.get("extreme_excursion", payload.get("exit_price"))
-                    self._reentry_opportunities.append({
-                        "level": level,
-                        "direction": direction,
-                        "pair": trade["pair"],
-                        "extreme_excursion": extreme,
-                        "sl_bar_time": payload.get("exit_time", 0),
-                    })
-                    self.logger.info(
-                        f"[ReEntry] SL hit on {direction} @ {trade['pair']}. "
-                        f"Watching level={level} for re-entry."
-                    )
 
     def _check_phantom_exits(self, bar: dict[str, Any]) -> None:
         """Check SL/TP for phantom trades only.

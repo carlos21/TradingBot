@@ -110,7 +110,6 @@ class TestMultiAccountExecutor:
         gateway_ex = FakeGatewayExecutor()
         gateway_ex._gateway = FakeGateway()
         # Monkey-patch the class method to record on the instance
-        orig_send_close = FakeGateway.send_close_order
         def capture_send_close(self, trade_id, reason, account=None):
             gateway_ex.closes.append((trade_id, account))
         FakeGateway.send_close_order = capture_send_close

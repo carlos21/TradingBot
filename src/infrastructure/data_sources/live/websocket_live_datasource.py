@@ -4,6 +4,7 @@ import threading
 import websocket
 
 from src.infrastructure.data_sources.live.live_datasource import LiveDataSource
+import contextlib
 
 
 class WebsocketLiveDataSource(LiveDataSource):
@@ -36,10 +37,8 @@ class WebsocketLiveDataSource(LiveDataSource):
                 pass  # Connection dropped or thread killed
             finally:
                 if ws is not None:
-                    try:
+                    with contextlib.suppress(Exception):
                         ws.close()
-                    except Exception:
-                        pass
 
         t = threading.Thread(target=_run, daemon=True)
         t.start()

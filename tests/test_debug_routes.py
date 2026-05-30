@@ -11,7 +11,6 @@ from tests.fakes import (
     FakeLogger,
     FakeNotifier,
     FakeTradeRepository,
-    DummySocketIO,
 )
 
 
@@ -142,7 +141,7 @@ class TestResetAll:
             assert setup_debug_routes["trades_repo"].inserted == []
 
     def test_reset_all_with_time_range(self, app, setup_debug_routes):
-        data_source = setup_debug_routes["data_source"]
+        setup_debug_routes["data_source"]
         with app.test_client() as client:
             resp = client.post(
                 "/__reset_all",

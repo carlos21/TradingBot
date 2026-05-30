@@ -34,7 +34,6 @@ class FakeZMQDataSource(ZMQDataSource):
 
 class FakeNonZMQDataSource:
     """A non-ZMQ data source to test error paths."""
-    pass
 
 
 class FakePlatformLifecycleService:

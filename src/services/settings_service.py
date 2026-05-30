@@ -2,15 +2,11 @@
 from __future__ import annotations
 
 import base64
-import os
 from typing import Protocol
 
 from cryptography.fernet import Fernet
 
-from src.config.models import DEFAULT_HISTORY_DAYS, AccountConfig, AppConfig
-from src.infrastructure.repositories.accounts_repository import NtAccountRepository
-from src.infrastructure.repositories.credentials_repository import CredentialRepository
-from src.infrastructure.repositories.settings_repository import SettingsRepository
+from src.config.models import DEFAULT_HISTORY_DAYS, AccountConfig
 
 
 class ISettingsRepository(Protocol):

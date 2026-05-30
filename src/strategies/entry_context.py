@@ -53,7 +53,7 @@ class EntryContext:
 EntryFilter = Callable[['EntryContext'], tuple[bool, str]]
 
 EntryTrigger = Callable[
-    ['BaseLiquidityStrategy', Any, dict[str, Any], dict[str, Any]],
+    ['_BaseLiquidityStrategy', Any, dict[str, Any], dict[str, Any]],
     Optional['EntryContext']
 ]
 

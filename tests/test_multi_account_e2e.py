@@ -11,15 +11,14 @@ from __future__ import annotations
 
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import MagicMock
 
 import pytest
 
 from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
 from src.services.trade_manager import TradeManager
-from src.domain.types import Direction
-from src.domain.events import DomainEvent, EventType
+from src.domain.events import EventType
 from src.events.event_bus import EventBus
 from src.infrastructure.event_publisher import DomainEventBusPublisher
 from src.strategies.base_strategy import BreakevenConfig
@@ -943,7 +942,6 @@ class TestMultiAccountReentryIntegration:
         executor.on_trade_open(signal_trade)
         aid = executor.signal_to_accounts["S1"][0]
 
-        balance_before = tm.account_balance
 
         # First SL fill
         tm.handle_broker_fill(aid, exit_price=90.0, result_type="SL")
@@ -976,7 +974,7 @@ class TestMultiAccountReentryIntegration:
         )
         gateway = FakeGateway()
         zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
-        executor = MultiAccountExecutor(
+        MultiAccountExecutor(
             trade_manager=tm,
             account_configs=[AccountConfig("Sim101")],
             gateway_executor=zmq_ex,
@@ -1185,7 +1183,7 @@ class TestMultiAccountReentryIntegration:
         )
         gateway = FakeGateway()
         zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
-        executor = MultiAccountExecutor(
+        MultiAccountExecutor(
             trade_manager=tm,
             account_configs=[AccountConfig("Sim101")],
             gateway_executor=zmq_ex,

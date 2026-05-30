@@ -6,7 +6,6 @@ os.environ.setdefault("TELEGRAM_CHAT_ID", "dummy")
 import pytest
 
 from src.infrastructure.database.database_protocol import Base, get_database
-from src.infrastructure.database.database import setup_database, db as global_db
 from src.services.trade_logger import TradeLogger
 from src.services.trade_manager import TradeManager
 from src.strategies.liquidity_v2.base_strategy import StrategyOptions

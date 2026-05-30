@@ -1,6 +1,5 @@
 """Tests for TsiAnalyzer."""
 
-import pytest
 
 from src.domain.types import Direction
 from src.strategies.tsi_cross.tsi_analyzer import TsiAnalyzer

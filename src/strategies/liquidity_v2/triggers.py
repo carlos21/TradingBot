@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from src.strategies.base_strategy import DecisionEventCategory
 from src.strategies.entry_context import EntryContext, EntryTrigger
 from src.domain.types import Direction
+from src.strategies.indicators.tsi import calculate_tsi_series as _calculate_tsi_series
 
 if TYPE_CHECKING:
     from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
@@ -594,7 +595,6 @@ def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val
         return EntryContext(strategy, line_id, Direction.SHORT, lvl, bar, bar['close'], bar['low'], bar['high'], true_extreme, cross_depth)
 
 # --- HELPER FUNCTIONS FOR TSI ---
-from src.strategies.indicators.tsi import calculate_ema as _calculate_ema, calculate_tsi_series as _calculate_tsi_series
 
 def wick_near_line_trigger(
     strategy: LiquidityStrategyV2,

@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime, timezone
 
 from flask import abort, jsonify
 
@@ -125,7 +124,7 @@ class TradesController:
 
         trade = next(t for t in self.trade_manager.open_trades
                      if t['trade_id'] == trade_id or t.get('signal_id') == trade_id)
-        pair = trade['pair']
+        trade['pair']
 
         exit_price = self._resolve_price()
         exit_time = self._get_virtual_now()

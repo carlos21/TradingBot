@@ -7,7 +7,6 @@ ZeroMQ sockets or long-running background threads.  zmq is mocked where needed.
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -19,19 +18,14 @@ zmq = pytest.importorskip("zmq")
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
 from src.infrastructure.gateway.protocol import (
     BarMessage,
-    CloseOrderCommand,
     CommandAckMessage,
-    ConfigResponseMessage,
     ConnectMessage,
     EntryFillMessage,
     ExitFillMessage,
     HeartbeatMessage,
     MessageEnvelope,
     MessageType,
-    OpenOrderCommand,
     PositionResponseMessage,
-    TestPongMessage,
-    TestResultMessage,
     TickMessage,
 )
 from tests.fakes import FakeLogger
@@ -268,22 +262,26 @@ class TestNextSeq:
 
 class TestCallbackRegistration:
     def test_on_tick(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_tick(cb)
         assert cb in gateway._callbacks[MessageType.TICK]
 
     def test_on_bar(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_bar(cb)
         assert cb in gateway._callbacks[MessageType.BAR]
 
     def test_on_partial_bar(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_partial_bar(cb)
         assert cb in gateway._callbacks[MessageType.PARTIAL_BAR]
 
     def test_on_history_batch(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_history_batch(cb)
         assert cb in gateway._callbacks[MessageType.HISTORY_BATCH]
 
@@ -296,67 +294,80 @@ class TestCallbackRegistration:
         assert called == [1]
 
     def test_on_entry_fill(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_entry_fill(cb)
         assert cb in gateway._callbacks[MessageType.ENTRY_FILL]
 
     def test_on_exit_fill(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_exit_fill(cb)
         assert cb in gateway._callbacks[MessageType.EXIT_FILL]
 
     def test_on_trade_log(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_trade_log(cb)
         assert cb in gateway._callbacks[MessageType.TRADE_LOG]
 
     def test_on_error(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_error(cb)
         assert cb in gateway._callbacks[MessageType.ERROR]
 
     def test_on_test_ping(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_test_ping(cb)
         assert cb in gateway._callbacks[MessageType.TEST_PING]
 
     def test_on_test_pong(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_test_pong(cb)
         assert cb in gateway._callbacks[MessageType.TEST_PONG]
 
     def test_on_position_sync(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_position_sync(cb)
         assert cb in gateway._callbacks[MessageType.POSITION_SYNC]
 
     def test_on_test_start(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_test_start(cb)
         assert cb in gateway._callbacks[MessageType.TEST_START]
 
     def test_on_test_result(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_test_result(cb)
         assert cb in gateway._callbacks[MessageType.TEST_RESULT]
 
     def test_on_connection_change(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on_connection_change(cb)
         assert cb in gateway._connection_listeners
 
     def test_on_position_query(self, gateway):
-        handler = lambda: []
+        def handler():
+            return []
         gateway.on_position_query(handler)
         assert gateway._position_query_handler is handler
 
     def test_on_unknown_message_type(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on(MessageType.DISCONNECT, cb)
         assert cb in gateway._callbacks[MessageType.DISCONNECT]
 
     def test_on_creates_list_for_truly_unknown_type(self, gateway):
-        cb = lambda _: None
+        def cb(_):
+            return None
         gateway.on(MessageType.ACCOUNT_QUERY, cb)
         assert cb in gateway._callbacks[MessageType.ACCOUNT_QUERY]
 

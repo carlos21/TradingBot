@@ -13,7 +13,6 @@ from src.strategies.liquidity_v2.base_strategy import (
 )
 from src.strategies.entry_context import EntryContext
 from src.domain.types import Direction
-from datetime import datetime
 
 from tests.conftest import make_bar
 from tests.fakes import (

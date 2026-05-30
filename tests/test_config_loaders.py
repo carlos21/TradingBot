@@ -12,7 +12,7 @@ def db_loader(tmp_path):
     db_path = f"sqlite:///{tmp_path / 'loader_test.db'}"
     setup_database(db_url=db_path)
     from src.infrastructure.database.database import get_db_session
-    session = get_db_session().__enter__()
+    get_db_session().__enter__()
 
     settings_repo = SettingsRepository()
     accounts_repo = NtAccountRepository()

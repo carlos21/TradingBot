@@ -10,8 +10,6 @@ Focus areas:
 """
 
 from datetime import datetime, timezone
-from unittest.mock import MagicMock
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -429,7 +427,6 @@ class TestEdgeCasesTradeManagement:
         strat = _make_base()
         strat.strategy_window = 300  # 5m = 300s for easier testing
         processed = []
-        original = strat._on_strategy_bar
         strat._on_strategy_bar = lambda bar: processed.append(bar)
 
         # First bar at t=0
@@ -773,13 +770,15 @@ class TestMiscMethods:
 
     def test_set_entry_filters(self):
         strat = _make_base()
-        f = lambda ctx: (True, "ok")
+        def f(ctx):
+            return (True, "ok")
         strat.set_entry_filters([f])
         assert strat.entry_filters == [f]
 
     def test_set_triggers(self):
         strat = _make_base()
-        t = lambda s, sid, line, bar: None
+        def t(s, sid, line, bar):
+            return None
         strat.set_triggers([t])
         assert strat.triggers == [t]
 

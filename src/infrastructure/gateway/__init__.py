@@ -52,6 +52,7 @@ __all__ = [
     "TradingGateway",
     "GatewayConfig",
     # Executor
+    "MultiAccountExecutor",
     "ZMQTradeExecutor",
     "create_zmq_executor",
     # DataSource

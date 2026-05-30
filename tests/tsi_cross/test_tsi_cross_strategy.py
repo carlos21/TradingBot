@@ -1,8 +1,6 @@
 """Tests for TsiCrossStrategy."""
 
-import pytest
 
-from src.domain.types import Direction
 from src.strategies.tsi_cross.config import TsiCrossConfig, TsiCrossNumbers
 from src.strategies.tsi_cross.strategy import TsiCrossStrategy
 from tests.fakes import FakeLogger, DummySocketIO

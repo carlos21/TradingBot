@@ -1,10 +1,8 @@
 """Tests for src/utils/app_logger.py."""
 
-import os
 import tempfile
 from pathlib import Path
 
-import pytest
 
 from src.utils.app_logger import ConsoleLogger, FileAndConsoleLogger, ILogger
 

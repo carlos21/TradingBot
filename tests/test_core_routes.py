@@ -5,7 +5,7 @@ from flask import Flask
 
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.routes.core_routes import register_core_routes
-from tests.fakes import FakeDataSource, FakeLogger
+from tests.fakes import FakeLogger
 
 
 class GoodDataSource(CombinedDataSource):
@@ -37,7 +37,7 @@ class TestCoreRoutes:
     def test_index_route_needs_template(self, app):
         # index route renders chart.html which requires templates folder
         # Skipping full integration, just verify route exists
-        with app.test_client() as client:
+        with app.test_client():
             # Will fail with TemplateNotFound in test env without templates
             pass
 

@@ -33,6 +33,7 @@ from .protocol import (
     OpenOrderCommand,
     RefreshRequestMessage,
 )
+import contextlib
 
 
 @dataclass
@@ -492,10 +493,8 @@ to be:
                             self.logger.warning(f"Platform heartbeat timeout ({elapsed:.1f}s) - expected every {self.config.heartbeat_interval_sec}s")
                             self._platform_connected = False
                             for cb in self._connection_listeners:
-                                try:
+                                with contextlib.suppress(Exception):
                                     cb(False)
-                                except Exception:
-                                    pass
                 else:
                     # No heartbeat received yet after connection
                     # This is normal during initial connection phase
@@ -583,10 +582,8 @@ to be:
                     self._platform_connected = True
                     self.logger.info("Platform connected (heartbeat received)")
                     for cb in self._connection_listeners:
-                        try:
+                        with contextlib.suppress(Exception):
                             cb(True)
-                        except Exception:
-                            pass
         except Exception as e:
             raw_bytes = json_msg.encode('utf-8', errors='replace') if isinstance(json_msg, str) else json_msg
             self.logger.debug(f"Error handling heartbeat: {e} | Hex: {raw_bytes[:200].hex() if isinstance(raw_bytes, bytes) else raw_bytes}")
@@ -602,10 +599,8 @@ to be:
         account = payload.get('account', 'N/A')
         self.logger.info(f"Platform connected: {platform} v{version} | Pair: {pair} | Account: {account}")
         for cb in self._connection_listeners:
-            try:
+            with contextlib.suppress(Exception):
                 cb(True)
-            except Exception:
-                pass
 
     def _handle_entry_fill(self, payload: dict[str, Any]) -> None:
         """Handle entry fill notification."""

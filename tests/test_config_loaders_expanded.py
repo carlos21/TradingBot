@@ -8,9 +8,7 @@ Covers all public classes and private helpers with edge-case focus:
 - Private helpers (_bool_env, _float_or_none, _int_or_none, _csv_to_floats)
 """
 
-import os
 import sys
-from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -24,7 +22,7 @@ from src.config.loaders import (
     _float_or_none,
     _int_or_none,
 )
-from src.config.models import AccountConfig, AppConfig
+from src.config.models import AppConfig
 from src.infrastructure.database.database import setup_database
 from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.infrastructure.repositories.settings_repository import SettingsRepository

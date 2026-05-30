@@ -2,7 +2,6 @@
 
 from datetime import datetime, timezone
 
-import pytest
 
 from src.services.analytics_service import AnalyticsService
 from tests.fakes import FakeTradeRepository

@@ -397,7 +397,7 @@ class TestNotifyStrategyClose:
         assert "TP_HIT" in events
 
 
-class TestStreamEndClose:
+class TestStreamEndCloseRemaining:
 
     def test_closes_remaining_trades(self):
         tm = _make_manager()

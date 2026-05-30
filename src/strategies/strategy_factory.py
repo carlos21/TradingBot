@@ -8,7 +8,7 @@ from typing import Any
 
 from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
 from src.strategies.tsi_cross.strategy import TsiCrossStrategy
-from src.strategies.tsi_cross.config import TsiCrossConfig, TsiCrossNumbers
+from src.strategies.tsi_cross.config import TsiCrossNumbers
 
 
 class StrategyFactory:

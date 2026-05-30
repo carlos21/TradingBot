@@ -6,7 +6,6 @@ heartbeat handling, error handling, callback registration, command
 sending, and query operations.
 """
 
-import json
 import threading
 import time
 from unittest.mock import MagicMock, patch
@@ -18,16 +17,11 @@ zmq = pytest.importorskip("zmq")
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
 from src.infrastructure.gateway.protocol import (
     CommandAckMessage,
-    ConfigResponseMessage,
     ConnectMessage,
     HeartbeatMessage,
     MessageEnvelope,
     MessageType,
-    PositionResponseMessage,
-    TestPongMessage,
-    TestResultMessage,
 )
-from src.utils.app_logger import ConsoleLogger
 
 
 class FakeLogger:
@@ -485,25 +479,29 @@ class TestCallbackRegistration:
 
     def test_on_tick(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_tick(cb)
         assert cb in gw._callbacks[MessageType.TICK]
 
     def test_on_bar(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_bar(cb)
         assert cb in gw._callbacks[MessageType.BAR]
 
     def test_on_partial_bar(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_partial_bar(cb)
         assert cb in gw._callbacks[MessageType.PARTIAL_BAR]
 
     def test_on_history_batch(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_history_batch(cb)
         assert cb in gw._callbacks[MessageType.HISTORY_BATCH]
 
@@ -518,73 +516,85 @@ class TestCallbackRegistration:
 
     def test_on_entry_fill(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_entry_fill(cb)
         assert cb in gw._callbacks[MessageType.ENTRY_FILL]
 
     def test_on_exit_fill(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_exit_fill(cb)
         assert cb in gw._callbacks[MessageType.EXIT_FILL]
 
     def test_on_trade_log(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_trade_log(cb)
         assert cb in gw._callbacks[MessageType.TRADE_LOG]
 
     def test_on_error(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_error(cb)
         assert cb in gw._callbacks[MessageType.ERROR]
 
     def test_on_test_ping(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_test_ping(cb)
         assert cb in gw._callbacks[MessageType.TEST_PING]
 
     def test_on_test_pong(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_test_pong(cb)
         assert cb in gw._callbacks[MessageType.TEST_PONG]
 
     def test_on_position_query(self):
         gw = TradingGateway(FakeLogger())
-        handler = lambda: []
+        def handler():
+            return []
         gw.on_position_query(handler)
         assert gw._position_query_handler is handler
 
     def test_on_position_sync(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_position_sync(cb)
         assert cb in gw._callbacks[MessageType.POSITION_SYNC]
 
     def test_on_connection_change(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_connection_change(cb)
         assert cb in gw._connection_listeners
 
     def test_on_test_start(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_test_start(cb)
         assert cb in gw._callbacks[MessageType.TEST_START]
 
     def test_on_test_result(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on_test_result(cb)
         assert cb in gw._callbacks[MessageType.TEST_RESULT]
 
     def test_on_unknown_message_type(self):
         gw = TradingGateway(FakeLogger())
-        cb = lambda x: None
+        def cb(x):
+            return None
         gw.on(MessageType.DISCONNECT, cb)
         assert cb in gw._callbacks[MessageType.DISCONNECT]
 
@@ -882,7 +892,7 @@ class TestHandleTestStartSingleAccount:
             "rr_ratio": 1.5,
         })
         # Find the trade sequence (skip group key if present)
-        seq_keys = [k for k in gw._test_sequences.keys() if not k.startswith("__")]
+        seq_keys = [k for k in gw._test_sequences if not k.startswith("__")]
         assert len(seq_keys) == 1
         seq = gw._test_sequences[seq_keys[0]]
         assert seq["scenario"] == "sl_hit"

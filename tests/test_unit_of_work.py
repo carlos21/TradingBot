@@ -92,9 +92,8 @@ class TestUnitOfWorkLineRepository:
 
     def test_update_missing(self, uow_fixture):
         UoW = uow_fixture
-        with UoW() as uow:
-            with pytest.raises(DBNotFoundException):
-                uow.lines.update_line("NONEXISTENT", 5100.0)
+        with UoW() as uow, pytest.raises(DBNotFoundException):
+            uow.lines.update_line("NONEXISTENT", 5100.0)
 
     def test_delete(self, uow_fixture):
         UoW = uow_fixture

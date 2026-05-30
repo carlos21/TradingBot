@@ -7,7 +7,6 @@ from src.domain.models import LineData, TradeData
 from src.domain.repositories import (
     AccountRepository,
     CredentialRepository as ICredentialRepository,
-    SettingsRepository as ISettingsRepository,
 )
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.notifier import Notifier

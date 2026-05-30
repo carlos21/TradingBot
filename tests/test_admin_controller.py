@@ -5,7 +5,6 @@ from flask import Flask
 
 from src.controllers.admin_controller import AdminController
 from tests.fakes import (
-    FakeAnalyticsReporter,
     FakeLineRepository,
     FakeLogger,
     FakeTradeRepository,

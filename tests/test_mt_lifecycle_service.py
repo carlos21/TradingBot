@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from src.services.mt_manager_service import MetaTraderManagerService
 from src.services.platform_lifecycle.mt_lifecycle_service import MetaTraderLifecycleService

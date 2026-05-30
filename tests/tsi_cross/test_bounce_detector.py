@@ -1,6 +1,5 @@
 """Tests for SwingBounceDetector."""
 
-import pytest
 
 from src.strategies.tsi_cross.bounce_detector import SwingBounceDetector
 

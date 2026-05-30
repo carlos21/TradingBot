@@ -1,5 +1,4 @@
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 from src.strategies.base_strategy import BreakevenConfig
 from src.strategies.entry_context import EntryFilter

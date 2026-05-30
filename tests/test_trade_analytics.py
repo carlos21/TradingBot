@@ -1,6 +1,5 @@
 """Tests for src/trade_analytics.py."""
 
-import pytest
 
 from src.trade_analytics import (
     DistributionData,

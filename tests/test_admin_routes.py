@@ -47,7 +47,7 @@ class TestAdminRoutes:
     def test_admin_overview_needs_template(self, app):
         # admin_page renders admin.html which requires templates folder
         # Route exists but needs template rendering in test env
-        with app.test_client() as client:
+        with app.test_client():
             # Skip - template not available in test env
             pass
 

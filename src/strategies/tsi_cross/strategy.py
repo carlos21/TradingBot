@@ -17,9 +17,8 @@ from typing import Any
 
 from src.application.ports import EventPublisher
 from src.domain.types import Direction
-from src.financial_calc import FinancialCalc
 from src.services.trade_manager import TradeManager
-from src.strategies.base_strategy import BaseStrategy, BreakevenConfig, DecisionEventCategory
+from src.strategies.base_strategy import BaseStrategy, DecisionEventCategory
 from src.strategies.entry_context import EntryContext
 from src.strategies.tsi_cross.bounce_detector import BounceDetector, SwingBounceDetector
 from src.strategies.tsi_cross.config import TsiCrossConfig, TsiCrossNumbers

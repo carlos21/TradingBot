@@ -1,7 +1,6 @@
 """NinjaTrader-specific streaming lifecycle service."""
 from __future__ import annotations
 
-import threading
 import time
 
 from src.services.nt_manager_service import NtManagerService

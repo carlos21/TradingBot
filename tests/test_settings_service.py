@@ -1,8 +1,6 @@
 """Tests for src/services/settings_service.py."""
 
-import pytest
 
-from src.config.models import AccountConfig
 from src.services.settings_service import SettingsService
 from tests.fakes import (
     FakeCredentialRepository,

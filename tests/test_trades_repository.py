@@ -5,7 +5,6 @@ from datetime import datetime, timezone
 import pytest
 
 from src.infrastructure.database.database import setup_database
-from src.dbexception import DBNotFoundException
 from src.infrastructure.repositories.trades_repository import SQLTradeRepository
 
 
@@ -17,15 +16,15 @@ def repo(tmp_path):
 
 
 def _make_trade(repo, **kwargs):
-    defaults = dict(
-        pair="MNQ",
-        trade_type="long",
-        entry_price=5000.0,
-        stop_loss=4900.0,
-        take_profit=5200.0,
-        risk=100.0,
-        entry_time=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
-    )
+    defaults = {
+        "pair": "MNQ",
+        "trade_type": "long",
+        "entry_price": 5000.0,
+        "stop_loss": 4900.0,
+        "take_profit": 5200.0,
+        "risk": 100.0,
+        "entry_time": datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
+    }
     defaults.update(kwargs)
     return repo.insert_trade(**defaults)
 

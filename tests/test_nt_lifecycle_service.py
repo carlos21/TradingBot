@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from src.services.nt_manager_service import NtManagerService
 from src.services.platform_lifecycle.nt_lifecycle_service import NinjaTraderLifecycleService

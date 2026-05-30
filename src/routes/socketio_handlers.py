@@ -1,7 +1,6 @@
 """Socket.IO event handlers."""
 
 import threading
-import time
 
 from flask_socketio import SocketIO, emit
 
@@ -9,6 +8,7 @@ from src.bars_loader import BarsLoader
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.utils.app_logger import ILogger
+import contextlib
 
 
 def register_socketio_handlers(
@@ -31,10 +31,8 @@ def register_socketio_handlers(
     def _emit_health():
         """Emit current health snapshot if ZMQDataSource is available."""
         if isinstance(data_source, ZMQDataSource):
-            try:
+            with contextlib.suppress(Exception):
                 socketio.emit('health_update', data_source.get_health())
-            except Exception:
-                pass
 
     @socketio.on('connect')
     def on_connect(_auth):

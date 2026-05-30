@@ -7,7 +7,6 @@ reuse it without inheriting line-specific state and methods.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import RLock
@@ -18,12 +17,11 @@ from src.application.ports import EventPublisher
 from src.application.services.strategy_trade_service import StrategyTradeService
 from src.financial_calc import FinancialCalc
 from src.domain.repositories import TradeRepository
-from src.services.trade_executor import NoOpExecutor, TradeExecutor
+from src.services.trade_executor import NoOpExecutor
 from src.services.trade_manager import TradeManager
 from src.strategies.entry_context import EntryContext, EntryFilter
 from src.domain.types import Direction
 from src.domain.events import DomainEvent, EventType
-from src.events.event_bus import EventSubscriber
 from src.utils.app_logger import ILogger
 
 from enum import Enum, auto
@@ -187,7 +185,7 @@ class BaseStrategy:
 
     def add_strategy_line(self, id: Any, level: float, creation_timestamp: float = 0.0):
         if self.logger:
-            self.logger.warning(f"[BaseStrategy] add_strategy_line called but this strategy does not support lines.")
+            self.logger.warning("[BaseStrategy] add_strategy_line called but this strategy does not support lines.")
 
     def remove_strategy_line(self, id: Any):
         pass

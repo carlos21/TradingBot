@@ -1,8 +1,7 @@
 """Tests for src/notifier.py."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 
 from src.notifier import NoOpNotifier, Notifier, TelegramNotifier
 

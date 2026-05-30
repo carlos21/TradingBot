@@ -1,6 +1,6 @@
 """Admin dashboard HTTP routes."""
 
-from flask import Flask, abort, redirect, render_template, request, url_for
+from flask import Flask, abort, redirect, render_template, request
 
 from src.controllers.admin_controller import AdminController
 from src.utils.app_logger import ILogger

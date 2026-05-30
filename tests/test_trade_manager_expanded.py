@@ -296,7 +296,7 @@ class TestLoadOpenTradesErrorHandling:
         notifier = FakeNotifier()
         repo = ExplodingTradeRepository(explode_on={"list_trades"})
         analytics = FakeAnalyticsReporter()
-        tm = _make_manager(trade_repository=repo, notifier=notifier, analytics=analytics)
+        _make_manager(trade_repository=repo, notifier=notifier, analytics=analytics)
         assert len(analytics.exceptions) == 1
         assert "DB read failure" in str(analytics.exceptions[0][0])
 

@@ -4,11 +4,11 @@ from unittest.mock import MagicMock
 
 from src.strategies.liquidity_v2.config import CandleConfig
 from src.domain.types import Direction
+from src.strategies.indicators.tsi import calculate_ema as _calculate_ema
 from src.strategies.liquidity_v2.triggers import (
     TsiCrossCondition,
     VelocityTriggerConfig,
     _build_tsi_context,
-    _calculate_ema,
     _calculate_tsi_series,
     _calculate_velocity_score,
     _calculate_volatility_score,
@@ -1005,7 +1005,7 @@ class TestDouble5mCrossTriggerAdditional:
         bar = _bar(time=1, open_=99, high=101, low=97, close=98, tf="5m")
         try:
             double_5m_cross_trigger(s, "L1", line, bar)
-            assert False, "Expected AttributeError"
+            raise AssertionError("Expected AttributeError")
         except AttributeError:
             pass
 

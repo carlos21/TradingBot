@@ -9,7 +9,6 @@ TradeManager.handle_broker_fill.
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
 
 from src.application.ports import EventPublisher
 from src.domain.types import Direction
@@ -21,7 +20,6 @@ from src.utils.app_logger import ILogger
 
 class ExecutorCloseError(Exception):
     """Raised when the trade executor fails to close a trade."""
-    pass
 
 
 @dataclass(frozen=True)

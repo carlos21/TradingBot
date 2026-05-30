@@ -20,7 +20,7 @@ Usage:
 """
 
 
-from src.notifier import Notifier, NoOpNotifier
+from src.notifier import Notifier
 from src.utils.app_logger import ILogger
 
 from src.config.models import DEFAULT_HISTORY_DAYS
@@ -139,7 +139,6 @@ def create_multi_account_live_components(
     Returns:
         Tuple of (data_source, multi_account_executor)
     """
-    from src.config.models import AccountConfig
 
     account_names = [a.name for a in account_configs]
     data_source, gateway_executor = create_live_components(

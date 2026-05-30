@@ -1,8 +1,7 @@
 """Tests for src/analytics.py."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import pytest
 
 from src.analytics import (
     AnalyticsReporter,
@@ -35,7 +34,7 @@ class TestSentryReporter:
 
     @patch("sentry_sdk.init")
     def test_init(self, mock_init):
-        reporter = SentryReporter("https://test@sentry.io/1")
+        SentryReporter("https://test@sentry.io/1")
         mock_init.assert_called_once()
         call_kwargs = mock_init.call_args.kwargs
         assert call_kwargs["dsn"] == "https://test@sentry.io/1"

@@ -10,7 +10,6 @@ from __future__ import annotations
 from threading import RLock
 from typing import Any, Protocol
 
-from src.domain.events import DomainEvent
 from src.events.event_bus import EventSubscriber
 
 
