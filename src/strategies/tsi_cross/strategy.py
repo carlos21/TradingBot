@@ -19,7 +19,7 @@ from src.application.ports import EventPublisher
 from src.domain.types import Direction
 from src.financial_calc import FinancialCalc
 from src.services.trade_manager import TradeManager
-from src.strategies.base_strategy import BaseStrategy, BreakevenConfig
+from src.strategies.base_strategy import BaseStrategy, BreakevenConfig, DecisionEventCategory
 from src.strategies.entry_context import EntryContext
 from src.strategies.tsi_cross.bounce_detector import BounceDetector, SwingBounceDetector
 from src.strategies.tsi_cross.config import TsiCrossConfig, TsiCrossNumbers
@@ -201,6 +201,7 @@ class TsiCrossStrategy(BaseStrategy):
                 bar["time"], bar.get("tf"), None, "FILTER_BLOCK",
                 f"{reason} | bounce={bounce_price:.2f}",
                 direction=str(direction),
+                category=DecisionEventCategory.TRADE_ACTION,
             )
             return
 
@@ -214,5 +215,6 @@ class TsiCrossStrategy(BaseStrategy):
             bar["time"], bar.get("tf"), None, "ENTRY",
             f"{direction} @ {entry_price:.2f} | SL={sl_str} | TP={tp_str}",
             direction=str(direction),
+            category=DecisionEventCategory.TRADE_ACTION,
         )
         self._store_and_emit_open(trade)

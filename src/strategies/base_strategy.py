@@ -26,6 +26,18 @@ from src.domain.events import DomainEvent, EventType
 from src.events.event_bus import EventSubscriber
 from src.utils.app_logger import ILogger
 
+from enum import Enum, auto
+
+
+class DecisionEventCategory(Enum):
+    """Classifies decision events so strategies can apply logging policies."""
+
+    ROUTINE_POLL = auto()      # Routine polling checks — typically dropped
+    STATE_CHANGE = auto()      # Line state transitions (latch, remove, regime lock)
+    TRIGGER_MILESTONE = auto() # Trigger reached a significant milestone (cross, rescue)
+    EVAL_FAILURE = auto()      # Real evaluation that failed (3C fail, wick fail, etc.)
+    TRADE_ACTION = auto()      # Entry, filter block, breakeven, close
+
 
 @dataclass
 class BreakevenConfig:
@@ -165,7 +177,8 @@ class BaseStrategy:
     def log_decision(self, bar_time: int, tf: str | None, line_id: str | None, event: str,
                      details: str = "", *, direction: str | None = None,
                      trigger_name: str | None = None, filter_name: str | None = None,
-                     reason: str | None = None, extra: dict | None = None):
+                     reason: str | None = None, extra: dict | None = None,
+                     category: DecisionEventCategory = DecisionEventCategory.TRADE_ACTION):
         pass
 
     # ------------------------------------------------------------------

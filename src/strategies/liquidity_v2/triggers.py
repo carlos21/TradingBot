@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from src.strategies.base_strategy import DecisionEventCategory
 from src.strategies.entry_context import EntryContext, EntryTrigger
 from src.domain.types import Direction
 
@@ -147,12 +148,12 @@ def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_
             if t_curr < s_curr:
                 line["tsi_reset_occurred"] = True
                 strategy.log_decision(bar['time'], tf, line_id, "TSI_RESET",
-                    "TSI Reset detected (Blue < Orange). Ready for Rescue Cross.")
+                    "TSI Reset detected (Blue < Orange). Ready for Rescue Cross.", category=DecisionEventCategory.TRIGGER_MILESTONE)
         elif dir_ == Direction.SHORT and t_curr > s_curr:
             # Reset condition: Blue is ABOVE Orange (Bullish state)
                 line["tsi_reset_occurred"] = True
                 strategy.log_decision(bar['time'], tf, line_id, "TSI_RESET",
-                    "TSI Reset detected (Blue > Orange). Ready for Rescue Cross.")
+                    "TSI Reset detected (Blue > Orange). Ready for Rescue Cross.", category=DecisionEventCategory.TRIGGER_MILESTONE)
 
     # 2. CHECK FOR TRIGGER (Only if Reset has occurred)
     if line.get("tsi_reset_occurred", False):
@@ -167,7 +168,7 @@ def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_
 
         if rescue:
             strategy.log_decision(bar['time'], tf, line_id, f"TSI_{rescue_tf}_RESCUE",
-                f"{rescue_tf} TSI Rescue Cross detected. Triggering Entry.")
+                f"{rescue_tf} TSI Rescue Cross detected. Triggering Entry.", category=DecisionEventCategory.TRIGGER_MILESTONE)
 
             # Reset internal state
             line["tsi_stage"] = 0
@@ -268,7 +269,7 @@ def tsi_cross_trigger(
                 line["tsi_reset_occurred"] = False
 
                 strategy.log_decision(bar['time'], tf, line_id, "TSI_FAST",
-                    f"Fast Move ({velocity_score:.2f}). Protection Mode ON. Wait for Sweep of {line['tsi_ref_price']}.")
+                    f"Fast Move ({velocity_score:.2f}). Protection Mode ON. Wait for Sweep of {line['tsi_ref_price']}.", category=DecisionEventCategory.TRIGGER_MILESTONE)
                 return None
             else:
                 return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
@@ -283,7 +284,7 @@ def tsi_cross_trigger(
 
         if invalidated:
             strategy.log_decision(bar['time'], tf, line_id, "TSI_INVALID",
-                f"Price moved > {PROTECTION_INVALIDATION_DIST}pts against trade. Line Invalidated.")
+                f"Price moved > {PROTECTION_INVALIDATION_DIST}pts against trade. Line Invalidated.", category=DecisionEventCategory.EVAL_FAILURE)
             line["tsi_stage"] = -1
             return None
 
@@ -301,7 +302,7 @@ def tsi_cross_trigger(
             line["tsi_stage"] = 2
             line["tsi_reset_occurred"] = False # Ensure reset logic starts fresh
             strategy.log_decision(bar['time'], tf, line_id, "TSI_SWEEP",
-                f"Swept previous extreme {ref}. Now waiting for {RESCUE_TSI_TIMEFRAME} TSI Rescue.")
+                f"Swept previous extreme {ref}. Now waiting for {RESCUE_TSI_TIMEFRAME} TSI Rescue.", category=DecisionEventCategory.TRIGGER_MILESTONE)
 
     # STAGE 2: Post-Sweep (Wait for TSI Rescue)
     elif line["tsi_stage"] == 2:
@@ -316,7 +317,7 @@ def tsi_cross_trigger(
 
         if invalidated:
             strategy.log_decision(bar['time'], tf, line_id, "TSI_INVALID",
-                f"Price moved > {PROTECTION_INVALIDATION_DIST}pts against trade. Line Invalidated.")
+                f"Price moved > {PROTECTION_INVALIDATION_DIST}pts against trade. Line Invalidated.", category=DecisionEventCategory.EVAL_FAILURE)
             line["tsi_stage"] = -1
             return None
 
@@ -349,7 +350,7 @@ def _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf):
     # No cross – record values so we can see how far TSI is from crossing
     gap = curr_tsi - curr_sig
     strategy.log_decision(bar['time'], tf, line_id, "TSI_CHECK",
-        f"TSI {prev_tsi:+.2f}→{curr_tsi:+.2f} | Sig {prev_sig:+.2f}→{curr_sig:+.2f} | gap={gap:+.2f} (no cross)")
+        f"TSI {prev_tsi:+.2f}→{curr_tsi:+.2f} | Sig {prev_sig:+.2f}→{curr_sig:+.2f} | gap={gap:+.2f} (no cross)", category=DecisionEventCategory.ROUTINE_POLL)
     return None
 
 
@@ -387,7 +388,7 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
             line[stage_key] = 1
             line[reset_key] = False
             strategy.log_decision(bar['time'], tf, line_id, "VAT_CROSS_1",
-                f"1st {tf} TSI cross ({dir_}). Waiting for reset then 2nd cross.")
+                f"1st {tf} TSI cross ({dir_}). Waiting for reset then 2nd cross.", category=DecisionEventCategory.TRIGGER_MILESTONE)
         return None
 
     elif stage == 1:
@@ -400,7 +401,7 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
             if too_far:
                 dist = abs(bar['close'] - lvl)
                 strategy.log_decision(bar['time'], tf, line_id, "VAT_CROSS1_TOO_FAR",
-                    f"Price {bar['close']} moved {dist:.1f}pts from line {lvl} after 1st cross (max={max_dist}). Invalidated.")
+                    f"Price {bar['close']} moved {dist:.1f}pts from line {lvl} after 1st cross (max={max_dist}). Invalidated.", category=DecisionEventCategory.EVAL_FAILURE)
                 line[stage_key] = 0
                 line[reset_key] = False
                 strategy.remove_strategy_line(line_id)
@@ -415,7 +416,7 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
             if reset:
                 line[reset_key] = True
                 strategy.log_decision(bar['time'], tf, line_id, "VAT_RESET",
-                    f"{tf} TSI reset. Ready for 2nd cross.")
+                    f"{tf} TSI reset. Ready for 2nd cross.", category=DecisionEventCategory.TRIGGER_MILESTONE)
 
         # Step B: once reset, look for 2nd cross
         if line.get(reset_key, False):
@@ -427,7 +428,7 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
                 line[stage_key] = 0
                 line[reset_key] = False
                 strategy.log_decision(bar['time'], tf, line_id, "VAT_CROSS_2",
-                    f"2nd {tf} TSI cross ({dir_}). Triggering entry.")
+                    f"2nd {tf} TSI cross ({dir_}). Triggering entry.", category=DecisionEventCategory.TRIGGER_MILESTONE)
                 return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
 
     return None
@@ -494,17 +495,17 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
         if interaction_ts is not None and interaction_ts > bar['time']:
             strategy.log_decision(bar['time'], tf, line_id, "TRIGGER_SKIP",
                 f"interaction_ts {interaction_ts} > bar_time {bar['time']}",
-                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_))
+                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_), category=DecisionEventCategory.ROUTINE_POLL)
             return None
         if dir_ == Direction.LONG and line['extreme'] > lvl:
             strategy.log_decision(bar['time'], tf, line_id, "TRIGGER_SKIP",
                 f"extreme {line['extreme']:.2f} > lvl {lvl:.2f} (long: price never touched line)",
-                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_))
+                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_), category=DecisionEventCategory.ROUTINE_POLL)
             return None
         if dir_ == Direction.SHORT and line['extreme'] < lvl:
             strategy.log_decision(bar['time'], tf, line_id, "TRIGGER_SKIP",
                 f"extreme {line['extreme']:.2f} < lvl {lvl:.2f} (short: price never touched line)",
-                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_))
+                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_), category=DecisionEventCategory.ROUTINE_POLL)
             return None
 
         # Lock regime on first touch; reuse on all subsequent bars
@@ -528,7 +529,7 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
             regime_conditions = config.fast if is_fast else (config.moderate if is_moderate else config.slow)
             conds_str = " OR ".join(f"{c.timeframe}×{c.count}" for c in regime_conditions)
             strategy.log_decision(bar['time'], tf, line_id, "VAT_REGIME",
-                f"vel={abs_vel:.2f} pts/min → {regime_label} | need [{conds_str}] (locked at touch)")
+                f"vel={abs_vel:.2f} pts/min → {regime_label} | need [{conds_str}] (locked at touch)", category=DecisionEventCategory.STATE_CHANGE)
         else:
             regime_label = line['vat_regime']
             is_fast      = regime_label == "FAST"
@@ -556,7 +557,7 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
             conds_str = " OR ".join(f"{c.timeframe}×{c.count}" for c in regime_conditions)
             strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TRIGGER_SKIP",
                 f"VAT {regime_label}: no TSI cross for [{conds_str}]",
-                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_))
+                trigger_name="velocity_adaptive_tsi_trigger", direction=str(dir_), category=DecisionEventCategory.ROUTINE_POLL)
         return None
 
     trigger.__name__ = "velocity_adaptive_tsi_trigger"
@@ -574,22 +575,22 @@ def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val
     if max_dist is not None and max_dist > 0:
         if dir_ == Direction.LONG and entry_price > lvl + max_dist:
             strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_DIST",
-                f"Entry {entry_price:.2f} is {entry_price - lvl:.1f}pts above line (max allowed={max_dist}). Skipping.")
+                f"Entry {entry_price:.2f} is {entry_price - lvl:.1f}pts above line (max allowed={max_dist}). Skipping.", category=DecisionEventCategory.EVAL_FAILURE)
             return None
         if dir_ == Direction.SHORT and entry_price < lvl - max_dist:
             strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_DIST",
-                f"Entry {entry_price:.2f} is {lvl - entry_price:.1f}pts below line (max allowed={max_dist}). Skipping.")
+                f"Entry {entry_price:.2f} is {lvl - entry_price:.1f}pts below line (max allowed={max_dist}). Skipping.", category=DecisionEventCategory.EVAL_FAILURE)
             return None
 
     if dir_ == Direction.LONG:
         true_extreme = min(line['extreme'], bar['low'])
         cross_depth = max(0.0, lvl - true_extreme)
-        strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_CROSS", f"Long Trigger: TSI({tsi_val:.2f}) > Sig({sig_val:.2f})")
+        strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_CROSS", f"Long Trigger: TSI({tsi_val:.2f}) > Sig({sig_val:.2f})", category=DecisionEventCategory.TRIGGER_MILESTONE)
         return EntryContext(strategy, line_id, Direction.LONG, lvl, bar, bar['close'], bar['low'], bar['high'], true_extreme, cross_depth)
     else:
         true_extreme = max(line['extreme'], bar['high'])
         cross_depth = max(0.0, true_extreme - lvl)
-        strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_CROSS", f"Short Trigger: TSI({tsi_val:.2f}) < Sig({sig_val:.2f})")
+        strategy.log_decision(bar['time'], bar.get('tf'), line_id, "TSI_CROSS", f"Short Trigger: TSI({tsi_val:.2f}) < Sig({sig_val:.2f})", category=DecisionEventCategory.TRIGGER_MILESTONE)
         return EntryContext(strategy, line_id, Direction.SHORT, lvl, bar, bar['close'], bar['low'], bar['high'], true_extreme, cross_depth)
 
 # --- HELPER FUNCTIONS FOR TSI ---
@@ -626,8 +627,8 @@ def wick_near_line_trigger(
     if body_ratio > cfg.small_body_max_ratio:
         strategy.log_decision(
             bar['time'], bar.get('tf'), line_id, "WICK_FAIL",
-            f"Body too big: {body_ratio:.2f} > Max {cfg.small_body_max_ratio}"
-        )
+            f"Body too big: {body_ratio:.2f} > Max {cfg.small_body_max_ratio}",
+            category=DecisionEventCategory.EVAL_FAILURE)
         return None
 
     upper_wick = h - max(o, c)
@@ -640,8 +641,8 @@ def wick_near_line_trigger(
         if lower_ratio < cfg.wick_min_ratio:
             strategy.log_decision(
                 bar['time'], bar.get('tf'), line_id, "WICK_FAIL",
-                f"Long wick too small: {lower_ratio:.2f} < Min {cfg.wick_min_ratio}"
-            )
+                f"Long wick too small: {lower_ratio:.2f} < Min {cfg.wick_min_ratio}",
+                category=DecisionEventCategory.EVAL_FAILURE)
             return None
         true_extreme = min(line['extreme'], low)
         cross_depth = max(0.0, lvl - true_extreme)
@@ -649,8 +650,8 @@ def wick_near_line_trigger(
         if upper_ratio < cfg.wick_min_ratio:
             strategy.log_decision(
                 bar['time'], bar.get('tf'), line_id, "WICK_FAIL",
-                f"Short wick too small: {upper_ratio:.2f} < Min {cfg.wick_min_ratio}"
-            )
+                f"Short wick too small: {upper_ratio:.2f} < Min {cfg.wick_min_ratio}",
+                category=DecisionEventCategory.EVAL_FAILURE)
             return None
         true_extreme = max(line['extreme'], h)
         cross_depth = max(0.0, true_extreme - lvl)
@@ -709,14 +710,14 @@ def three_candle_reversal_trigger(
     if dir_ == Direction.SHORT:
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
         if b2_ratio > cfg.hammer_body_max_ratio:
-            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Body {b2_ratio:.2f} > Max {cfg.hammer_body_max_ratio}")
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Body {b2_ratio:.2f} > Max {cfg.hammer_body_max_ratio}", category=DecisionEventCategory.EVAL_FAILURE)
             return None
         if b2_upper > cfg.hammer_nose_max_ratio:
-            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Nose {b2_upper:.2f} > Max {cfg.hammer_nose_max_ratio}")
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Nose {b2_upper:.2f} > Max {cfg.hammer_nose_max_ratio}", category=DecisionEventCategory.EVAL_FAILURE)
             return None
 
         if c3['close'] >= c3['open']:
-            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C3 is not Bearish (Red)")
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C3 is not Bearish (Red)", category=DecisionEventCategory.EVAL_FAILURE)
             return None
 
         pattern_high = max(c1['high'], c2['high'], c3['high'])
@@ -739,14 +740,14 @@ def three_candle_reversal_trigger(
     elif dir_ == Direction.LONG:
         b2_ratio, b2_upper, b2_lower = get_ratios(c2)
         if b2_ratio > cfg.hammer_body_max_ratio:
-            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Body {b2_ratio:.2f} > Max {cfg.hammer_body_max_ratio}")
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Body {b2_ratio:.2f} > Max {cfg.hammer_body_max_ratio}", category=DecisionEventCategory.EVAL_FAILURE)
             return None
         if b2_lower > cfg.hammer_nose_max_ratio:
-            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Nose {b2_lower:.2f} > Max {cfg.hammer_nose_max_ratio}")
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", f"C2 Nose {b2_lower:.2f} > Max {cfg.hammer_nose_max_ratio}", category=DecisionEventCategory.EVAL_FAILURE)
             return None
 
         if c3['close'] <= c3['open']:
-            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C3 is not Bullish (Green)")
+            strategy.log_decision(bar['time'], tf, line_id, "3C_FAIL", "C3 is not Bullish (Green)", category=DecisionEventCategory.EVAL_FAILURE)
             return None
 
         pattern_low = min(c1['low'], c2['low'], c3['low'])
@@ -812,20 +813,20 @@ def double_5m_cross_trigger(
         # 1. Initial Dip
         if stage == 0 and low < lvl:
             line["d5_stage"] = 1
-            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_1", f"1. Initial Dip < {lvl}")
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_1", f"1. Initial Dip < {lvl}", category=DecisionEventCategory.STATE_CHANGE)
             stage = 1 # Allow fallthrough
 
         # 2. First Close Above
         if stage == 1 and close > lvl:
             line["d5_stage"] = 2
-            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_2", f"2. 1st Close > {lvl}")
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_2", f"2. 1st Close > {lvl}", category=DecisionEventCategory.STATE_CHANGE)
             # STOP HERE. Wait for new dip in subsequent bars.
             return None
 
         # 3. Second Dip
         if stage == 2 and low < lvl:
             line["d5_stage"] = 3
-            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_3", f"3. 2nd Dip < {lvl}")
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_3", f"3. 2nd Dip < {lvl}", category=DecisionEventCategory.STATE_CHANGE)
             stage = 3 # Allow fallthrough
 
         # 4. Second Close Above (Trigger)
@@ -855,20 +856,20 @@ def double_5m_cross_trigger(
         # 1. Initial Pop
         if stage == 0 and high > lvl:
             line["d5_stage"] = 1
-            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_1", f"1. Initial Pop > {lvl}")
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_1", f"1. Initial Pop > {lvl}", category=DecisionEventCategory.STATE_CHANGE)
             stage = 1
 
         # 2. First Close Below
         if stage == 1 and close < lvl:
             line["d5_stage"] = 2
-            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_2", f"2. 1st Close < {lvl}")
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_2", f"2. 1st Close < {lvl}", category=DecisionEventCategory.STATE_CHANGE)
             # STOP HERE.
             return None
 
         # 3. Second Pop
         if stage == 2 and high > lvl:
             line["d5_stage"] = 3
-            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_3", f"3. 2nd Pop > {lvl}")
+            strategy.log_decision(bar['time'], tf, line_id, "D5_STAGE_3", f"3. 2nd Pop > {lvl}", category=DecisionEventCategory.STATE_CHANGE)
             stage = 3
 
         # 4. Second Close Below (Trigger)

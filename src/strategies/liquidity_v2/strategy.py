@@ -15,6 +15,7 @@ from src.strategies.liquidity_v2.base_strategy import (
 from src.strategies.entry_context import EntryContext
 from src.strategies.liquidity_v2.config import CandleConfig
 from src.strategies.liquidity_v2.triggers import RESCUE_TSI_TIMEFRAME, _calculate_tsi_series
+from src.strategies.base_strategy import DecisionEventCategory
 from src.utils.app_logger import ILogger
 
 
@@ -160,7 +161,11 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
     def log_decision(self, bar_time: int, tf: str, line_id: str, event: str,
                      details: str = "", *, direction: str = None,
                      trigger_name: str = None, filter_name: str = None,
-                     reason: str = None, _extra: dict = None):
+                     reason: str = None, _extra: dict = None,
+                     category: DecisionEventCategory = DecisionEventCategory.TRADE_ACTION):
+        if category == DecisionEventCategory.ROUTINE_POLL:
+            return
+
         entry = {
             "time": bar_time,
             "tf": tf,
@@ -171,6 +176,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             "trigger_name": trigger_name,
             "filter_name": filter_name,
             "reason": reason,
+            "category": category.name,
         }
         self.decision_logs.append(entry)
 
@@ -252,7 +258,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             depth = pending_ext - lvl if pending_ext > lvl else 0.0
                             self.log_decision(bar_time, "1m", sid, "LATCH",
                                 f"Latched short @ {current_price} (depth={depth:.2f})",
-                                direction="short", reason=f"depth={depth:.2f}")
+                                direction="short", reason=f"depth={depth:.2f}",
+                                category=DecisionEventCategory.STATE_CHANGE)
                             self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "short", "level": lvl, "depth": depth})
                             if self.is_warmup:
                                 self.warmup_crossed_lines.add(sid)
@@ -261,7 +268,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                 depth = pending_ext - lvl if pending_ext > lvl else 0.0
                                 self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
                                     f"Pending short @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
-                                    direction="short", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
+                                    direction="short", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}",
+                                    category=DecisionEventCategory.STATE_CHANGE)
                     elif current_price > lvl:
                         # Potential long: close is above the line.
                         # Accumulate the lowest low seen while close stays above the line.
@@ -283,7 +291,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             depth = lvl - pending_ext if pending_ext < lvl else 0.0
                             self.log_decision(bar_time, "1m", sid, "LATCH",
                                 f"Latched long @ {current_price} (depth={depth:.2f})",
-                                direction="long", reason=f"depth={depth:.2f}")
+                                direction="long", reason=f"depth={depth:.2f}",
+                                category=DecisionEventCategory.STATE_CHANGE)
                             self.analytics.capture_signal_event("LATCH", {"line_id": sid, "direction": "long", "level": lvl, "depth": depth})
                             if self.is_warmup:
                                 self.warmup_crossed_lines.add(sid)
@@ -292,7 +301,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                 depth = lvl - pending_ext if pending_ext < lvl else 0.0
                                 self.log_decision(bar_time, "1m", sid, "LATCH_PENDING",
                                     f"Pending long @ {current_price} (depth={depth:.2f} < {self.min_cross_depth})",
-                                    direction="long", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}")
+                                    direction="long", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}",
+                                    category=DecisionEventCategory.STATE_CHANGE)
 
                 elif line['direction'] == 'short':
                     if current_price > (line['level'] + self.max_bounce):
@@ -303,7 +313,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         if not self.is_warmup or line.get('creation_ts', 0) > 0:
                             msg = f"Price {current_price} > {line['level'] + self.max_bounce} (Max Bounce)"
                             self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
-                                direction="short", reason="max_bounce")
+                                direction="short", reason="max_bounce",
+                                category=DecisionEventCategory.STATE_CHANGE)
                             self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
                             lines_to_remove.add(sid)
 
@@ -312,7 +323,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         if not self.is_warmup or line.get('creation_ts', 0) > 0:
                             msg = f"Price {current_price} < {line['level'] - self.max_bounce} (Max Bounce)"
                             self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
-                                direction="long", reason="max_bounce")
+                                direction="long", reason="max_bounce",
+                                category=DecisionEventCategory.STATE_CHANGE)
                             self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
                             lines_to_remove.add(sid)
 
@@ -333,7 +345,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         if other is line:
                             continue
                         if line['level'] < other['level'] <= bar['high']:
-                            self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit higher resistance {other['level']}")
+                            self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit higher resistance {other['level']}",
+                                category=DecisionEventCategory.STATE_CHANGE)
                             lines_to_remove.add(sid)
                             break
                 elif line['direction'] == 'long':
@@ -341,7 +354,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         if other is line:
                             continue
                         if line['level'] > other['level'] >= bar['low']:
-                            self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit lower support {other['level']}")
+                            self.log_decision(bar_time, "1m", sid, "REMOVE", f"Hit lower support {other['level']}",
+                                category=DecisionEventCategory.STATE_CHANGE)
                             lines_to_remove.add(sid)
                             break
 
@@ -392,7 +406,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             self.warmup_crossed_lines.add(sid)
                         self.log_decision(bar_time, "1m", sid, "TOUCH",
                             f"Short line touched @ {bar['high']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
-                            direction="short")
+                            direction="short",
+                            category=DecisionEventCategory.STATE_CHANGE)
             elif line['direction'] == 'long':
                 if bar['low'] < line['extreme']:
                     old_ext = line['extreme']
@@ -404,7 +419,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             self.warmup_crossed_lines.add(sid)
                         self.log_decision(bar_time, "1m", sid, "TOUCH",
                             f"Long line touched @ {bar['low']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
-                            direction="long")
+                            direction="long",
+                            category=DecisionEventCategory.STATE_CHANGE)
 
         self._persist_all_line_states()
 
@@ -470,7 +486,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 if allow:
                     self.log_decision(bar['time'], bar.get('tf'), sid, "ENTRY",
                         f"Trigger: {trigger_name} | Dir: {proposed_ctx.direction} | Price: {proposed_ctx.close}",
-                        trigger_name=trigger_name, direction=str(proposed_ctx.direction))
+                        trigger_name=trigger_name, direction=str(proposed_ctx.direction),
+                        category=DecisionEventCategory.TRADE_ACTION)
 
                     trade = self._build_trade_from_context(proposed_ctx)
                     trade['tf'] = bar.get('tf', '1m')
@@ -491,7 +508,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 else:
                     self.log_decision(bar['time'], bar.get('tf'), sid, "FILTER_BLOCK",
                         f"Trigger: {trigger_name} | Reason: {reason}",
-                        trigger_name=trigger_name, filter_name=filter_name, reason=reason)
+                        trigger_name=trigger_name, filter_name=filter_name, reason=reason,
+                        category=DecisionEventCategory.TRADE_ACTION)
                     self.analytics.capture_signal_event("FILTER_BLOCK", {
                         "line_id": sid, "trigger": trigger_name, "reason": reason,
                     })

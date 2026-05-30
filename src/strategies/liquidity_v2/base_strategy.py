@@ -26,6 +26,7 @@ from src.strategies.entry_context import (
 from src.domain.types import Direction
 from src.domain.events import DomainEvent, EventType
 from src.events.event_bus import EventSubscriber
+from src.strategies.base_strategy import DecisionEventCategory
 from src.utils.app_logger import ILogger
 
 class LineRemovalMode(str, Enum):
@@ -496,7 +497,8 @@ class BaseLiquidityStrategy:
                     if adverse > threshold:
                         self.logger.info(f"[ReEntry] Cancelled LONG re-entry: price went {adverse:.1f} pts below line {level:.2f}")
                         self.log_decision(bar["time"], "1m", lid, "REENTRY_CANCEL",
-                                          f"Cancelled — price went {adverse:.1f}pts below line={level:.2f} (threshold={threshold:.0f}pts)")
+                                          f"Cancelled — price went {adverse:.1f}pts below line={level:.2f} (threshold={threshold:.0f}pts)",
+                                          category=DecisionEventCategory.STATE_CHANGE)
                         continue  # drop opportunity
                     if bar["close"] > level and bar["close"] > bar["open"] and adverse >= 0:
                         ctx = EntryContext(
@@ -508,12 +510,14 @@ class BaseLiquidityStrategy:
                         if not allow:
                             self.logger.info(f"[ReEntry] Filter blocked LONG re-entry at {bar['close']:.2f}: {reason}")
                             self.log_decision(bar["time"], "1m", lid, "REENTRY_FILTER_BLOCK",
-                                              f"Filter blocked — {reason}")
+                                              f"Filter blocked — {reason}",
+                                              category=DecisionEventCategory.TRADE_ACTION)
                             remaining.append(opp)
                             continue  # keep opportunity alive for next bar
                         self.logger.info(f"[ReEntry] Triggering LONG re-entry at {bar['close']:.2f} (line={level:.2f}) — bullish candle")
                         self.log_decision(bar["time"], "1m", lid, "ENTRY",
-                                          f"Re-entry LONG @ {bar['close']:.2f} — bullish close above line={level:.2f} (max adverse={adverse:.1f}pts)")
+                                          f"Re-entry LONG @ {bar['close']:.2f} — bullish close above line={level:.2f} (max adverse={adverse:.1f}pts)",
+                                          category=DecisionEventCategory.TRADE_ACTION)
                         trade = self._build_trade_from_context(ctx)
                         trade["is_reentry"] = True
                         self._store_and_emit_open(trade)
@@ -525,7 +529,8 @@ class BaseLiquidityStrategy:
                     if adverse > threshold:
                         self.logger.info(f"[ReEntry] Cancelled SHORT re-entry: price went {adverse:.1f} pts above line {level:.2f}")
                         self.log_decision(bar["time"], "1m", lid, "REENTRY_CANCEL",
-                                          f"Cancelled — price went {adverse:.1f}pts above line={level:.2f} (threshold={threshold:.0f}pts)")
+                                          f"Cancelled — price went {adverse:.1f}pts above line={level:.2f} (threshold={threshold:.0f}pts)",
+                                          category=DecisionEventCategory.STATE_CHANGE)
                         continue  # drop opportunity
                     if bar["close"] < level and bar["close"] < bar["open"] and adverse >= 0:
                         ctx = EntryContext(
@@ -537,12 +542,14 @@ class BaseLiquidityStrategy:
                         if not allow:
                             self.logger.info(f"[ReEntry] Filter blocked SHORT re-entry at {bar['close']:.2f}: {reason}")
                             self.log_decision(bar["time"], "1m", lid, "REENTRY_FILTER_BLOCK",
-                                              f"Filter blocked — {reason}")
+                                              f"Filter blocked — {reason}",
+                                              category=DecisionEventCategory.TRADE_ACTION)
                             remaining.append(opp)
                             continue  # keep opportunity alive for next bar
                         self.logger.info(f"[ReEntry] Triggering SHORT re-entry at {bar['close']:.2f} (line={level:.2f}) — bearish candle")
                         self.log_decision(bar["time"], "1m", lid, "ENTRY",
-                                          f"Re-entry SHORT @ {bar['close']:.2f} — bearish close below line={level:.2f} (max adverse={adverse:.1f}pts)")
+                                          f"Re-entry SHORT @ {bar['close']:.2f} — bearish close below line={level:.2f} (max adverse={adverse:.1f}pts)",
+                                          category=DecisionEventCategory.TRADE_ACTION)
                         trade = self._build_trade_from_context(ctx)
                         trade["is_reentry"] = True
                         self._store_and_emit_open(trade)
