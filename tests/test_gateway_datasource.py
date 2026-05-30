@@ -395,6 +395,51 @@ class TestBarHandling:
         assert len(data_source._refresh_buffer) == 1
         assert data_source._refresh_buffer[0]["time"] == 100
 
+    def test_on_bar_during_connected_is_buffered(self, data_source):
+        data_source._state = DataSourceState.CONNECTED
+        received = []
+        data_source.on_live_bar = lambda bar: received.append(bar)
+        bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
+        data_source._on_bar(bar)
+        assert len(data_source._historical_bars) == 0
+        assert len(data_source._refresh_buffer) == 1
+        assert data_source._refresh_buffer[0]["time"] == 100
+        assert len(received) == 0
+
+    def test_on_bar_during_connected_and_refreshing_flushed_on_history_end(self, data_source):
+        now = int(time.time())
+        data_source._state = DataSourceState.CONNECTED
+        data_source._historical_bars = [
+            make_bar(time_val=now - 300, open_=10.0, high=11.0, low=9.0, close=10.5),
+        ]
+        # Bar arrives during CONNECTED (will be covered by history)
+        data_source._on_bar(make_bar(time_val=now - 200, open_=11.0, high=12.0, low=10.0, close=11.5))
+        # Transition to REFRESHING — buffer should be preserved
+        data_source._on_refresh_start()
+        assert data_source._state == DataSourceState.REFRESHING
+        assert len(data_source._refresh_buffer) == 1
+        # Bar arrives during REFRESHING (genuinely new)
+        data_source._on_bar(make_bar(time_val=now - 100, open_=12.0, high=13.0, low=11.0, close=12.5))
+        assert len(data_source._refresh_buffer) == 2
+        # History batch includes the first two bars
+        data_source._on_history_batch({
+            "bars": [
+                {"time": now - 300, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100},
+                {"time": now - 200, "open": 11.0, "high": 12.0, "low": 10.0, "close": 11.5, "volume": 100},
+            ],
+            "days": 1,
+            "pair": "MNQ",
+        })
+        live_bars = []
+        data_source.on_live_bar = lambda bar: live_bars.append(bar)
+        data_source._on_history_end()
+        assert data_source.state == DataSourceState.LIVE
+        # now-200 is a duplicate (in history) — skipped. now-100 is new — emitted.
+        assert len(data_source._historical_bars) == 3
+        assert len(live_bars) == 1
+        assert live_bars[0]["time"] == now - 100
+        assert data_source._refresh_buffer == []
+
     def test_on_bar_triggers_live_bar_callback(self, data_source):
         received = []
         data_source.on_live_bar = lambda bar: received.append(bar)
@@ -434,6 +479,22 @@ class TestPartialBarHandling:
         assert len(received) == 1
         assert received[0]["partial"] is True
         assert received[0]["time"] == 100
+
+    def test_on_partial_bar_during_connected_is_dropped(self, data_source):
+        data_source._state = DataSourceState.CONNECTED
+        received = []
+        data_source.on_live_bar = lambda bar: received.append(bar)
+        data_source._on_partial_bar({"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 50})
+        assert len(received) == 0
+        assert data_source._last_native_partial_time == 0.0
+
+    def test_on_partial_bar_during_refreshing_is_dropped(self, data_source):
+        data_source._state = DataSourceState.REFRESHING
+        received = []
+        data_source.on_live_bar = lambda bar: received.append(bar)
+        data_source._on_partial_bar({"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 50})
+        assert len(received) == 0
+        assert data_source._last_native_partial_time == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -595,6 +656,14 @@ class TestRefreshStartHandling:
         data_source._historical_bars = []
         data_source._on_refresh_start()
         assert data_source._last_history_time == 0
+
+    def test_on_refresh_start_preserves_buffer_when_from_connected(self, data_source):
+        data_source._state = DataSourceState.CONNECTED
+        data_source._refresh_buffer = [make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)]
+        data_source._on_refresh_start()
+        assert data_source.state == DataSourceState.REFRESHING
+        assert len(data_source._refresh_buffer) == 1
+        assert data_source._refresh_buffer[0]["time"] == 100
 
 
 # ---------------------------------------------------------------------------

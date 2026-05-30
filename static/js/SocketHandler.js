@@ -29,28 +29,37 @@ export class SocketHandler {
     if (startBtn) startBtn.classList.toggle('hidden', visible);
   }
 
+  _processBar(bar) {
+    const c = this.chart;
+    if (c._seriesBusy) return;
+    if (bar.time >= c.lastTime) {
+      c.series.update(bar);
+
+      const lastIdx = c.historicalBars.length - 1;
+      if (lastIdx >= 0 && c.historicalBars[lastIdx].time === bar.time) {
+        c.historicalBars[lastIdx] = bar;
+      } else {
+        c.historicalBars.push(bar);
+      }
+
+      c.lastTime = bar.time;
+      c.lastPrice = bar.close;
+      c.shadeBar(bar);
+      c.recalculateTSI();  // passes validTimes built from historicalBars internally
+    }
+  }
+
   init() {
     const c = this.chart;
 
     this.socket.on('connect', () => console.log('[ChartViewer] socket connected'));
 
     this.socket.on('bar', bar => {
-      if (c._seriesBusy) return;
-      if (bar.time >= c.lastTime) {
-        c.series.update(bar);
-
-        const lastIdx = c.historicalBars.length - 1;
-        if (lastIdx >= 0 && c.historicalBars[lastIdx].time === bar.time) {
-          c.historicalBars[lastIdx] = bar;
-        } else {
-          c.historicalBars.push(bar);
-        }
-
-        c.lastTime = bar.time;
-        c.lastPrice = bar.close;
-        c.shadeBar(bar);
-        c.recalculateTSI();  // passes validTimes built from historicalBars internally
+      if (!c.historyReady) {
+        c.pendingBars.push(bar);
+        return;
       }
+      this._processBar(bar);
     });
 
     this.socket.on('indicator_update', data => {
@@ -131,6 +140,12 @@ export class SocketHandler {
       clearTimeout(c._historyReadyTimer);
       c._historyReadyTimer = setTimeout(async () => {
         await c.initBars();
+        c.historyReady = true;
+        // Flush any bars that arrived before history was fully loaded
+        for (const bar of c.pendingBars) {
+          this._processBar(bar);
+        }
+        c.pendingBars = [];
       }, 150);
     });
 
@@ -164,12 +179,16 @@ export class SocketHandler {
     });
 
     this.socket.on('platform_disconnected', () => {
+      c.historyReady = false;
+      c.pendingBars = [];
       this._setOverlayVisible(true);
       this._setConnectionStatus(`Lost connection — ${this._getPlatformLabel()} disconnected`);
       this._showReconnectButton(true);
     });
 
     this.socket.on('gateway_stopped', () => {
+      c.historyReady = false;
+      c.pendingBars = [];
       this._setOverlayVisible(true);
       this._setConnectionStatus('Streaming stopped');
       this._showReconnectButton(false);

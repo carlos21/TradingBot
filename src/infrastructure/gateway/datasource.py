@@ -136,7 +136,7 @@ class ZMQDataSource(CombinedDataSource):
         self._stale_history_retry_count: int = 0
 
         # Delay before first history request to let NinjaTrader populate its cache
-        self._history_request_delay_sec: float = 3.0
+        self._history_request_delay_sec: float = 1.0
         self._pending_refresh_timer: threading.Timer | None = None
 
         # Notifier for alerts when bar stream dies
@@ -381,6 +381,8 @@ class ZMQDataSource(CombinedDataSource):
             # and the platform's true BarsSeries values.
             if now - self._last_native_partial_time < 2.0:
                 return
+            if self._state in (DataSourceState.CONNECTED, DataSourceState.REFRESHING):
+                return  # Suppress partial bars before history is ready
             partial = dict(self._current_bar)
             partial["partial"] = True
             if self.on_live_bar:
@@ -416,9 +418,9 @@ class ZMQDataSource(CombinedDataSource):
             "pair": payload.get("pair", self.pair),
         }
 
-        if self._state == DataSourceState.REFRESHING:
+        if self._state in (DataSourceState.CONNECTED, DataSourceState.REFRESHING):
             self._refresh_buffer.append(bar)
-            return  # Buffer live bars during refresh
+            return  # Buffer live bars before history is ready
 
         inserted_idx = -1
         # Insert in sorted order (platform should send in order, but be safe)
@@ -457,6 +459,8 @@ class ZMQDataSource(CombinedDataSource):
 
     def _on_partial_bar(self, payload: dict) -> None:
         """Handle partial bar from platform."""
+        if self._state in (DataSourceState.CONNECTED, DataSourceState.REFRESHING):
+            return  # Suppress partial bars before history is ready
         self._last_native_partial_time = time.monotonic()
         if self.on_live_bar:
             partial = dict(payload)
@@ -604,9 +608,11 @@ class ZMQDataSource(CombinedDataSource):
             self._historical_bars = preserved
             self._last_history_time = preserved[-1]["time"] if preserved else 0
 
+        previous_state = self._state
         self._state = DataSourceState.REFRESHING
         self._current_bar = None
-        self._refresh_buffer.clear()
+        if previous_state != DataSourceState.CONNECTED:
+            self._refresh_buffer.clear()
 
         self.logger.info(f"Refresh start: preserved {len(preserved)} historical bars, removed {removed} recent bars")
 

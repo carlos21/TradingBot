@@ -30,6 +30,8 @@ export class ChartViewer {
     this.allTradeLines = [];  // track all Entry/SL/TP price lines
     this._seriesBusy = false;
     this._lastShadedTime = -Infinity;
+    this.historyReady = false;
+    this.pendingBars = [];
 
     // Config
     this.keepClosedTradeLines = opts.keepClosedTradeLines || false;
