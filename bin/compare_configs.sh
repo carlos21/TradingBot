@@ -1,5 +1,5 @@
 poetry run python scripts/compare_configs.py \
-  --yaml tests/scenarios.yaml \
+  --yaml src/strategies/liquidity_v2/scenarios.yaml \
   --source-csv csvs/NQ_live.csv \
   --outdir ./scenarios_out \
   --port 5001 \

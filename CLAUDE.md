@@ -25,7 +25,7 @@ poetry install
 ./bin/run_test_scenario.sh
 ```
 
-Both scripts invoke `scripts/run_scenarios.py` with Playwright browser automation against `tests/scenarios.yaml` (full suite) or `tests/test_scenario.yaml` (single case). Output is written to `scenarios_out/`.
+Both scripts invoke `scripts/run_scenarios.py` with Playwright browser automation against `src/strategies/liquidity_v2/scenarios.yaml` (full suite) or `src/strategies/liquidity_v2/test_scenario.yaml` (single case). Output is written to `scenarios_out/`.
 
 ## Rules
 
@@ -96,6 +96,6 @@ In live mode, a C# NinjaTrader AddOn (`ninjatrader/TradingBotConnector.cs`) acts
 
 ### Scenario Testing
 
-Tests are YAML-based (`tests/scenarios.yaml`). Each scenario defines: pair, timeframe, date range, support/resistance lines to draw, and expected trade outcomes (entry price, SL, TP, with tolerance). `scripts/run_scenarios.py` starts the Flask app as a subprocess, drives the UI via Playwright, then validates actual trades against expectations.
+Tests are YAML-based (`src/strategies/liquidity_v2/scenarios.yaml`). Each scenario defines: pair, timeframe, date range, support/resistance lines to draw, and expected trade outcomes (entry price, SL, TP, with tolerance). `scripts/run_scenarios.py` starts the Flask app as a subprocess, drives the UI via Playwright, then validates actual trades against expectations.
 
-To add a new scenario, add an entry to `tests/scenarios.yaml` following the existing format.
+To add a new scenario, add an entry to `src/strategies/liquidity_v2/scenarios.yaml` following the existing format.
