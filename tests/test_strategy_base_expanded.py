@@ -607,6 +607,37 @@ class TestReentryOpportunities:
         assert len(strat._reentry_opportunities) == 1
         assert len(strat.open_trades) == 0
 
+    def test_reentry_trade_tracks_attempt_number(self):
+        """When a reentry fires, the trade should record its attempt number."""
+        strat = _make_base(options=StrategyOptions(reentry_after_sl=True))
+        strat._reentry_opportunities.append({
+            "level": 100.0, "direction": "long", "pair": "MNQ",
+            "extreme_excursion": 100.0, "reentry_attempt": 2,
+        })
+        bar = make_bar(time=1000, close=101, high=102, low=99, pair="MNQ")
+        strat._check_reentry_opportunities(bar)
+        assert len(strat._reentry_opportunities) == 0
+        assert len(strat.open_trades) == 1
+        assert strat.open_trades[0].get("is_reentry") is True
+        assert strat.open_trades[0].get("reentry_attempt") == 2
+
+    def test_reentry_second_attempt_creates_opportunity_on_sl(self):
+        """With max_reentry_attempts=3, a reentry attempt 2 hitting SL creates attempt 3."""
+        strat = _make_base(options=StrategyOptions(reentry_after_sl=True, max_reentry_attempts=3))
+        strat.open_trades.append({
+            "trade_id": "R2", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "line_level": 100.0,
+            "is_reentry": True, "reentry_attempt": 2,
+        })
+        strat._on_trade_closed({
+            "trade_id": "R2", "result_type": "SL",
+            "exit_price": 90.0, "line_level": 100.0,
+            "is_reentry": True, "is_phantom": False,
+        })
+        assert len(strat._reentry_opportunities) == 1
+        assert strat._reentry_opportunities[0]["reentry_attempt"] == 3
+
 
 # ---------------------------------------------------------------------------
 # Restore & Persist
@@ -686,6 +717,41 @@ class TestRestoreAndPersist:
         strat = _make_base(trade_repo=tr, options=StrategyOptions(reentry_after_sl=True))
         strat.restore_reentry_opportunities("MNQ", reference_time=now)
         assert len(strat._reentry_opportunities) == 1
+
+    def test_restore_reentry_opportunities_multi_attempt(self):
+        """Restore should create opportunity for reentry attempt 2 when max=3."""
+        from datetime import timedelta
+        tr = FakeTradeRepository()
+        now = datetime.now(timezone.utc)
+        tr.insert_trade(
+            pair="MNQ", trade_type="long", entry_price=100,
+            stop_loss=90, take_profit=130, risk=10,
+            entry_time=now - timedelta(minutes=30),
+            params={"line_level": 100.0, "is_reentry": True, "reentry_attempt": 1},
+        )
+        td = tr.inserted[-1]
+        tr.close_trade(td["trade_id"], 90, now - timedelta(minutes=25), -1.0, "SL")
+        strat = _make_base(trade_repo=tr, options=StrategyOptions(reentry_after_sl=True, max_reentry_attempts=3))
+        strat.restore_reentry_opportunities("MNQ", reference_time=now)
+        assert len(strat._reentry_opportunities) == 1
+        assert strat._reentry_opportunities[0]["reentry_attempt"] == 2
+
+    def test_restore_reentry_opportunities_stops_at_max(self):
+        """Restore should NOT create opportunity when next_attempt > max."""
+        from datetime import timedelta
+        tr = FakeTradeRepository()
+        now = datetime.now(timezone.utc)
+        tr.insert_trade(
+            pair="MNQ", trade_type="long", entry_price=100,
+            stop_loss=90, take_profit=130, risk=10,
+            entry_time=now - timedelta(minutes=30),
+            params={"line_level": 100.0, "is_reentry": True, "reentry_attempt": 2},
+        )
+        td = tr.inserted[-1]
+        tr.close_trade(td["trade_id"], 90, now - timedelta(minutes=25), -1.0, "SL")
+        strat = _make_base(trade_repo=tr, options=StrategyOptions(reentry_after_sl=True, max_reentry_attempts=2))
+        strat.restore_reentry_opportunities("MNQ", reference_time=now)
+        assert len(strat._reentry_opportunities) == 0
 
 
 # ---------------------------------------------------------------------------

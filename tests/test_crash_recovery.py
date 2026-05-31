@@ -708,3 +708,64 @@ class TestResetPreserveTriggerState:
 
         # Direction should match pre-refresh state
         assert strat.strategy_lines["line-20046"]["direction"] == saved_dir
+
+
+class TestMultiAttemptReentry:
+    """Crash recovery with configurable max_reentry_attempts > 1."""
+
+    def test_crash_after_reentry_sl_restores_second_opportunity(self):
+        """If reentry attempt 1 hits SL, crash recovery restores opportunity for attempt 2."""
+        trade_repo = FakeTradeRepository()
+        tsr = InMemoryLineTriggerStateRepository()
+        all_bars = _may01_bars()
+
+        # PHASE 1: original trade hits SL, reentry fires and also hits SL
+        strat1 = make_recovery_strategy(trade_repo, tsr)
+        strat1.options.max_reentry_attempts = 2
+        strat1.add_strategy_line("line-20046", 20046.00, creation_timestamp=MAY01_LINE_TS)
+        strat1.add_strategy_line("line-20198", 20198.25, creation_timestamp=MAY01_LINE_TS)
+        crash_idx = _feed_until_sl(strat1, all_bars, trade_repo)
+
+        # Clear the first opportunity (as if it were consumed by the reentry opening)
+        strat1._reentry_opportunities.clear()
+
+        # Manually simulate reentry hitting SL to create second opportunity
+        # First insert into DB so restore can find it
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+        trade_repo.insert_trade(
+            pair="MNQ", trade_type="short", entry_price=20046.0,
+            stop_loss=20086.0, take_profit=19846.0, risk=40,
+            entry_time=now - timedelta(minutes=10),
+            params={"line_level": 20046.0, "is_reentry": True, "reentry_attempt": 1},
+            trade_id="RE1",
+        )
+        trade_repo.close_trade("RE1", 20086.0, now - timedelta(minutes=5), -1.0, "SL")
+
+        reentry_trade = {
+            "trade_id": "RE1", "pair": "MNQ", "type": "short",
+            "entry": 20046.0, "stop_loss": 20086.0, "take_profit": 19846.0,
+            "risk": 40, "status": "open", "line_level": 20046.0,
+            "is_reentry": True, "reentry_attempt": 1,
+        }
+        strat1.open_trades.append(reentry_trade)
+        strat1._on_trade_closed({
+            "trade_id": "RE1", "result_type": "SL",
+            "exit_price": 20086.0, "line_level": 20046.0,
+            "is_reentry": True,
+        })
+        assert len(strat1._reentry_opportunities) == 1
+        assert strat1._reentry_opportunities[0]["reentry_attempt"] == 2
+
+        # PHASE 2: Crash & recover
+        del strat1
+        strat2 = make_recovery_strategy(trade_repo, tsr)
+        strat2.options.max_reentry_attempts = 2
+        strat2.add_strategy_line("line-20046", 20046.00, creation_timestamp=MAY01_LINE_TS)
+        strat2.add_strategy_line("line-20198", 20198.25, creation_timestamp=MAY01_LINE_TS)
+        strat2.restore_trigger_states("MNQ")
+        strat2.restore_open_trades()
+        strat2.restore_reentry_opportunities("MNQ", reference_time=_utc_dt(all_bars[crash_idx]["time"]))
+
+        assert len(strat2._reentry_opportunities) == 1
+        assert strat2._reentry_opportunities[0]["reentry_attempt"] == 2

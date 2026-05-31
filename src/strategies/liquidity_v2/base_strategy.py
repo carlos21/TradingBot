@@ -45,6 +45,7 @@ class StrategyOptions:
     reentry_after_sl: bool = False        # re-enter if price comes back after a SL hit
     reentry_threshold: float = 60.0       # cancel re-entry if price goes this many pts past the line
     reentry_only: bool = False            # skip initial trade, only take re-entry trades
+    max_reentry_attempts: int = 1         # how many re-entry trades allowed per original setup
 
 
 class BaseLiquidityStrategy:
@@ -345,14 +346,16 @@ class BaseLiquidityStrategy:
         ref = reference_time or datetime.now(timezone.utc)
         cutoff = ref - timedelta(hours=4)
 
-        trades = self.trade_repository.list_trades(pair)
+        trades = sorted(
+            self.trade_repository.list_trades(pair),
+            key=lambda t: t.exit_time or datetime.min.replace(tzinfo=timezone.utc),
+            reverse=True,
+        )
         restored = 0
         for t in trades:
             if t.result is None or t.result >= 0:
                 continue
             if t.exit_time is None or t.exit_time < cutoff:
-                continue
-            if t.params and t.params.get("is_reentry"):
                 continue
             line_level = t.params.get("line_level") if t.params else None
             # Multi-account: account trades may not have line_level in params;
@@ -362,6 +365,12 @@ class BaseLiquidityStrategy:
                 if signal_trade and signal_trade.params:
                     line_level = signal_trade.params.get("line_level")
             if line_level is None:
+                continue
+            attempt = t.params.get("reentry_attempt", 0) if t.params else 0
+            if attempt == 0 and t.params and t.params.get("is_reentry"):
+                attempt = 1
+            next_attempt = attempt + 1
+            if next_attempt > self.options.max_reentry_attempts:
                 continue
             already_watching = any(
                 opp["level"] == line_level and opp["direction"] == t.trade_type
@@ -375,9 +384,10 @@ class BaseLiquidityStrategy:
                 "pair": pair,
                 "extreme_excursion": line_level,
                 "sl_bar_time": int(t.exit_time.timestamp()) if t.exit_time else 0,
+                "reentry_attempt": next_attempt,
             })
             restored += 1
-            self.logger.info(f"[ReEntry] Restored re-entry watch: {t.trade_type} @ level={line_level:.2f}")
+            self.logger.info(f"[ReEntry] Restored re-entry watch: {t.trade_type} @ level={line_level:.2f} (attempt {next_attempt})")
         if restored:
             self.logger.info(f"[Strategy] Restored {restored} re-entry opportunity(ies) from DB")
 
@@ -521,6 +531,7 @@ class BaseLiquidityStrategy:
                                           category=DecisionEventCategory.TRADE_ACTION)
                         trade = self._build_trade_from_context(ctx)
                         trade["is_reentry"] = True
+                        trade["reentry_attempt"] = opp.get("reentry_attempt", 1)
                         self._store_and_emit_open(trade)
                         continue  # consumed
 
@@ -553,6 +564,7 @@ class BaseLiquidityStrategy:
                                           category=DecisionEventCategory.TRADE_ACTION)
                         trade = self._build_trade_from_context(ctx)
                         trade["is_reentry"] = True
+                        trade["reentry_attempt"] = opp.get("reentry_attempt", 1)
                         self._store_and_emit_open(trade)
                         continue  # consumed
 
@@ -744,16 +756,17 @@ class BaseLiquidityStrategy:
         level = payload.get("line_level")
         if level is None:
             level = trade.get("line_level")
-        # Prefer strategy trade's is_reentry (authoritative) over payload,
+        # Prefer strategy trade's reentry_attempt (authoritative) over payload,
         # because multi-account account trades lack this field.
-        is_reentry = trade.get("is_reentry")
-        if is_reentry is None:
-            is_reentry = payload.get("is_reentry", False)
+        attempt = trade.get("reentry_attempt", 0)
+        if attempt == 0 and trade.get("is_reentry"):
+            # Legacy trades without reentry_attempt field: treat as attempt 1
+            attempt = 1
 
         if (
             (self.options.reentry_after_sl or self.options.reentry_only)
             and payload.get("result_type") == "SL"
-            and not is_reentry
+            and attempt < self.options.max_reentry_attempts
         ) and level is not None:
             direction = trade["type"]
             # Guard against duplicate opportunities (duplicate events, retries, etc.)
@@ -769,10 +782,11 @@ class BaseLiquidityStrategy:
                     "pair": trade["pair"],
                     "extreme_excursion": extreme,
                     "sl_bar_time": payload.get("exit_time", 0),
+                    "reentry_attempt": attempt + 1,
                 })
                 self.logger.info(
                     f"[ReEntry] SL hit on {direction} @ {trade['pair']}. "
-                    f"Watching level={level} for re-entry."
+                    f"Watching level={level} for re-entry (attempt {attempt + 1}/{self.options.max_reentry_attempts})."
                 )
 
     def _check_phantom_exits(self, bar: dict[str, Any]) -> None:
@@ -842,10 +856,13 @@ class BaseLiquidityStrategy:
                 )
                 self.event_publisher.emit("trade_close", t)
                 # Reentry logic for phantom SL hits
+                attempt = t.get("reentry_attempt", 0)
+                if attempt == 0 and t.get("is_reentry"):
+                    attempt = 1
                 if (
                     (self.options.reentry_after_sl or self.options.reentry_only)
                     and result_type == "SL"
-                    and not t.get("is_reentry", False)
+                    and attempt < self.options.max_reentry_attempts
                 ):
                     level = t.get("line_level")
                     if level is not None:
@@ -856,6 +873,7 @@ class BaseLiquidityStrategy:
                             "pair": t["pair"],
                             "extreme_excursion": extreme,
                             "sl_bar_time": bar["time"],
+                            "reentry_attempt": attempt + 1,
                         })
             else:
                 remaining.append(t)

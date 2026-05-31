@@ -123,7 +123,8 @@ def get_prod_strategy_options(max_bounce: float,
                                 min_cross_depth: float = 0.0,
                                 skip_rollover_days: bool = False,
                                 reentry_only: bool = False,
-                                line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE) -> StrategyOptions:
+                                line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE,
+                                max_reentry_attempts: int = 1) -> StrategyOptions:
     """
     High-level strategy behaviour: filters, triggers, breakeven, re-entry.
     """
@@ -243,4 +244,8 @@ def get_prod_strategy_options(max_bounce: float,
         # If True, skip the FIRST touch/trigger entirely and ONLY trade
         # re-entries after a stop-loss.
         reentry_only=reentry_only,
+
+        # How many re-entry attempts are allowed per original trade setup.
+        # 1 = one re-entry (default), 3 = up to three re-entries, etc.
+        max_reentry_attempts=max_reentry_attempts,
     )

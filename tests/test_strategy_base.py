@@ -260,6 +260,45 @@ class TestOnTradeClosed:
         assert len(strat.open_trades) == 0
         assert len(strat._reentry_opportunities) == 0
 
+    def test_multi_reentry_creates_second_opportunity(self):
+        """With max_reentry_attempts=2, a reentry SL creates another opportunity."""
+        strat = _make_base()
+        strat.options.reentry_after_sl = True
+        strat.options.max_reentry_attempts = 2
+        strat.open_trades.append({
+            "trade_id": "R1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "line_level": 95.0,
+            "is_reentry": True, "reentry_attempt": 1,
+        })
+        strat._on_trade_closed({
+            "trade_id": "R1", "result_type": "SL",
+            "exit_price": 90.0, "line_level": 95.0,
+            "is_reentry": True, "is_phantom": False,
+        })
+        assert len(strat.open_trades) == 0
+        assert len(strat._reentry_opportunities) == 1
+        assert strat._reentry_opportunities[0]["reentry_attempt"] == 2
+
+    def test_multi_reentry_stops_at_max(self):
+        """With max_reentry_attempts=2, the second reentry SL does NOT create a third."""
+        strat = _make_base()
+        strat.options.reentry_after_sl = True
+        strat.options.max_reentry_attempts = 2
+        strat.open_trades.append({
+            "trade_id": "R2", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "line_level": 95.0,
+            "is_reentry": True, "reentry_attempt": 2,
+        })
+        strat._on_trade_closed({
+            "trade_id": "R2", "result_type": "SL",
+            "exit_price": 90.0, "line_level": 95.0,
+            "is_reentry": True, "is_phantom": False,
+        })
+        assert len(strat.open_trades) == 0
+        assert len(strat._reentry_opportunities) == 0
+
 
 class TestPhantomExits:
     """Tests for _check_phantom_exits (strategy-only trades with no DB/broker)."""
@@ -299,6 +338,22 @@ class TestPhantomExits:
         bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
         strat._check_phantom_exits(bar)
         assert len(strat.open_trades) == 1
+
+    def test_phantom_multi_reentry_creates_second_opportunity(self):
+        strat = _make_base()
+        strat.options.reentry_after_sl = True
+        strat.options.max_reentry_attempts = 2
+        strat.open_trades.append({
+            "trade_id": "phantom-R1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "line_level": 95.0,
+            "is_phantom": True, "is_reentry": True, "reentry_attempt": 1,
+        })
+        bar = make_bar(time=1000, low=85, high=95, pair="MNQ")
+        strat._check_phantom_exits(bar)
+        assert len(strat.open_trades) == 0
+        assert len(strat._reentry_opportunities) == 1
+        assert strat._reentry_opportunities[0]["reentry_attempt"] == 2
 
 
 class TestFiltersAllowEntry:

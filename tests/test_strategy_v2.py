@@ -566,3 +566,29 @@ class TestPhantomAndReentryGuards:
         # Reentry should have fired (daily limit bypassed)
         assert len(strat._reentry_opportunities) == 0
         assert any(t.get("is_reentry") for t in strat.open_trades)
+
+    def test_reentry_chains_up_to_max_attempts(self):
+        """With max_reentry_attempts=2, reentry SL should create a second opportunity."""
+        sio, lr, tr, tm = _deps()
+        options = StrategyOptions(
+            reentry_after_sl=True,
+            reentry_threshold=60.0,
+            max_reentry_attempts=2,
+        )
+        strat = make_strategy(sio, lr, tr, tm, options=options)
+        strat.is_warmup = False
+        # Seed an open reentry trade
+        strat.open_trades.append({
+            "trade_id": "R1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "line_level": 100.0,
+            "is_reentry": True, "reentry_attempt": 1,
+        })
+        # SL hit
+        strat._on_trade_closed({
+            "trade_id": "R1", "result_type": "SL",
+            "exit_price": 90.0, "line_level": 100.0,
+            "is_reentry": True,
+        })
+        assert len(strat._reentry_opportunities) == 1
+        assert strat._reentry_opportunities[0]["reentry_attempt"] == 2
