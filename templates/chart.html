@@ -78,8 +78,6 @@
       </div>
 
       <div class="flex items-center space-x-4">
-        <span id="liveIndicator" class="hidden px-3 py-1 bg-red-600 text-white font-bold rounded animate-pulse">LIVE</span>
-
         <!-- Test Actions Dropdown -->
         <div id="testTradeControls" class="hidden relative">
           <button
@@ -133,46 +131,41 @@
     </div>
   </header>
 
-  <!-- Stream Health Status Bar -->
-  <div id="streamHealthBar" class="hidden bg-gray-900 border-t border-gray-700 text-xs text-gray-300 px-3 py-1.5 flex items-center justify-between cursor-pointer select-none">
-    <div class="flex items-center space-x-3">
-      <span id="healthDot" class="w-2.5 h-2.5 rounded-full bg-gray-500"></span>
+  <!-- Floating Stream Health Monitor -->
+  <div id="streamHealthWrapper" class="hidden absolute bottom-4 right-4 z-50 flex flex-col items-end space-y-2" style="max-width: 420px;">
+    <!-- Compact Pill Bar -->
+    <div id="streamHealthBar" class="bg-gray-800/90 backdrop-blur border border-gray-700 rounded-full shadow-lg text-xs text-gray-300 px-3 py-1.5 flex items-center space-x-3 cursor-pointer select-none hover:bg-gray-700/90 transition-colors">
+      <span id="healthDot" class="w-2.5 h-2.5 rounded-full bg-gray-500 flex-shrink-0"></span>
       <span id="healthState" class="font-semibold text-gray-400">--</span>
       <span class="text-gray-600">|</span>
-      <span id="healthLastBar">Last bar: --</span>
+      <span id="healthLastBar">--</span>
       <span class="text-gray-600">|</span>
-      <span id="healthCached">Cached: --</span>
+      <span id="healthCached">--</span>
       <span id="healthAlertIcon" class="hidden text-yellow-400">⚠️</span>
-    </div>
-    <div class="flex items-center space-x-2">
-      <span id="healthExpandHint" class="text-gray-500">Click for details</span>
-      <svg id="healthChevron" class="w-3 h-3 text-gray-500 transform transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <svg id="healthChevron" class="w-3 h-3 text-gray-500 transform transition-transform flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
       </svg>
     </div>
-  </div>
 
-  <!-- Stream Health Detailed Panel -->
-  <div id="streamHealthPanel" class="hidden bg-gray-800 border-t border-gray-700 text-xs text-gray-300 px-4 py-3">
-    <div class="grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 mb-3">
-      <div><span class="text-gray-500">State:</span> <span id="detailState" class="font-mono">--</span></div>
-      <div><span class="text-gray-500">Last bar time:</span> <span id="detailLastBar" class="font-mono">--</span></div>
-      <div><span class="text-gray-500">Bars cached:</span> <span id="detailCached" class="font-mono">--</span></div>
-      <div><span class="text-gray-500">Heartbeat age:</span> <span id="detailHeartbeat" class="font-mono">--</span></div>
-      <div><span class="text-gray-500">Duplicates:</span> <span id="detailDuplicates" class="font-mono">--</span></div>
-      <div><span class="text-gray-500">Gaps:</span> <span id="detailGaps" class="font-mono">--</span></div>
-      <div><span class="text-gray-500">Ticks:</span> <span id="detailTicks" class="font-mono">--</span></div>
-      <div><span class="text-gray-500">History batches:</span> <span id="detailBatches" class="font-mono">--</span></div>
-      <div><span class="text-gray-500">Platform:</span> <span id="detailPlatform" class="font-mono">--</span></div>
-    </div>
-    <div class="flex items-center space-x-3 border-t border-gray-700 pt-2">
-      <button id="healthResyncBtn" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs disabled:opacity-50 disabled:cursor-not-allowed">
-        Re-sync from NT
-      </button>
-      <button id="healthDeepResyncBtn" class="px-3 py-1 bg-gray-700 hover:bg-gray-600 text-white rounded text-xs disabled:opacity-50 disabled:cursor-not-allowed">
-        Force deep re-sync
-      </button>
-      <span id="healthRefreshStatus" class="text-gray-500 hidden"></span>
+    <!-- Floating Detailed Panel -->
+    <div id="streamHealthPanel" class="hidden bg-gray-800/95 backdrop-blur border border-gray-700 rounded-xl shadow-2xl text-xs text-gray-300 px-4 py-3" style="width: 380px; max-height: 60vh; overflow-y: auto;">
+      <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3">
+        <div><span class="text-gray-500">State:</span> <span id="detailState" class="font-mono">--</span></div>
+        <div><span class="text-gray-500">Last bar:</span> <span id="detailLastBar" class="font-mono">--</span></div>
+        <div><span class="text-gray-500">Cached:</span> <span id="detailCached" class="font-mono">--</span></div>
+        <div><span class="text-gray-500">Heartbeat:</span> <span id="detailHeartbeat" class="font-mono">--</span></div>
+        <div><span class="text-gray-500">Duplicates:</span> <span id="detailDuplicates" class="font-mono">--</span></div>
+        <div><span class="text-gray-500">Gaps:</span> <span id="detailGaps" class="font-mono">--</span></div>
+        <div><span class="text-gray-500">Ticks:</span> <span id="detailTicks" class="font-mono">--</span></div>
+        <div><span class="text-gray-500">Batches:</span> <span id="detailBatches" class="font-mono">--</span></div>
+        <div class="col-span-2"><span class="text-gray-500">Platform:</span> <span id="detailPlatform" class="font-mono">--</span></div>
+      </div>
+      <div class="flex items-center space-x-3 border-t border-gray-700 pt-2">
+        <button id="healthResyncBtn" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs disabled:opacity-50 disabled:cursor-not-allowed">
+          Re-sync
+        </button>
+        <span id="healthRefreshStatus" class="text-gray-500 hidden"></span>
+      </div>
     </div>
   </div>
 

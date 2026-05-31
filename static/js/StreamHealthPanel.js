@@ -6,9 +6,10 @@ export class StreamHealthPanel {
     this.expanded = false;
     this.userCollapsed = false;
 
+    this.wrapper = document.getElementById('streamHealthWrapper');
     this.bar = document.getElementById('streamHealthBar');
     this.panel = document.getElementById('streamHealthPanel');
-    if (!this.bar || !this.panel) return;
+    if (!this.bar || !this.panel || !this.wrapper) return;
 
     // Elements
     this.dot = document.getElementById('healthDot');
@@ -17,7 +18,6 @@ export class StreamHealthPanel {
     this.cachedEl = document.getElementById('healthCached');
     this.alertIcon = document.getElementById('healthAlertIcon');
     this.chevron = document.getElementById('healthChevron');
-    this.hint = document.getElementById('healthExpandHint');
 
     // Detail elements
     this.detailState = document.getElementById('detailState');
@@ -31,11 +31,11 @@ export class StreamHealthPanel {
     this.detailPlatform = document.getElementById('detailPlatform');
 
     this.resyncBtn = document.getElementById('healthResyncBtn');
-    this.deepResyncBtn = document.getElementById('healthDeepResyncBtn');
     this.refreshStatus = document.getElementById('healthRefreshStatus');
 
     this._bindEvents();
     this._loadPreference();
+    this._restorePosition();
   }
 
   _bindEvents() {
@@ -46,14 +46,11 @@ export class StreamHealthPanel {
       this._doRefresh();
     });
 
-    this.deepResyncBtn?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      if (!confirm('Force deep re-sync? This will request up to 7 days of history from NinjaTrader.')) return;
-      this._doRefresh(7);
-    });
-
     this.socket.on('health_update', (data) => this.update(data));
     this.socket.on('refresh_result', (data) => this._onRefreshResult(data));
+
+    // Drag support
+    this._initDrag();
   }
 
   _loadPreference() {
@@ -68,12 +65,80 @@ export class StreamHealthPanel {
     } catch {}
   }
 
+  _restorePosition() {
+    try {
+      const pos = sessionStorage.getItem('healthPanelPos');
+      if (pos) {
+        const { right, bottom } = JSON.parse(pos);
+        this.wrapper.style.right = right;
+        this.wrapper.style.bottom = bottom;
+        this.wrapper.style.left = 'auto';
+        this.wrapper.style.top = 'auto';
+      }
+    } catch {}
+  }
+
+  _savePosition() {
+    try {
+      sessionStorage.setItem('healthPanelPos', JSON.stringify({
+        right: this.wrapper.style.right,
+        bottom: this.wrapper.style.bottom,
+      }));
+    } catch {}
+  }
+
+  _initDrag() {
+    let isDragging = false;
+    let startX, startY, startRight, startBottom;
+
+    const onMouseDown = (e) => {
+      // Don't drag if clicking a button inside the bar
+      if (e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+
+      const rect = this.wrapper.getBoundingClientRect();
+      const parentRect = this.wrapper.offsetParent.getBoundingClientRect();
+      startRight = parentRect.right - rect.right;
+      startBottom = parentRect.bottom - rect.bottom;
+
+      this.wrapper.classList.add('dragging');
+      e.preventDefault();
+    };
+
+    const onMouseMove = (e) => {
+      if (!isDragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      const newRight = Math.max(0, startRight - dx);
+      const newBottom = Math.max(0, startBottom - dy);
+
+      this.wrapper.style.right = `${newRight}px`;
+      this.wrapper.style.bottom = `${newBottom}px`;
+      this.wrapper.style.left = 'auto';
+      this.wrapper.style.top = 'auto';
+    };
+
+    const onMouseUp = () => {
+      if (!isDragging) return;
+      isDragging = false;
+      this.wrapper.classList.remove('dragging');
+      this._savePosition();
+    };
+
+    this.bar.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
+  }
+
   update(data) {
     if (!this.bar) return;
     this.lastHealth = data;
 
-    // Show bar once we have data
-    this.bar.classList.remove('hidden');
+    // Show wrapper once we have data
+    this.wrapper.classList.remove('hidden');
 
     const state = data.state || 'UNKNOWN';
     const lastBarTime = data.last_bar_time;
@@ -93,14 +158,14 @@ export class StreamHealthPanel {
 
     // Compact bar
     this.stateEl.textContent = state;
-    this.lastBarEl.textContent = `Last bar: ${lastBarTime ? this._fmtTime(lastBarTime) : '--'}`;
-    this.cachedEl.textContent = `Cached: ${barsCached.toLocaleString()}`;
+    this.lastBarEl.textContent = lastBarTime ? this._fmtTime(lastBarTime) : '--';
+    this.cachedEl.textContent = `${barsCached.toLocaleString()}`;
 
     // Alert icon
     this.alertIcon.classList.toggle('hidden', newLevel === 'ok');
 
     // Dot color
-    this.dot.className = 'w-2.5 h-2.5 rounded-full';
+    this.dot.className = 'w-2.5 h-2.5 rounded-full flex-shrink-0';
     if (newLevel === 'error') this.dot.classList.add('bg-red-500');
     else if (newLevel === 'warn') this.dot.classList.add('bg-yellow-400');
     else this.dot.classList.add('bg-green-500');
@@ -122,10 +187,9 @@ export class StreamHealthPanel {
     if (this.detailBatches) this.detailBatches.textContent = (data.history_batches ?? 0).toLocaleString();
     if (this.detailPlatform) this.detailPlatform.textContent = platformConnected ? 'Connected' : 'Disconnected';
 
-    // Refresh buttons state
+    // Refresh button state
     const canRefresh = platformConnected && state !== 'REFRESHING';
     if (this.resyncBtn) this.resyncBtn.disabled = !canRefresh;
-    if (this.deepResyncBtn) this.deepResyncBtn.disabled = !canRefresh;
 
     // Auto-expand on new alert (unless user manually collapsed)
     if (newLevel !== 'ok' && newLevel !== this.alertLevel && !this.userCollapsed) {
@@ -147,7 +211,6 @@ export class StreamHealthPanel {
     this.expanded = true;
     this.panel.classList.remove('hidden');
     if (this.chevron) this.chevron.classList.add('rotate-180');
-    if (this.hint) this.hint.textContent = 'Click to collapse';
     this.userCollapsed = false;
     this._savePreference();
   }
@@ -157,7 +220,6 @@ export class StreamHealthPanel {
     this.expanded = false;
     this.panel.classList.add('hidden');
     if (this.chevron) this.chevron.classList.remove('rotate-180');
-    if (this.hint) this.hint.textContent = 'Click for details';
     this.userCollapsed = true;
     this._savePreference();
   }

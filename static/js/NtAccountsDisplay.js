@@ -10,7 +10,6 @@ export class NtAccountsDisplay {
     this.el = {
       display: document.getElementById('ntAccountsDisplay'),
       warning: document.getElementById('ntAccountsWarning'),
-      liveIndicator: document.getElementById('liveIndicator'),
       testTradeControls: document.getElementById('testTradeControls'),
     };
     this._popover = null;
@@ -94,9 +93,8 @@ export class NtAccountsDisplay {
       }
     }
 
-    // If streaming is disabled, hide live indicator and test controls
+    // If streaming is disabled, hide test controls
     if (disabledReason) {
-      if (this.el.liveIndicator) this.el.liveIndicator.classList.add('hidden');
       if (this.el.testTradeControls) this.el.testTradeControls.classList.add('hidden');
     }
   }

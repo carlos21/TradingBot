@@ -9,3 +9,41 @@
 [data-timeframe].active:hover {
     background-color: #3b82f6;
 }
+
+/* ── Floating Stream Health Monitor ── */
+#streamHealthWrapper {
+    transition: opacity 0.2s ease;
+}
+
+#streamHealthBar {
+    /* Prevent text selection while dragging */
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+#streamHealthWrapper.dragging {
+    opacity: 0.85;
+    cursor: grabbing;
+}
+
+#streamHealthWrapper.dragging #streamHealthBar {
+    cursor: grabbing;
+}
+
+/* Smooth panel expand/collapse */
+#streamHealthPanel {
+    transition: opacity 0.15s ease, transform 0.15s ease;
+    transform-origin: top right;
+}
+
+#streamHealthPanel.hidden {
+    opacity: 0;
+    transform: scale(0.95);
+    pointer-events: none;
+}
+
+#streamHealthPanel:not(.hidden) {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+}
