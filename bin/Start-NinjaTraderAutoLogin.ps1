@@ -342,7 +342,7 @@ function Find-TryItDialog {
             $buttons = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond)
             for ($j = 0; $j -lt $buttons.Count; $j++) {
                 $btn = $buttons[$j]
-                if ($btn.Current.Name -match "Launch|LAUNCH|launch") {
+                if ($btn.Current.Name -match "Launch|LAUNCH|launch|Try it|TRY IT|try it") {
                     return @{ Button = $btn; Window = $win; Hwnd = $winHandle }
                 }
             }
