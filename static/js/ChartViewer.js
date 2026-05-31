@@ -131,6 +131,9 @@ export class ChartViewer {
       })
       .then(() => this._initLines())
       .then(() => {
+        if (!this.liveMode) {
+          this.historyReady = true;
+        }
         window.__chartReady = true;
       })
       .catch(console.error);
