@@ -149,3 +149,37 @@ def register_socketio_handlers(
 
     _health_thread = threading.Thread(target=_health_loop, name="SocketIO-Health", daemon=True)
     _health_thread.start()
+
+    # Wire up log forwarding to connected browsers
+    _original_logger_methods = {}
+
+    def _forward_log(level: str, message: str):
+        """Forward log entries to browsers via Socket.IO."""
+        try:
+            socketio.emit('system_log', {
+                'time': __import__('time').time(),
+                'level': level,
+                'source': 'server',
+                'message': message,
+            })
+        except Exception:
+            pass  # Don't let log forwarding break anything
+
+    def _wrap_logger():
+        """Wrap the logger's methods to also emit via Socket.IO."""
+        for level in ('debug', 'info', 'warning', 'error'):
+            orig = getattr(_logger, level, None)
+            if orig is None:
+                continue
+            _original_logger_methods[level] = orig
+
+            def make_wrapper(lvl, original):
+                def wrapper(msg: str):
+                    original(msg)
+                    if lvl in ('info', 'warning', 'error'):
+                        _forward_log(lvl.upper(), msg)
+                return wrapper
+
+            setattr(_logger, level, make_wrapper(level, orig))
+
+    _wrap_logger()

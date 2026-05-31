@@ -96,6 +96,14 @@ class TradeStatistics:
     total_pnl_usd: float = 0.0  # Dollar amount
     avg_pnl_usd: float = 0.0    # Dollar amount
     avg_profit_monthly: float = 0.0  # Average monthly profit in dollars
+    # Enhanced KPIs
+    max_drawdown: float = 0.0
+    max_drawdown_pct: float = 0.0
+    expectancy: float = 0.0
+    max_consecutive_wins: int = 0
+    max_consecutive_losses: int = 0
+    current_streak: int = 0
+    current_streak_type: str = ""  # "win" or "loss"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -113,6 +121,13 @@ class TradeStatistics:
             "profit_factor": round(self.profit_factor, 2) if self.profit_factor != float('inf') else None,
             "avg_r_multiple": round(self.avg_r_multiple, 2),
             "avg_profit_monthly": round(self.avg_profit_monthly, 2),
+            "max_drawdown": round(self.max_drawdown, 2),
+            "max_drawdown_pct": round(self.max_drawdown_pct, 2),
+            "expectancy": round(self.expectancy, 2),
+            "max_consecutive_wins": self.max_consecutive_wins,
+            "max_consecutive_losses": self.max_consecutive_losses,
+            "current_streak": self.current_streak,
+            "current_streak_type": self.current_streak_type,
         }
 
 

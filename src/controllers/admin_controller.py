@@ -57,6 +57,7 @@ class AdminController:
         result_dist = self._analytics.get_result_distribution(pair)
         monthly_pnl = self._analytics.get_monthly_pnl(pair)
         pnl_dist = self._analytics.get_pnl_distribution(pair)
+        account_stats = self._analytics.get_account_analytics(pair)
 
         return jsonify({
             "equity_curve": equity_curve.to_dict(),
@@ -65,6 +66,7 @@ class AdminController:
             "result_distribution": result_dist.to_dict(),
             "monthly_pnl": monthly_pnl.to_dict(),
             "pnl_distribution": pnl_dist.to_dict(),
+            "account_stats": account_stats,
         }), 200
 
     def get_lines(self, pair: str):

@@ -28,13 +28,13 @@
           <div id="stat-total-trades" class="text-3xl font-bold text-white">-</div>
           <div id="stat-open-trades" class="text-sm text-yellow-400 mt-1">- open</div>
         </div>
-        
+
         <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
           <div class="text-gray-400 text-sm mb-1">Win Rate</div>
           <div id="stat-win-rate" class="text-3xl font-bold text-white">-</div>
           <div id="stat-win-loss" class="text-sm text-gray-400 mt-1">- / -</div>
         </div>
-        
+
         <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
           <div class="text-gray-400 text-sm mb-1">Total P&L ($)</div>
           <div id="stat-total-pnl-usd" class="text-3xl font-bold">-</div>
@@ -44,11 +44,38 @@
             <span id="stat-avg-pnl-usd">avg: -</span>
           </div>
         </div>
-        
+
         <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
           <div class="text-gray-400 text-sm mb-1">Avg Profit Monthly</div>
           <div id="stat-avg-profit-monthly" class="text-3xl font-bold text-white">-</div>
           <div id="stat-avg-r" class="text-sm text-gray-400 mt-1">avg R: -</div>
+        </div>
+      </div>
+
+      <!-- Enhanced KPI Cards -->
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <div class="text-gray-400 text-sm mb-1">Max Drawdown</div>
+          <div id="stat-max-drawdown" class="text-3xl font-bold text-red-400">-</div>
+          <div id="stat-max-drawdown-pct" class="text-sm text-gray-400 mt-1">-</div>
+        </div>
+
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <div class="text-gray-400 text-sm mb-1">Profit Factor</div>
+          <div id="stat-profit-factor" class="text-3xl font-bold text-white">-</div>
+          <div id="stat-avg-win-loss" class="text-sm text-gray-400 mt-1">-</div>
+        </div>
+
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <div class="text-gray-400 text-sm mb-1">Expectancy</div>
+          <div id="stat-expectancy" class="text-3xl font-bold text-white">-</div>
+          <div class="text-sm text-gray-400 mt-1">R per trade</div>
+        </div>
+
+        <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
+          <div class="text-gray-400 text-sm mb-1">Best Streak</div>
+          <div id="stat-streak" class="text-3xl font-bold text-white">-</div>
+          <div id="stat-streak-detail" class="text-sm text-gray-400 mt-1">-</div>
         </div>
       </div>
       
@@ -221,26 +248,80 @@
       </div>
     </div>
 
+    <!-- Logs Tab -->
+    <div id="logs-tab" class="tab-content {% if active_tab != 'logs' %}hidden{% endif %}">
+      <div class="flex justify-between items-center mb-6">
+        <h2 class="text-2xl font-bold">System Logs</h2>
+        <div class="flex items-center space-x-3">
+          <span id="log-connection-status" class="text-xs text-gray-500">Disconnected</span>
+          <button id="log-clear-btn" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors">
+            Clear
+          </button>
+          <button id="log-pause-btn" class="px-3 py-1.5 bg-gray-700 hover:bg-gray-600 rounded-lg text-sm font-medium transition-colors">
+            Pause
+          </button>
+        </div>
+      </div>
+
+      <!-- Log Filters -->
+      <div class="bg-gray-800 rounded-xl p-4 border border-gray-700 mb-4 flex flex-wrap gap-3 items-end">
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Level</label>
+          <select id="log-level-filter" class="bg-gray-700 text-white text-sm rounded px-3 py-2 border border-gray-600">
+            <option value="">All</option>
+            <option value="INFO">INFO</option>
+            <option value="WARN">WARN</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Source</label>
+          <input type="text" id="log-source-filter" placeholder="e.g. TradeManager"
+                 class="bg-gray-700 text-white text-sm rounded px-3 py-2 border border-gray-600 w-40" />
+        </div>
+        <div>
+          <label class="block text-sm text-gray-400 mb-1">Search</label>
+          <input type="text" id="log-search-filter" placeholder="Filter messages..."
+                 class="bg-gray-700 text-white text-sm rounded px-3 py-2 border border-gray-600 w-56" />
+        </div>
+      </div>
+
+      <!-- Log Entries -->
+      <div id="log-container" class="bg-gray-800 rounded-xl border border-gray-700 overflow-hidden">
+        <div class="overflow-y-auto max-h-[70vh] p-2 space-y-1" id="log-entries">
+          <div class="text-gray-500 text-center py-8 text-sm">Waiting for logs...</div>
+        </div>
+      </div>
+    </div>
+
     <!-- Analytics Tab -->
     <div id="analytics-tab" class="tab-content {% if active_tab != 'analytics' %}hidden{% endif %}">
       <h2 class="text-2xl font-bold mb-6">Detailed Analytics</h2>
-      
+
+      <!-- Per-Account Stats -->
+      <div id="account-stats-section" class="mb-8">
+        <h3 class="text-lg font-semibold mb-4">Performance by Account</h3>
+        <div id="account-stats-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
           <h3 class="text-lg font-semibold mb-4">Trades by Hour</h3>
           <canvas id="analytics-hour-chart"></canvas>
         </div>
-        
+
         <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
           <h3 class="text-lg font-semibold mb-4">Trades by Day of Week</h3>
           <canvas id="analytics-day-chart"></canvas>
         </div>
-        
+
         <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
           <h3 class="text-lg font-semibold mb-4">Monthly P&L</h3>
           <canvas id="analytics-monthly-chart"></canvas>
         </div>
-        
+
         <div class="bg-gray-800 rounded-xl p-6 border border-gray-700">
           <h3 class="text-lg font-semibold mb-4">P&L Distribution</h3>
           <canvas id="analytics-pnl-dist-chart"></canvas>
@@ -580,5 +661,6 @@
 {% endblock %}
 
 {% block scripts %}
+  <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
   <script type="module" src="/static/js/admin/AdminApp.js"></script>
 {% endblock %}

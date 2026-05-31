@@ -11,6 +11,39 @@ from src.analytics import (
 from src.domain.repositories import TradeRepository
 
 
+class AccountStatistics:
+    """Per-account trade statistics."""
+
+    def __init__(
+        self,
+        account: str,
+        total_trades: int,
+        winning_trades: int,
+        losing_trades: int,
+        win_rate: float,
+        total_pnl_usd: float,
+        avg_pnl_usd: float,
+    ):
+        self.account = account
+        self.total_trades = total_trades
+        self.winning_trades = winning_trades
+        self.losing_trades = losing_trades
+        self.win_rate = win_rate
+        self.total_pnl_usd = total_pnl_usd
+        self.avg_pnl_usd = avg_pnl_usd
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "account": self.account,
+            "total_trades": self.total_trades,
+            "winning_trades": self.winning_trades,
+            "losing_trades": self.losing_trades,
+            "win_rate": round(self.win_rate, 4),
+            "total_pnl_usd": round(self.total_pnl_usd, 2),
+            "avg_pnl_usd": round(self.avg_pnl_usd, 2),
+        }
+
+
 class AnalyticsService:
     """Service for trade analytics calculations."""
 
@@ -71,6 +104,11 @@ class AnalyticsService:
         # Calculate average monthly profit
         avg_profit_monthly = self._calculate_avg_profit_monthly(closed_trades)
 
+        # Enhanced KPIs
+        max_dd, max_dd_pct = self._calculate_max_drawdown(closed_trades)
+        expectancy = self._calculate_expectancy(win_rate, avg_win_r, avg_loss_r)
+        max_win_streak, max_loss_streak, current_streak, streak_type = self._calculate_streaks(closed_trades)
+
         return TradeStatistics(
             total_trades=total,
             open_trades=len(open_trades),
@@ -86,6 +124,13 @@ class AnalyticsService:
             profit_factor=profit_factor,
             avg_r_multiple=avg_r,
             avg_profit_monthly=avg_profit_monthly,
+            max_drawdown=max_dd,
+            max_drawdown_pct=max_dd_pct,
+            expectancy=expectancy,
+            max_consecutive_wins=max_win_streak,
+            max_consecutive_losses=max_loss_streak,
+            current_streak=current_streak,
+            current_streak_type=streak_type,
         )
 
     def get_equity_curve(self, pair: str) -> TimeSeriesData:
@@ -252,6 +297,67 @@ class AnalyticsService:
             logs=logs,
         )
 
+    def _calculate_max_drawdown(self, closed_trades: list) -> tuple[float, float]:
+        """Calculate max drawdown in R and as percentage of peak equity."""
+        if not closed_trades:
+            return 0.0, 0.0
+
+        # Sort by exit time for equity curve
+        sorted_trades = sorted(closed_trades, key=lambda t: t.exit_time or t.entry_time)
+
+        peak = 0.0
+        max_dd = 0.0
+        equity = 0.0
+
+        for trade in sorted_trades:
+            equity += trade.result or 0
+            if equity > peak:
+                peak = equity
+            dd = peak - equity
+            if dd > max_dd:
+                max_dd = dd
+
+        max_dd_pct = (max_dd / peak * 100) if peak > 0 else 0.0
+        return max_dd, max_dd_pct
+
+    def _calculate_expectancy(self, win_rate: float, avg_win: float, avg_loss: float) -> float:
+        """Calculate expectancy: (Win% × Avg Win) − (Loss% × |Avg Loss|)."""
+        loss_rate = 1.0 - win_rate
+        return (win_rate * avg_win) - (loss_rate * abs(avg_loss))
+
+    def _calculate_streaks(self, closed_trades: list) -> tuple[int, int, int, str]:
+        """Calculate max consecutive wins/losses and current streak.
+        Returns (max_win_streak, max_loss_streak, current_streak, streak_type).
+        """
+        if not closed_trades:
+            return 0, 0, 0, ""
+
+        # Sort by exit time
+        sorted_trades = sorted(closed_trades, key=lambda t: t.exit_time or t.entry_time)
+
+        max_win_streak = 0
+        max_loss_streak = 0
+        current_win_streak = 0
+        current_loss_streak = 0
+
+        for trade in sorted_trades:
+            result = trade.result or 0
+            if result > 0:
+                current_win_streak += 1
+                current_loss_streak = 0
+                if current_win_streak > max_win_streak:
+                    max_win_streak = current_win_streak
+            else:
+                current_loss_streak += 1
+                current_win_streak = 0
+                if current_loss_streak > max_loss_streak:
+                    max_loss_streak = current_loss_streak
+
+        current_streak = current_win_streak if current_win_streak > 0 else current_loss_streak
+        streak_type = "win" if current_win_streak > 0 else "loss"
+
+        return max_win_streak, max_loss_streak, current_streak, streak_type
+
     def _calculate_avg_profit_monthly(self, closed_trades: list) -> float:
         """Calculate average profit per month based on closed trades."""
         if not closed_trades:
@@ -314,3 +420,38 @@ class AnalyticsService:
             "limit": limit,
             "offset": offset,
         }
+
+    def get_account_analytics(self, pair: str) -> list[dict[str, Any]]:
+        """Get per-account trade statistics."""
+        trades = self._repo.get_all_trades(pair)
+        closed_trades = [t for t in trades if t.exit_time is not None]
+
+        # Group by account (fallback to 'default' if no account)
+        by_account: dict[str, list] = defaultdict(list)
+        for trade in closed_trades:
+            acct = trade.account or 'default'
+            by_account[acct].append(trade)
+
+        results = []
+        for account, acct_trades in sorted(by_account.items()):
+            winning = [t for t in acct_trades if (t.result or 0) > 0]
+            losing = [t for t in acct_trades if (t.result or 0) <= 0]
+
+            total_pnl_usd = sum(
+                t.pnl_usd if t.pnl_usd is not None
+                else (t.result or 0) * (t.risk_dollars if t.risk_dollars else t.risk)
+                for t in acct_trades
+            )
+
+            stats = AccountStatistics(
+                account=account,
+                total_trades=len(acct_trades),
+                winning_trades=len(winning),
+                losing_trades=len(losing),
+                win_rate=len(winning) / len(acct_trades) if acct_trades else 0.0,
+                total_pnl_usd=total_pnl_usd,
+                avg_pnl_usd=total_pnl_usd / len(acct_trades) if acct_trades else 0.0,
+            )
+            results.append(stats.to_dict())
+
+        return results

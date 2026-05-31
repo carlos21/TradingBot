@@ -12,6 +12,7 @@ import { DecisionLogs } from './DecisionLogs.js';
 import { SettingsManager } from './SettingsManager.js';
 import { NtManager } from './NtManager.js';
 import { MtManager } from './MtManager.js';
+import { LogPanel } from './LogPanel.js';
 
 class AdminApp {
   constructor() {
@@ -25,6 +26,8 @@ class AdminApp {
     this.settingsManager = new SettingsManager(this.api);
     this.ntManager = new NtManager(this.api);
     this.mtManager = new MtManager(this.api);
+    this.logPanel = null;
+    this.socket = null;
 
     this.currentTab = 'overview';
     this.analyticsData = null;
@@ -89,6 +92,16 @@ class AdminApp {
       }
       if (document.getElementById('metatrader-tab')) {
         this.mtManager.init();
+      }
+
+      // Initialize Socket.IO connection for admin
+      if (typeof io !== 'undefined') {
+        this.socket = io();
+      }
+
+      // Initialize log panel (needs socket)
+      if (document.getElementById('logs-tab') && this.socket) {
+        this.logPanel = new LogPanel(this.socket);
       }
 
       // Determine initial tab from server-rendered attribute or URL
@@ -203,6 +216,9 @@ class AdminApp {
       case 'metatrader':
         // MT panel is event-driven; no auto-load needed
         break;
+      case 'logs':
+        // Log panel is event-driven; no auto-load needed
+        break;
     }
   }
 
@@ -267,16 +283,53 @@ class AdminApp {
       if (!this.analyticsData) {
         this.analyticsData = await this.api.getAnalytics();
       }
-      
+
       const data = this.analyticsData;
-      
+
       this.charts.renderTradesByHour('analytics-hour-chart', data.trades_by_hour);
       this.charts.renderTradesByDay('analytics-day-chart', data.trades_by_day);
       this.charts.renderMonthlyPnl('analytics-monthly-chart', data.monthly_pnl);
       this.charts.renderPnlDistribution('analytics-pnl-dist-chart', data.pnl_distribution);
+
+      // Render per-account stats
+      this.renderAccountStats(data.account_stats);
     } catch (error) {
       console.error('[AdminApp] Failed to load analytics data:', error);
     }
+  }
+
+  renderAccountStats(accountStats) {
+    const container = document.getElementById('account-stats-grid');
+    if (!container) return;
+
+    if (!accountStats || accountStats.length === 0) {
+      container.innerHTML = '<div class="col-span-full text-gray-500 text-center py-4">No account data available</div>';
+      return;
+    }
+
+    container.innerHTML = accountStats.map(acct => {
+      const pnlClass = acct.total_pnl_usd >= 0 ? 'text-green-400' : 'text-red-400';
+      const pnlSign = acct.total_pnl_usd >= 0 ? '+' : '-';
+      const pnlAbs = Math.abs(acct.total_pnl_usd).toFixed(2);
+      const winRatePct = (acct.win_rate * 100).toFixed(1);
+
+      return `
+        <div class="bg-gray-800 rounded-xl p-5 border border-gray-700">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-sm font-semibold text-gray-300">${acct.account}</span>
+            <span class="text-xs text-gray-500">${acct.total_trades} trades</span>
+          </div>
+          <div class="text-2xl font-bold ${pnlClass}">${pnlSign}$${pnlAbs}</div>
+          <div class="flex items-center gap-3 mt-2 text-xs text-gray-400">
+            <span class="${winRatePct >= 50 ? 'text-green-400' : 'text-red-400'}">${winRatePct}% WR</span>
+            <span>|</span>
+            <span>${acct.winning_trades}W / ${acct.losing_trades}L</span>
+            <span>|</span>
+            <span>avg ${acct.avg_pnl_usd >= 0 ? '+' : '-'}$${Math.abs(acct.avg_pnl_usd).toFixed(2)}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
   }
 
   renderStats(stats) {
@@ -334,6 +387,62 @@ class AdminApp {
       avgProfitMonthlyEl.className = `text-3xl font-bold ${avgMonthly >= 0 ? 'text-green-400' : 'text-red-400'}`;
     }
     if (avgREl) avgREl.textContent = `avg R: ${stats.avg_r_multiple?.toFixed(2) || '-'}`;
+
+    // Enhanced KPIs
+    // Max Drawdown
+    const maxDdEl = document.getElementById('stat-max-drawdown');
+    const maxDdPctEl = document.getElementById('stat-max-drawdown-pct');
+    if (maxDdEl) {
+      const dd = stats.max_drawdown;
+      maxDdEl.textContent = dd !== undefined && dd !== null ? `${dd.toFixed(2)}R` : '-';
+    }
+    if (maxDdPctEl) {
+      const ddPct = stats.max_drawdown_pct;
+      maxDdPctEl.textContent = ddPct !== undefined && ddPct !== null ? `${ddPct.toFixed(1)}% of peak` : '-';
+    }
+
+    // Profit Factor
+    const pfEl = document.getElementById('stat-profit-factor');
+    const avgWinLossEl = document.getElementById('stat-avg-win-loss');
+    if (pfEl) {
+      const pf = stats.profit_factor;
+      pfEl.textContent = pf !== undefined && pf !== null ? pf.toFixed(2) : '-';
+      pfEl.className = `text-3xl font-bold ${pf >= 1.5 ? 'text-green-400' : pf >= 1.0 ? 'text-yellow-400' : 'text-red-400'}`;
+    }
+    if (avgWinLossEl) {
+      const aw = stats.avg_win;
+      const al = stats.avg_loss;
+      avgWinLossEl.textContent = (aw !== undefined && al !== undefined) ? `${aw.toFixed(2)}R / ${al.toFixed(2)}R` : '-';
+    }
+
+    // Expectancy
+    const expEl = document.getElementById('stat-expectancy');
+    if (expEl) {
+      const exp = stats.expectancy;
+      expEl.textContent = exp !== undefined && exp !== null ? `${exp >= 0 ? '+' : ''}${exp.toFixed(2)}R` : '-';
+      expEl.className = `text-3xl font-bold ${exp >= 0 ? 'text-green-400' : 'text-red-400'}`;
+    }
+
+    // Streak
+    const streakEl = document.getElementById('stat-streak');
+    const streakDetailEl = document.getElementById('stat-streak-detail');
+    if (streakEl) {
+      const cw = stats.max_consecutive_wins;
+      const cl = stats.max_consecutive_losses;
+      const cur = stats.current_streak;
+      const curType = stats.current_streak_type;
+      streakEl.textContent = (cw !== undefined && cl !== undefined) ? `${cw}W / ${cl}L` : '-';
+    }
+    if (streakDetailEl) {
+      const cur = stats.current_streak;
+      const curType = stats.current_streak_type;
+      if (cur !== undefined && curType) {
+        const color = curType === 'win' ? 'text-green-400' : 'text-red-400';
+        streakDetailEl.innerHTML = `Current: <span class="${color}">${cur} ${curType}${cur > 1 ? 's' : ''}</span>`;
+      } else {
+        streakDetailEl.textContent = '-';
+      }
+    }
   }
 }
 
