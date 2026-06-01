@@ -21,6 +21,7 @@ from src.infrastructure.database import database
 from src.infrastructure.database.database_protocol import SQLiteDatabase
 from src.infrastructure.gateway import create_live_components, create_multi_account_live_components
 from src.notifier import NoOpNotifier, Notifier, TelegramNotifier
+from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from src.strategies.liquidity_v2.prod_config import (
     get_prod_candle_config,
     get_prod_strategy_numbers,
@@ -121,6 +122,8 @@ class AppBuilder:
             min_cross_depth=numbers.min_cross_depth,
             skip_rollover_days=cfg.skip_rollover_days,
             reentry_only=cfg.reentry_only,
+            line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
+            max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
         )
         if cfg.no_breakeven:
             options.breakeven = None
@@ -218,6 +221,8 @@ class AppBuilder:
             min_cross_depth=numbers.min_cross_depth,
             skip_rollover_days=cfg.skip_rollover_days,
             reentry_only=cfg.reentry_only,
+            line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
+            max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
         )
         if cfg.no_breakeven:
             options.breakeven = None

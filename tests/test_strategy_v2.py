@@ -4,7 +4,10 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from src.services.trade_manager import TradeManager
+import dataclasses
+
 from src.strategies.liquidity_v2.base_strategy import StrategyOptions, LineRemovalMode
+from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from tests.conftest import make_bar, make_strategy
 from tests.fakes import (
     DummySocketIO,
@@ -266,7 +269,7 @@ class TestWarmupLineTracking:
         sio, lr, tr, tm = _deps()
         strat = make_strategy(
             sio, lr, tr, tm, min_cross_depth=0.0,
-            options=StrategyOptions(line_removal_mode=LineRemovalMode.ON_EVALUATE),
+            options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, line_removal_mode=LineRemovalMode.ON_EVALUATE),
         )
         strat.is_warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
@@ -285,7 +288,7 @@ class TestWarmupLineTracking:
         sio, lr, tr, tm = _deps()
         strat = make_strategy(
             sio, lr, tr, tm, min_cross_depth=0.0,
-            options=StrategyOptions(line_removal_mode=LineRemovalMode.ON_ENTER),
+            options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, line_removal_mode=LineRemovalMode.ON_ENTER),
         )
         strat.is_warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
@@ -304,7 +307,7 @@ class TestWarmupLineTracking:
         sio, lr, tr, tm = _deps()
         strat = make_strategy(
             sio, lr, tr, tm, min_cross_depth=0.0,
-            options=StrategyOptions(line_removal_mode=LineRemovalMode.NEVER),
+            options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, line_removal_mode=LineRemovalMode.NEVER),
         )
         strat.is_warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
@@ -510,7 +513,7 @@ class TestPhantomAndReentryGuards:
         """Reentry should be blocked by time_range_filter outside RTH."""
         from src.strategies.entry_context import time_range_filter
         sio, lr, tr, tm = _deps()
-        options = StrategyOptions(
+        options = dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, 
             reentry_after_sl=True,
             reentry_threshold=60.0,
             entry_filters=[time_range_filter("08:00", "15:30")],
@@ -536,7 +539,7 @@ class TestPhantomAndReentryGuards:
         """Reentry should NOT be blocked by daily_trades_limit_filter."""
         from src.strategies.entry_context import daily_trades_limit_filter, time_range_filter
         sio, lr, tr, tm = _deps()
-        options = StrategyOptions(
+        options = dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, 
             reentry_after_sl=True,
             reentry_threshold=60.0,
             entry_filters=[
@@ -570,7 +573,7 @@ class TestPhantomAndReentryGuards:
     def test_reentry_chains_up_to_max_attempts(self):
         """With max_reentry_attempts=2, reentry SL should create a second opportunity."""
         sio, lr, tr, tm = _deps()
-        options = StrategyOptions(
+        options = dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, 
             reentry_after_sl=True,
             reentry_threshold=60.0,
             max_reentry_attempts=2,

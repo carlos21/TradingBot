@@ -17,7 +17,10 @@ from src.infrastructure.repositories.line_trigger_state_repository import (
     InMemoryLineTriggerStateRepository,
 )
 from src.services.trade_manager import TradeManager
+import dataclasses
+
 from src.strategies.liquidity_v2.base_strategy import StrategyOptions
+from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
 from tests.fakes import (
     DummySocketIO,
@@ -104,7 +107,14 @@ def make_recovery_strategy(
     if options_override is not None:
         options = options_override
     else:
-        options = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0)
+        options = get_prod_strategy_options(
+            max_bounce=90.0,
+            min_cross_depth=5.0,
+            skip_rollover_days=False,
+            reentry_only=False,
+            line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
+            max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
+        )
         options.breakeven = None
 
     return LiquidityStrategyV2(
@@ -531,7 +541,14 @@ class TestCrashRecoveryEdgeCases:
         del strat1
 
         # Recover with reentry DISABLED
-        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0)
+        opts = get_prod_strategy_options(
+            max_bounce=90.0,
+            min_cross_depth=5.0,
+            skip_rollover_days=False,
+            reentry_only=False,
+            line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
+            max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
+        )
         opts.breakeven = None
         opts.reentry_after_sl = False
         strat2 = make_recovery_strategy(trade_repo, tsr, options_override=opts)

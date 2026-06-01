@@ -38,6 +38,7 @@ from src.financial_calc import FinancialCalc
 
 # Use unified BE threshold from FinancialCalc
 BE_THRESHOLD = FinancialCalc.DEFAULT_BE_THRESHOLD_R  # Threshold for considering a trade as breakeven (in R)
+from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from src.strategies.liquidity_v2.prod_config import (
     get_prod_strategy_numbers,
     get_prod_candle_config,
@@ -154,7 +155,14 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
     from dataclasses import replace
     numbers = replace(numbers, account_balance=account_balance)
     candle_config = get_prod_candle_config()
-    options = get_prod_strategy_options(numbers.max_bounce, numbers.min_cross_depth, line_removal_mode=LineRemovalMode.ON_EVALUATE)
+    options = get_prod_strategy_options(
+        numbers.max_bounce,
+        numbers.min_cross_depth,
+        skip_rollover_days=False,
+        reentry_only=False,
+        line_removal_mode=LineRemovalMode.ON_EVALUATE,
+        max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
+    )
 
     if no_breakeven:
         options.breakeven = None

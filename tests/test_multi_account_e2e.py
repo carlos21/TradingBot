@@ -22,7 +22,10 @@ from src.domain.events import EventType
 from src.events.event_bus import EventBus
 from src.infrastructure.event_publisher import DomainEventBusPublisher
 from src.strategies.base_strategy import BreakevenConfig
+import dataclasses
+
 from src.strategies.liquidity_v2.base_strategy import BaseLiquidityStrategy, StrategyOptions
+from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from tests.fakes import (
     FakeAnalyticsReporter,
     FakeLogger,
@@ -727,7 +730,7 @@ class TestMultiAccountReentryIntegration:
             trade_manager=trade_manager,
             extra_sl_space=0.0,
             fixed_stop_loss=20,
-            options=options or StrategyOptions(reentry_after_sl=True),
+            options=options or dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, reentry_after_sl=True),
             sl_levels=None,
             rr_ratio=3.3,
             point_value=2.0,
@@ -1014,7 +1017,7 @@ class TestMultiAccountReentryIntegration:
         executor.trade_manager = tm
         strategy = self._make_strategy(
             event_bus, tm, tr,
-            options=StrategyOptions(
+            options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS,
                 reentry_after_sl=True,
                 breakeven=BreakevenConfig(trigger_rr=1.0, move_to_rr=0.0),
             ),

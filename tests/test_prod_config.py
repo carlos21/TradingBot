@@ -5,7 +5,7 @@ from src.strategies.liquidity_v2.prod_config import (
     get_prod_strategy_numbers,
     get_prod_strategy_options,
 )
-from src.strategies.liquidity_v2.base_strategy import StrategyOptions
+from src.strategies.liquidity_v2.base_strategy import StrategyOptions, LineRemovalMode
 from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 
 
@@ -51,22 +51,22 @@ class TestGetProdCandleConfig:
 class TestGetProdStrategyOptions:
 
     def test_returns_strategy_options(self):
-        opts = get_prod_strategy_options(max_bounce=90.0)
+        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1)
         assert isinstance(opts, StrategyOptions)
 
     def test_has_filters(self):
-        opts = get_prod_strategy_options(max_bounce=90.0)
+        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1)
         assert len(opts.entry_filters) > 0
 
     def test_has_triggers(self):
-        opts = get_prod_strategy_options(max_bounce=90.0)
+        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1)
         assert len(opts.triggers) > 0
 
     def test_reentry_after_sl_enabled(self):
-        opts = get_prod_strategy_options(max_bounce=90.0)
+        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1)
         assert opts.reentry_after_sl is True
 
     def test_reentry_breakeven_configured(self):
-        opts = get_prod_strategy_options(max_bounce=90.0)
+        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1)
         assert opts.reentry_breakeven is not None
         assert opts.reentry_breakeven.trigger_rr == 2.0

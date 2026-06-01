@@ -37,15 +37,15 @@ class LineRemovalMode(str, Enum):
 
 @dataclass
 class StrategyOptions:
-    line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE
-    entry_filters: list[EntryFilter] | None = None
-    triggers: list[EntryTrigger] | None = None
-    breakeven: BreakevenConfig | None = None
-    reentry_breakeven: BreakevenConfig | None = None  # breakeven config applied only to re-entry trades
-    reentry_after_sl: bool = False        # re-enter if price comes back after a SL hit
-    reentry_threshold: float = 60.0       # cancel re-entry if price goes this many pts past the line
-    reentry_only: bool = False            # skip initial trade, only take re-entry trades
-    max_reentry_attempts: int = 1         # how many re-entry trades allowed per original setup
+    line_removal_mode: LineRemovalMode
+    entry_filters: list[EntryFilter] | None
+    triggers: list[EntryTrigger] | None
+    breakeven: BreakevenConfig | None
+    reentry_breakeven: BreakevenConfig | None  # breakeven config applied only to re-entry trades
+    reentry_after_sl: bool
+    reentry_threshold: float
+    reentry_only: bool
+    max_reentry_attempts: int
 
 
 class BaseLiquidityStrategy:
@@ -148,7 +148,9 @@ class BaseLiquidityStrategy:
         self._buf: list[dict[str, Any]] = []
         self._group_start: int | None = None
 
-        self.options = options or StrategyOptions()
+        if options is None:
+            raise ValueError("options is required — use DEFAULT_STRATEGY_OPTIONS from src.strategies.liquidity_v2.constants if you need defaults")
+        self.options = options
         # Let subclasses decide the triggers (they may depend on attrs set after super().__init__)
         self.triggers: list[EntryTrigger] = list(self.options.triggers) if self.options.triggers else []
         # Filters can be taken straight from options

@@ -120,11 +120,11 @@ def get_prod_candle_config() -> CandleConfig:
 
 
 def get_prod_strategy_options(max_bounce: float,
-                                min_cross_depth: float = 0.0,
-                                skip_rollover_days: bool = False,
-                                reentry_only: bool = False,
-                                line_removal_mode: LineRemovalMode = LineRemovalMode.ON_EVALUATE,
-                                max_reentry_attempts: int = 1) -> StrategyOptions:
+                                min_cross_depth: float,
+                                skip_rollover_days: bool,
+                                reentry_only: bool,
+                                line_removal_mode: LineRemovalMode,
+                                max_reentry_attempts: int) -> StrategyOptions:
     """
     High-level strategy behaviour: filters, triggers, breakeven, re-entry.
     """

@@ -6,11 +6,14 @@ import pytest
 
 from src.services.trade_manager import TradeManager
 from src.strategies.base_strategy import BreakevenConfig
+import dataclasses
+
 from src.strategies.liquidity_v2.base_strategy import (
     BaseLiquidityStrategy,
     LineRemovalMode,
     StrategyOptions,
 )
+from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from src.strategies.entry_context import EntryContext
 from src.domain.types import Direction
 
@@ -47,7 +50,7 @@ def _make_base(event_publisher=None, line_repo=None, trade_repo=None, trade_mana
         trade_manager=tm,
         extra_sl_space=0.0,
         fixed_stop_loss=fixed_stop_loss,
-        options=options or StrategyOptions(),
+        options=options,
         sl_levels=sl_levels,
         rr_ratio=3.3,
         point_value=2.0,
@@ -60,7 +63,7 @@ def _make_base(event_publisher=None, line_repo=None, trade_repo=None, trade_mana
 class TestLineManagement:
 
     def test_add_line(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.add_strategy_line("L1", 100.0, creation_timestamp=500)
         assert "L1" in strat.strategy_lines
         assert strat.strategy_lines["L1"]["level"] == 100.0
@@ -70,30 +73,30 @@ class TestLineManagement:
         sio = DummySocketIO()
         lr = FakeLineRepository()
         lr.insert_line("MNQ", 100.0)
-        strat = _make_base(event_publisher=sio, line_repo=lr)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, event_publisher=sio, line_repo=lr)
         strat.add_strategy_line("L1", 100.0)
         strat.remove_strategy_line("L1")
         assert "L1" not in strat.strategy_lines
         assert any(e[0] == "line_removed" for e in sio.events)
 
     def test_remove_nonexistent_line_does_not_crash(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.remove_strategy_line("DOES_NOT_EXIST")
 
 
 class TestSLSelection:
 
     def test_tiered_picks_smallest_covering(self):
-        strat = _make_base(sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
         # distance=17 -> 15+3=18 >= 17 -> pick 15
         assert strat._select_sl_level(17.0) == 15.0
 
     def test_tiered_exceeds_all_picks_largest(self):
-        strat = _make_base(sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
         assert strat._select_sl_level(100.0) == 40.0
 
     def test_tiered_exact_match(self):
-        strat = _make_base(sl_levels=[15, 20, 30, 40], sl_level_tolerance=0)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, sl_levels=[15, 20, 30, 40], sl_level_tolerance=0)
         assert strat._select_sl_level(20.0) == 20.0
 
 
@@ -109,7 +112,7 @@ class TestBuildTrade:
         )
 
     def test_long_fixed_sl(self):
-        strat = _make_base(fixed_stop_loss=20, sl_levels=None)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, fixed_stop_loss=20, sl_levels=None)
         ctx = self._make_ctx(strat, direction=Direction.LONG, close=100, extreme=85)
         trade = strat._build_trade_from_context(ctx)
         assert trade["type"] == "long"
@@ -118,7 +121,7 @@ class TestBuildTrade:
         assert trade["risk"] == 20.0
 
     def test_short_fixed_sl(self):
-        strat = _make_base(fixed_stop_loss=20, sl_levels=None)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, fixed_stop_loss=20, sl_levels=None)
         ctx = self._make_ctx(strat, direction=Direction.SHORT, close=100, extreme=115)
         trade = strat._build_trade_from_context(ctx)
         assert trade["type"] == "short"
@@ -126,21 +129,21 @@ class TestBuildTrade:
         assert trade["risk"] == 20.0
 
     def test_tiered_sl(self):
-        strat = _make_base(fixed_stop_loss=None, sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, fixed_stop_loss=None, sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
         ctx = self._make_ctx(strat, direction=Direction.LONG, close=100, extreme=83)
         # distance = max(100-83, 10) = 17; pick 15 since 15+3=18>=17
         trade = strat._build_trade_from_context(ctx)
         assert trade["risk"] == 15.0
 
     def test_max_stop_loss_cap(self):
-        strat = _make_base(fixed_stop_loss=None, sl_levels=None, max_stop_loss=25)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, fixed_stop_loss=None, sl_levels=None, max_stop_loss=25)
         # Dynamic risk: distance = max(100-70, 10) = 30; capped at 25
         ctx = self._make_ctx(strat, direction=Direction.LONG, close=100, extreme=70)
         trade = strat._build_trade_from_context(ctx)
         assert trade["risk"] == 25.0
 
     def test_trade_has_line_level(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         ctx = self._make_ctx(strat, level=105.0)
         trade = strat._build_trade_from_context(ctx)
         assert trade["line_level"] == 105.0
@@ -150,7 +153,7 @@ class TestOnTradeClosed:
     """Tests for the event-driven trade close handler (replaces _check_open_trades)."""
 
     def test_sl_closes_trade_and_creates_reentry(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.options.reentry_after_sl = True
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
@@ -167,7 +170,7 @@ class TestOnTradeClosed:
         assert strat._reentry_opportunities[0]["level"] == 95.0
 
     def test_tp_closes_trade_no_reentry(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.options.reentry_after_sl = True
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
@@ -183,13 +186,13 @@ class TestOnTradeClosed:
         assert len(strat._reentry_opportunities) == 0
 
     def test_unknown_trade_id_is_noop(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat._on_trade_closed({"trade_id": "UNKNOWN", "result_type": "SL"})
         assert len(strat.open_trades) == 0
         assert len(strat._reentry_opportunities) == 0
 
     def test_already_closed_trade_is_noop(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
@@ -203,7 +206,7 @@ class TestOnTradeClosed:
         assert len(strat.open_trades) == 1
 
     def test_reentry_trade_does_not_create_reentry(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.options.reentry_after_sl = True
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
@@ -222,7 +225,7 @@ class TestOnTradeClosed:
     def test_sl_creates_reentry_when_payload_lacks_line_level(self):
         """Live multi-account: account trade payload lacks line_level,
         but strategy trade still has it — fallback must create reentry."""
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.options.reentry_after_sl = True
         strat.open_trades.append({
             "trade_id": "signal-abc", "pair": "MNQ", "type": "long",
@@ -244,7 +247,7 @@ class TestOnTradeClosed:
 
     def test_reentry_suppressed_when_payload_and_trade_both_flag_reentry(self):
         """If both payload and strategy trade mark it as reentry, do not chain."""
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.options.reentry_after_sl = True
         strat.open_trades.append({
             "trade_id": "signal-abc", "pair": "MNQ", "type": "long",
@@ -262,7 +265,7 @@ class TestOnTradeClosed:
 
     def test_multi_reentry_creates_second_opportunity(self):
         """With max_reentry_attempts=2, a reentry SL creates another opportunity."""
-        strat = _make_base()
+        strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS))
         strat.options.reentry_after_sl = True
         strat.options.max_reentry_attempts = 2
         strat.open_trades.append({
@@ -282,7 +285,7 @@ class TestOnTradeClosed:
 
     def test_multi_reentry_stops_at_max(self):
         """With max_reentry_attempts=2, the second reentry SL does NOT create a third."""
-        strat = _make_base()
+        strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS))
         strat.options.reentry_after_sl = True
         strat.options.max_reentry_attempts = 2
         strat.open_trades.append({
@@ -304,7 +307,7 @@ class TestPhantomExits:
     """Tests for _check_phantom_exits (strategy-only trades with no DB/broker)."""
 
     def test_phantom_sl_hit_closes_and_creates_reentry(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.options.reentry_after_sl = True
         strat.open_trades.append({
             "trade_id": "phantom-1", "pair": "MNQ", "type": "long",
@@ -318,7 +321,7 @@ class TestPhantomExits:
         assert len(strat._reentry_opportunities) == 1
 
     def test_phantom_no_hit_keeps_trade(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.open_trades.append({
             "trade_id": "phantom-1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
@@ -329,7 +332,7 @@ class TestPhantomExits:
         assert len(strat.open_trades) == 1
 
     def test_real_trade_ignored_by_phantom_check(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
@@ -340,7 +343,7 @@ class TestPhantomExits:
         assert len(strat.open_trades) == 1
 
     def test_phantom_multi_reentry_creates_second_opportunity(self):
-        strat = _make_base()
+        strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS))
         strat.options.reentry_after_sl = True
         strat.options.max_reentry_attempts = 2
         strat.open_trades.append({
@@ -359,7 +362,7 @@ class TestPhantomExits:
 class TestFiltersAllowEntry:
 
     def test_all_pass(self):
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.entry_filters = [lambda _ctx: (True, "ok")]
         ctx = MagicMock()
         allow, reason, hold = strat._filters_allow_entry(ctx)
@@ -370,7 +373,7 @@ class TestFiltersAllowEntry:
         def blocker(_ctx):
             return False, "blocked"
         blocker.__name__ = "blocker"
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.entry_filters = [blocker]
         ctx = MagicMock()
         allow, reason, hold = strat._filters_allow_entry(ctx)
@@ -382,7 +385,7 @@ class TestFiltersAllowEntry:
             return False, "hold"
         holder.__name__ = "holder"
         holder._hold_on_block = True
-        strat = _make_base()
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.entry_filters = [holder]
         ctx = MagicMock()
         allow, reason, hold = strat._filters_allow_entry(ctx)
@@ -393,13 +396,13 @@ class TestFiltersAllowEntry:
 class TestLineRemovalModes:
 
     def test_on_evaluate_removes_always(self):
-        strat = _make_base(options=StrategyOptions(line_removal_mode=LineRemovalMode.ON_EVALUATE))
+        strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, line_removal_mode=LineRemovalMode.ON_EVALUATE))
         strat.add_strategy_line("L1", 100.0)
         strat._maybe_remove_line("L1", opened=False)
         assert "L1" not in strat.strategy_lines
 
     def test_on_enter_removes_only_when_opened(self):
-        strat = _make_base(options=StrategyOptions(line_removal_mode=LineRemovalMode.ON_ENTER))
+        strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, line_removal_mode=LineRemovalMode.ON_ENTER))
         strat.add_strategy_line("L1", 100.0)
         strat._maybe_remove_line("L1", opened=False)
         assert "L1" in strat.strategy_lines
@@ -407,7 +410,7 @@ class TestLineRemovalModes:
         assert "L1" not in strat.strategy_lines
 
     def test_never_keeps_line_and_resets(self):
-        strat = _make_base(options=StrategyOptions(line_removal_mode=LineRemovalMode.NEVER))
+        strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, line_removal_mode=LineRemovalMode.NEVER))
         strat.add_strategy_line("L1", 100.0)
         strat.strategy_lines["L1"]["extreme"] = 50.0
         strat._maybe_remove_line("L1", opened=True)
@@ -430,7 +433,7 @@ class TestBreakeven:
         )
         strat = _make_base(
             event_publisher=sio, trade_repo=tr, trade_manager=tm,
-            options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
+            options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
         )
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
@@ -445,7 +448,7 @@ class TestBreakeven:
 
     def test_breakeven_not_triggered_below_threshold(self):
         strat = _make_base(
-            options=StrategyOptions(breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
+            options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
         )
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
@@ -470,7 +473,7 @@ class TestStoreAndEmitOpen:
             account_balance=100000.0,
             logger=FakeLogger(),
         )
-        strat = _make_base(event_publisher=sio, trade_repo=tr, trade_manager=tm)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, event_publisher=sio, trade_repo=tr, trade_manager=tm)
         trade = {
             "pair": "MNQ", "type": "long", "entry": 100,
             "stop_loss": 90, "take_profit": 130, "risk": 10,
