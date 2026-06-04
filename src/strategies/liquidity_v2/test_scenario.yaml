@@ -8,4 +8,3 @@ scenarios:
       - { price: 30163.75, at: "2026-06-04 08:00:00" }
     expect:
       none: true
-    show_tsi: false
