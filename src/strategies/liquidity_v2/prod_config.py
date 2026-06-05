@@ -189,7 +189,7 @@ def get_prod_strategy_options(max_bounce: float,
                 slow_threshold=15.0,    # pts/min.  Between 15-28 = MODERATE.
                 lookback=30,            # number of 1m bars for volatility calc
                 fast=    [TsiCrossCondition("5m", 2)],   # 2x 5m crosses
-                moderate=[TsiCrossCondition("3m", 1)],   # 1x 1m cross
+                moderate=[TsiCrossCondition("1m", 1), TsiCrossCondition("3m", 1)],   # 1x 1m cross
                 slow=    [TsiCrossCondition("1m", 1)],   # 1x 1m cross
                 # For double-cross setups: if price moves >80 pts from the
                 # line AFTER the first cross, invalidate the line entirely.
