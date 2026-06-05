@@ -102,6 +102,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         self.candle_config = candle_config
         self._tf_aggregators = {}
         self._tf_histories = {}
+        self.history_complete = True  # Default True for backtest/replay; live mode overrides via data_source
 
         self.decision_logs = []
 
@@ -113,7 +114,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             }
             self._tf_histories[tf] = deque(maxlen=100)
 
-    def reset(self, preserve_trigger_state: bool = False):
+    def reset(self, preserve_trigger_state: bool = False, preserve_histories: bool = False):
         with self.lock:
             if not preserve_trigger_state:
                 for line_id in list(self.strategy_lines.keys()):
@@ -129,8 +130,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     "buf": [],
                     "start": None
                 }
-                self._tf_histories[tf].clear()
-            self.logger.info("[StrategyV2] Internal state fully reset.")
+                if not preserve_histories:
+                    self._tf_histories[tf].clear()
+            self.logger.info(f"[StrategyV2] Internal state fully reset. (preserve_histories={preserve_histories})")
 
     def _reset_trigger_state(self, line_state: dict[str, Any]):
         """Reset trigger-specific state only, preserving direction and extreme."""
@@ -380,8 +382,13 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 if state["buf"]:
                     agg_bar = self._aggregate_bars(state["buf"], state["start"], window_secs)
                     agg_bar['tf'] = tf
-                    self._tf_histories[tf].append(agg_bar)
-                    self._on_strategy_bar(agg_bar)
+                    # Avoid duplicate aggregated bars in history (can happen during refresh replay)
+                    hist = self._tf_histories[tf]
+                    if not hist or hist[-1]['time'] != agg_bar['time']:
+                        hist.append(agg_bar)
+                        self._on_strategy_bar(agg_bar)
+                    elif self.logger:
+                        self.logger.info(f"[StrategyV2] Duplicate agg bar skipped for {tf} @ {agg_bar['time']}")
 
                 state["buf"] = [bar]
                 state["start"] = window_start
@@ -435,6 +442,10 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 closes = [b['close'] for b in history]
                 tsi_vals, sig_vals = _calculate_tsi_series(closes, 6, 13, 4)
 
+                if not tsi_vals or not sig_vals:
+                    if self.logger:
+                        self.logger.info(f"[TSI:{tf}] bar={bar['time']} close={bar['close']:.2f} — insufficient history for TSI ({len(history)} bars)")
+
                 if tsi_vals and sig_vals:
                     # --- NEW: Detect Crossover ---
                     cross_type = None
@@ -451,6 +462,12 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         elif prev_tsi >= prev_sig and curr_tsi < curr_sig:
                             cross_type = 'bearish'
 
+                    if self.logger:
+                        self.logger.info(
+                            f"[TSI:{tf}] bar={bar['time']} close={bar['close']:.2f} "
+                            f"tsi={curr_tsi:+.2f} sig={curr_sig:+.2f} cross={cross_type or 'none'}"
+                        )
+
                     self.event_publisher.emit('indicator_update', {
                         'tf': tf,
                         'time': bar['time'],
@@ -458,6 +475,10 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         'signal': sig_vals[-1],
                         'cross_type': cross_type
                     })
+
+            # Skip trigger evaluation until historical data is complete enough for TSI
+            if not self.history_complete:
+                return
 
             for sid, line in list(self.strategy_lines.items()):
                 if line.get('creation_ts', 0) > bar['time']:

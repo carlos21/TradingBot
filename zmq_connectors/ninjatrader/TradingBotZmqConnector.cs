@@ -647,13 +647,27 @@ namespace NinjaTrader.NinjaScript.AddOns
                     {
                         lock (_barSendLock)
                         {
-                            // Use second-to-last bar as last sent completed bar,
-                            // because the last bar may still be forming.
+                            var pair = _config.Instrument.Split(' ')[0];
+                            // Send all completed bars from the initial load so they don't get
+                            // lost when the catch-up logic skips them based on _lastSentBarTime.
+                            // The forming bar (last index) is excluded — it will be sent when it completes.
+                            for (int i = 0; i < bars.Bars.Count - 1; i++)
+                            {
+                                _network?.SendBar(pair,
+                                    bars.Bars.GetTime(i),
+                                    bars.Bars.GetOpen(i),
+                                    bars.Bars.GetHigh(i),
+                                    bars.Bars.GetLow(i),
+                                    bars.Bars.GetClose(i),
+                                    (long)bars.Bars.GetVolume(i),
+                                    isPartial: false);
+                            }
+
                             int idx = Math.Max(0, bars.Bars.Count - 2);
                             _lastSentBarTime = bars.Bars.GetTime(idx);
                             _lastFormingBarTime = bars.Bars.GetTime(bars.Bars.Count - 1);
                         }
-                        _logger.Info($"Live bars stream ready. Cached {bars.Bars.Count} bars, lastCompleted={_lastSentBarTime:HH:mm:ss}");
+                        _logger.Info($"Live bars stream ready. Cached {bars.Bars.Count} bars, lastCompleted={_lastSentBarTime:HH:mm:ss}, sent {Math.Max(0, bars.Bars.Count - 1)} initial bar(s)");
                     }
                 }
                 catch (Exception callbackEx)
@@ -895,7 +909,15 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
 
                 var tcs = new TaskCompletionSource<bool>();
-                var barsRequest = new BarsRequest(instrument, DateTime.UtcNow.AddDays(-days), DateTime.UtcNow)
+                // IMPORTANT: DateTime-range BarsRequest forces NinjaTrader to load fresh data
+                // from the data provider if the range is not fully cached. The barsBack overload
+                // reads from cache only and can return stale data on startup before the cache
+                // has been warmed by real-time ticks. We use DateTime range to guarantee fresh
+                // data on every refresh, even though NT may cache the result internally.
+                var startDateTime = DateTime.UtcNow.AddDays(-days);
+                var endDateTime = DateTime.UtcNow;
+                _logger.Info($"[History] DateTime range | days={days} | start={startDateTime:yyyy-MM-dd HH:mm:ss} UTC | end={endDateTime:yyyy-MM-dd HH:mm:ss} UTC | requesting...");
+                var barsRequest = new BarsRequest(instrument, startDateTime, endDateTime)
                 {
                     BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 }
                 };
@@ -925,6 +947,19 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 _logger.Error("BarsRequest returned null bars");
                                 tcs.TrySetResult(false);
                                 return;
+                            }
+
+                            int receivedCount = bars.Bars.Count;
+                            if (receivedCount > 0)
+                            {
+                                var firstTime = bars.Bars.GetTime(0);
+                                var lastTime = bars.Bars.GetTime(receivedCount - 1);
+                                var gapToNow = DateTime.Now - lastTime;
+                                _logger.Info($"[History] BarsRequest returned {receivedCount} bars | first={firstTime:yyyy-MM-dd HH:mm:ss} | last={lastTime:yyyy-MM-dd HH:mm:ss} | gapToNow={gapToNow.TotalSeconds:F0}s");
+                            }
+                            else
+                            {
+                                _logger.Warning("[History] BarsRequest returned 0 bars");
                             }
 
                             for (int i = 0; i < bars.Bars.Count; i++)

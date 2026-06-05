@@ -126,20 +126,27 @@ def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_
     Returns EntryContext if rescue triggers, else None.
     """
     rescue_tf = RESCUE_TSI_TIMEFRAME
-    hist = strategy.get_history(rescue_tf, 50)
-
-    if len(hist) < 30:
+    hist = _get_history_with_gap_check(strategy, rescue_tf, line_id, bar, min_bars=30)
+    if hist is None:
         return None
 
     closes = [b['close'] for b in hist]
     tsi_vals, sig_vals = _calculate_tsi_series(closes, 6, 13, 4)
 
     if len(tsi_vals) < 2:
+        if strategy.logger:
+            strategy.logger.info(f"[TSI:{rescue_tf}] line={line_id} tsi_line too short: {len(tsi_vals)} < 2")
         return None
 
     # Check the latest closed bar
     t_curr, t_prev = tsi_vals[-1], tsi_vals[-2]
     s_curr, s_prev = sig_vals[-1], sig_vals[-2]
+
+    if strategy.logger:
+        strategy.logger.info(
+            f"[TSI:{rescue_tf}] line={line_id} close={bar['close']:.2f} "
+            f"tsi={t_curr:+.2f} sig={s_curr:+.2f} (rescue eval)"
+        )
 
     # 1. CHECK FOR RESET
     # If we haven't reset yet, check if the lines are currently in the "bad" direction
@@ -329,19 +336,66 @@ def tsi_cross_trigger(
 
     return None
 
+def _get_history_with_gap_check(strategy, tf, line_id, bar, min_bars=30):
+    """Fetch history and detect data gaps. Returns post-gap history or None if unusable."""
+    history = strategy.get_history(tf, 50)
+    if len(history) < min_bars:
+        if strategy.logger:
+            strategy.logger.info(f"[TSI:{tf}] line={line_id} history too short: {len(history)} < {min_bars}")
+        return None
+
+    parse_tf = getattr(strategy, '_parse_tf_seconds', None)
+    if parse_tf:
+        expected_interval = parse_tf(tf)
+        # Guard against mock objects in tests
+        if isinstance(expected_interval, (int, float)) and expected_interval > 0:
+            gap_idx = None
+            for i in range(1, len(history)):
+                gap = history[i]['time'] - history[i - 1]['time']
+                if gap > expected_interval * 2:
+                    gap_idx = i
+            if gap_idx is not None:
+                post_gap = history[gap_idx:]
+                if len(post_gap) < min_bars:
+                    strategy.log_decision(bar['time'], tf, line_id, "TSI_GAP",
+                        f"Data gap at bar {gap_idx}; post-gap history too short: {len(post_gap)} < {min_bars}",
+                        category=DecisionEventCategory.EVAL_FAILURE)
+                    if strategy.logger:
+                        strategy.logger.info(f"[TSI:{tf}] line={line_id} data gap, post-gap history too short: {len(post_gap)} < {min_bars}")
+                    return None
+                if strategy.logger:
+                    strategy.logger.info(f"[TSI:{tf}] line={line_id} data gap detected at bar {gap_idx}, using post-gap history ({len(post_gap)} bars)")
+                return post_gap
+    return history
+
+
 def _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf):
     """Check for a single TSI cross on the given timeframe."""
-    history = strategy.get_history(tf, 50)
-    if len(history) < 30:
+    history = _get_history_with_gap_check(strategy, tf, line_id, bar, min_bars=30)
+    if history is None:
         return None
 
     closes = [b['close'] for b in history]
     tsi_line, sig_line = _calculate_tsi_series(closes, 6, 13, 4)
     if len(tsi_line) < 2:
+        if strategy.logger:
+            strategy.logger.info(f"[TSI:{tf}] line={line_id} tsi_line too short: {len(tsi_line)} < 2")
         return None
 
     curr_tsi, prev_tsi = tsi_line[-1], tsi_line[-2]
     curr_sig, prev_sig = sig_line[-1], sig_line[-2]
+
+    cross_status = "none"
+    if prev_tsi <= prev_sig and curr_tsi > curr_sig:
+        cross_status = "up"
+    elif prev_tsi >= prev_sig and curr_tsi < curr_sig:
+        cross_status = "down"
+
+    if strategy.logger:
+        strategy.logger.info(
+            f"[TSI:{tf}] line={line_id} close={bar['close']:.2f} "
+            f"tsi={curr_tsi:+.2f} sig={curr_sig:+.2f} cross={cross_status}"
+        )
 
     if dir_ == Direction.LONG and prev_tsi <= prev_sig and curr_tsi > curr_sig:
         return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
@@ -364,17 +418,25 @@ def _handle_double_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf, state_
     max_dist: if > 0, invalidate and remove the line when price moves more than
     this many points away from the line (in trade direction) after the 1st cross.
     """
-    history = strategy.get_history(tf, 50)
-    if len(history) < 30:
+    history = _get_history_with_gap_check(strategy, tf, line_id, bar, min_bars=30)
+    if history is None:
         return None
 
     closes = [b['close'] for b in history]
     tsi_line, sig_line = _calculate_tsi_series(closes, 6, 13, 4)
     if len(tsi_line) < 2:
+        if strategy.logger:
+            strategy.logger.info(f"[TSI:{tf}] line={line_id} tsi_line too short: {len(tsi_line)} < 2")
         return None
 
     curr_tsi, prev_tsi = tsi_line[-1], tsi_line[-2]
     curr_sig, prev_sig = sig_line[-1], sig_line[-2]
+
+    if strategy.logger:
+        strategy.logger.info(
+            f"[TSI:{tf}] line={line_id} close={bar['close']:.2f} "
+            f"tsi={curr_tsi:+.2f} sig={curr_sig:+.2f} stage={line.get(f'{state_prefix}_stage', 0)} (double-cross eval)"
+        )
 
     stage_key = f"{state_prefix}_stage"
     reset_key = f"{state_prefix}_reset"

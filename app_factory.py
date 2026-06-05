@@ -218,11 +218,18 @@ def _setup_live_mode_callbacks(
                 logger.info(f"[LiveMode] Removed {stale_count} stale line(s) touched during warmup")
             
             elapsed = __import__('time').monotonic() - start
-            logger.info(f"[LiveMode] Warmup complete in {elapsed:.1f}s, ready for live bars.")
+            strategy.history_complete = getattr(data_source, '_history_complete', False)
+            logger.info(
+                f"[LiveMode] Warmup complete in {elapsed:.1f}s, "
+                f"history_complete={strategy.history_complete}, ready for live bars."
+            )
             
             # Tell any connected browsers to reload chart data
             try:
-                socketio.emit('history_ready', {'count': len(bars)})
+                socketio.emit('history_ready', {
+                    'count': len(bars),
+                    'history_complete': strategy.history_complete,
+                })
             except Exception as e:
                 logger.error(f"[LiveMode] Failed to emit history_ready: {type(e).__name__}: {e}")
         except Exception as e:
@@ -252,6 +259,8 @@ def _setup_live_mode_callbacks(
         thread.start()
     
     def _on_live_bar(bar):
+        # Sync history-complete flag before processing the bar
+        strategy.history_complete = getattr(data_source, '_history_complete', False)
         # Route through BarsLoader so bars get aggregated into
         # the current timeframe (5m, 15m, etc.) before chart emission.
         loader._handle_message(bar)
@@ -259,7 +268,7 @@ def _setup_live_mode_callbacks(
     def _on_before_refresh():
         """Reset strategy and re-add DB lines before fresh bars arrive."""
         logger.info("[LiveMode] Refresh: resetting strategy...")
-        strategy.reset(preserve_trigger_state=True)
+        strategy.reset(preserve_trigger_state=True, preserve_histories=True)
         loader.reset()
         # Re-add persistent lines with their real creation timestamp so the
         # existing guards in liquidity_strategy_v2 skip historical bars that

@@ -13,6 +13,7 @@ from src.strategies.liquidity_v2.triggers import (
     _calculate_velocity_score,
     _calculate_volatility_score,
     _check_tsi_condition,
+    _get_history_with_gap_check,
     _handle_double_tsi_cross,
     _handle_single_tsi_cross,
     _process_tsi_rescue,
@@ -1152,3 +1153,42 @@ class TestVelocityAdaptiveTsiTriggerAdditional:
         )
         result = trigger(s, "L1", line, _bar(tf="1m"))
         assert result is not None
+
+
+class TestGetHistoryWithGapCheck:
+
+    def test_no_gap_returns_full_history(self):
+        history = [_bar(time=i * 180, close=100 + i) for i in range(35)]
+        s = _make_strategy_mock({"3m": history})
+        s._parse_tf_seconds = MagicMock(return_value=180)
+        result = _get_history_with_gap_check(s, "3m", "L1", _bar(time=35 * 180))
+        assert result is not None
+        assert len(result) == 35
+
+    def test_gap_detected_returns_post_gap_history(self):
+        # Bars 0-9 are normal (0..1620), then a 600s gap, then bars 10-39 (30 post-gap bars)
+        history = [_bar(time=i * 180 if i < 10 else 2220 + (i - 10) * 180, close=100 + i) for i in range(40)]
+        s = _make_strategy_mock({"3m": history})
+        s._parse_tf_seconds = MagicMock(return_value=180)
+        result = _get_history_with_gap_check(s, "3m", "L1", _bar(time=history[-1]["time"]))
+        assert result is not None
+        # Post-gap should start from index 10
+        assert len(result) == 30
+        assert result[0]["time"] == history[10]["time"]
+
+    def test_gap_with_insufficient_post_gap_returns_none(self):
+        # Gap at index 5 (720 -> 1120 = 400s gap), only 20 bars after gap (need 30)
+        history = [_bar(time=i * 180 if i < 5 else 1120 + (i - 5) * 180, close=100 + i) for i in range(25)]
+        s = _make_strategy_mock({"3m": history})
+        s._parse_tf_seconds = MagicMock(return_value=180)
+        result = _get_history_with_gap_check(s, "3m", "L1", _bar(time=history[-1]["time"]))
+        assert result is None
+
+    def test_no_parse_tf_fallback_returns_full_history(self):
+        history = [_bar(time=i * 180, close=100 + i) for i in range(35)]
+        s = _make_strategy_mock({"3m": history})
+        # No _parse_tf_seconds method
+        del s._parse_tf_seconds
+        result = _get_history_with_gap_check(s, "3m", "L1", _bar(time=35 * 180))
+        assert result is not None
+        assert len(result) == 35

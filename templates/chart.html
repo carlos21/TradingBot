@@ -138,6 +138,8 @@
       <span id="healthDot" class="w-2.5 h-2.5 rounded-full bg-gray-500 flex-shrink-0"></span>
       <span id="healthState" class="font-semibold text-gray-400">--</span>
       <span class="text-gray-600">|</span>
+      <span id="healthReadyBadge" class="hidden px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide">--</span>
+      <span class="text-gray-600">|</span>
       <span id="healthLastBar">--</span>
       <span class="text-gray-600">|</span>
       <span id="healthCached">--</span>
@@ -159,6 +161,7 @@
         <div><span class="text-gray-500">Ticks:</span> <span id="detailTicks" class="font-mono">--</span></div>
         <div><span class="text-gray-500">Batches:</span> <span id="detailBatches" class="font-mono">--</span></div>
         <div class="col-span-2"><span class="text-gray-500">Platform:</span> <span id="detailPlatform" class="font-mono">--</span></div>
+        <div class="col-span-2"><span class="text-gray-500">History:</span> <span id="detailHistory" class="font-mono">--</span></div>
       </div>
       <div class="flex items-center space-x-3 border-t border-gray-700 pt-2">
         <button id="healthResyncBtn" class="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs disabled:opacity-50 disabled:cursor-not-allowed">

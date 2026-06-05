@@ -595,3 +595,54 @@ class TestPhantomAndReentryGuards:
         })
         assert len(strat._reentry_opportunities) == 1
         assert strat._reentry_opportunities[0]["reentry_attempt"] == 2
+
+
+class TestResetPreserveHistories:
+
+    def test_preserve_histories_keeps_tf_histories(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm)
+        # Seed some bars into 3m history
+        for i in range(5):
+            strat._tf_histories["3m"].append(make_bar(time=i * 180))
+        strat.reset(preserve_histories=True)
+        assert len(strat._tf_histories["3m"]) == 5
+        assert strat._tf_aggregators["3m"]["buf"] == []
+        assert strat._tf_aggregators["3m"]["start"] is None
+
+    def test_reset_without_preserve_clears_histories(self):
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm)
+        for i in range(5):
+            strat._tf_histories["3m"].append(make_bar(time=i * 180))
+        strat.reset()
+        assert len(strat._tf_histories["3m"]) == 0
+
+
+class TestDuplicateAggBarSuppression:
+
+    def test_replay_does_not_create_duplicate_agg_bars(self):
+        """Simulate a refresh replay: same raw bars should not produce duplicate aggregated bars."""
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0)
+        strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
+
+        # First pass: feed bars that complete a 3m window
+        for t in range(0, 180, 60):
+            strat.on_raw_bar(make_bar(time=t, open_=100, high=101, low=99, close=100, pair="MNQ"))
+        # The 3m window should close at t=180, but we need one more bar to trigger rollover
+        strat.on_raw_bar(make_bar(time=180, open_=100, high=101, low=99, close=100, pair="MNQ"))
+
+        # Count 3m bars after first pass
+        first_pass_count = len(strat._tf_histories["3m"])
+        assert first_pass_count >= 1
+
+        # Simulate refresh: reset with preserve_histories, then replay
+        strat.reset(preserve_histories=True)
+        for t in range(0, 180, 60):
+            strat.on_raw_bar(make_bar(time=t, open_=100, high=101, low=99, close=100, pair="MNQ"))
+        strat.on_raw_bar(make_bar(time=180, open_=100, high=101, low=99, close=100, pair="MNQ"))
+
+        # Count should not increase because duplicates are suppressed
+        second_pass_count = len(strat._tf_histories["3m"])
+        assert second_pass_count == first_pass_count

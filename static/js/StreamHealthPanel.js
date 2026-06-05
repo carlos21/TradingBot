@@ -17,6 +17,7 @@ export class StreamHealthPanel {
     this.lastBarEl = document.getElementById('healthLastBar');
     this.cachedEl = document.getElementById('healthCached');
     this.alertIcon = document.getElementById('healthAlertIcon');
+    this.readyBadge = document.getElementById('healthReadyBadge');
     this.chevron = document.getElementById('healthChevron');
 
     // Detail elements
@@ -29,6 +30,7 @@ export class StreamHealthPanel {
     this.detailTicks = document.getElementById('detailTicks');
     this.detailBatches = document.getElementById('detailBatches');
     this.detailPlatform = document.getElementById('detailPlatform');
+    this.detailHistory = document.getElementById('detailHistory');
 
     this.resyncBtn = document.getElementById('healthResyncBtn');
     this.refreshStatus = document.getElementById('healthRefreshStatus');
@@ -137,22 +139,27 @@ export class StreamHealthPanel {
     if (!this.bar) return;
     this.lastHealth = data;
 
-    // Show wrapper once we have data
-    this.wrapper.classList.remove('hidden');
-
     const state = data.state || 'UNKNOWN';
+
+    // Only show panel once streaming has started (not DISCONNECTED)
+    if (state === 'DISCONNECTED') {
+      this.wrapper.classList.add('hidden');
+      return;
+    }
+    this.wrapper.classList.remove('hidden');
     const lastBarTime = data.last_bar_time;
     const barsCached = data.bars_cached ?? 0;
     const hbAge = data.heartbeat_age_sec;
     const duplicates = data.duplicate_count ?? 0;
     const gaps = data.gap_count ?? 0;
     const platformConnected = data.platform_connected;
+    const historyComplete = data.history_complete;
 
     // Determine alert level
     let newLevel = 'ok';
     if (state !== 'LIVE' || !platformConnected || (hbAge !== null && hbAge > 90)) {
       newLevel = 'error';
-    } else if (gaps > 0 || duplicates > 0 || (hbAge !== null && hbAge > 30)) {
+    } else if (!historyComplete || gaps > 0 || duplicates > 0 || (hbAge !== null && hbAge > 30)) {
       newLevel = 'warn';
     }
 
@@ -186,6 +193,30 @@ export class StreamHealthPanel {
     if (this.detailTicks) this.detailTicks.textContent = (data.ticks_received ?? 0).toLocaleString();
     if (this.detailBatches) this.detailBatches.textContent = (data.history_batches ?? 0).toLocaleString();
     if (this.detailPlatform) this.detailPlatform.textContent = platformConnected ? 'Connected' : 'Disconnected';
+
+    // Ready badge
+    if (this.readyBadge) {
+      this.readyBadge.classList.remove('hidden', 'bg-green-600', 'text-white', 'bg-red-600');
+      if (historyComplete === true) {
+        this.readyBadge.textContent = 'READY';
+        this.readyBadge.classList.add('bg-green-600', 'text-white');
+      } else {
+        this.readyBadge.textContent = 'NOT READY';
+        this.readyBadge.classList.add('bg-red-600', 'text-white');
+      }
+    }
+
+    // Detail history
+    if (this.detailHistory) {
+      if (historyComplete === true) {
+        this.detailHistory.textContent = 'Complete ✅';
+        this.detailHistory.className = 'font-mono text-green-400';
+      } else {
+        const reason = data.history_complete_reason || 'Checking...';
+        this.detailHistory.textContent = `Incomplete — ${reason}`;
+        this.detailHistory.className = 'font-mono text-red-400';
+      }
+    }
 
     // Refresh button state
     const canRefresh = platformConnected && state !== 'REFRESHING';

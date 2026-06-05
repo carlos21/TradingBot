@@ -111,7 +111,7 @@ class TestInitialization:
             "bars_received": 0,
             "history_batches": 0,
         }
-        assert ds._gap_threshold == 120
+        assert ds._gap_threshold == 60
 
     def test_init_with_gateway(self, logger, mock_gateway):
         ds = ZMQDataSource(logger=logger, gateway=mock_gateway, pair="ES")
@@ -775,21 +775,21 @@ class TestGapDetection:
         assert len(data_source._historical_bars) == 0  # no state change
 
     def test_detect_gap_no_warning_below_threshold(self, data_source, logger):
-        data_source._detect_gap(0, 60, "TEST")
-        # Should not log anything for gaps <= 120s
+        data_source._detect_gap(0, 30, "TEST")
+        # Should not log anything for gaps <= 60s
 
     def test_scan_for_gaps(self, data_source):
         bars = [
             make_bar(time_val=0, open_=10.0, high=11.0, low=9.0, close=10.5),
-            make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
-            make_bar(time_val=400, open_=12.0, high=13.0, low=11.0, close=12.5),
+            make_bar(time_val=90, open_=11.0, high=12.0, low=10.0, close=11.5),
+            make_bar(time_val=180, open_=12.0, high=13.0, low=11.0, close=12.5),
         ]
         count = data_source._scan_for_gaps(bars, "TEST")
         assert count == 2
 
     def test_scan_for_gaps_limits_warnings(self, data_source, logger):
         bars = [
-            make_bar(time_val=i * 200, open_=10.0, high=11.0, low=9.0, close=10.5)
+            make_bar(time_val=i * 90, open_=10.0, high=11.0, low=9.0, close=10.5)
             for i in range(10)
         ]
         count = data_source._scan_for_gaps(bars, "TEST")
