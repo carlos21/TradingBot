@@ -1112,40 +1112,54 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         # ── Overall summary (count each individual trade) ─────────────────────
         outcomes = []
         for r in summary_results:
+            scenario_date = dtparser.parse(r["date"]).date()
             for trade, close in (r.get("trade_pairs") or []):
                 if close is None:
                     continue
+                exit_ts = close.get("exit_time")
+                if exit_ts:
+                    date_str = datetime.fromtimestamp(exit_ts, tz=pair_tz).strftime("%Y-%m-%d")
+                else:
+                    date_str = str(scenario_date)
                 result_type = close.get("result_type", None)
                 if result_type == "SP":
-                    outcomes.append("sp")
+                    outcomes.append(("sp", date_str))
                 elif result_type == "BE":
-                    outcomes.append("be")
+                    outcomes.append(("be", date_str))
                 else:
                     actual_r = close.get("result", 0.0)
                     if FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD):
-                        outcomes.append("be")
+                        outcomes.append(("be", date_str))
                     elif actual_r >= BE_THRESHOLD:
-                        outcomes.append(True)
+                        outcomes.append((True, date_str))
                     else:
-                        outcomes.append(False)
+                        outcomes.append((False, date_str))
 
         total_t = len(outcomes)
-        wins    = outcomes.count(True)
-        losses  = outcomes.count(False)
-        bes     = outcomes.count("be")
-        sps     = outcomes.count("sp")
+        wins    = sum(1 for o, _ in outcomes if o is True)
+        losses  = sum(1 for o, _ in outcomes if o is False)
+        bes     = sum(1 for o, _ in outcomes if o == "be")
+        sps     = sum(1 for o, _ in outcomes if o == "sp")
         winrate = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0.0
 
         max_consec_w = max_consec_l = cur_w = cur_l = 0
-        for o in outcomes:
+        max_consec_l_start = max_consec_l_end = ""
+        cur_l_start = cur_l_end = ""
+        for o, d in outcomes:
             if o is True:
                 cur_w += 1; cur_l = 0
             elif o is False:
+                if cur_l == 0:
+                    cur_l_start = d
                 cur_l += 1; cur_w = 0
+                cur_l_end = d
             else:
                 continue
             max_consec_w = max(max_consec_w, cur_w)
-            max_consec_l = max(max_consec_l, cur_l)
+            if cur_l > max_consec_l:
+                max_consec_l = cur_l
+                max_consec_l_start = cur_l_start
+                max_consec_l_end = cur_l_end
 
         total_usd_all = sum(v["usd"] for v in daily.values())
 
@@ -1167,7 +1181,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         print(f"  Trades  : {total_t}  ({' / '.join(summary_parts)})")
         print(f"  Win Rate: {_col(winrate - 50, f'{winrate:.1f}%')}  (excl. breakevens)")
         print(f"  Max consec. wins  : {GREEN}{BOLD}{max_consec_w}{RST}")
-        print(f"  Max consec. losses: {RED}{BOLD}{max_consec_l}{RST}")
+        max_l_period = ""
+        if max_consec_l > 0 and max_consec_l_start:
+            if max_consec_l_start == max_consec_l_end:
+                max_l_period = f" ({max_consec_l_start})"
+            else:
+                max_l_period = f" ({max_consec_l_start} → {max_consec_l_end})"
+        print(f"  Max consec. losses: {RED}{BOLD}{max_consec_l}{RST}{max_l_period}")
         print(f"  Max Drawdown (from peak) : {_col(-max_dd_usd, f'${-max_dd_usd:,.0f}')} ({_col(-max_dd_pct, f'{-max_dd_pct:.2f}%')})")
         print(f"  Max Drawdown (from start): {_col(-max_dd_start_usd, f'${-max_dd_start_usd:,.0f}')} ({_col(-max_dd_start_pct, f'{-max_dd_start_pct:.2f}%')})")
         total_comm_all = sum(v.get("commission", 0.0) for v in daily.values())
