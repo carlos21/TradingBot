@@ -252,6 +252,8 @@ class FakeTradeRepository:
                     pnl_usd=closed_info.get('pnl_usd') if closed_info else None,
                     params=t.get('params'),
                     source=t.get('source'),
+                    account=t.get('account'),
+                    signal_id=t.get('signal_id'),
                     created_at=datetime.utcnow()
                 )
         return None

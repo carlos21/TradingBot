@@ -172,7 +172,7 @@ class TestCommandAckMessage:
             success=True,
             trade_id="T1",
         )
-        env = msg.to_envelope(seq_num_out=5)
+        env = msg.to_envelope(seq_num=5)
         assert env.msg_type == MessageType.COMMAND_ACK
         assert env.payload["success"] is True
 

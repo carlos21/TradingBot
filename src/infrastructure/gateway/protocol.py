@@ -609,7 +609,7 @@ class CommandAckMessage:
     message: str | None = None
     timestamp: float | None = None
 
-    def to_envelope(self, seq_num_out: int = 0) -> MessageEnvelope:
+    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
             "command_type": self.command_type,
             "seq_num": self.seq_num,
@@ -625,7 +625,7 @@ class CommandAckMessage:
         return MessageEnvelope.create(
             msg_type=MessageType.COMMAND_ACK,
             payload=payload,
-            seq_num=seq_num_out,
+            seq_num=seq_num,
         )
 
     @classmethod

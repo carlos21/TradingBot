@@ -296,7 +296,7 @@ class TestMessageHandling:
             success=True,
             trade_id="T1",
         )
-        gw._handle_message(ack.to_envelope(seq_num_out=10).to_json())
+        gw._handle_message(ack.to_envelope(seq_num=10).to_json())
         assert 5 not in gw._pending_commands
         assert any("Command ACK" in m for m in logger.messages)
 
@@ -315,7 +315,7 @@ class TestMessageHandling:
             trade_id="T1",
             message="rejected",
         )
-        gw._handle_message(ack.to_envelope(seq_num_out=11).to_json())
+        gw._handle_message(ack.to_envelope(seq_num=11).to_json())
         assert 6 not in gw._pending_commands
         assert any("Command FAILED" in m for m in logger.messages)
 
@@ -328,7 +328,7 @@ class TestMessageHandling:
             success=True,
             trade_id="T1",
         )
-        gw._handle_message(ack.to_envelope(seq_num_out=12).to_json())
+        gw._handle_message(ack.to_envelope(seq_num=12).to_json())
         assert any("unknown" in m.lower() for m in logger.messages)
 
     def test_handle_message_command_ack_parse_error(self):

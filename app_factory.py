@@ -591,9 +591,6 @@ def create_app(
 
     # Initialize settings/manager/NT services from DB
     from src.services.settings_service import SettingsService
-    from src.infrastructure.repositories.settings_repository import SettingsRepository
-    from src.infrastructure.repositories.accounts_repository import NtAccountRepository
-    from src.infrastructure.repositories.credentials_repository import CredentialRepository
     from src.services.nt_manager_service import NtManagerService
     from src.services.platform_deploy_service import PlatformDeployService
     from src.controllers.settings_controller import SettingsController

@@ -639,7 +639,7 @@ class TestCommandAckHandling:
     def test_success_removes_pending(self, gateway, logger):
         gateway._pending_commands[5] = {"type": "order_open", "sent_time": time.time(), "payload": {}}
         ack = CommandAckMessage(command_type="order_open", seq_num=5, success=True, trade_id="T1")
-        env = ack.to_envelope(seq_num_out=10)
+        env = ack.to_envelope(seq_num=10)
         gateway._handle_message(env.to_json())
         assert 5 not in gateway._pending_commands
         assert any("Command ACK" in m for m in logger.messages)
@@ -647,14 +647,14 @@ class TestCommandAckHandling:
     def test_failure_removes_pending(self, gateway, logger):
         gateway._pending_commands[6] = {"type": "order_close", "sent_time": time.time(), "payload": {}}
         ack = CommandAckMessage(command_type="order_close", seq_num=6, success=False, trade_id="T1", message="rej")
-        env = ack.to_envelope(seq_num_out=10)
+        env = ack.to_envelope(seq_num=10)
         gateway._handle_message(env.to_json())
         assert 6 not in gateway._pending_commands
         assert any("Command FAILED" in m for m in logger.messages)
 
     def test_unknown_ack_logged_debug(self, gateway, logger):
         ack = CommandAckMessage(command_type="order_open", seq_num=999, success=True, trade_id="T1")
-        env = ack.to_envelope(seq_num_out=10)
+        env = ack.to_envelope(seq_num=10)
         gateway._handle_message(env.to_json())
         assert any("unknown" in m.lower() for m in logger.messages)
 

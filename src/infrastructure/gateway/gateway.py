@@ -281,6 +281,7 @@ to be:
         """Python binds sockets, platform connects to us."""
         # SUB socket: Receive market data from platform
         self._market_sub = self._context.socket(zmq.SUB)
+        self._market_sub.setsockopt(zmq.RCVHWM, 5000)
         self._market_sub.bind(self.config.market_data_pub)
         self._market_sub.setsockopt_string(zmq.SUBSCRIBE, "")
 
@@ -295,6 +296,7 @@ to be:
 
         # SUB socket: Receive heartbeats from platform
         self._heartbeat_sub = self._context.socket(zmq.SUB)
+        self._heartbeat_sub.setsockopt(zmq.RCVHWM, 1000)
         self._heartbeat_sub.bind(self.config.heartbeat_pub)
         self._heartbeat_sub.setsockopt_string(zmq.SUBSCRIBE, "")
 
@@ -302,6 +304,7 @@ to be:
         """Platform binds sockets, Python connects to platform."""
         # SUB socket: Connect to platform's market data PUB
         self._market_sub = self._context.socket(zmq.SUB)
+        self._market_sub.setsockopt(zmq.RCVHWM, 5000)
         self._market_sub.connect(self.config.market_data_pub)
         self._market_sub.setsockopt_string(zmq.SUBSCRIBE, "")
 
