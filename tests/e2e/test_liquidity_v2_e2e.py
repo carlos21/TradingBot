@@ -894,3 +894,97 @@ class TestFillAccuracy:
         assert closed.result_type == "TP"
         # Profit = (21200 - 20995) * point_value(2.0) - fees
         assert closed.pnl_usd > 0
+
+
+# ---------------------------------------------------------------------------
+# Bar stream health
+# ---------------------------------------------------------------------------
+
+
+class TestBarStreamStall:
+    """Heartbeat monitor detects when completed bars stop arriving."""
+
+    def test_no_bars_for_threshold_triggers_alert(self, e2e_harness: E2EHarness) -> None:
+        """When no bar arrives for >threshold seconds in LIVE state, alert fires."""
+        app = e2e_harness.app
+        nt = e2e_harness.nt
+        ds = app.data_source
+
+        # Shorten heartbeat settings so the test completes quickly.
+        # Must restart the monitor so the running thread picks up the new interval.
+        ds._heartbeat_alert_threshold_sec = 1.0
+        ds._heartbeat_check_interval_sec = 0.3
+        ds._stop_heartbeat_monitor()
+        ds._start_heartbeat_monitor()
+
+        now_ts = int(time.time())
+        # Send recent history so datasource transitions to LIVE
+        nt.send_history_batch([
+            {"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}
+        ])
+        nt.send_history_end()
+        time.sleep(0.2)
+
+        assert ds.state.name == "LIVE"
+        assert ds._heartbeat_alert_sent is False
+
+        # Wait for the heartbeat loop to detect the stall
+        time.sleep(1.5)
+        assert ds._heartbeat_alert_sent is True
+
+        # Send a fresh bar — alert should reset
+        nt.send_bar({"time": now_ts, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"})
+        time.sleep(0.5)
+        assert ds._heartbeat_alert_sent is False
+
+
+class TestGapDetection:
+    """Gap detection warns when bars have >60s holes between them."""
+
+    def test_history_gap_detected(self, e2e_harness: E2EHarness) -> None:
+        """Gaps in the history batch are scanned and counted."""
+        app = e2e_harness.app
+        nt = e2e_harness.nt
+        ds = app.data_source
+
+        ds._check_history_completeness = lambda bars: (True, "test")
+
+        now_ts = int(time.time())
+        # History with a 120s gap between the two bars
+        nt.send_history_batch([
+            {"time": now_ts - 240, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"},
+            {"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"},
+        ])
+        nt.send_history_end()
+        time.sleep(0.2)
+
+        assert ds._gap_count >= 1
+
+    def test_live_bar_gap_detected(self, e2e_harness: E2EHarness) -> None:
+        """Gaps between consecutive live bars are detected and counted."""
+        app = e2e_harness.app
+        nt = e2e_harness.nt
+        ds = app.data_source
+
+        ds._check_history_completeness = lambda bars: (True, "test")
+
+        now_ts = int(time.time())
+        # History without gaps
+        nt.send_history_batch([
+            {"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"},
+            {"time": now_ts - 60, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"},
+        ])
+        nt.send_history_end()
+        time.sleep(0.2)
+
+        assert ds._gap_count == 0
+
+        # Live bar with no gap (60s after last history bar)
+        nt.send_bar({"time": now_ts, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"})
+        time.sleep(0.1)
+        assert ds._gap_count == 0
+
+        # Live bar with 120s gap
+        nt.send_bar({"time": now_ts + 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"})
+        time.sleep(0.1)
+        assert ds._gap_count >= 1
