@@ -8,7 +8,7 @@ by infrastructure adapters (e.g., SocketIOBridge, loggers, analytics).
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Any
 
@@ -46,5 +46,5 @@ class DomainEvent:
     Events are immutable (frozen dataclass) to prevent accidental modification.
     """
     event_type: EventType
-    timestamp: datetime = field(default_factory=lambda: datetime.utcnow())
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     payload: dict[str, Any] = field(default_factory=dict)

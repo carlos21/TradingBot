@@ -423,58 +423,73 @@ to be:
                     continue
 
                 # Parse and handle query
-                envelope = MessageEnvelope.from_json(query_json)
-                self.logger.debug(f"Query received: {envelope.msg_type}")
+                # REP socket is now in "received" state — we MUST send a reply
+                # before receiving again, even if parsing/handling fails.
+                try:
+                    envelope = MessageEnvelope.from_json(query_json)
+                    self.logger.debug(f"Query received: {envelope.msg_type}")
 
-                if envelope.msg_type == MessageType.TEST_PING:
-                    # Respond with pong
-                    self.logger.info("🧪 TEST PING query received, sending PONG")
-                    from .protocol import TestPongMessage
-                    pong = TestPongMessage(timestamp=time.time())
-                    resp_envelope = pong.to_envelope(seq_num=self._next_seq())
-                    self._query_rep.send_string(resp_envelope.to_json())
-                elif envelope.msg_type == MessageType.POSITION_QUERY:
-                    # Handle position query - return open positions for crash recovery sync
-                    positions = []
-                    if self._position_query_handler:
-                        try:
-                            positions = self._position_query_handler()
-                            self.logger.info(f"📊 POSITION QUERY: returning {len(positions)} open positions")
-                        except Exception as e:
-                            self.logger.error(f"Error in position query handler: {e}")
+                    if envelope.msg_type == MessageType.TEST_PING:
+                        # Respond with pong
+                        self.logger.info("🧪 TEST PING query received, sending PONG")
+                        from .protocol import TestPongMessage
+                        pong = TestPongMessage(timestamp=time.time())
+                        resp_envelope = pong.to_envelope(seq_num=self._next_seq())
+                        self._query_rep.send_string(resp_envelope.to_json())
+                    elif envelope.msg_type == MessageType.POSITION_QUERY:
+                        # Handle position query - return open positions for crash recovery sync
+                        positions = []
+                        if self._position_query_handler:
+                            try:
+                                positions = self._position_query_handler()
+                                self.logger.info(f"📊 POSITION QUERY: returning {len(positions)} open positions")
+                            except Exception as e:
+                                self.logger.error(f"Error in position query handler: {e}")
 
-                    from .protocol import PositionResponseMessage
-                    resp = PositionResponseMessage(positions=positions, count=len(positions))
-                    resp_envelope = resp.to_envelope(seq_num=self._next_seq())
-                    self._query_rep.send_string(resp_envelope.to_json())
-                elif envelope.msg_type == MessageType.CONFIG_QUERY:
-                    # Handle config query - return settings like account name
-                    key = envelope.payload.get("key")
-                    self.logger.debug(f"CONFIG QUERY for key: {key}")
+                        from .protocol import PositionResponseMessage
+                        resp = PositionResponseMessage(positions=positions, count=len(positions))
+                        resp_envelope = resp.to_envelope(seq_num=self._next_seq())
+                        self._query_rep.send_string(resp_envelope.to_json())
+                    elif envelope.msg_type == MessageType.CONFIG_QUERY:
+                        # Handle config query - return settings like account name
+                        key = envelope.payload.get("key")
+                        self.logger.debug(f"CONFIG QUERY for key: {key}")
 
-                    from .protocol import ConfigResponseMessage
-                    config = {}
-                    if key == "accounts" or key == "all":
-                        # Refresh from DB so account changes don't require app restart
-                        self._refresh_account_names()
-                        account_names = getattr(self, '_account_names', [])
-                        config["accounts"] = ",".join(account_names) if account_names else ""
+                        from .protocol import ConfigResponseMessage
+                        config = {}
+                        if key == "accounts" or key == "all":
+                            # Refresh from DB so account changes don't require app restart
+                            self._refresh_account_names()
+                            account_names = getattr(self, '_account_names', [])
+                            config["accounts"] = ",".join(account_names) if account_names else ""
+                        else:
+                            config[key] = None
+
+                        resp = ConfigResponseMessage(config=config)
+                        resp_envelope = resp.to_envelope(seq_num=self._next_seq())
+                        self._query_rep.send_string(resp_envelope.to_json())
                     else:
-                        config[key] = None
-
-                    resp = ConfigResponseMessage(config=config)
-                    resp_envelope = resp.to_envelope(seq_num=self._next_seq())
-                    self._query_rep.send_string(resp_envelope.to_json())
-                else:
-                    # Unknown query type
-                    self.logger.warning(f"Unknown query type: {envelope.msg_type}")
-                    # Send empty response to avoid blocking
-                    resp_envelope = MessageEnvelope.create(
-                        msg_type=MessageType.ERROR,
-                        payload={"error": "Unknown query type"},
-                        seq_num=self._next_seq(),
-                    )
-                    self._query_rep.send_string(resp_envelope.to_json())
+                        # Unknown query type
+                        self.logger.warning(f"Unknown query type: {envelope.msg_type}")
+                        # Send empty response to avoid blocking
+                        resp_envelope = MessageEnvelope.create(
+                            msg_type=MessageType.ERROR,
+                            payload={"error": "Unknown query type"},
+                            seq_num=self._next_seq(),
+                        )
+                        self._query_rep.send_string(resp_envelope.to_json())
+                except Exception as e:
+                    self.logger.error(f"Error handling query: {e}")
+                    # Must send a reply to keep REP socket state machine valid
+                    try:
+                        resp_envelope = MessageEnvelope.create(
+                            msg_type=MessageType.ERROR,
+                            payload={"error": f"Internal error: {e}"},
+                            seq_num=self._next_seq(),
+                        )
+                        self._query_rep.send_string(resp_envelope.to_json())
+                    except Exception as send_err:
+                        self.logger.error(f"Failed to send error reply on REP socket: {send_err}")
 
             except Exception as e:
                 self.logger.error(f"Error in query handler loop: {e}")
@@ -1155,6 +1170,7 @@ to be:
 
         REQ sockets are strictly send->receive state machines. Concurrent calls
         will cause EFSM errors. This method uses a dedicated lock for safety.
+        If a timeout occurs, the REQ socket is recreated to reset its state.
         """
         if not self._query_req:
             return None
@@ -1178,7 +1194,15 @@ to be:
                 return None
 
             except zmq.Again:
-                self.logger.warning("Position query timeout")
+                self.logger.warning("Position query timeout — recreating REQ socket")
+                # Recreate REQ socket to reset FSM state
+                try:
+                    old = self._query_req
+                    self._query_req = self._context.socket(zmq.REQ)
+                    self._query_req.connect(self.config.query_rep)
+                    old.close(linger=0)
+                except Exception as rec_err:
+                    self.logger.error(f"Failed to recreate REQ socket: {rec_err}")
                 return None
             except Exception as e:
                 self.logger.error(f"Position query error: {e}")

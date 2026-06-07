@@ -95,7 +95,7 @@ class TradeCloseUseCase:
         trade_id = trade['trade_id']
 
         # 1. Calculate close metrics
-        risk = trade.get('risk', 0)
+        risk = trade.get('risk') or 0
         if risk <= 0:
             risk = 1.0
 

@@ -1,6 +1,6 @@
 import contextlib
-import threading
 from abc import ABC, abstractmethod
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -16,13 +16,13 @@ class NoOpNotifier(Notifier):
 
 
 class TelegramNotifier(Notifier):
-    def __init__(self, bot_token: str, chat_id: str):
+    def __init__(self, bot_token: str, chat_id: str, max_workers: int = 4):
         self._url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
         self._chat_id = chat_id
+        self._executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="telegram")
 
     def send(self, message: str) -> None:
-        t = threading.Thread(target=self._send, args=(message,), daemon=True)
-        t.start()
+        self._executor.submit(self._send, message)
 
     def _send(self, message: str) -> None:
         with contextlib.suppress(Exception):

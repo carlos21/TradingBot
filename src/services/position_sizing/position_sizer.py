@@ -164,11 +164,13 @@ class TieredSLPositionSizer(PositionSizer):
         self,
         sl_levels: list[float],
         sl_level_tolerance: float = 5.0,
+        min_stop_loss: float = 0.0,
         **kwargs
     ):
         super().__init__(**kwargs)
         self.sl_levels = sorted(sl_levels) if sl_levels else []
         self.sl_level_tolerance = sl_level_tolerance
+        self.min_stop_loss = min_stop_loss
 
     def _select_sl_level(self, distance: float) -> float:
         """Pick the smallest SL tier that covers the distance."""

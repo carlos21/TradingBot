@@ -364,72 +364,72 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             for sid in lines_to_remove:
                 self.remove_strategy_line(sid)
 
-        ts = bar["time"]
-        # Iterate over ALL internal aggregators (including 3m/15m)
-        for tf, state in self._tf_aggregators.items():
-            window_secs = state["seconds"]
-            window_start = (ts // window_secs) * window_secs
+            ts = bar["time"]
+            # Iterate over ALL internal aggregators (including 3m/15m)
+            for tf, state in self._tf_aggregators.items():
+                window_secs = state["seconds"]
+                window_start = (ts // window_secs) * window_secs
 
-            if state["start"] is None:
-                state["start"] = window_start
+                if state["start"] is None:
+                    state["start"] = window_start
 
-            if state["buf"] and state["buf"][-1]['time'] == ts:
-                continue
+                if state["buf"] and state["buf"][-1]['time'] == ts:
+                    continue
 
-            if window_start == state["start"]:
-                state["buf"].append(bar)
-            else:
-                if state["buf"]:
-                    agg_bar = self._aggregate_bars(state["buf"], state["start"], window_secs)
-                    agg_bar['tf'] = tf
-                    # Avoid duplicate aggregated bars in history (can happen during refresh replay)
-                    hist = self._tf_histories[tf]
-                    if not hist or hist[-1]['time'] != agg_bar['time']:
-                        hist.append(agg_bar)
-                        self._on_strategy_bar(agg_bar)
-                    elif self.logger:
-                        self.logger.info(f"[StrategyV2] Duplicate agg bar skipped for {tf} @ {agg_bar['time']}")
+                if window_start == state["start"]:
+                    state["buf"].append(bar)
+                else:
+                    if state["buf"]:
+                        agg_bar = self._aggregate_bars(state["buf"], state["start"], window_secs)
+                        agg_bar['tf'] = tf
+                        # Avoid duplicate aggregated bars in history (can happen during refresh replay)
+                        hist = self._tf_histories[tf]
+                        if not hist or hist[-1]['time'] != agg_bar['time']:
+                            hist.append(agg_bar)
+                            self._on_strategy_bar(agg_bar)
+                        elif self.logger:
+                            self.logger.info(f"[StrategyV2] Duplicate agg bar skipped for {tf} @ {agg_bar['time']}")
 
-                state["buf"] = [bar]
-                state["start"] = window_start
+                    state["buf"] = [bar]
+                    state["start"] = window_start
 
-        # Update line extremes AFTER all trigger evaluation so that
-        # _on_strategy_bar only sees the state as of the bar being processed.
-        for sid, line in self.strategy_lines.items():
-            creation_ts = line.get('creation_ts', 0)
-            if creation_ts > bar_time:
-                continue
-            if sid in lines_to_remove:
-                continue
-            lvl = line['level']
-            if line['direction'] == 'short':
-                if bar['high'] > line['extreme']:
-                    old_ext = line['extreme']
-                    line['extreme'] = bar['high']
-                    if line['extreme'] >= lvl and 'interaction_ts' not in line:
-                        line['interaction_ts'] = bar_time
-                        line['touch_bar_time'] = bar_time
-                        if self.is_warmup:
-                            self.warmup_crossed_lines.add(sid)
-                        self.log_decision(bar_time, "1m", sid, "TOUCH",
-                            f"Short line touched @ {bar['high']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
-                            direction="short",
-                            category=DecisionEventCategory.STATE_CHANGE)
-            elif line['direction'] == 'long':
-                if bar['low'] < line['extreme']:
-                    old_ext = line['extreme']
-                    line['extreme'] = bar['low']
-                    if line['extreme'] <= lvl and 'interaction_ts' not in line:
-                        line['interaction_ts'] = bar_time
-                        line['touch_bar_time'] = bar_time
-                        if self.is_warmup:
-                            self.warmup_crossed_lines.add(sid)
-                        self.log_decision(bar_time, "1m", sid, "TOUCH",
-                            f"Long line touched @ {bar['low']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
-                            direction="long",
-                            category=DecisionEventCategory.STATE_CHANGE)
+            # Update line extremes AFTER all trigger evaluation so that
+            # _on_strategy_bar only sees the state as of the bar being processed.
+            for sid, line in self.strategy_lines.items():
+                creation_ts = line.get('creation_ts', 0)
+                if creation_ts > bar_time:
+                    continue
+                if sid in lines_to_remove:
+                    continue
+                lvl = line['level']
+                if line['direction'] == 'short':
+                    if bar['high'] > line['extreme']:
+                        old_ext = line['extreme']
+                        line['extreme'] = bar['high']
+                        if line['extreme'] >= lvl and 'interaction_ts' not in line:
+                            line['interaction_ts'] = bar_time
+                            line['touch_bar_time'] = bar_time
+                            if self.is_warmup:
+                                self.warmup_crossed_lines.add(sid)
+                            self.log_decision(bar_time, "1m", sid, "TOUCH",
+                                f"Short line touched @ {bar['high']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
+                                direction="short",
+                                category=DecisionEventCategory.STATE_CHANGE)
+                elif line['direction'] == 'long':
+                    if bar['low'] < line['extreme']:
+                        old_ext = line['extreme']
+                        line['extreme'] = bar['low']
+                        if line['extreme'] <= lvl and 'interaction_ts' not in line:
+                            line['interaction_ts'] = bar_time
+                            line['touch_bar_time'] = bar_time
+                            if self.is_warmup:
+                                self.warmup_crossed_lines.add(sid)
+                            self.log_decision(bar_time, "1m", sid, "TOUCH",
+                                f"Long line touched @ {bar['low']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
+                                direction="long",
+                                category=DecisionEventCategory.STATE_CHANGE)
 
-        self._persist_all_line_states()
+            self._persist_all_line_states()
 
     def _on_strategy_bar(self, bar: dict[str, Any]):
         if self.is_warmup:
@@ -449,9 +449,9 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 if tsi_vals and sig_vals:
                     # --- NEW: Detect Crossover ---
                     cross_type = None
+                    curr_tsi = tsi_vals[-1]
+                    curr_sig = sig_vals[-1]
                     if len(tsi_vals) >= 2:
-                        curr_tsi = tsi_vals[-1]
-                        curr_sig = sig_vals[-1]
                         prev_tsi = tsi_vals[-2]
                         prev_sig = sig_vals[-2]
 

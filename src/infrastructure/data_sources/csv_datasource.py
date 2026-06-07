@@ -146,7 +146,10 @@ class CSVDataSource(CombinedDataSource):
                     dt = parser.parse(ts)                  # still naive
 
                 # Treat the CSV timestamp as local (pair) time, then convert to UTC
-                dt_local = dt.replace(tzinfo=local_tz)
+                if dt.tzinfo is None:
+                    dt_local = dt.replace(tzinfo=local_tz)
+                else:
+                    dt_local = dt.astimezone(local_tz)
                 dt_utc   = dt_local.astimezone(self.utc)
 
                 bars.append({

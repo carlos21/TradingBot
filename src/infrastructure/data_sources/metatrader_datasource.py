@@ -59,7 +59,7 @@ class MetaTraderDataSource(CombinedDataSource):
             print(f"⚠️ symbol_select failed for {self.symbol}: {mt5.last_error()}")
             return []
 
-        utc_to   = datetime.utcnow()
+        utc_to   = datetime.now(timezone.utc)
         utc_from = utc_to - timedelta(days=self._history_days)
         rates    = mt5.copy_rates_range(self.symbol, tf_const, utc_from, utc_to)
 
@@ -114,10 +114,11 @@ class MetaTraderDataSource(CombinedDataSource):
         srv.listen(1)
         print(f"[MTDataSrc] Listening for ticks on {self._host}:{self._port}…")
 
-        conn, addr = srv.accept()
-        print(f"[MTDataSrc] EA connected from {addr}")
-        buf = b""
+        conn = None
         try:
+            conn, addr = srv.accept()
+            print(f"[MTDataSrc] EA connected from {addr}")
+            buf = b""
             while True:
                 chunk = conn.recv(1024)
                 if not chunk:
@@ -140,13 +141,14 @@ class MetaTraderDataSource(CombinedDataSource):
                         continue
 
                     tick = {
-                        "time":   int(datetime.utcnow().timestamp()),
+                        "time":   int(datetime.now(timezone.utc).timestamp()),
                         "price":  price,
                         "volume": 0,
                         "pair":   symbol
                     }
                     callback(tick)
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
             srv.close()
             print("[MTDataSrc] Tick stream closed, server shutdown")

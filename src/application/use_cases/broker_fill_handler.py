@@ -77,10 +77,14 @@ class BrokerFillHandler:
 
         # Recalculate risk
         is_long = trade['type'] == 'long'
-        if is_long:
-            trade['risk'] = abs(entry_price - trade['stop_loss'])
+        sl = trade.get('stop_loss')
+        if sl is not None:
+            if is_long:
+                trade['risk'] = abs(entry_price - sl)
+            else:
+                trade['risk'] = abs(sl - entry_price)
         else:
-            trade['risk'] = abs(trade['stop_loss'] - entry_price)
+            trade['risk'] = trade.get('risk') or 0
 
         # Recalculate contracts
         risk_per_contract = trade['risk'] * self._point_value
