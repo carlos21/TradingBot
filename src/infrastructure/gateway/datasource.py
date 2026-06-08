@@ -147,6 +147,9 @@ class ZMQDataSource(CombinedDataSource):
         # Notifier for alerts when bar stream dies
         self._notifier = notifier or NoOpNotifier()
 
+        # Market status: suppress duplicate warnings when market is closed
+        self._market_is_open: bool = True
+
         # Heartbeat: track last completed bar time and monitor for stalls
         self._last_completed_bar_time: float = 0.0
         self._heartbeat_thread: threading.Thread | None = None
@@ -274,6 +277,7 @@ class ZMQDataSource(CombinedDataSource):
         gateway.on(MessageType.HISTORY_BATCH, self._on_history_batch)
         gateway.on(MessageType.HISTORY_END, self._on_history_end)
         gateway.on(MessageType.REFRESH_START, self._on_refresh_start)
+        gateway.on(MessageType.MARKET_STATUS, self._on_market_status)
 
         # Register connection-state callback so ZMQDataSource manages its own lifecycle
         gateway.on_connection_change(self._on_gateway_connection_change)
@@ -345,6 +349,12 @@ class ZMQDataSource(CombinedDataSource):
                     self._heartbeat_alert_sent = False
                     self.logger.info(f"[Heartbeat] Completed-bar stream resumed for {self.pair}")
 
+            # Stale-bar fallback: if no completed bar for >5min, treat market as closed
+            # to suppress duplicate warnings from the forming bar being resent.
+            if elapsed >= 300 and self._market_is_open:
+                self._market_is_open = False
+                self.logger.info(f"[MarketStatus] No completed bar for {int(elapsed)}s — treating market as CLOSED (stale-bar fallback)")
+
     def _on_tick(self, payload: dict) -> None:
         """Handle incoming tick."""
         self._stats["ticks_received"] += 1
@@ -412,6 +422,10 @@ class ZMQDataSource(CombinedDataSource):
             if self._heartbeat_alert_sent:
                 self._heartbeat_alert_sent = False
                 self.logger.info(f"[Heartbeat] Completed-bar stream resumed for {self.pair}")
+            # Reset market-open flag when a bar arrives (stale-bar fallback recovery)
+            if not self._market_is_open:
+                self._market_is_open = True
+                self.logger.info(f"[MarketStatus] Bar received while flagged closed — treating market as OPEN")
 
         bar = {
             "time": int(payload["time"]),
@@ -439,7 +453,8 @@ class ZMQDataSource(CombinedDataSource):
                 idx = bisect.bisect_left(times, bar["time"])
                 if idx < len(times) and times[idx] == bar["time"]:
                     self._duplicate_count += 1
-                    self.logger.warning(f"Duplicate bar at time {bar['time']} (total={self._duplicate_count})")
+                    if self._market_is_open:
+                        self.logger.warning(f"Duplicate bar at time {bar['time']} (total={self._duplicate_count})")
                     return
                 self._historical_bars.insert(idx, bar)
                 inserted_idx = idx
@@ -614,7 +629,9 @@ class ZMQDataSource(CombinedDataSource):
                     self.logger.error(
                         f"🕳️  History still ends {gap_to_now:.0f}s ago after "
                         f"{self._max_stale_history_retries} refresh attempts. "
-                        f"Proceeding with stale data — large gap warnings expected."
+                        f"Proceeding with stale data — large gap warnings expected. "
+                        f"NinjaTrader data provider may still be syncing missing bars. "
+                        f"Gap-fill retries are logged on the NinjaTrader side."
                     )
 
         self._state = DataSourceState.LIVE
@@ -673,6 +690,20 @@ class ZMQDataSource(CombinedDataSource):
             self._refresh_buffer.clear()
 
         self.logger.info(f"Refresh start: preserved {len(preserved)} historical bars, removed {removed} recent bars")
+
+    def _on_market_status(self, payload: dict) -> None:
+        """Handle market status notification from platform."""
+        market_open = payload.get("market_open", True)
+        next_open = payload.get("next_open", 0)
+        pair = payload.get("pair", self.pair)
+
+        if market_open != self._market_is_open:
+            self._market_is_open = market_open
+            status = "OPEN" if self._market_is_open else "CLOSED"
+            self.logger.info(f"[MarketStatus] {pair} market is now {status}, next_open={next_open}")
+        else:
+            # Log at debug level when status hasn't changed
+            self.logger.debug(f"[MarketStatus] {pair} still {'OPEN' if self._market_is_open else 'CLOSED'}")
 
     # -------------------------------------------------------------------------
     # Public API

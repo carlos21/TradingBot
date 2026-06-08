@@ -36,6 +36,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         public const string PositionSync = "position_sync";
         public const string ConfigQuery = "config_query";
         public const string ConfigResponse = "config_response";
+        public const string MarketStatus = "market_status";
 
         // Testing
         public const string TestPing = "test_ping";

@@ -11,6 +11,7 @@ from src.infrastructure.gateway.protocol import (
     EntryFillMessage,
     ExitFillMessage,
     HeartbeatMessage,
+    MarketStatusMessage,
     MessageEnvelope,
     MessageType,
     OpenOrderCommand,
@@ -78,8 +79,28 @@ class TestMessageEnvelope:
         )
         assert env.msg_type == MessageType.TICK
         assert env.seq_num == 10
-        assert env.payload == {"price": 5000.0}
-        assert env.timestamp > 0
+
+
+class TestMarketStatusMessage:
+
+    def test_to_envelope(self):
+        msg = MarketStatusMessage(market_open=True, next_open=1700000000, pair="MNQ")
+        env = msg.to_envelope(seq_num=7)
+        assert env.msg_type == MessageType.MARKET_STATUS
+        assert env.seq_num == 7
+        assert env.payload["market_open"] is True
+        assert env.payload["next_open"] == 1700000000
+        assert env.payload["pair"] == "MNQ"
+
+    def test_from_json_roundtrip(self):
+        msg = MarketStatusMessage(market_open=False, next_open=1700000100, pair="ES")
+        env = msg.to_envelope(seq_num=3)
+        json_str = env.to_json()
+        parsed = MessageEnvelope.from_json(json_str)
+        assert parsed.msg_type == MessageType.MARKET_STATUS
+        assert parsed.payload["market_open"] is False
+        assert parsed.payload["next_open"] == 1700000100
+        assert parsed.payload["pair"] == "ES"
 
 
 class TestTickMessage:

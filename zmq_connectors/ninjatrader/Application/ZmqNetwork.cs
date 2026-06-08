@@ -258,6 +258,17 @@ namespace NinjaTrader.NinjaScript.AddOns
             Send(MessageType.TestResult, payload);
         }
 
+        public void SendMarketStatus(bool marketOpen, DateTime nextOpen, string pair)
+        {
+            var payload = new JObject
+            {
+                ["market_open"] = marketOpen,
+                ["next_open"] = ToUnixSeconds(nextOpen),
+                ["pair"] = pair
+            };
+            Send(MessageType.MarketStatus, payload);
+        }
+
         // ───────────────────────────────────────────────────────────────────
         // Receive Methods (Python → Platform)
         // ───────────────────────────────────────────────────────────────────

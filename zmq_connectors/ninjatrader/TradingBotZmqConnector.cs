@@ -87,11 +87,17 @@ namespace NinjaTrader.NinjaScript.AddOns
         private BarsRequest _liveBarsRequest;
         private DateTime _lastSentBarTime = DateTime.MinValue;
         private DateTime _lastFormingBarTime = DateTime.MinValue;
+        private DateTime _lastHistoryBarTime = DateTime.MinValue;
         private readonly object _barSendLock = new object();
         private TickRateLimiter _partialBarRateLimiter;
         private System.Timers.Timer _liveBarsDelayTimer;  // Fallback: creates BarsRequest if no tick arrives within 10s
         private volatile bool _liveBarsSubscribed;
         private System.Timers.Timer _barsRequestWatchdog; // Recreates BarsRequest if completed bars stall
+
+        // Market status tracking (suppress duplicate warnings when market is closed)
+        private bool _marketIsOpen = true;
+        private DateTime _lastMarketStatusSent = DateTime.MinValue;
+        private SessionIterator _sessionIterator;
 
         // Duplicate command detection (track processed seq_nums)
         private readonly HashSet<int> _processedSeqNums = new HashSet<int>();
@@ -347,6 +353,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // Reset bar streaming state so reconnect starts fresh
                 _lastSentBarTime = DateTime.MinValue;
                 _lastFormingBarTime = DateTime.MinValue;
+                _lastHistoryBarTime = DateTime.MinValue;
 
                 // Reset stats
                 _commandsReceived = 0;
@@ -667,6 +674,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                             _lastSentBarTime = bars.Bars.GetTime(idx);
                             _lastFormingBarTime = bars.Bars.GetTime(bars.Bars.Count - 1);
                         }
+                        _sessionIterator = new SessionIterator(bars.Bars);
                         _logger.Info($"Live bars stream ready. Cached {bars.Bars.Count} bars, lastCompleted={_lastSentBarTime:HH:mm:ss}, sent {Math.Max(0, bars.Bars.Count - 1)} initial bar(s)");
                     }
                 }
@@ -733,6 +741,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             try
             {
                 if (!_connected || !_liveBarsSubscribed) return;
+
+                // Check market status every watchdog tick (30s) and notify Python
+                CheckMarketStatus();
+
                 if (_lastSentBarTime == DateTime.MinValue) return;
 
                 var elapsed = DateTime.Now - _lastSentBarTime;
@@ -749,6 +761,38 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        private void CheckMarketStatus()
+        {
+            if (_sessionIterator == null) return;
+
+            DateTime nextBegin;
+            bool isOpen;
+            try
+            {
+                isOpen = _sessionIterator.IsInSession(DateTime.Now, false, true);
+                _sessionIterator.GetNextSession(DateTime.Now, false);
+                nextBegin = _sessionIterator.ActualSessionBegin;
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning($"[MarketStatus] Failed to query session: {ex.Message}");
+                return;
+            }
+
+            // Send on state change OR at least every 5 minutes as a heartbeat
+            bool shouldSend = isOpen != _marketIsOpen || (DateTime.Now - _lastMarketStatusSent).TotalMinutes > 5;
+
+            if (shouldSend)
+            {
+                _marketIsOpen = isOpen;
+                _lastMarketStatusSent = DateTime.Now;
+                var pair = _config.Instrument.Split(' ')[0];
+                _network?.SendMarketStatus(_marketIsOpen, nextBegin, pair);
+                var status = _marketIsOpen ? "OPEN" : "CLOSED";
+                _logger.Info($"[MarketStatus] {pair} market is {status}, next_open={nextBegin:yyyy-MM-dd HH:mm:ss}");
+            }
+        }
+
         private void UnsubscribeFromLiveBars()
         {
             StopLiveBarsDelayTimer();
@@ -759,6 +803,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _liveBarsRequest.Dispose();
                 _liveBarsRequest = null;
                 _liveBarsSubscribed = false;
+                _sessionIterator = null;
                 _logger.Info("Unsubscribed from live 1m bars");
             }
         }
@@ -919,7 +964,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _logger.Info($"[History] DateTime range | days={days} | start={startDateTime:yyyy-MM-dd HH:mm:ss} UTC | end={endDateTime:yyyy-MM-dd HH:mm:ss} UTC | requesting...");
                 var barsRequest = new BarsRequest(instrument, startDateTime, endDateTime)
                 {
-                    BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 }
+                    BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 },
+                    TradingHours = TradingHours.Get("Default 24 x 7")
                 };
 
                 // Notify Python that a refresh is starting so it buffers live bars
@@ -954,6 +1000,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                             {
                                 var firstTime = bars.Bars.GetTime(0);
                                 var lastTime = bars.Bars.GetTime(receivedCount - 1);
+                                _lastHistoryBarTime = lastTime;
                                 var gapToNow = DateTime.Now - lastTime;
                                 _logger.Info($"[History] BarsRequest returned {receivedCount} bars | first={firstTime:yyyy-MM-dd HH:mm:ss} | last={lastTime:yyyy-MM-dd HH:mm:ss} | gapToNow={gapToNow.TotalSeconds:F0}s");
                             }
@@ -987,6 +1034,22 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                             _barsSent = count;
                             _logger.Info($"Sent {count} historical bars ({days} days)");
+
+                            // Gap-fill: if history ends significantly before now, try to fetch missing bars
+                            if (_lastHistoryBarTime != DateTime.MinValue)
+                            {
+                                var gapToNow = DateTime.Now - _lastHistoryBarTime;
+                                if (gapToNow.TotalMinutes > 5)
+                                {
+                                    _logger.Info($"[History] Detected {gapToNow.TotalMinutes:F0}m gap to now — attempting gap-fill from {_lastHistoryBarTime:yyyy-MM-dd HH:mm:ss} UTC");
+                                    _ = SendGapFillAsync(instrument, _lastHistoryBarTime, DateTime.UtcNow).ContinueWith(t =>
+                                    {
+                                        if (t.IsFaulted)
+                                            _logger.Error("Gap-fill failed", t.Exception?.GetBaseException());
+                                    }, TaskContinuationOptions.OnlyOnFaulted);
+                                }
+                            }
+
                             _network?.SendHistoryEnd();
                             tcs.TrySetResult(true);
                         }
@@ -1015,6 +1078,135 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _logger.Error("SendHistory error", ex);
                 _network?.SendError("ninjatrader", "history_load_failed", $"Failed to load {days} days of history", FormatExceptionDetails(ex));
             }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // Gap Fill
+        // ═══════════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Sends a targeted BarsRequest for the gap between lastHistoryBarTime and endTime.
+        /// Retries up to 3 times and logs each attempt so we can see what NT returns.
+        /// </summary>
+        private async Task SendGapFillAsync(Instrument instrument, DateTime gapStart, DateTime gapEnd)
+        {
+            const int maxAttempts = 3;
+            var pair = _config.Instrument.Split(' ')[0];
+
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                _logger.Info($"[GapFill] Attempt {attempt}/{maxAttempts} | requesting bars from {gapStart:yyyy-MM-dd HH:mm:ss} UTC to {gapEnd:yyyy-MM-dd HH:mm:ss} UTC");
+
+                var tcs = new TaskCompletionSource<bool>();
+                var gapBatch = new List<JObject>();
+                int gapCount = 0;
+                DateTime? gapFirst = null;
+                DateTime? gapLast = null;
+
+                var gapRequest = new BarsRequest(instrument, gapStart, gapEnd)
+                {
+                    BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 },
+                    TradingHours = TradingHours.Get("Default 24 x 7")
+                };
+
+                try
+                {
+                    gapRequest.Request((bars, errorCode, errorMessage) =>
+                    {
+                        try
+                        {
+                            if (errorCode != ErrorCode.NoError)
+                            {
+                                _logger.Error($"[GapFill] Attempt {attempt}/{maxAttempts} | BarsRequest failed: {errorMessage}");
+                                tcs.TrySetResult(false);
+                                return;
+                            }
+
+                            if (bars?.Bars == null)
+                            {
+                                _logger.Error($"[GapFill] Attempt {attempt}/{maxAttempts} | BarsRequest returned null bars");
+                                tcs.TrySetResult(false);
+                                return;
+                            }
+
+                            int receivedCount = bars.Bars.Count;
+                            if (receivedCount > 0)
+                            {
+                                gapFirst = bars.Bars.GetTime(0);
+                                gapLast = bars.Bars.GetTime(receivedCount - 1);
+
+                                for (int i = 0; i < bars.Bars.Count; i++)
+                                {
+                                    var barTime = bars.Bars.GetTime(i);
+                                    // Skip bars already covered by the primary history
+                                    if (barTime <= gapStart)
+                                        continue;
+
+                                    gapBatch.Add(new JObject
+                                    {
+                                        ["time"] = ToUnixSeconds(barTime),
+                                        ["open"] = bars.Bars.GetOpen(i),
+                                        ["high"] = bars.Bars.GetHigh(i),
+                                        ["low"] = bars.Bars.GetLow(i),
+                                        ["close"] = bars.Bars.GetClose(i),
+                                        ["volume"] = (long)bars.Bars.GetVolume(i),
+                                        ["pair"] = pair
+                                    });
+                                    gapCount++;
+                                }
+                            }
+
+                            _logger.Info($"[GapFill] Attempt {attempt}/{maxAttempts} | returned {receivedCount} bars | first={gapFirst:yyyy-MM-dd HH:mm:ss} | last={gapLast:yyyy-MM-dd HH:mm:ss} | unique_new={gapCount}");
+                            tcs.TrySetResult(true);
+                        }
+                        catch (Exception callbackEx)
+                        {
+                            _logger.Error($"[GapFill] Attempt {attempt}/{maxAttempts} | callback error", callbackEx);
+                            tcs.TrySetResult(false);
+                        }
+                    });
+
+                    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(15));
+                    var completedTask = await Task.WhenAny(tcs.Task, timeoutTask);
+                    if (completedTask == timeoutTask)
+                    {
+                        _logger.Warning($"[GapFill] Attempt {attempt}/{maxAttempts} | timed out after 15s");
+                    }
+                }
+                finally
+                {
+                    gapRequest?.Dispose();
+                }
+
+                if (gapCount > 0)
+                {
+                    if (gapBatch.Count > 0)
+                    {
+                        _network?.SendHistoryBatch(pair, gapBatch, days: 1);
+                        _barsSent += gapCount;
+                        _logger.Success($"[GapFill] SUCCESS — sent {gapCount} bars on attempt {attempt}/{maxAttempts}");
+                    }
+
+                    // If the gap-fill didn't reach the end, update gapStart for next attempt
+                    if (gapLast.HasValue && gapLast.Value < gapEnd.AddMinutes(-1))
+                    {
+                        gapStart = gapLast.Value;
+                        _logger.Info($"[GapFill] Gap partially filled — continuing from {gapStart:yyyy-MM-dd HH:mm:ss} UTC");
+                        continue; // retry with updated gapStart
+                    }
+
+                    return; // gap fully filled
+                }
+
+                _logger.Warning($"[GapFill] Attempt {attempt}/{maxAttempts} | no new bars received");
+
+                if (attempt < maxAttempts)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2)); // brief delay before retry
+                }
+            }
+
+            _logger.Error($"[GapFill] FAILED after {maxAttempts} attempts — gap remains from {gapStart:yyyy-MM-dd HH:mm:ss} UTC to {gapEnd:yyyy-MM-dd HH:mm:ss} UTC");
         }
 
         // ═══════════════════════════════════════════════════════════════════

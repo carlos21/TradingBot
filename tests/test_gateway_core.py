@@ -202,6 +202,7 @@ class TestGatewayInitialization:
             MessageType.TEST_RESULT,
             MessageType.POSITION_SYNC,
             MessageType.COMMAND_ACK,
+            MessageType.MARKET_STATUS,
         }
         assert set(gateway._callbacks.keys()) == expected
         for lst in gateway._callbacks.values():
@@ -346,6 +347,12 @@ class TestCallbackRegistration:
             return None
         gateway.on_test_result(cb)
         assert cb in gateway._callbacks[MessageType.TEST_RESULT]
+
+    def test_on_market_status(self, gateway):
+        def cb(_):
+            return None
+        gateway.on_market_status(cb)
+        assert cb in gateway._callbacks[MessageType.MARKET_STATUS]
 
     def test_on_connection_change(self, gateway):
         def cb(_):
@@ -714,6 +721,43 @@ class TestPositionSyncHandling:
         )
         gateway._handle_message(env.to_json())
         assert len(received) == 1
+
+
+# ---------------------------------------------------------------------------
+# Market status handling
+# ---------------------------------------------------------------------------
+
+
+class TestMarketStatusHandling:
+    def test_market_status_open_logged(self, gateway, logger):
+        env = MessageEnvelope.create(
+            msg_type=MessageType.MARKET_STATUS,
+            payload={"market_open": True, "next_open": 1700000000, "pair": "MNQ"},
+            seq_num=1,
+        )
+        gateway._handle_message(env.to_json())
+        assert any("market is OPEN" in m for m in logger.messages)
+
+    def test_market_status_closed_logged(self, gateway, logger):
+        env = MessageEnvelope.create(
+            msg_type=MessageType.MARKET_STATUS,
+            payload={"market_open": False, "next_open": 1700003600, "pair": "MNQ"},
+            seq_num=2,
+        )
+        gateway._handle_message(env.to_json())
+        assert any("market is CLOSED" in m for m in logger.messages)
+
+    def test_market_status_callback(self, gateway):
+        received = []
+        gateway.on_market_status(lambda p: received.append(p))
+        env = MessageEnvelope.create(
+            msg_type=MessageType.MARKET_STATUS,
+            payload={"market_open": True, "next_open": 1700000000, "pair": "MNQ"},
+            seq_num=1,
+        )
+        gateway._handle_message(env.to_json())
+        assert len(received) == 1
+        assert received[0]["market_open"] is True
 
 
 # ---------------------------------------------------------------------------

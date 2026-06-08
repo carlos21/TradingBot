@@ -884,8 +884,14 @@ class TestFillAccuracy:
         nt.simulate_entry_fill(trade_id, entry_price=20995.0)
         _wait_for_entry_fill(app.trade_manager, trade_id, expected_entry=20995.0)
 
-        # Verify DB stores the actual fill price
-        db_trade = app.trade_manager.trade_repository.get_trade(trade_id)
+        # Verify DB stores the actual fill price (poll briefly — repo update is async)
+        deadline = time.time() + 2.0
+        db_trade = None
+        while time.time() < deadline:
+            db_trade = app.trade_manager.trade_repository.get_trade(trade_id)
+            if db_trade and abs(db_trade.entry_price - 20995.0) < 0.001:
+                break
+            time.sleep(0.01)
         assert db_trade.entry_price == pytest.approx(20995.0)
 
         # TP hit — P&L should be based on 20995, not 21000

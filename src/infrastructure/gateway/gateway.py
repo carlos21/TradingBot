@@ -163,6 +163,7 @@ to be:
             MessageType.TEST_RESULT: [],
             MessageType.POSITION_SYNC: [],
             MessageType.COMMAND_ACK: [],
+            MessageType.MARKET_STATUS: [],
         }
 
         # Query handlers - special callbacks that return data for sync queries
@@ -550,7 +551,9 @@ to be:
                     self.logger.error(f"Callback error for {msg_type}: {e}")
 
             # Special handling for certain message types
-            if msg_type == MessageType.CONNECT:
+            if msg_type == MessageType.MARKET_STATUS:
+                self._handle_market_status(envelope.payload)
+            elif msg_type == MessageType.CONNECT:
                 self._handle_connect(envelope.payload)
             elif msg_type == MessageType.ENTRY_FILL:
                 self._handle_entry_fill(envelope.payload)
@@ -590,6 +593,14 @@ to be:
         except Exception as e:
             raw_bytes = json_msg.encode('utf-8', errors='replace') if isinstance(json_msg, str) else json_msg
             self.logger.debug(f"Error handling heartbeat: {e} | Hex: {raw_bytes[:200].hex() if isinstance(raw_bytes, bytes) else raw_bytes}")
+
+    def _handle_market_status(self, payload: dict[str, Any]) -> None:
+        """Handle market status notification from platform."""
+        market_open = payload.get("market_open", True)
+        next_open = payload.get("next_open", 0)
+        pair = payload.get("pair", "unknown")
+        status = "OPEN" if market_open else "CLOSED"
+        self.logger.info(f"[MarketStatus] {pair} market is {status}, next_open={next_open}")
 
     def _handle_connect(self, payload: dict[str, Any]) -> None:
         """Handle initial connection from platform."""
@@ -958,6 +969,16 @@ to be:
         and False when heartbeat timeout occurs.
         """
         self._connection_listeners.append(callback)
+
+    def on_market_status(self, callback: Callable[[dict[str, Any]], None]) -> None:
+        """Register market status callback.
+
+        Payload contains:
+            - market_open: bool (True when market is currently open)
+            - next_open: int (Unix timestamp of next session open)
+            - pair: str (trading pair symbol)
+        """
+        self.on(MessageType.MARKET_STATUS, callback)
 
     def on_test_start(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """Register test start callback.

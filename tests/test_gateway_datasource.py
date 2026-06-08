@@ -1076,3 +1076,67 @@ class TestHeartbeatMonitoring:
         before = time.monotonic()
         data_source._on_bar(make_bar(time_val=1000, open_=10.0, high=11.0, low=9.0, close=10.5))
         assert data_source._last_completed_bar_time >= before
+
+
+# ---------------------------------------------------------------------------
+# Market status handling
+# ---------------------------------------------------------------------------
+
+
+class TestMarketStatusHandling:
+
+    def test_on_market_status_updates_flag(self, data_source):
+        data_source._on_market_status({"market_open": False, "next_open": 1700000000, "pair": "MNQ"})
+        assert data_source._market_is_open is False
+
+    def test_duplicate_bar_suppressed_when_market_closed(self, data_source):
+        data_source._market_is_open = False
+        bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
+        data_source._on_bar(bar)
+        data_source._on_bar(bar)
+        assert len(data_source._historical_bars) == 1
+        assert data_source._duplicate_count == 1
+
+    def test_duplicate_bar_warned_when_market_open(self, data_source):
+        logger = RecordingLogger()
+        data_source.logger = logger
+        data_source._market_is_open = True
+        bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
+        data_source._on_bar(bar)
+        data_source._on_bar(bar)
+        assert len(data_source._historical_bars) == 1
+        assert data_source._duplicate_count == 1
+        assert any("Duplicate bar" in m for m in logger.messages)
+
+    def test_bar_arrival_reopens_market(self, data_source):
+        logger = RecordingLogger()
+        data_source.logger = logger
+        data_source._market_is_open = False
+        data_source._state = DataSourceState.LIVE
+        data_source._on_bar(make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5))
+        assert data_source._market_is_open is True
+        assert any("treating market as OPEN" in m for m in logger.messages)
+
+
+class TestStaleBarFallback:
+
+    def test_stale_fallback_sets_market_closed(self, data_source):
+        data_source._market_is_open = True
+        data_source._state = DataSourceState.LIVE
+        data_source._heartbeat_check_interval_sec = 0.01
+        data_source._start_heartbeat_monitor()
+        # Set stale time AFTER starting monitor (which resets baseline)
+        data_source._last_completed_bar_time = time.monotonic() - 400
+        time.sleep(0.05)
+        data_source._stop_heartbeat_monitor()
+        assert data_source._market_is_open is False
+
+    def test_stale_fallback_does_not_fire_when_recent_bar(self, data_source):
+        data_source._market_is_open = True
+        data_source._state = DataSourceState.LIVE
+        data_source._last_completed_bar_time = time.monotonic()
+        data_source._heartbeat_check_interval_sec = 0.01
+        data_source._start_heartbeat_monitor()
+        time.sleep(0.05)
+        data_source._stop_heartbeat_monitor()
+        assert data_source._market_is_open is True

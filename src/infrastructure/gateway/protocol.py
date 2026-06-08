@@ -56,6 +56,9 @@ class MessageType(str, Enum):
     CONFIG_QUERY = "config_query"
     CONFIG_RESPONSE = "config_response"
 
+    # Market Status (Platform → Python)
+    MARKET_STATUS = "market_status"
+
     # Position Sync (Platform → Python, broker is source of truth)
     POSITION_SYNC = "position_sync"
 
@@ -650,6 +653,25 @@ class ConfigResponseMessage:
         return MessageEnvelope.create(
             msg_type=MessageType.CONFIG_RESPONSE,
             payload=self.config,
+            seq_num=seq_num,
+        )
+
+
+@dataclass
+class MarketStatusMessage:
+    """Market open/closed status from platform."""
+    market_open: bool
+    next_open: int  # Unix timestamp
+    pair: str
+
+    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        return MessageEnvelope.create(
+            msg_type=MessageType.MARKET_STATUS,
+            payload={
+                "market_open": self.market_open,
+                "next_open": self.next_open,
+                "pair": self.pair,
+            },
             seq_num=seq_num,
         )
 

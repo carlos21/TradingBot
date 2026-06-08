@@ -42,6 +42,7 @@ from src.infrastructure.gateway.protocol import (
     ExitFillMessage,
     HeartbeatMessage,
     HistoryBatchMessage,
+    MarketStatusMessage,
     MessageEnvelope,
     MessageType,
     PositionSyncMessage,
@@ -407,6 +408,11 @@ class FakeNinjaTrader:
             volume=int(bar.get("volume", 0)),
             is_partial=True,
         )
+        self._publish(msg.to_envelope(seq_num=self._next_seq()))
+
+    def send_market_status(self, market_open: bool, next_open: int, pair: str = "MNQ") -> None:
+        """Send market open/closed status."""
+        msg = MarketStatusMessage(market_open=market_open, next_open=next_open, pair=pair)
         self._publish(msg.to_envelope(seq_num=self._next_seq()))
 
     def stream_bars(self, bars: list[dict[str, Any]], delay_sec: float = 0.0, batch_size: int = 0, batch_pause: float = 0.0) -> None:
