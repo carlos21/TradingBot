@@ -203,6 +203,7 @@ class TestGatewayInitialization:
             MessageType.POSITION_SYNC,
             MessageType.COMMAND_ACK,
             MessageType.MARKET_STATUS,
+            MessageType.AUDIT_RESPONSE,
         }
         assert set(gateway._callbacks.keys()) == expected
         for lst in gateway._callbacks.values():

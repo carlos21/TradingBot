@@ -34,6 +34,7 @@ from typing import Any, Literal
 import zmq
 
 from src.infrastructure.gateway.protocol import (
+    AuditResponseMessage,
     BarMessage,
     CommandAckMessage,
     ConfigResponseMessage,
@@ -93,6 +94,9 @@ class FakeNinjaTrader:
 
         # Connection state
         self._connected = False
+
+        # Audit: keep every bar streamed so we can respond to AUDIT_REQUEST
+        self._audit_bars: deque[dict[str, Any]] = deque(maxlen=10000)
 
         # Auto-fill exit tracking: trade_id -> {direction, entry, stop_loss, take_profit}
         self._auto_filled_trades: dict[str, dict[str, Any]] = {}
@@ -170,6 +174,7 @@ class FakeNinjaTrader:
             self._commands_received.clear()
             self._seq_num = 0
             self._connected = False
+            self._audit_bars.clear()
             self._auto_filled_trades.clear()
 
         self._logger.info("FakeNinjaTrader stopped")
@@ -247,6 +252,8 @@ class FakeNinjaTrader:
             self._handle_order_modify(payload, seq_num)
         elif msg_type == MessageType.REFRESH_REQUEST:
             self._handle_refresh_request(payload, seq_num)
+        elif msg_type == MessageType.AUDIT_REQUEST:
+            self._handle_audit_request(payload, seq_num)
         else:
             self._logger.warning(f"FakeNT: unhandled command {msg_type.value}")
 
@@ -345,6 +352,32 @@ class FakeNinjaTrader:
             success=True,
         )
 
+    def _handle_audit_request(self, payload: dict[str, Any], seq_num: int) -> None:
+        """Handle AUDIT_REQUEST by returning the last N streamed bars."""
+        bars_back = payload.get("bars_back", 60)
+        try:
+            bars_back = int(bars_back)
+        except (ValueError, TypeError):
+            bars_back = 60
+
+        with self._lock:
+            snapshot = list(self._audit_bars)
+        recent = snapshot[-bars_back:] if len(snapshot) > bars_back else snapshot
+
+        self._send_command_ack(
+            command_type="audit_request",
+            seq_num=seq_num,
+            success=True,
+        )
+
+        msg = AuditResponseMessage(
+            pair="MNQ",
+            bars=recent,
+            count=len(recent),
+        )
+        self._publish(msg.to_envelope(seq_num=self._next_seq()))
+        self._logger.info(f"FakeNT: sent AUDIT_RESPONSE with {len(recent)} bars")
+
     # ------------------------------------------------------------------
     # Public API — Market data
     # ------------------------------------------------------------------
@@ -384,6 +417,7 @@ class FakeNinjaTrader:
 
     def send_bar(self, bar: dict[str, Any]) -> None:
         """Send a completed bar."""
+        self._audit_bars.append(dict(bar))
         msg = BarMessage(
             pair=bar.get("pair", "MNQ"),
             time=int(bar["time"]),
@@ -531,6 +565,16 @@ class FakeNinjaTrader:
     def simulate_trade_log(self, trade_id: str, event: str, message: str) -> None:
         """Send a TRADE_LOG message to Python."""
         self._send_trade_log(trade_id, event, message)
+
+    def send_audit_response(self, bars: list[dict[str, Any]]) -> None:
+        """Manually send an AUDIT_RESPONSE (for direct test control)."""
+        msg = AuditResponseMessage(
+            pair="MNQ",
+            bars=bars,
+            count=len(bars),
+        )
+        self._publish(msg.to_envelope(seq_num=self._next_seq()))
+        self._logger.info(f"FakeNT: manually sent AUDIT_RESPONSE with {len(bars)} bars")
 
     def send_position_sync(self) -> None:
         """Send POSITION_SYNC with current open positions."""

@@ -129,7 +129,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private static int _completedBarsSent = 0;
         private static int _partialBarsSent = 0;
 
-        public void SendBar(string pair, DateTime time, double open, double high, double low, double close, long volume, bool isPartial = false)
+        public void SendBar(string pair, DateTime time, double open, double high, double low, double close, long volume, bool isPartial = false, long seqNum = 0)
         {
             var payload = new JObject
             {
@@ -141,6 +141,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 ["close"] = close,
                 ["volume"] = volume
             };
+            if (seqNum > 0)
+                payload["seq_num"] = seqNum;
             if (isPartial)
             {
                 int count = Interlocked.Increment(ref _partialBarsSent);
@@ -155,6 +157,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                     _logger.Info($"[ZMQ] Sent {count} completed bars (latest {pair} @{close:F2} time={ToUnixSeconds(time)})");
                 Send(MessageType.Bar, payload);
             }
+        }
+
+        public void SendAuditResponse(string pair, List<JObject> bars)
+        {
+            Send(MessageType.AuditResponse, new JObject
+            {
+                ["pair"] = pair,
+                ["bars"] = new JArray(bars),
+                ["count"] = bars.Count
+            });
         }
 
         public void SendHistoryBatch(string pair, List<JObject> bars, int days)

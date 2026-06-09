@@ -1,0 +1,113 @@
+// ═══════════════════════════════════════════════════════════════════════
+// Commands Layer: AuditRequestHandler
+// Handles AUDIT_REQUEST commands — returns last N bars for verification.
+// Does NOT trigger refresh lifecycle; purely read-only audit.
+// ═══════════════════════════════════════════════════════════════════════
+
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
+using NinjaTrader.Data;
+
+namespace NinjaTrader.NinjaScript.AddOns
+{
+    /// <summary>
+    /// Handles AUDIT_REQUEST commands.
+    /// Creates a temporary BarsRequest to fetch the last N 1m bars
+    /// and sends them back as an AuditResponse.  This is a read-only
+    /// operation that does not mutate strategy state.
+    /// </summary>
+    internal sealed class AuditRequestHandler : ICommandHandler
+    {
+        public string CommandType => MessageType.AuditRequest;
+
+        private readonly ZmqNetwork _network;
+        private readonly ILogger _logger;
+        private readonly string _instrument;
+
+        public AuditRequestHandler(ZmqNetwork network, ILogger logger, string instrument)
+        {
+            _network = network ?? throw new ArgumentNullException(nameof(network));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _instrument = instrument ?? throw new ArgumentNullException(nameof(instrument));
+        }
+
+        public bool Handle(JObject payload)
+        {
+            try
+            {
+                int barsBack = payload?["bars_back"]?.Value<int>() ?? 60;
+                if (barsBack < 1) barsBack = 60;
+                if (barsBack > 5000) barsBack = 5000; // Safety cap
+
+                _logger.Info($"AUDIT REQUEST: returning last {barsBack} bars");
+
+                var instrument = Instrument.GetInstrument(_instrument);
+                if (instrument == null)
+                {
+                    _logger.Error($"Instrument '{_instrument}' not found for audit");
+                    return false;
+                }
+
+                var barsRequest = new BarsRequest(instrument, barsBack)
+                {
+                    BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 },
+                    TradingHours = TradingHours.Get("Default 24 x 7")
+                };
+
+                barsRequest.Request((bars, errorCode, errorMessage) =>
+                {
+                    try
+                    {
+                        if (errorCode != ErrorCode.NoError)
+                        {
+                            _logger.Error($"Audit BarsRequest failed: {errorMessage}");
+                            return;
+                        }
+
+                        var batch = new List<JObject>();
+                        if (bars?.Bars != null)
+                        {
+                            for (int i = 0; i < bars.Bars.Count; i++)
+                            {
+                                batch.Add(new JObject
+                                {
+                                    ["time"] = ToUnixSeconds(bars.Bars.GetTime(i)),
+                                    ["open"] = bars.Bars.GetOpen(i),
+                                    ["high"] = bars.Bars.GetHigh(i),
+                                    ["low"] = bars.Bars.GetLow(i),
+                                    ["close"] = bars.Bars.GetClose(i),
+                                    ["volume"] = (long)bars.Bars.GetVolume(i),
+                                    ["pair"] = _instrument.Split(' ')[0]
+                                });
+                            }
+                        }
+
+                        _network?.SendAuditResponse(_instrument.Split(' ')[0], batch);
+                        _logger.Info($"AUDIT RESPONSE: sent {batch.Count} bars");
+                    }
+                    catch (Exception callbackEx)
+                    {
+                        _logger.Error("Audit BarsRequest callback error", callbackEx);
+                    }
+                    finally
+                    {
+                        barsRequest?.Dispose();
+                    }
+                });
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("Audit request failed", ex);
+                _network?.SendError("ninjatrader", "audit_failed", ex.Message);
+                return false;
+            }
+        }
+
+        private static double ToUnixSeconds(DateTime dt) =>
+            (dt.ToUniversalTime() - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+    }
+}

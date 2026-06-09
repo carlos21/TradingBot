@@ -85,9 +85,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         // Live bar streaming
         private BarsRequest _liveBarsRequest;
-        private DateTime _lastSentBarTime = DateTime.MinValue;
-        private DateTime _lastFormingBarTime = DateTime.MinValue;
-        private DateTime _lastHistoryBarTime = DateTime.MinValue;
+        private readonly BarStreamTracker _barTracker = new BarStreamTracker();
         private readonly object _barSendLock = new object();
         private TickRateLimiter _partialBarRateLimiter;
         private System.Timers.Timer _liveBarsDelayTimer;  // Fallback: creates BarsRequest if no tick arrives within 10s
@@ -351,9 +349,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _cts = null;
 
                 // Reset bar streaming state so reconnect starts fresh
-                _lastSentBarTime = DateTime.MinValue;
-                _lastFormingBarTime = DateTime.MinValue;
-                _lastHistoryBarTime = DateTime.MinValue;
+                _barTracker.Reset();
 
                 // Reset stats
                 _commandsReceived = 0;
@@ -457,6 +453,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             dispatcher.Register(new OrderCloseHandler(_network, _logger, _config.Instrument, _orderTracker, simulate));
             dispatcher.Register(new OrderModifyHandler(_network, _logger, _orderTracker, simulate));
             dispatcher.Register(new RefreshRequestHandler(_network, _logger, SendHistoryAsync));
+            dispatcher.Register(new AuditRequestHandler(_network, _logger, _config.Instrument));
             dispatcher.Register(new TestStartHandler(_network, _logger));
             return dispatcher;
         }
@@ -670,12 +667,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                                     isPartial: false);
                             }
 
-                            int idx = Math.Max(0, bars.Bars.Count - 2);
-                            _lastSentBarTime = bars.Bars.GetTime(idx);
-                            _lastFormingBarTime = bars.Bars.GetTime(bars.Bars.Count - 1);
+                            int lastCompletedIdx = Math.Max(0, bars.Bars.Count - 2);
+                            _barTracker.Reset(lastCompletedIdx);
                         }
                         _sessionIterator = new SessionIterator(bars.Bars);
-                        _logger.Info($"Live bars stream ready. Cached {bars.Bars.Count} bars, lastCompleted={_lastSentBarTime:HH:mm:ss}, sent {Math.Max(0, bars.Bars.Count - 1)} initial bar(s)");
+                        _logger.Info($"Live bars stream ready. Cached {bars.Bars.Count} bars, lastCompletedIdx={_barTracker.LastSentIndex}, sent {Math.Max(0, bars.Bars.Count - 1)} initial bar(s)");
                     }
                 }
                 catch (Exception callbackEx)
@@ -745,12 +741,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // Check market status every watchdog tick (30s) and notify Python
                 CheckMarketStatus();
 
-                if (_lastSentBarTime == DateTime.MinValue) return;
+                var lastForming = _barTracker.LastFormingBarTime;
+                if (lastForming == DateTime.MinValue) return;
 
-                var elapsed = DateTime.Now - _lastSentBarTime;
+                var elapsed = DateTime.Now - lastForming;
                 if (elapsed.TotalSeconds > 75)
                 {
-                    _logger.Warning($"[BarsRequestWatchdog] No completed bar sent in {elapsed.TotalSeconds:F0}s (threshold=75s). Recreating BarsRequest...");
+                    _logger.Warning($"[BarsRequestWatchdog] No forming bar update in {elapsed.TotalSeconds:F0}s (threshold=75s). Recreating BarsRequest...");
                     UnsubscribeFromLiveBars();
                     SubscribeToLiveBars();
                 }
@@ -804,6 +801,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _liveBarsRequest = null;
                 _liveBarsSubscribed = false;
                 _sessionIterator = null;
+                _barTracker.Reset();
                 _logger.Info("Unsubscribed from live 1m bars");
             }
         }
@@ -820,84 +818,34 @@ namespace NinjaTrader.NinjaScript.AddOns
                 var formingBarTime = series.GetTime(series.Count - 1);
                 var pair = _config.Instrument.Split(' ')[0];
 
-                // When the forming bar time advances, send ALL bars that closed since last update.
-                // This handles bursts after UI thread lag, market halts, or data provider reconnects.
+                // Send every completed bar that hasn't been sent yet.
+                // Index-based forward scan guarantees no bar is skipped,
+                // even when the UI thread lags and multiple bars complete
+                // between updates.
                 lock (_barSendLock)
                 {
-                    if (_lastFormingBarTime != DateTime.MinValue && formingBarTime > _lastFormingBarTime)
+                    int sent = 0;
+                    foreach (var bar in _barTracker.GetUnsentBars(series))
                     {
-                        int sent = 0;
-                        int skipped = 0;
-                        // Walk backwards from the bar before the forming bar
-                        for (int i = series.Count - 2; i >= 0; i--)
-                        {
-                            var barTime = series.GetTime(i);
-
-                            // Stop once we reach already-sent bars
-                            if (barTime <= _lastSentBarTime)
-                            {
-                                skipped++;
-                                break;
-                            }
-
-                            // Stop once we pass the previous forming bar (safety)
-                            if (barTime < _lastFormingBarTime)
-                            {
-                                skipped++;
-                                break;
-                            }
-
-                            var open   = series.GetOpen(i);
-                            var high   = series.GetHigh(i);
-                            var low    = series.GetLow(i);
-                            var close  = series.GetClose(i);
-                            var volume = (long)series.GetVolume(i);
-
-                            _network?.SendBar(pair, barTime, open, high, low, close, volume, isPartial: false);
-                            _barsSent++;
-                            _lastSentBarTime = barTime;
-                            sent++;
-                        }
-                        if (sent > 1 || skipped > 0)
-                            _logger.Info($"[CatchUp] sent={sent} skipped={skipped} forming={formingBarTime:HH:mm:ss} lastForming={_lastFormingBarTime:HH:mm:ss} lastSent={_lastSentBarTime:HH:mm:ss} seriesCount={series.Count}");
+                        _network?.SendBar(pair, bar.Time, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume,
+                            isPartial: false, seqNum: bar.SequenceNumber);
+                        _barsSent++;
+                        _barTracker.MarkSent(bar.Index, formingBarTime);
+                        sent++;
                     }
-
-                    _lastFormingBarTime = formingBarTime;
+                    if (sent > 1)
+                        _logger.Info($"[CatchUp] sent={sent} forming={formingBarTime:HH:mm:ss} lastIdx={_barTracker.LastSentIndex} seriesCount={series.Count}");
                 }
 
-                // Process updates in the notified range (typically just the forming bar)
-                for (int i = e.MinIndex; i <= e.MaxIndex; i++)
+                // Partial bar for the forming bar (rate limited)
+                if (_partialBarRateLimiter?.TryAllow() == true)
                 {
-                    bool isFormingBar = (i == series.Count - 1);
-                    if (!isFormingBar)
-                    {
-                        var barTime = series.GetTime(i);
-                        lock (_barSendLock)
-                        {
-                            if (barTime <= _lastSentBarTime) continue;
-                        }
-
-                        var open   = series.GetOpen(i);
-                        var high   = series.GetHigh(i);
-                        var low    = series.GetLow(i);
-                        var close  = series.GetClose(i);
-                        var volume = (long)series.GetVolume(i);
-
-                        _network?.SendBar(pair, barTime, open, high, low, close, volume, isPartial: false);
-                        _barsSent++;
-                        lock (_barSendLock) { _lastSentBarTime = barTime; }
-                    }
-                    else if (_partialBarRateLimiter?.TryAllow() == true)
-                    {
-                        var open   = series.GetOpen(i);
-                        var high   = series.GetHigh(i);
-                        var low    = series.GetLow(i);
-                        var close  = series.GetClose(i);
-                        var volume = (long)series.GetVolume(i);
-
-                        _network?.SendBar(pair, formingBarTime, open, high, low, close, volume, isPartial: true);
-                        _partialBarsSent++;
-                    }
+                    int formingIdx = series.Count - 1;
+                    _network?.SendBar(pair, formingBarTime,
+                        series.GetOpen(formingIdx), series.GetHigh(formingIdx),
+                        series.GetLow(formingIdx), series.GetClose(formingIdx),
+                        (long)series.GetVolume(formingIdx), isPartial: true);
+                    _partialBarsSent++;
                 }
 
                 if ((_barsSent + _partialBarsSent) % 100 == 0) UpdateStats();

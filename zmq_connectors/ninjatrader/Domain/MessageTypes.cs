@@ -38,6 +38,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         public const string ConfigResponse = "config_response";
         public const string MarketStatus = "market_status";
 
+        // Audit
+        public const string AuditRequest = "audit_request";
+        public const string AuditResponse = "audit_response";
+
         // Testing
         public const string TestPing = "test_ping";
         public const string TestPong = "test_pong";

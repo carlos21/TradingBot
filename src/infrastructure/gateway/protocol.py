@@ -65,6 +65,10 @@ class MessageType(str, Enum):
     # Command Acknowledgment (Platform → Python)
     COMMAND_ACK = "command_ack"
 
+    # Audit (Bidirectional)
+    AUDIT_REQUEST = "audit_request"   # Request recent bars for verification
+    AUDIT_RESPONSE = "audit_response" # Response with recent bars
+
     # Testing (Bidirectional)
     TEST_PING = "test_ping"           # Connection test request
     TEST_PONG = "test_pong"           # Connection test response
@@ -452,6 +456,38 @@ class RefreshRequestMessage:
         return MessageEnvelope.create(
             msg_type=MessageType.REFRESH_REQUEST,
             payload={"days": self.days},
+            seq_num=seq_num,
+        )
+
+
+@dataclass
+class AuditRequestMessage:
+    """Request recent bars for verification (read-only audit)."""
+    bars_back: int = 60
+
+    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        return MessageEnvelope.create(
+            msg_type=MessageType.AUDIT_REQUEST,
+            payload={"bars_back": self.bars_back},
+            seq_num=seq_num,
+        )
+
+
+@dataclass
+class AuditResponseMessage:
+    """Response to audit request with recent bars."""
+    pair: str
+    bars: list[dict[str, Any]]
+    count: int
+
+    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        return MessageEnvelope.create(
+            msg_type=MessageType.AUDIT_RESPONSE,
+            payload={
+                "pair": self.pair,
+                "bars": self.bars,
+                "count": self.count,
+            },
             seq_num=seq_num,
         )
 

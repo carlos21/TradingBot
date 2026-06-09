@@ -26,6 +26,7 @@ import zmq
 from src.utils.app_logger import ILogger
 
 from .protocol import (
+    AuditRequestMessage,
     CloseOrderCommand,
     MessageEnvelope,
     MessageType,
@@ -164,6 +165,7 @@ to be:
             MessageType.POSITION_SYNC: [],
             MessageType.COMMAND_ACK: [],
             MessageType.MARKET_STATUS: [],
+            MessageType.AUDIT_RESPONSE: [],
         }
 
         # Query handlers - special callbacks that return data for sync queries
@@ -1124,6 +1126,23 @@ to be:
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
         self.logger.info(f"Queued REFRESH request: {days} days")
+
+    def send_audit_request(self, bars_back: int = 60) -> None:
+        """Request recent bars for verification (read-only audit)."""
+        cmd = AuditRequestMessage(bars_back=bars_back)
+        envelope = cmd.to_envelope(seq_num=self._next_seq())
+        self._send_command(envelope)
+        self.logger.info(f"Queued AUDIT request: last {bars_back} bars")
+
+    def on_audit_response(self, callback: Callable[[dict[str, Any]], None]) -> None:
+        """Register callback for audit response.
+
+        Payload contains:
+            - pair: str
+            - bars: list[dict]  # OHLCV bars
+            - count: int
+        """
+        self.on(MessageType.AUDIT_RESPONSE, callback)
 
     def send_error(
         self,

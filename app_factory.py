@@ -1,7 +1,7 @@
 # src/app_factory.py
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import Optional, List
+from typing import Any, Optional, List
 import os
 import sys
 import time
@@ -17,6 +17,7 @@ from src.controllers.admin_controller import AdminController
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.events.event_bus import EventBus
+from src.infrastructure.bar_auditor import NinjaTraderBarAuditor
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.event_publisher import (
     CompositeEventPublisher,
@@ -91,6 +92,7 @@ class AppWiring:
     pair: str
     live_mode: bool = False
     logger: Optional[ILogger] = None
+    bar_auditor: Any | None = None
 
 
 def _setup_logging(app: Flask):
@@ -578,8 +580,25 @@ def create_app(
     loader.stream_end_callback = stream_end_callback
 
     # In live mode, wire direct callbacks on the data source
+    bar_auditor = None
     if live_mode:
         _setup_live_mode_callbacks(data_source, tstrategy, loader, repos, pair, logger, socketio)
+
+        # Start background bar auditor to verify NT bars match Python bars
+        if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
+            def _on_bar_drift(result):
+                logger.error(f"[CRITICAL] Bar drift detected: {result.summary}")
+
+            bar_auditor = NinjaTraderBarAuditor(
+                gateway=data_source.gateway,
+                data_source=data_source,
+                logger=logger,
+                interval_minutes=5,
+                bars_back=60,
+                on_drift=_on_bar_drift,
+            )
+            bar_auditor.start()
+            logger.info("[LiveMode] BarAuditor started")
 
     # Create controllers
     lines_controller = LinesController(repos.lines, loader, tstrategy, logger=logger)
@@ -672,4 +691,5 @@ def create_app(
         pair=pair,
         live_mode=live_mode,
         logger=logger,
+        bar_auditor=bar_auditor,
     )
