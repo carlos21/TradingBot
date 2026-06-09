@@ -179,7 +179,24 @@ class TradeOpenUseCase:
             'contracts': contracts,
             'account': account,
         }
-        self._executor.on_trade_open(trade_for_executor)
+        try:
+            self._executor.on_trade_open(trade_for_executor)
+        except Exception as e:
+            if self._logger:
+                self._logger.error(f"[TradeOpenUseCase] Executor failed for {td.trade_id}: {e}")
+            # Rollback DB insert to prevent zombie trade
+            try:
+                self._repo.close_trade(
+                    trade_id=td.trade_id,
+                    exit_price=entry_price,
+                    exit_time=datetime.fromtimestamp(entry_time, tz=timezone.utc),
+                    result=0.0,
+                    result_type="CANCELLED",
+                )
+            except Exception as db_err:
+                if self._logger:
+                    self._logger.error(f"[TradeOpenUseCase] Failed to rollback DB for {td.trade_id}: {db_err}")
+            raise
 
         if self._logger:
             self._logger.info(f"[TradeOpenUseCase] Registered OPEN trade {result.trade_id} @ {entry_time}")

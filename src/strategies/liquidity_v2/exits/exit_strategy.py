@@ -94,9 +94,12 @@ class SLTPExitStrategy(ExitStrategy):
         bar: dict,
     ) -> ExitSignal | None:
         """Check if SL or TP was hit."""
-        direction = trade['direction']  # Direction enum
-        stop_loss = trade['stop_loss']
-        take_profit = trade['take_profit']
+        from src.domain.types import Direction
+        direction = trade.get('direction') or Direction.from_string(trade.get('type', 'long'))
+        stop_loss = trade.get('stop_loss')
+        take_profit = trade.get('take_profit')
+        if stop_loss is None or take_profit is None:
+            return None
 
         bar_low = bar['low']
         bar_high = bar['high']

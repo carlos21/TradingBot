@@ -26,6 +26,8 @@ class LiquidityDualM1Strategy:
         trade_repository: TradeRepository,
         extra_sl_space: dict[str, float],
         logger: ILogger,
+        point_value: float = 5.0,
+        fee_per_rt: float = 2.88,
     ):
         self.min_stop_loss = min_stop_loss
         self.max_bounce = max_bounce
@@ -34,6 +36,8 @@ class LiquidityDualM1Strategy:
         self.trade_repository = trade_repository
         self.extra_sl_space = extra_sl_space
         self.logger = logger
+        self.point_value = point_value
+        self.fee_per_rt = fee_per_rt
 
         # Tracks pending lines: id -> { level, direction, crosses, extreme }
         self.strategy_lines = {}

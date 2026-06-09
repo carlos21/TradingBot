@@ -1,3 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
 poetry run python scripts/compare_configs.py \
   --yaml src/strategies/liquidity_v2/scenarios.yaml \
   --source-csv csvs/NQ_live.csv \

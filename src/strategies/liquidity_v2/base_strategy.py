@@ -755,41 +755,41 @@ class BaseLiquidityStrategy:
             self.open_trades = [t for t in self.open_trades if t is not trade]
 
             # Create re-entry opportunity on SL hit (mirrors old _check_open_trades logic)
-        level = payload.get("line_level")
-        if level is None:
-            level = trade.get("line_level")
-        # Prefer strategy trade's reentry_attempt (authoritative) over payload,
-        # because multi-account account trades lack this field.
-        attempt = trade.get("reentry_attempt", 0)
-        if attempt == 0 and trade.get("is_reentry"):
-            # Legacy trades without reentry_attempt field: treat as attempt 1
-            attempt = 1
+            level = payload.get("line_level")
+            if level is None:
+                level = trade.get("line_level")
+            # Prefer strategy trade's reentry_attempt (authoritative) over payload,
+            # because multi-account account trades lack this field.
+            attempt = trade.get("reentry_attempt", 0)
+            if attempt == 0 and trade.get("is_reentry"):
+                # Legacy trades without reentry_attempt field: treat as attempt 1
+                attempt = 1
 
-        if (
-            (self.options.reentry_after_sl or self.options.reentry_only)
-            and payload.get("result_type") == "SL"
-            and attempt < self.options.max_reentry_attempts
-        ) and level is not None:
-            direction = trade["type"]
-            # Guard against duplicate opportunities (duplicate events, retries, etc.)
-            already_watching = any(
-                o["level"] == level and o["direction"] == direction
-                for o in self._reentry_opportunities
-            )
-            if not already_watching:
-                extreme = payload.get("extreme_excursion", payload.get("exit_price"))
-                self._reentry_opportunities.append({
-                    "level": level,
-                    "direction": direction,
-                    "pair": trade["pair"],
-                    "extreme_excursion": extreme,
-                    "sl_bar_time": payload.get("exit_time", 0),
-                    "reentry_attempt": attempt + 1,
-                })
-                self.logger.info(
-                    f"[ReEntry] SL hit on {direction} @ {trade['pair']}. "
-                    f"Watching level={level} for re-entry (attempt {attempt + 1}/{self.options.max_reentry_attempts})."
+            if (
+                (self.options.reentry_after_sl or self.options.reentry_only)
+                and payload.get("result_type") == "SL"
+                and attempt < self.options.max_reentry_attempts
+            ) and level is not None:
+                direction = trade["type"]
+                # Guard against duplicate opportunities (duplicate events, retries, etc.)
+                already_watching = any(
+                    o["level"] == level and o["direction"] == direction
+                    for o in self._reentry_opportunities
                 )
+                if not already_watching:
+                    extreme = payload.get("extreme_excursion", payload.get("exit_price"))
+                    self._reentry_opportunities.append({
+                        "level": level,
+                        "direction": direction,
+                        "pair": trade["pair"],
+                        "extreme_excursion": extreme,
+                        "sl_bar_time": payload.get("exit_time", 0),
+                        "reentry_attempt": attempt + 1,
+                    })
+                    self.logger.info(
+                        f"[ReEntry] SL hit on {direction} @ {trade['pair']}. "
+                        f"Watching level={level} for re-entry (attempt {attempt + 1}/{self.options.max_reentry_attempts})."
+                    )
 
     def _check_phantom_exits(self, bar: dict[str, Any]) -> None:
         """Check SL/TP for phantom trades only.
@@ -799,87 +799,88 @@ class BaseLiquidityStrategy:
         """
         if self.is_warmup:
             return
-        remaining = []
-        for t in self.open_trades:
-            if t.get("status") != "open" or not t.get("is_phantom"):
-                remaining.append(t)
-                continue
-            if t.get('entry_time', 0) >= bar['time']:
-                remaining.append(t)
-                continue
-            low, high = bar["low"], bar["high"]
-            closed = False
-            exit_price = 0.0
-            result_type = None
+        with self.lock:
+            remaining = []
+            for t in self.open_trades:
+                if t.get("status") != "open" or not t.get("is_phantom"):
+                    remaining.append(t)
+                    continue
+                if t.get('entry_time', 0) >= bar['time']:
+                    remaining.append(t)
+                    continue
+                low, high = bar["low"], bar["high"]
+                closed = False
+                exit_price = 0.0
+                result_type = None
 
-            if t["type"] == "long":
-                if low <= t["stop_loss"]:
-                    exit_price = t["stop_loss"]
-                    result_type = "SL"
-                    closed = True
-                elif high >= t["take_profit"]:
-                    exit_price = t["take_profit"]
-                    result_type = "TP"
-                    closed = True
-            else:
-                if high >= t["stop_loss"]:
-                    exit_price = t["stop_loss"]
-                    result_type = "SL"
-                    closed = True
-                elif low <= t["take_profit"]:
-                    exit_price = t["take_profit"]
-                    result_type = "TP"
-                    closed = True
-            # NOTE: If both SL and TP are inside the same bar, SL always wins.
-            # This is a conservative assumption since intrabar sequence is unknown.
+                if t["type"] == "long":
+                    if low <= t["stop_loss"]:
+                        exit_price = t["stop_loss"]
+                        result_type = "SL"
+                        closed = True
+                    elif high >= t["take_profit"]:
+                        exit_price = t["take_profit"]
+                        result_type = "TP"
+                        closed = True
+                else:
+                    if high >= t["stop_loss"]:
+                        exit_price = t["stop_loss"]
+                        result_type = "SL"
+                        closed = True
+                    elif low <= t["take_profit"]:
+                        exit_price = t["take_profit"]
+                        result_type = "TP"
+                        closed = True
+                # NOTE: If both SL and TP are inside the same bar, SL always wins.
+                # This is a conservative assumption since intrabar sequence is unknown.
 
-            if closed:
-                contracts = t.get("contracts") or 1
-                risk_pts = t.get("risk", 0) or 1.0
-                r_result, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
-                    direction=Direction.from_string(t["type"]),
-                    entry_price=t["entry"],
-                    exit_price=exit_price,
-                    stop_loss=t["stop_loss"],
-                    take_profit=t["take_profit"],
-                    risk_points=risk_pts,
-                    contracts=contracts,
-                    point_value=self.point_value,
-                    fee_per_rt=self.fee_per_rt,
-                )
-                if self.broker_spread > 0:
-                    spread_cost = contracts * self.broker_spread * self.point_value
-                    t_pnl_usd -= spread_cost
-                    t_fees += spread_cost
-                t.update(
-                    status="closed", result=r_result, exit_time=bar["time"],
-                    exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd,
-                    result_type=result_type,
-                )
-                self.event_publisher.emit("trade_close", t)
-                # Reentry logic for phantom SL hits
-                attempt = t.get("reentry_attempt", 0)
-                if attempt == 0 and t.get("is_reentry"):
-                    attempt = 1
-                if (
-                    (self.options.reentry_after_sl or self.options.reentry_only)
-                    and result_type == "SL"
-                    and attempt < self.options.max_reentry_attempts
-                ):
-                    level = t.get("line_level")
-                    if level is not None:
-                        extreme = bar["low"] if t["type"] == Direction.LONG else bar["high"]
-                        self._reentry_opportunities.append({
-                            "level": level,
-                            "direction": t["type"],
-                            "pair": t["pair"],
-                            "extreme_excursion": extreme,
-                            "sl_bar_time": bar["time"],
-                            "reentry_attempt": attempt + 1,
-                        })
-            else:
-                remaining.append(t)
-        self.open_trades = remaining
+                if closed:
+                    contracts = t.get("contracts") or 1
+                    risk_pts = t.get("risk", 0) or 1.0
+                    r_result, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
+                        direction=Direction.from_string(t["type"]),
+                        entry_price=t["entry"],
+                        exit_price=exit_price,
+                        stop_loss=t["stop_loss"],
+                        take_profit=t["take_profit"],
+                        risk_points=risk_pts,
+                        contracts=contracts,
+                        point_value=self.point_value,
+                        fee_per_rt=self.fee_per_rt,
+                    )
+                    if self.broker_spread > 0:
+                        spread_cost = contracts * self.broker_spread * self.point_value
+                        t_pnl_usd -= spread_cost
+                        t_fees += spread_cost
+                    t.update(
+                        status="closed", result=r_result, exit_time=bar["time"],
+                        exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd,
+                        result_type=result_type,
+                    )
+                    self.event_publisher.emit("trade_close", t)
+                    # Reentry logic for phantom SL hits
+                    attempt = t.get("reentry_attempt", 0)
+                    if attempt == 0 and t.get("is_reentry"):
+                        attempt = 1
+                    if (
+                        (self.options.reentry_after_sl or self.options.reentry_only)
+                        and result_type == "SL"
+                        and attempt < self.options.max_reentry_attempts
+                    ):
+                        level = t.get("line_level")
+                        if level is not None:
+                            extreme = bar["low"] if t["type"] == Direction.LONG else bar["high"]
+                            self._reentry_opportunities.append({
+                                "level": level,
+                                "direction": t["type"],
+                                "pair": t["pair"],
+                                "extreme_excursion": extreme,
+                                "sl_bar_time": bar["time"],
+                                "reentry_attempt": attempt + 1,
+                            })
+                else:
+                    remaining.append(t)
+            self.open_trades = remaining
 
     # ----- Trade creation & persistence -----
 

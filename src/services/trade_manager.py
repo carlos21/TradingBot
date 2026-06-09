@@ -2,6 +2,7 @@
 
 import contextlib
 from datetime import datetime, timezone
+from threading import RLock
 from zoneinfo import ZoneInfo
 
 from src.analytics import AnalyticsReporter, NoOpReporter
@@ -59,6 +60,7 @@ class TradeManager:
         self.risk_pct_per_trade = risk_pct_per_trade
         self.fee_per_rt       = fee_per_rt
         self._accounts_repo   = accounts_repo
+        self._lock = RLock()
 
         # Session end close config
         self._session_end_time = None
@@ -243,9 +245,10 @@ class TradeManager:
             if result is not None:
                 self.account_balance += result.pnl_usd
                 self._open_use_case.update_account_balance(self.account_balance)
+            self._monitored_trades.discard(trade['trade_id'])
+            self._closing_trades.discard(trade['trade_id'])
             with contextlib.suppress(ValueError):
                 self.open_trades.remove(trade)
-
             if result is not None:
                 self.analytics.capture_trade_event(analytics_event, {
                     "trade_id": trade['trade_id'], "exit_price": exit_price,
@@ -301,9 +304,10 @@ class TradeManager:
             if result is not None:
                 self.account_balance += result.pnl_usd
                 self._open_use_case.update_account_balance(self.account_balance)
+            self._monitored_trades.discard(trade['trade_id'])
+            self._closing_trades.discard(trade['trade_id'])
             with contextlib.suppress(ValueError):
                 self.open_trades.remove(trade)
-
             if result is not None:
                 self.analytics.capture_trade_event("SESSION_END", {
                     "trade_id": trade['trade_id'], "exit_price": bar['close'], "result": result.result,
@@ -486,9 +490,10 @@ class TradeManager:
             if result is not None:
                 self.account_balance += result.pnl_usd
                 self._open_use_case.update_account_balance(self.account_balance)
+            self._monitored_trades.discard(trade['trade_id'])
+            self._closing_trades.discard(trade['trade_id'])
             with contextlib.suppress(ValueError):
                 self.open_trades.remove(trade)
-
             if result is not None:
                 self.analytics.capture_trade_event("STREAM_END", {
                     "trade_id": trade['trade_id'], "exit_price": final_close_price, "result": result.result,
@@ -525,10 +530,11 @@ class TradeManager:
             return
 
         # Atomic guard: prevent duplicate fills from double-counting PnL
-        if trade_id in self._closing_trades:
-            self.logger.warning(f"[TradeManager] Duplicate broker fill ignored for {trade_id}")
-            return
-        self._closing_trades.add(trade_id)
+        with self._lock:
+            if trade_id in self._closing_trades:
+                self.logger.warning(f"[TradeManager] Duplicate broker fill ignored for {trade_id}")
+                return
+            self._closing_trades.add(trade_id)
 
         try:
             result = self._close_use_case.execute(
@@ -547,12 +553,17 @@ class TradeManager:
             if self.trade_logger:
                 self.trade_logger.log(trade_id, "ERROR", str(e))
             self.notifier.send(f"[TradeManager] DB error on broker fill for {trade_id}: {e}")
+            # Broker is source of truth — trade is closed even if DB persist failed
+            self._monitored_trades.discard(trade_id)
+            self._closing_trades.discard(trade_id)
             with contextlib.suppress(ValueError):
                 self.open_trades.remove(trade)
             return
 
         self.account_balance += result.pnl_usd
         self._open_use_case.update_account_balance(self.account_balance)
+        self._monitored_trades.discard(trade_id)
+        self._closing_trades.discard(trade_id)
         with contextlib.suppress(ValueError):
             self.open_trades.remove(trade)
 
@@ -564,7 +575,10 @@ class TradeManager:
 
         self.account_balance += pnl_usd
         self._open_use_case.update_account_balance(self.account_balance)
-        self.open_trades.remove(trade)
+        self._monitored_trades.discard(trade_id)
+        self._closing_trades.discard(trade_id)
+        with contextlib.suppress(ValueError):
+            self.open_trades.remove(trade)
 
         event = "SL_HIT" if result_type == "SL" else "TP_HIT" if result_type == "TP" else "SESSION_END"
         self.logger.info(f"[TradeManager] SYNCED {event} for {trade_id} @ {exit_price} (Result: {result:.2f}R)")

@@ -15,22 +15,33 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 PIDFILE="${PROJECT_DIR}/.multi_instance_pids"
 
 start_instances() {
-    echo "[multi] Starting NinjaTrader instance..."
-    nohup "${SCRIPT_DIR}/start_nt.sh" > "${PROJECT_DIR}/logs/ninja.out" 2>&1 &
-    NT_PID=$!
-
-    echo "[multi] Starting MetaTrader instance..."
-    nohup "${SCRIPT_DIR}/start_mt.sh" > "${PROJECT_DIR}/logs/meta.out" 2>&1 &
-    MT_PID=$!
-
     mkdir -p "${PROJECT_DIR}/logs"
-    echo "${NT_PID}" > "$PIDFILE"
-    echo "${MT_PID}" >> "$PIDFILE"
 
-    echo "[multi] Both instances started."
-    echo "[multi] NinjaTrader PID: $NT_PID  (logs: logs/ninja.out)"
-    echo "[multi] MetaTrader   PID: $MT_PID  (logs: logs/meta.out)"
-    echo "[multi] Web UIs: http://localhost:5001 (NT) and http://localhost:5002 (MT)"
+    if [[ ! -f "${SCRIPT_DIR}/start_nt.sh" ]]; then
+        echo "[multi] ERROR: ${SCRIPT_DIR}/start_nt.sh not found. Skipping NinjaTrader."
+        NT_PID=""
+    else
+        echo "[multi] Starting NinjaTrader instance..."
+        nohup "${SCRIPT_DIR}/start_nt.sh" > "${PROJECT_DIR}/logs/ninja.out" 2>&1 &
+        NT_PID=$!
+    fi
+
+    if [[ ! -f "${SCRIPT_DIR}/start_mt.sh" ]]; then
+        echo "[multi] ERROR: ${SCRIPT_DIR}/start_mt.sh not found. Skipping MetaTrader."
+        MT_PID=""
+    else
+        echo "[multi] Starting MetaTrader instance..."
+        nohup "${SCRIPT_DIR}/start_mt.sh" > "${PROJECT_DIR}/logs/meta.out" 2>&1 &
+        MT_PID=$!
+    fi
+
+    : > "$PIDFILE"
+    [[ -n "$NT_PID" ]] && echo "${NT_PID}" >> "$PIDFILE"
+    [[ -n "$MT_PID" ]] && echo "${MT_PID}" >> "$PIDFILE"
+
+    echo "[multi] Instances started."
+    [[ -n "$NT_PID" ]] && echo "[multi] NinjaTrader PID: $NT_PID  (logs: logs/ninja.out)"
+    [[ -n "$MT_PID" ]] && echo "[multi] MetaTrader   PID: $MT_PID  (logs: logs/meta.out)"
 }
 
 stop_instances() {
@@ -40,14 +51,23 @@ stop_instances() {
     fi
 
     while read -r pid; do
+        if [[ -z "$pid" ]]; then
+            continue
+        fi
+        # Verify the process is actually one of our Python instances before killing
         if kill -0 "$pid" 2>/dev/null; then
-            echo "[multi] Stopping PID $pid..."
-            kill "$pid" 2>/dev/null || true
+            cmdline="$(cat /proc/${pid}/cmdline 2>/dev/null | tr '\0' ' ' || ps -p "$pid" -o comm= 2>/dev/null || echo "")"
+            if [[ "$cmdline" == *"python"* ]] || [[ "$cmdline" == *"start_nt"* ]] || [[ "$cmdline" == *"start_mt"* ]]; then
+                echo "[multi] Stopping PID $pid..."
+                kill "$pid" 2>/dev/null || true
+            else
+                echo "[multi] WARNING: PID $pid does not match expected process, skipping."
+            fi
         fi
     done < "$PIDFILE"
 
     rm -f "$PIDFILE"
-    echo "[multi] Both instances stopped."
+    echo "[multi] Stopped."
 }
 
 case "${1:-}" in
