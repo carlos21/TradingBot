@@ -17,6 +17,7 @@ def register_socketio_handlers(
     data_source: CombinedDataSource,
     live_mode: bool,
     _logger: ILogger,
+    parity_service=None,
 ):
     """Register Socket.IO event handlers.
 
@@ -129,6 +130,24 @@ def register_socketio_handlers(
         except Exception as e:
             _logger.error(f"request_refresh failed: {e}")
             emit('refresh_result', {'ok': False, 'error': str(e)})
+
+    @socketio.on('check_parity')
+    def on_check_parity():
+        if parity_service is None:
+            emit('parity_result', {
+                'ok': False,
+                'error': 'Parity service not available',
+            })
+            return
+        try:
+            result = parity_service.check_parity(hours_back=5)
+            emit('parity_result', result.to_dict())
+        except Exception as e:
+            _logger.error(f"check_parity failed: {e}")
+            emit('parity_result', {
+                'ok': False,
+                'error': str(e),
+            })
 
     # Wire up platform connection state changes
     if isinstance(data_source, ZMQDataSource) and data_source.gateway:

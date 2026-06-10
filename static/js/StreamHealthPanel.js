@@ -33,7 +33,19 @@ export class StreamHealthPanel {
     this.detailHistory = document.getElementById('detailHistory');
 
     this.resyncBtn = document.getElementById('healthResyncBtn');
+    this.checkParityBtn = document.getElementById('healthCheckParityBtn');
     this.refreshStatus = document.getElementById('healthRefreshStatus');
+
+    // Parity modal elements
+    this.parityModal = document.getElementById('parityModal');
+    this.parityModalIcon = document.getElementById('parityModalIcon');
+    this.parityModalSummary = document.getElementById('parityModalSummary');
+    this.parityModalAllGood = document.getElementById('parityModalAllGood');
+    this.parityModalGaps = document.getElementById('parityModalGaps');
+    this.parityModalGapsBody = document.getElementById('parityModalGapsBody');
+    this.parityModalCheckedAt = document.getElementById('parityModalCheckedAt');
+    this.parityModalClose = document.getElementById('parityModalClose');
+    this.parityModalCloseBtn = document.getElementById('parityModalCloseBtn');
 
     this._bindEvents();
     this._loadPreference();
@@ -48,8 +60,21 @@ export class StreamHealthPanel {
       this._doRefresh();
     });
 
+    this.checkParityBtn?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      this._doCheckParity();
+    });
+
     this.socket.on('health_update', (data) => this.update(data));
     this.socket.on('refresh_result', (data) => this._onRefreshResult(data));
+    this.socket.on('parity_result', (data) => this._onParityResult(data));
+
+    // Parity modal close handlers
+    this.parityModalClose?.addEventListener('click', () => this._closeParityModal());
+    this.parityModalCloseBtn?.addEventListener('click', () => this._closeParityModal());
+    this.parityModal?.addEventListener('click', (e) => {
+      if (e.target === this.parityModal) this._closeParityModal();
+    });
 
     // Drag support
     this._initDrag();
@@ -221,6 +246,7 @@ export class StreamHealthPanel {
     // Refresh button state
     const canRefresh = platformConnected && state !== 'REFRESHING';
     if (this.resyncBtn) this.resyncBtn.disabled = !canRefresh;
+    if (this.checkParityBtn) this.checkParityBtn.disabled = !canRefresh;
 
     // Auto-expand on new alert (unless user manually collapsed)
     if (newLevel !== 'ok' && newLevel !== this.alertLevel && !this.userCollapsed) {
@@ -293,6 +319,140 @@ export class StreamHealthPanel {
       return d.toLocaleString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', month: 'short', day: 'numeric', timeZone: 'America/New_York' });
     } catch {
       return String(ts);
+    }
+  }
+
+  _doCheckParity() {
+    if (!this.checkParityBtn) return;
+    this.checkParityBtn.disabled = true;
+    this.checkParityBtn.textContent = 'Checking...';
+    this.socket.emit('check_parity');
+  }
+
+  _onParityResult(data) {
+    // Re-enable button
+    if (this.checkParityBtn) {
+      this.checkParityBtn.disabled = false;
+      this.checkParityBtn.textContent = 'Check Parity';
+    }
+
+    // Handle error from service
+    if (data.error) {
+      this.parityModalSummary.textContent = `Error: ${data.error}`;
+      this.parityModalIcon.textContent = '❌';
+      this.parityModalAllGood?.classList.add('hidden');
+      this.parityModalGaps?.classList.add('hidden');
+      this.parityModalCheckedAt.textContent = '';
+      this._openParityModal();
+      return;
+    }
+
+    // Populate header
+    const allGood = data.all_good;
+    this.parityModalIcon.textContent = allGood ? '✅' : '⚠️';
+    this.parityModalSummary.textContent = data.summary || '--';
+
+    // Checked-at timestamp
+    if (data.checked_at) {
+      const d = new Date(data.checked_at * 1000);
+      this.parityModalCheckedAt.textContent = `Checked at ${d.toLocaleTimeString('en-US', { hour12: false, timeZone: 'America/New_York' })} ET`;
+    } else {
+      this.parityModalCheckedAt.textContent = '';
+    }
+
+    if (allGood) {
+      this.parityModalAllGood?.classList.remove('hidden');
+      this.parityModalGaps?.classList.add('hidden');
+    } else {
+      this.parityModalAllGood?.classList.add('hidden');
+      this.parityModalGaps?.classList.remove('hidden');
+      this._renderGaps(data.gaps || []);
+    }
+
+    this._openParityModal();
+  }
+
+  _renderGaps(gaps) {
+    if (!this.parityModalGapsBody) return;
+    this.parityModalGapsBody.innerHTML = '';
+
+    for (const g of gaps) {
+      const row = document.createElement('tr');
+      row.className = g.is_market_closed ? 'text-gray-500' : 'text-gray-300';
+
+      // Time (CDT)
+      const timeCell = document.createElement('td');
+      timeCell.className = 'px-3 py-2 font-mono text-xs';
+      const dt = new Date(g.start_time * 1000);
+      timeCell.textContent = dt.toLocaleString('en-US', {
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        month: 'short',
+        day: 'numeric',
+        timeZone: 'America/Chicago',
+      });
+      row.appendChild(timeCell);
+
+      // Duration
+      const durCell = document.createElement('td');
+      durCell.className = 'px-3 py-2 font-mono text-xs';
+      durCell.textContent = g.duration_seconds ? `${g.duration_seconds}s` : '—';
+      row.appendChild(durCell);
+
+      // Type
+      const typeCell = document.createElement('td');
+      typeCell.className = 'px-3 py-2';
+      const typeBadge = document.createElement('span');
+      typeBadge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold uppercase';
+      if (g.gap_type === 'missing') {
+        typeBadge.classList.add('bg-red-900/50', 'text-red-400');
+        typeBadge.textContent = 'Missing';
+      } else if (g.gap_type === 'extra') {
+        typeBadge.classList.add('bg-yellow-900/50', 'text-yellow-400');
+        typeBadge.textContent = 'Extra';
+      } else {
+        typeBadge.classList.add('bg-orange-900/50', 'text-orange-400');
+        typeBadge.textContent = 'Mismatch';
+      }
+      typeCell.appendChild(typeBadge);
+      row.appendChild(typeCell);
+
+      // Details
+      const detailCell = document.createElement('td');
+      detailCell.className = 'px-3 py-2 text-xs max-w-[200px] break-words';
+      detailCell.textContent = g.details || '—';
+      row.appendChild(detailCell);
+
+      // Market status
+      const marketCell = document.createElement('td');
+      marketCell.className = 'px-3 py-2';
+      if (g.is_market_closed) {
+        const badge = document.createElement('span');
+        badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-700 text-gray-400';
+        badge.textContent = '🌙 Closed';
+        marketCell.appendChild(badge);
+      } else {
+        const badge = document.createElement('span');
+        badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-900/50 text-green-400';
+        badge.textContent = 'Open';
+        marketCell.appendChild(badge);
+      }
+      row.appendChild(marketCell);
+
+      this.parityModalGapsBody.appendChild(row);
+    }
+  }
+
+  _openParityModal() {
+    if (this.parityModal) {
+      this.parityModal.classList.remove('hidden');
+    }
+  }
+
+  _closeParityModal() {
+    if (this.parityModal) {
+      this.parityModal.classList.add('hidden');
     }
   }
 }

@@ -19,6 +19,9 @@ from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.events.event_bus import EventBus
 from src.infrastructure.bar_auditor import NinjaTraderBarAuditor
 from src.infrastructure.gateway.datasource import ZMQDataSource
+from src.infrastructure.market_closure_filter import MarketClosureFilter
+from src.infrastructure.parity_checker import NinjaTraderParityChecker
+from src.application.parity_service import ParityCheckService
 from src.infrastructure.event_publisher import (
     CompositeEventPublisher,
     DomainEventBusPublisher,
@@ -617,6 +620,22 @@ def create_app(
             bar_auditor.start()
             logger.info("[LiveMode] BarAuditor started")
 
+            # Create on-demand parity check service
+            parity_service = ParityCheckService(
+                data_source=data_source,
+                gateway=data_source.gateway,
+                checker=NinjaTraderParityChecker(
+                    market_filter=MarketClosureFilter(instrument=pair),
+                ),
+                market_filter=MarketClosureFilter(instrument=pair),
+                logger=logger,
+            )
+            logger.info("[LiveMode] ParityCheckService ready")
+        else:
+            parity_service = None
+    else:
+        parity_service = None
+
     # Create controllers
     lines_controller = LinesController(repos.lines, loader, tstrategy, logger=logger)
     trades_controller = TradesController(loader, trade_manager, logger=logger, rr_ratio=numbers.rr_ratio, strategy=tstrategy)
@@ -673,7 +692,7 @@ def create_app(
         app, tstrategy, loader, trade_manager, repos.lines, repos.trades,
         data_source, pair, notifier, analytics, logger=logger
     )
-    register_socketio_handlers(socketio, loader, data_source, live_mode, logger)
+    register_socketio_handlers(socketio, loader, data_source, live_mode, logger, parity_service)
     
     from werkzeug.exceptions import HTTPException
 
