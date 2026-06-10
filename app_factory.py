@@ -656,7 +656,7 @@ def create_app(
     creds_repo = CredentialRepository(db=db)
     settings_service = SettingsService(settings_repo, accounts_repo, creds_repo, secret_key=secret_key)
     settings_controller = SettingsController(settings_service)
-    nt_service = NtManagerService()
+    nt_service = NtManagerService(logger=logger)
     deploy_service = PlatformDeployService()
 
     # Build platform-specific lifecycle service (SOLID: one implementation per platform)

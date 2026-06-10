@@ -9,8 +9,9 @@ from pathlib import Path
 class NtManagerService:
     """Manages NinjaTrader auto-login and NetMQ from the WSL backend."""
 
-    def __init__(self, project_dir: str | None = None):
+    def __init__(self, project_dir: str | None = None, logger=None):
         self._project_dir = Path(project_dir) if project_dir else Path(__file__).resolve().parents[2]
+        self._logger = logger
 
     def _can_run_windows_exe(self) -> bool:
         """Check if WSL can execute Windows binaries (e.g. powershell.exe)."""
@@ -113,17 +114,23 @@ class NtManagerService:
             cmd.extend(["-NinjaTraderPath", win_nt_path])
 
         try:
-            # Launch asynchronously — NT takes time to start
-            subprocess.Popen(
+            if self._logger:
+                self._logger.info(f"[NT Launch] Spawning PowerShell: {' '.join(cmd)}")
+
+            # Let PS inherit our stdout/stderr so the user sees all output directly
+            # in the console (avoids WSL pipe-buffer deadlocks too).
+            proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
                 start_new_session=True,
             )
+
+            if self._logger:
+                self._logger.info(f"[NT Launch] Popen returned — PID={proc.pid}")
             return {
                 "success": True,
                 "message": f"NinjaTrader launching with auto-login for {username}...",
             }
         except Exception as e:
+            if self._logger:
+                self._logger.error(f"[NT Launch] Failed to spawn PowerShell: {e}")
             return {"success": False, "message": f"Failed to launch: {e}"}

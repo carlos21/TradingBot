@@ -1001,6 +1001,37 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 }
                             }
 
+                            // Internal gap-fill: scan the returned history for holes and patch them.
+                            // End-gap fill (above) only covers the tail; this catches missing bars
+                            // in the middle of the range (e.g. NT cache was incomplete at request time).
+                            if (receivedCount >= 2)
+                            {
+                                var nowUtc = DateTime.UtcNow;
+                                var fourHoursAgo = nowUtc.AddHours(-4);
+                                for (int i = 1; i < receivedCount; i++)
+                                {
+                                    var prevTime = bars.Bars.GetTime(i - 1);
+                                    var currTime = bars.Bars.GetTime(i);
+                                    var gap = currTime - prevTime;
+                                    if (gap.TotalSeconds > 60)
+                                    {
+                                        // Skip expected exchange breaks (e.g. CME 60-min daily break)
+                                        if (gap.TotalMinutes >= 30)
+                                            continue;
+                                        // Only chase recent gaps; old holes are not critical for trading
+                                        if (prevTime < fourHoursAgo)
+                                            continue;
+
+                                        _logger.Info($"[History] Detected internal gap: {gap.TotalMinutes:F0}m between {prevTime:yyyy-MM-dd HH:mm:ss} and {currTime:yyyy-MM-dd HH:mm:ss} UTC — attempting gap-fill");
+                                        _ = SendGapFillAsync(instrument, prevTime, currTime).ContinueWith(t =>
+                                        {
+                                            if (t.IsFaulted)
+                                                _logger.Error("Internal gap-fill failed", t.Exception?.GetBaseException());
+                                        }, TaskContinuationOptions.OnlyOnFaulted);
+                                    }
+                                }
+                            }
+
                             _network?.SendHistoryEnd();
                             tcs.TrySetResult(true);
                         }
@@ -1549,6 +1580,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return;
             }
 
+            if (order.OrderState != OrderState.Filled)
+            {
+                _logger.Warning($"Stop {order.Name} state={order.OrderState} ({order.Filled}/{order.Quantity}), waiting for full fill before processing SL exit.");
+                return;
+            }
+
             string accountName = order.Account?.Name;
             _logger.Warning($"EXIT FILL (SL): {tradeId} @ {fillPrice} account={accountName}");
             _network?.SendExitFill(tradeId, fillPrice, "SL", account: accountName);
@@ -1572,6 +1609,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 return;
             }
 
+            if (order.OrderState != OrderState.Filled)
+            {
+                _logger.Warning($"Target {order.Name} state={order.OrderState} ({order.Filled}/{order.Quantity}), waiting for full fill before processing TP exit.");
+                return;
+            }
+
             string accountName = order.Account?.Name;
             _logger.Success($"EXIT FILL (TP): {tradeId} @ {fillPrice} account={accountName}");
             _network?.SendExitFill(tradeId, fillPrice, "TP", account: accountName);
@@ -1592,6 +1635,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _logger.Error($"CRITICAL: Close fill for order '{order.Name}' not found in tracking! Cannot process fill.");
                 _network?.SendError("ninjatrader", "fill_tracking_failed",
                     $"Close fill for order '{order.Name}' not found in tracking");
+                return;
+            }
+
+            if (order.OrderState != OrderState.Filled)
+            {
+                _logger.Warning($"Close {order.Name} state={order.OrderState} ({order.Filled}/{order.Quantity}), waiting for full fill before processing close.");
                 return;
             }
 

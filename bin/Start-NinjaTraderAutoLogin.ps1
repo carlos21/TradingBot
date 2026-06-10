@@ -437,6 +437,23 @@ try {
         if ($continue -notmatch '^[Yy]') { exit 0 }
     }
 
+    # -- Clear NT db cache so it reloads fresh data from the provider --
+    $dbPath = Join-Path $env:USERPROFILE "Documents\NinjaTrader 8\db"
+    if (Test-Path $dbPath) {
+        foreach ($folder in @("cache", "day", "minute", "tick")) {
+            $fp = Join-Path $dbPath $folder
+            $stash = Join-Path $dbPath ($folder + ".old")
+            if (Test-Path $stash) {
+                Start-Process "cmd.exe" -ArgumentList "/c", "rmdir /s /q `"$stash`"" -WindowStyle Hidden
+            }
+            if (Test-Path $fp) {
+                Rename-Item -Path $fp -NewName $stash -Force
+                Start-Process "cmd.exe" -ArgumentList "/c", "rmdir /s /q `"$stash`"" -WindowStyle Hidden
+                Write-Host "  Cleared $folder" -ForegroundColor Green
+            }
+        }
+    }
+
     # -- Launch NinjaTrader (capture the process) --
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $NinjaTraderPath
