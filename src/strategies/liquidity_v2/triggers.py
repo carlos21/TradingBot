@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from src.strategies.base_strategy import DecisionEventCategory
@@ -398,8 +399,20 @@ def _handle_single_tsi_cross(strategy, line_id, line, bar, lvl, dir_, tf):
         )
 
     if dir_ == Direction.LONG and prev_tsi <= prev_sig and curr_tsi > curr_sig:
+        if strategy.logger:
+            dt = datetime.fromtimestamp(bar['time'], tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            strategy.logger.info(
+                f"[TSI_CROSS] time={dt} close={bar['close']:.2f} "
+                f"tsi={curr_tsi:.2f} sig={curr_sig:.2f} dir=bullish"
+            )
         return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
     if dir_ == Direction.SHORT and prev_tsi >= prev_sig and curr_tsi < curr_sig:
+        if strategy.logger:
+            dt = datetime.fromtimestamp(bar['time'], tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+            strategy.logger.info(
+                f"[TSI_CROSS] time={dt} close={bar['close']:.2f} "
+                f"tsi={curr_tsi:.2f} sig={curr_sig:.2f} dir=bearish"
+            )
         return _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_sig)
 
     # No cross – record values so we can see how far TSI is from crossing

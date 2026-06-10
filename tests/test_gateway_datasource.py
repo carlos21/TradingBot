@@ -457,6 +457,63 @@ class TestBarHandling:
         # just that the code path ran without error and bars are stored)
         assert len(data_source._historical_bars) == 2
 
+    def test_on_bar_updates_existing_bar_when_values_differ(self, data_source):
+        """A live bar with different OHLCV values should update the cache entry."""
+        logger = RecordingLogger()
+        data_source.logger = logger
+        data_source._market_is_open = True
+
+        hist_bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5, volume=100)
+        live_bar = make_bar(time_val=100, open_=10.0, high=12.0, low=8.5, close=11.0, volume=200)
+
+        # History batch arrives first
+        data_source._on_history_batch({"bars": [hist_bar], "days": 1})
+        assert data_source._historical_bars[0]["close"] == 10.5
+        assert data_source._historical_bars[0]["volume"] == 100
+
+        # Live bar arrives with different values — should update cache
+        data_source._on_bar(live_bar)
+        assert len(data_source._historical_bars) == 1
+        assert data_source._historical_bars[0]["high"] == 12.0
+        assert data_source._historical_bars[0]["low"] == 8.5
+        assert data_source._historical_bars[0]["close"] == 11.0
+        assert data_source._historical_bars[0]["volume"] == 200
+        assert data_source._duplicate_count == 0
+        assert any("[LiveUpdate]" in m for m in logger.messages)
+        assert not any("Duplicate bar" in m for m in logger.messages)
+
+    def test_on_bar_warns_on_identical_duplicate_when_market_open(self, data_source):
+        """A live bar with identical values is counted as duplicate and warned when market is open."""
+        logger = RecordingLogger()
+        data_source.logger = logger
+        data_source._market_is_open = True
+
+        bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
+        data_source._on_history_batch({"bars": [bar], "days": 1})
+
+        # Identical live bar — duplicate warning (market is open)
+        data_source._on_bar(bar)
+        assert len(data_source._historical_bars) == 1
+        assert data_source._duplicate_count == 1
+        assert not any("[LiveUpdate]" in m for m in logger.messages)
+        assert any("Duplicate bar" in m for m in logger.messages)
+
+    def test_on_bar_silently_skips_identical_duplicate_when_market_closed(self, data_source):
+        """A live bar with identical values is silently skipped when market is closed."""
+        logger = RecordingLogger()
+        data_source.logger = logger
+        data_source._market_is_open = False
+
+        bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
+        data_source._on_history_batch({"bars": [bar], "days": 1})
+
+        # Identical live bar — silently skipped (market is closed)
+        data_source._on_bar(bar)
+        assert len(data_source._historical_bars) == 1
+        assert data_source._duplicate_count == 1
+        assert not any("[LiveUpdate]" in m for m in logger.messages)
+        assert not any("Duplicate bar" in m for m in logger.messages)
+
 
 # ---------------------------------------------------------------------------
 # Partial bar handling
@@ -609,6 +666,105 @@ class TestHistoryEndHandling:
         ]
         data_source._on_history_end()
         assert data_source.is_live is True
+
+    def test_on_history_end_stale_switches_to_live_without_retry(self, data_source, mock_gateway):
+        """Stale history should switch to LIVE without sending retry refresh requests."""
+        now = int(time.time())
+        data_source._historical_bars = [
+            make_bar(time_val=now - 1000, open_=10.0, high=11.0, low=9.0, close=10.5),
+        ]
+        data_source._on_history_end()
+        assert data_source.state == DataSourceState.LIVE
+        mock_gateway.send_refresh_request.assert_not_called()
+
+    def test_on_history_batch_in_live_emits_history_ready_when_complete(self, data_source):
+        """Gap-fill batches arriving in LIVE state should emit history_ready when history becomes complete."""
+        now = int(time.time())
+        called_with = []
+        data_source.on_history_complete = lambda bars: called_with.append(list(bars))
+        data_source._state = DataSourceState.LIVE
+        data_source._history_complete = False
+        data_source._history_complete_reason = "Last bar is old"
+
+        # Seed with bars that have a continuous recent sequence but the last bar is old
+        # (simulates stale history where recent data is missing)
+        data_source._historical_bars = [
+            make_bar(time_val=now - 180, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=now - 120, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=now - 60, open_=10.0, high=11.0, low=9.0, close=10.5),
+        ]
+
+        # Inject the missing recent bar via history_batch (simulates gap-fill)
+        data_source._on_history_batch({
+            'bars': [{
+                'time': now,
+                'open': 10.0,
+                'high': 11.0,
+                'low': 9.0,
+                'close': 10.5,
+                'volume': 100,
+                'pair': 'MNQ',
+            }],
+            'pair': 'MNQ',
+        })
+
+        assert data_source._history_complete is True
+        assert len(called_with) == 1
+        assert len(called_with[0]) == 4
+
+    def test_on_bar_in_live_emits_history_ready_when_becomes_complete(self, data_source):
+        """Live bar that completes history should emit history_ready."""
+        now = int(time.time())
+        called_with = []
+        data_source.on_history_complete = lambda bars: called_with.append(list(bars))
+        data_source._state = DataSourceState.LIVE
+        data_source._history_complete = False
+
+        # Seed with continuous recent bars but missing the very last one
+        data_source._historical_bars = [
+            make_bar(time_val=now - 180, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=now - 120, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=now - 60, open_=10.0, high=11.0, low=9.0, close=10.5),
+        ]
+
+        # Inject the missing recent live bar
+        data_source._on_bar({
+            'time': now,
+            'open': 10.0,
+            'high': 11.0,
+            'low': 9.0,
+            'close': 10.5,
+            'volume': 100,
+            'pair': 'MNQ',
+        })
+
+        assert data_source._history_complete is True
+        assert len(called_with) == 1
+        assert len(called_with[0]) == 4
+
+    def test_on_history_batch_does_not_emit_during_refreshing(self, data_source):
+        """History batches during REFRESHING state should not emit history_ready."""
+        now = int(time.time())
+        called_with = []
+        data_source.on_history_complete = lambda bars: called_with.append(list(bars))
+        data_source._state = DataSourceState.REFRESHING
+        data_source._history_complete = False
+
+        data_source._on_history_batch({
+            'bars': [{
+                'time': now,
+                'open': 10.0,
+                'high': 11.0,
+                'low': 9.0,
+                'close': 10.5,
+                'volume': 100,
+                'pair': 'MNQ',
+            }],
+            'pair': 'MNQ',
+        })
+
+        assert data_source._history_complete is False  # not checked during REFRESHING
+        assert len(called_with) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1140,3 +1296,34 @@ class TestStaleBarFallback:
         time.sleep(0.05)
         data_source._stop_heartbeat_monitor()
         assert data_source._market_is_open is True
+
+    def test_detect_gap_logs_warning_when_market_open(self, data_source):
+        """Gap detection should log a warning when market is open."""
+        from unittest.mock import MagicMock
+        data_source._market_is_open = True
+        data_source._gap_threshold = 60
+        mock_logger = MagicMock()
+        original_logger = data_source.logger
+        data_source.logger = mock_logger
+        try:
+            data_source._detect_gap(100, 200, "TEST")
+        finally:
+            data_source.logger = original_logger
+        mock_logger.warning.assert_called_once()
+        call_args = str(mock_logger.warning.call_args)
+        assert "GAP DETECTED [TEST]" in call_args
+
+    def test_detect_gap_silent_when_market_closed(self, data_source):
+        """Gap detection should be silent when market is closed."""
+        from unittest.mock import MagicMock
+        data_source._market_is_open = False
+        data_source._gap_threshold = 60
+        mock_logger = MagicMock()
+        original_logger = data_source.logger
+        data_source.logger = mock_logger
+        try:
+            data_source._detect_gap(100, 200, "TEST")
+        finally:
+            data_source.logger = original_logger
+        mock_logger.warning.assert_not_called()
+        assert data_source._gap_count == 1  # still counted internally

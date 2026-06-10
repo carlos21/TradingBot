@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
+using NinjaTrader.Cbi;
 using NinjaTrader.Data;
 
 namespace NinjaTrader.NinjaScript.AddOns
@@ -50,7 +51,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                     return false;
                 }
 
-                var barsRequest = new BarsRequest(instrument, barsBack)
+                // Request one extra bar so we can drop the forming (partial) bar at the end.
+                // Python only caches completed bars from ZMQ BAR messages, so including the
+                // forming bar in the audit response causes a systematic missing=1 extra=1 drift.
+                var barsRequest = new BarsRequest(instrument, barsBack + 1)
                 {
                     BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 },
                     TradingHours = TradingHours.Get("Default 24 x 7")
@@ -69,7 +73,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                         var batch = new List<JObject>();
                         if (bars?.Bars != null)
                         {
-                            for (int i = 0; i < bars.Bars.Count; i++)
+                            // Skip the last index — it is the forming/partial bar, which Python
+                            // does not yet have in its cache. We only return completed bars.
+                            int count = Math.Max(0, bars.Bars.Count - 1);
+                            for (int i = 0; i < count; i++)
                             {
                                 batch.Add(new JObject
                                 {
@@ -85,7 +92,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                         }
 
                         _network?.SendAuditResponse(_instrument.Split(' ')[0], batch);
-                        _logger.Info($"AUDIT RESPONSE: sent {batch.Count} bars");
+                        _logger.Info($"AUDIT RESPONSE: sent {batch.Count} completed bars (requested {barsBack + 1}, dropped forming bar)");
                     }
                     catch (Exception callbackEx)
                     {

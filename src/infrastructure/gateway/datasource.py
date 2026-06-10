@@ -136,10 +136,6 @@ class ZMQDataSource(CombinedDataSource):
         # Gap detection threshold (seconds). For 1m bars, anything > 1 min is a hole.
         self._gap_threshold: int = 60
 
-        # Retry counter for stale history auto-refresh
-        self._max_stale_history_retries: int = 3
-        self._stale_history_retry_count: int = 0
-
         # History completeness for TSI readiness
         self._history_complete: bool = False
         self._history_complete_reason: str = "Initializing"
@@ -471,9 +467,24 @@ class ZMQDataSource(CombinedDataSource):
                 times = [b["time"] for b in self._historical_bars]
                 idx = bisect.bisect_left(times, bar["time"])
                 if idx < len(times) and times[idx] == bar["time"]:
-                    self._duplicate_count += 1
-                    if self._market_is_open:
-                        self.logger.warning(f"Duplicate bar at time {bar['time']} (total={self._duplicate_count})")
+                    existing = self._historical_bars[idx]
+                    updated = False
+                    for f in ("open", "high", "low", "close", "volume"):
+                        if existing.get(f) != bar.get(f):
+                            existing[f] = bar[f]
+                            updated = True
+                    if updated:
+                        self.logger.info(
+                            f"[LiveUpdate] Bar t={bar['time']} updated from live stream"
+                        )
+                        # Mark as inserted so gap detection still runs
+                        inserted_idx = idx
+                    else:
+                        self._duplicate_count += 1
+                        if self._market_is_open:
+                            self.logger.warning(
+                                f"Duplicate bar at time {bar['time']} (total={self._duplicate_count})"
+                            )
                     return
                 self._historical_bars.insert(idx, bar)
                 inserted_idx = idx
@@ -500,6 +511,8 @@ class ZMQDataSource(CombinedDataSource):
                 self._history_complete, self._history_complete_reason = self._check_history_completeness(self._historical_bars)
                 if self._history_complete and not was_complete:
                     self.logger.info(f"[Health] History now complete — confirmed by live bars ({self._history_complete_reason})")
+                    if self.on_history_complete:
+                        self.on_history_complete(list(self._historical_bars))
                 elif not self._history_complete and was_complete:
                     self.logger.warning(f"[Health] History became incomplete — {self._history_complete_reason}")
 
@@ -548,6 +561,16 @@ class ZMQDataSource(CombinedDataSource):
             if added > 0 and len(self._historical_bars) > 1:
                 self._historical_bars.sort(key=lambda b: b["time"])
 
+            # If gap-fill batches arrive after we switched to LIVE, check whether
+            # history just became complete and notify the frontend to re-fetch.
+            if self._state == DataSourceState.LIVE and added > 0:
+                was_complete = self._history_complete
+                self._history_complete, self._history_complete_reason = self._check_history_completeness(self._historical_bars)
+                if self._history_complete and not was_complete and self.on_history_complete:
+                    self.logger.info("[Health] History complete confirmed by gap-fill batch — emitting history_ready")
+                    # Copy bars so the callback can't mutate internal state
+                    self.on_history_complete(list(self._historical_bars))
+
         self.logger.info(f"RECV: history_batch | pair={pair} | bars={len(new_bars)} | unique_added={added} | total_cached={len(self._historical_bars)}")
 
     def _detect_gap(self, prev_time: int, curr_time: int, context: str) -> None:
@@ -555,6 +578,9 @@ class ZMQDataSource(CombinedDataSource):
         gap = curr_time - prev_time
         if gap > self._gap_threshold:
             self._gap_count += 1
+            if not self._market_is_open:
+                # Market is closed — gap is expected (lunch break, overnight, etc.)
+                return
             chicago = ZoneInfo("America/Chicago")
             dt_prev = datetime.fromtimestamp(prev_time, tz=timezone.utc).astimezone(chicago).strftime('%Y-%m-%d %H:%M:%S %Z')
             dt_curr = datetime.fromtimestamp(curr_time, tz=timezone.utc).astimezone(chicago).strftime('%Y-%m-%d %H:%M:%S %Z')
@@ -627,34 +653,24 @@ class ZMQDataSource(CombinedDataSource):
         # If history passes, mark READY immediately. Live bar re-check in _on_bar
         # will flip back to False if a gap appears after history end.
 
-        # NinjaTrader's BarsRequest can return partial cached data on the first call.
-        # If the last bar is far behind now, re-request a refresh instead of switching to LIVE.
+        # NinjaTrader's BarsRequest can return partial cached data on a cold start.
+        # The data provider backfills asynchronously; gap-fill is already running
+        # on the NT side (SendGapFillAsync). Hammering NT with rapid retries just
+        # exhausts the retry budget before gap-fill can arrive. Switch to LIVE so
+        # live bars flow, and let gap-fill batches arrive naturally.
         if bars_copy:
             last_bar_time = bars_copy[-1]["time"]
             now = time.time()
             gap_to_now = now - last_bar_time
             if gap_to_now > 600:  # > 10 minutes stale
-                self._stale_history_retry_count += 1
-                if self._stale_history_retry_count <= self._max_stale_history_retries:
-                    dt_str = datetime.fromtimestamp(last_bar_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
-                    self.logger.warning(
-                        f"🕳️  History ends {gap_to_now:.0f}s ago ({dt_str} UTC), "
-                        f"re-requesting refresh (attempt {self._stale_history_retry_count}/{self._max_stale_history_retries})..."
-                    )
-                    self._state = DataSourceState.CONNECTED
-                    self.request_refresh()
-                    return
-                else:
-                    self.logger.error(
-                        f"🕳️  History still ends {gap_to_now:.0f}s ago after "
-                        f"{self._max_stale_history_retries} refresh attempts. "
-                        f"Proceeding with stale data — large gap warnings expected. "
-                        f"NinjaTrader data provider may still be syncing missing bars. "
-                        f"Gap-fill retries are logged on the NinjaTrader side."
-                    )
+                dt_str = datetime.fromtimestamp(last_bar_time, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
+                self.logger.warning(
+                    f"🕳️  History ends {gap_to_now:.0f}s ago ({dt_str} UTC) — "
+                    f"NT cache is still warming. Gap-fill is in progress on NT side. "
+                    f"Switching to LIVE and waiting for gap-fill batches..."
+                )
 
         self._state = DataSourceState.LIVE
-        self._stale_history_retry_count = 0
         # Reset heartbeat baseline so the first live bar has a full grace period
         self._last_completed_bar_time = time.monotonic()
 
@@ -774,7 +790,6 @@ class ZMQDataSource(CombinedDataSource):
         """Called when the platform connects. Auto-request refresh if needed."""
         if self._state == DataSourceState.DISCONNECTED:
             self._state = DataSourceState.CONNECTED
-            self._stale_history_retry_count = 0
             delay = self._history_request_delay_sec
             self.logger.info(f"Platform connected, requesting historical data refresh in {delay}s")
             self._cancel_pending_refresh_timer()

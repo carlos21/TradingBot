@@ -58,6 +58,8 @@ export function detectCrosses(tsiRaw, signalRaw, times) {
     const currSig = signalRaw[i];
 
     if (prevTsi <= prevSig && currTsi > currSig) {
+      const dt = new Date(times[i] * 1000).toISOString().slice(0, 19).replace('T', ' ');
+      console.log('[TSI_CROSS] time=' + dt + ' tsi=' + currTsi.toFixed(2) + ' sig=' + currSig.toFixed(2) + ' dir=bullish');
       markers.push({
         time: times[i],
         position: 'belowBar',
@@ -66,6 +68,8 @@ export function detectCrosses(tsiRaw, signalRaw, times) {
         size: 1,
       });
     } else if (prevTsi >= prevSig && currTsi < currSig) {
+      const dt = new Date(times[i] * 1000).toISOString().slice(0, 19).replace('T', ' ');
+      console.log('[TSI_CROSS] time=' + dt + ' tsi=' + currTsi.toFixed(2) + ' sig=' + currSig.toFixed(2) + ' dir=bearish');
       markers.push({
         time: times[i],
         position: 'aboveBar',

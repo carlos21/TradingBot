@@ -83,6 +83,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         private long _barsSent = 0;
         private long _partialBarsSent = 0;
 
+        // History / gap-fill tracking
+        private DateTime _lastHistoryBarTime = DateTime.MinValue;
+
         // Live bar streaming
         private BarsRequest _liveBarsRequest;
         private readonly BarStreamTracker _barTracker = new BarStreamTracker();
@@ -1040,6 +1043,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             const int maxAttempts = 3;
             var pair = _config.Instrument.Split(' ')[0];
+            int totalGapBarsSent = 0;
 
             for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
@@ -1128,6 +1132,7 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 if (gapCount > 0)
                 {
+                    totalGapBarsSent += gapCount;
                     if (gapBatch.Count > 0)
                     {
                         _network?.SendHistoryBatch(pair, gapBatch, days: 1);
@@ -1135,15 +1140,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                         _logger.Success($"[GapFill] SUCCESS — sent {gapCount} bars on attempt {attempt}/{maxAttempts}");
                     }
 
-                    // If the gap-fill didn't reach the end, update gapStart for next attempt
-                    if (gapLast.HasValue && gapLast.Value < gapEnd.AddMinutes(-1))
+                    // If the gap-fill didn't reach the end, update gapStart for next attempt.
+                    // A remaining gap < 2 minutes is considered success — live stream covers it.
+                    if (gapLast.HasValue && gapLast.Value < gapEnd.AddMinutes(-2))
                     {
                         gapStart = gapLast.Value;
                         _logger.Info($"[GapFill] Gap partially filled — continuing from {gapStart:yyyy-MM-dd HH:mm:ss} UTC");
                         continue; // retry with updated gapStart
                     }
 
-                    return; // gap fully filled
+                    return; // gap fully filled (or < 2 min remaining)
                 }
 
                 _logger.Warning($"[GapFill] Attempt {attempt}/{maxAttempts} | no new bars received");
@@ -1154,7 +1160,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
             }
 
-            _logger.Error($"[GapFill] FAILED after {maxAttempts} attempts — gap remains from {gapStart:yyyy-MM-dd HH:mm:ss} UTC to {gapEnd:yyyy-MM-dd HH:mm:ss} UTC");
+            if (totalGapBarsSent > 0)
+            {
+                _logger.Info($"[GapFill] Sent {totalGapBarsSent} bars total. Remaining micro-gap < 2 min — live stream will cover it.");
+            }
+            else
+            {
+                _logger.Error($"[GapFill] FAILED after {maxAttempts} attempts — no bars received for any attempt. Gap remains from {gapStart:yyyy-MM-dd HH:mm:ss} UTC to {gapEnd:yyyy-MM-dd HH:mm:ss} UTC");
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════════

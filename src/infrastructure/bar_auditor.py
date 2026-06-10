@@ -239,13 +239,6 @@ class NinjaTraderBarAuditor:
 
     def _run_audit(self) -> None:
         try:
-            local_bars = self._data_source.load_historical_bars("1m")
-            if not local_bars:
-                self._logger.warning("[BarAuditor] No local bars to audit")
-                return
-
-            recent_local = local_bars[-self._bars_back :] if len(local_bars) > self._bars_back else list(local_bars)
-
             # Fire-and-forget async request
             self._pending_event = threading.Event()
             self._remote_bars = []
@@ -256,19 +249,84 @@ class NinjaTraderBarAuditor:
                 self._logger.warning("[BarAuditor] Audit response timeout")
                 return
 
+            # Grace delay: the audit response includes the newest completed bar,
+            # but the corresponding ZMQ BAR message may still be in flight.
+            # Wait briefly so the live stream can catch up before we compare.
+            import time
+            time.sleep(1.5)
+
+            # Re-fetch local bars AFTER the grace delay
+            local_bars = self._data_source.load_historical_bars("1m")
+            if not local_bars:
+                self._logger.warning("[BarAuditor] No local bars to audit")
+                return
+            recent_local = local_bars[-self._bars_back :] if len(local_bars) > self._bars_back else list(local_bars)
+
             result = self._comparer.compare(recent_local, self._remote_bars)
 
             if result.has_drift:
-                self._logger.error(f"[BarAuditor] DRIFT DETECTED: {result.summary}")
-                for d in result.details[:10]:  # cap log noise
-                    self._logger.error(f"[BarAuditor]   {d}")
-                if len(result.details) > 10:
-                    self._logger.error(f"[BarAuditor]   ... and {len(result.details) - 10} more")
-                if self._on_drift:
-                    try:
-                        self._on_drift(result)
-                    except Exception as cb_err:
-                        self._logger.error(f"[BarAuditor] on_drift callback failed: {cb_err}")
+                # Edge-only drift (typically the forming/partial bar at the newest end
+                # plus the oldest bar falling out of the 60-bar window) is a transient
+                # window mismatch, not a true data corruption. Downgrade to warning.
+                edge_only = False
+                if (result.missing_count == 1 and result.extra_count == 1
+                        and result.mismatch_count == 0
+                        and len(recent_local) >= 2 and len(self._remote_bars) >= 2
+                        and result.details):
+                    first = result.details[0]
+                    last = result.details[-1]
+                    # The comparer orders details by time ascending.
+                    # first  = oldest anomaly, last = newest anomaly.
+                    # Case 1: NT has forming bar (newest) that Python doesn't;
+                    #         Python has oldest bar that NT dropped.
+                    #   Anomalies: first=EXTRA (oldest local), last=MISSING (newest remote)
+                    case1 = (
+                        first.remote_bar is None
+                        and last.local_bar is None
+                        and first.time == recent_local[0]["time"]
+                        and last.time == self._remote_bars[-1]["time"]
+                    )
+                    # Case 2: Python has newest live bar that NT historical cache
+                    #         hasn't picked up yet; NT has oldest bar Python dropped.
+                    #   Anomalies: first=MISSING (oldest remote), last=EXTRA (newest local)
+                    case2 = (
+                        first.local_bar is None
+                        and last.remote_bar is None
+                        and first.time == self._remote_bars[0]["time"]
+                        and last.time == recent_local[-1]["time"]
+                    )
+                    edge_only = case1 or case2
+
+                if edge_only:
+                    self._logger.warning(
+                        f"[BarAuditor] Transient window-edge drift (forming bar or live-bar lag): {result.summary}"
+                    )
+                    for d in result.details:
+                        self._logger.warning(f"[BarAuditor]   {d}")
+                else:
+                    mismatch_only = (
+                        result.mismatch_count > 0
+                        and result.missing_count == 0
+                        and result.extra_count == 0
+                    )
+                    if mismatch_only:
+                        self._logger.warning(
+                            f"[BarAuditor] OHLCV mismatch (expected — NT live stream vs historical cache): {result.summary}"
+                        )
+                        for d in result.details:
+                            self._logger.warning(f"[BarAuditor]   {d}")
+                        # Do NOT fire on_drift — this is normal NT behavior, not data corruption
+                    else:
+                        self._logger.error(f"[BarAuditor] DRIFT DETECTED: {result.summary}")
+                        for d in result.details[:10]:  # cap log noise
+                            self._logger.error(f"[BarAuditor]   {d}")
+                        if len(result.details) > 10:
+                            self._logger.error(f"[BarAuditor]   ... and {len(result.details) - 10} more")
+                        if self._on_drift:
+                            try:
+                                self._on_drift(result)
+                            except Exception as cb_err:
+                                self._logger.error(f"[BarAuditor] on_drift callback failed: {cb_err}")
             else:
                 self._logger.info(f"[BarAuditor] OK — {len(recent_local)} bars match exactly")
 

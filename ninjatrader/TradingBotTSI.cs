@@ -176,12 +176,26 @@ namespace NinjaTrader.NinjaScript.Indicators
                 double currSig = Values[PLOT_SIGNAL][0];
                 double prevSig = Values[PLOT_SIGNAL][1];
 
+                // Helper: write TSI cross to both Output window and a log file
+                string tsiLogPath = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                    "NinjaTrader 8", "TSI_Crosses.log"
+                );
+
                 // Bullish cross: TSI crosses ABOVE Signal — green arrow below bar
                 if (prevTsi <= prevSig && currTsi > currSig)
                 {
                     RemoveDrawObject("bear_" + CurrentBar);
                     Draw.ArrowUp(this, "bull_" + CurrentBar, false, 0,
                         Low[0] - 2 * TickSize, bullBrush);
+
+                    string msg = string.Format(
+                        "[TSI_CROSS] time={0} close={1:F2} tsi={2:F2} sig={3:F2} dir=bullish",
+                        Time[0].ToString("yyyy-MM-dd HH:mm:ss"), Close[0], currTsi, currSig
+                    );
+                    Print(msg);
+                    try { System.IO.File.AppendAllText(tsiLogPath, msg + System.Environment.NewLine); }
+                    catch { /* ignore file write errors */ }
                 }
                 // Bearish cross: TSI crosses BELOW Signal — red arrow above bar
                 else if (prevTsi >= prevSig && currTsi < currSig)
@@ -189,6 +203,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                     RemoveDrawObject("bull_" + CurrentBar);
                     Draw.ArrowDown(this, "bear_" + CurrentBar, false, 0,
                         High[0] + 2 * TickSize, bearBrush);
+
+                    string msg = string.Format(
+                        "[TSI_CROSS] time={0} close={1:F2} tsi={2:F2} sig={3:F2} dir=bearish",
+                        Time[0].ToString("yyyy-MM-dd HH:mm:ss"), Close[0], currTsi, currSig
+                    );
+                    Print(msg);
+                    try { System.IO.File.AppendAllText(tsiLogPath, msg + System.Environment.NewLine); }
+                    catch { /* ignore file write errors */ }
                 }
             }
             catch (Exception ex)

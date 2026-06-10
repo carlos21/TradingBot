@@ -226,6 +226,9 @@ def _setup_live_mode_callbacks(
                 f"history_complete={strategy.history_complete}, ready for live bars."
             )
             
+            nonlocal _warmup_done
+            _warmup_done = True
+            
             # Tell any connected browsers to reload chart data
             try:
                 socketio.emit('history_ready', {
@@ -242,9 +245,23 @@ def _setup_live_mode_callbacks(
     
     import threading
     _warmup_running = threading.Event()
+    _warmup_done = False
     
     def _on_history_complete(bars):
         """Return immediately, process bars in background thread."""
+        nonlocal _warmup_done
+        if _warmup_done:
+            # History became complete after initial warmup (gap-fill arrived).
+            # Just tell browsers to reload chart data without re-running warmup.
+            try:
+                socketio.emit('history_ready', {
+                    'count': len(bars),
+                    'history_complete': True,
+                })
+                logger.info(f"[LiveMode] Gap-fill complete — emitted history_ready ({len(bars)} bars)")
+            except Exception as e:
+                logger.error(f"[LiveMode] Failed to emit history_ready: {type(e).__name__}: {e}")
+            return
         if _warmup_running.is_set():
             logger.warning(f"[LiveMode] Warmup already in progress, ignoring duplicate history_end ({len(bars)} bars)")
             return
