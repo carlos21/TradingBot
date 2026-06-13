@@ -157,7 +157,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _takeProfitOrders.Remove(tradeId);
                 _closeOrders.Remove(tradeId);
                 _pendingEntries.Remove(tradeId);
+                // Clean up both keyed modify slots (tradeId:sl and tradeId:tp)
                 _pendingModifies.Remove(tradeId);
+                _pendingModifies.Remove(tradeId + ":sl");
+                _pendingModifies.Remove(tradeId + ":tp");
             }
         }
 

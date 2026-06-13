@@ -352,7 +352,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _cts = null;
 
                 // Reset bar streaming state so reconnect starts fresh
-                _barTracker.Reset();
+                lock (_barSendLock)
+                {
+                    _barTracker.Reset();
+                }
 
                 // Reset stats
                 _commandsReceived = 0;
@@ -806,7 +809,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _liveBarsRequest = null;
                 _liveBarsSubscribed = false;
                 _sessionIterator = null;
-                _barTracker.Reset();
+                lock (_barSendLock)
+                {
+                    _barTracker.Reset();
+                }
                 _logger.Info("Unsubscribed from live 1m bars");
             }
         }
@@ -1294,17 +1300,19 @@ namespace NinjaTrader.NinjaScript.AddOns
                     // The suppression check below handles it uniformly
                     // for both modify and close workflows.
 
-                    if (!string.IsNullOrEmpty(tid) && _orderTracker.TryGetPendingModify(tid, out var modInfo))
+                    // Use keyed slots: stop modifies use "tradeId:sl", target modifies use "tradeId:tp"
+                    string modifyKey = !string.IsNullOrEmpty(tid) ? (IsStopOrder(order) ? tid + ":sl" : tid + ":tp") : null;
+                    if (modifyKey != null && _orderTracker.TryGetPendingModify(modifyKey, out var modInfo))
                     {
                         if (!wasExpected)
                         {
                             _logger.Warning($"Order {order.Name} was cancelled unexpectedly (not by modify/close workflow). Discarding pending modify.");
-                            _orderTracker.RemovePendingModify(tid);
+                            _orderTracker.RemovePendingModify(modifyKey);
                         }
                         else if (!_orderTracker.TryGetEntry(tid, out _))
                         {
                             _logger.Warning($"Order {order.Name} cancelled but trade {tid} no longer active. Discarding pending modify.");
-                            _orderTracker.RemovePendingModify(tid);
+                            _orderTracker.RemovePendingModify(modifyKey);
                         }
                         else
                         {
@@ -1314,7 +1322,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 if (account == null)
                                 {
                                     _logger.Error($"Cannot create replacement order for {tid}: account not found");
-                                    _orderTracker.RemovePendingModify(tid);
+                                    _orderTracker.RemovePendingModify(modifyKey);
                                     return;
                                 }
 
@@ -1355,7 +1363,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 if (newOrder != null)
                                 {
                                     account.Submit(new[] { newOrder });
-                                    _orderTracker.RemovePendingModify(tid);
+                                    _orderTracker.RemovePendingModify(modifyKey);
                                     if (modInfo.IsTarget)
                                     {
                                         _orderTracker.TrackTakeProfit(tid, newOrder);
@@ -1371,14 +1379,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                                 }
                                 else
                                 {
-                                    _orderTracker.RemovePendingModify(tid);
+                                    _orderTracker.RemovePendingModify(modifyKey);
                                     _logger.Error($"Failed to create replacement order for {tid}");
                                     _network?.SendError("ninjatrader", "order_modify_failed", $"Failed to create replacement for {tid}");
                                 }
                             }
                             catch (Exception modEx)
                             {
-                                _orderTracker.RemovePendingModify(tid);
+                                _orderTracker.RemovePendingModify(modifyKey);
                                 _logger.Error($"Error creating replacement order for {tid}", modEx);
                                 _network?.SendError("ninjatrader", "order_modify_failed", $"Replacement failed for {tid}: {modEx.Message}");
                             }
@@ -1715,6 +1723,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (!_orderTracker.TryGetEntry(tradeId, out var entryOrder)) continue;
                 if (entryOrder.Instrument?.MasterInstrument?.Name != closeOrder.Instrument.MasterInstrument.Name) continue;
                 if (entryOrder.OrderState != OrderState.Filled && entryOrder.OrderState != OrderState.PartFilled) continue;
+                // Match by account to avoid closing wrong trade in multi-account scenarios
+                if (closeOrder.Account != null && entryOrder.Account != null &&
+                    closeOrder.Account.Name != entryOrder.Account.Name) continue;
 
                 bool isOpposing = false;
                 if (entryOrder.OrderAction == OrderAction.Buy && closeOrder.OrderAction == OrderAction.Sell)
@@ -1737,7 +1748,12 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private (double sl, double tp) CalculateSlTp(double fillPrice, string direction, double slPoints, double rrRatio)
         {
-            if (direction == "long")
+            // Normalize to lowercase to guard against crash recovery returning "Long"/"LONG"
+            var dir = direction?.ToLowerInvariant();
+            if (dir != "long" && dir != "short")
+                throw new ArgumentException($"Invalid direction '{direction}' — must be 'long' or 'short'");
+
+            if (dir == "long")
             {
                 return (fillPrice - slPoints, fillPrice + (slPoints * rrRatio));
             }
@@ -1767,6 +1783,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 try
                 {
+                    _orderTracker.ExpectCancellation(stopOrder.Name);
                     account.Cancel(new[] { stopOrder });
                     _logger.Info($"Cancelled working stop order for {tradeId}");
                 }
@@ -1780,6 +1797,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 try
                 {
+                    _orderTracker.ExpectCancellation(targetOrder.Name);
                     account.Cancel(new[] { targetOrder });
                     _logger.Info($"Cancelled working target order for {tradeId}");
                 }

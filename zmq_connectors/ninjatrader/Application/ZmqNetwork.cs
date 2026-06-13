@@ -33,6 +33,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly object _sendLock = new object();
         private readonly object _recvLock = new object();
         private readonly object _queryLock = new object();
+        private readonly object _heartbeatLock = new object();
 
         public bool IsConnected => _marketPub != null && _commandPull != null;
 
@@ -73,6 +74,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             lock (_sendLock)
             lock (_recvLock)
             lock (_queryLock)
+            lock (_heartbeatLock)
             {
                 SafeDispose(ref _marketPub);
                 SafeDispose(ref _commandPull);
@@ -126,8 +128,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             Send(MessageType.Tick, payload);
         }
 
-        private static int _completedBarsSent = 0;
-        private static int _partialBarsSent = 0;
+        private int _completedBarsSent = 0;
+        private int _partialBarsSent = 0;
 
         public void SendBar(string pair, DateTime time, double open, double high, double low, double close, long volume, bool isPartial = false, long seqNum = 0)
         {
@@ -235,7 +237,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (_heartbeatPub == null) return;
             var payload = new JObject { ["source"] = source, ["status"] = status };
             var envelope = MessageEnvelope.Create(MessageType.Heartbeat, payload, NextSeq());
-            lock (_sendLock)
+            lock (_heartbeatLock)
             {
                 _heartbeatPub?.SendFrame(_serializer.Serialize(envelope));
             }

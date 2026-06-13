@@ -63,58 +63,70 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 _logger.Info($"MODIFY ORDER: {tradeId} new SL={newSl} new TP={newTp} account={account.Name}");
 
-                // Reject if a modify is already pending for this trade (prevents overwrite race)
-                if (_orderTracker.TryGetPendingModify(tradeId, out _))
-                {
-                    _logger.Warning($"MODIFY REJECTED: {tradeId} already has a pending modify — wait for it to complete");
-                    _network?.SendTradeLog(tradeId, "NT:MODIFY", "Modify rejected: previous modify still pending");
-                    return false;
-                }
-
                 bool modifiedAny = false;
 
                 // --- Modify Stop Loss ---
+                // Use keyed slots (tradeId:sl / tradeId:tp) so simultaneous SL+TP
+                // modifies don't overwrite each other's PendingModifyInfo.
                 if (newSl > 0)
                 {
-                    if (!_orderTracker.TryGetStopLoss(tradeId, out var stopOrder))
+                    string slKey = tradeId + ":sl";
+                    if (_orderTracker.TryGetPendingModify(slKey, out _))
                     {
-                        stopOrder = FindStopOrderForTrade(account, tradeId);
-                        if (stopOrder == null)
-                            throw new InvalidOperationException($"Stop order not found for trade {tradeId}");
-                        _orderTracker.TrackStopLoss(tradeId, stopOrder);
-                        _logger.Info($"[Recovery] Re-tracked stop order for {tradeId}");
+                        _logger.Warning($"MODIFY REJECTED: {tradeId} SL modify already pending — wait for it to complete");
+                        _network?.SendTradeLog(tradeId, "NT:MODIFY", "SL modify rejected: previous SL modify still pending");
                     }
+                    else
+                    {
+                        if (!_orderTracker.TryGetStopLoss(tradeId, out var stopOrder))
+                        {
+                            stopOrder = FindStopOrderForTrade(account, tradeId);
+                            if (stopOrder == null)
+                                throw new InvalidOperationException($"Stop order not found for trade {tradeId}");
+                            _orderTracker.TrackStopLoss(tradeId, stopOrder);
+                            _logger.Info($"[Recovery] Re-tracked stop order for {tradeId}");
+                        }
 
-                    if (stopOrder.OrderState != OrderState.Working && stopOrder.OrderState != OrderState.Accepted && stopOrder.OrderState != OrderState.Submitted && stopOrder.OrderState != OrderState.PartFilled)
-                        throw new InvalidOperationException($"Stop order is not modifiable (state: {stopOrder.OrderState})");
+                        if (stopOrder.OrderState != OrderState.Working && stopOrder.OrderState != OrderState.Accepted && stopOrder.OrderState != OrderState.Submitted && stopOrder.OrderState != OrderState.PartFilled)
+                            throw new InvalidOperationException($"Stop order is not modifiable (state: {stopOrder.OrderState})");
 
-                    _orderTracker.TrackPendingModify(tradeId, new PendingModifyInfo(
-                        newSl, stopOrder.Instrument, stopOrder.OrderAction, stopOrder.Quantity));
-                    _orderTracker.ExpectCancellation(stopOrder.Name);
-                    account.Cancel(new[] { stopOrder });
-                    modifiedAny = true;
+                        _orderTracker.TrackPendingModify(slKey, new PendingModifyInfo(
+                            newSl, stopOrder.Instrument, stopOrder.OrderAction, stopOrder.Quantity));
+                        _orderTracker.ExpectCancellation(stopOrder.Name);
+                        account.Cancel(new[] { stopOrder });
+                        modifiedAny = true;
+                    }
                 }
 
                 // --- Modify Take Profit ---
                 if (newTp > 0)
                 {
-                    if (!_orderTracker.TryGetTakeProfit(tradeId, out var targetOrder))
+                    string tpKey = tradeId + ":tp";
+                    if (_orderTracker.TryGetPendingModify(tpKey, out _))
                     {
-                        targetOrder = FindTargetOrderForTrade(account, tradeId);
-                        if (targetOrder == null)
-                            throw new InvalidOperationException($"Target order not found for trade {tradeId}");
-                        _orderTracker.TrackTakeProfit(tradeId, targetOrder);
-                        _logger.Info($"[Recovery] Re-tracked target order for {tradeId}");
+                        _logger.Warning($"MODIFY REJECTED: {tradeId} TP modify already pending — wait for it to complete");
+                        _network?.SendTradeLog(tradeId, "NT:MODIFY", "TP modify rejected: previous TP modify still pending");
                     }
+                    else
+                    {
+                        if (!_orderTracker.TryGetTakeProfit(tradeId, out var targetOrder))
+                        {
+                            targetOrder = FindTargetOrderForTrade(account, tradeId);
+                            if (targetOrder == null)
+                                throw new InvalidOperationException($"Target order not found for trade {tradeId}");
+                            _orderTracker.TrackTakeProfit(tradeId, targetOrder);
+                            _logger.Info($"[Recovery] Re-tracked target order for {tradeId}");
+                        }
 
-                    if (targetOrder.OrderState != OrderState.Working && targetOrder.OrderState != OrderState.Accepted && targetOrder.OrderState != OrderState.Submitted && targetOrder.OrderState != OrderState.PartFilled)
-                        throw new InvalidOperationException($"Target order is not modifiable (state: {targetOrder.OrderState})");
+                        if (targetOrder.OrderState != OrderState.Working && targetOrder.OrderState != OrderState.Accepted && targetOrder.OrderState != OrderState.Submitted && targetOrder.OrderState != OrderState.PartFilled)
+                            throw new InvalidOperationException($"Target order is not modifiable (state: {targetOrder.OrderState})");
 
-                    _orderTracker.TrackPendingModify(tradeId, new PendingModifyInfo(
-                        newTp, targetOrder.Instrument, targetOrder.OrderAction, targetOrder.Quantity, isTarget: true));
-                    _orderTracker.ExpectCancellation(targetOrder.Name);
-                    account.Cancel(new[] { targetOrder });
-                    modifiedAny = true;
+                        _orderTracker.TrackPendingModify(tpKey, new PendingModifyInfo(
+                            newTp, targetOrder.Instrument, targetOrder.OrderAction, targetOrder.Quantity, isTarget: true));
+                        _orderTracker.ExpectCancellation(targetOrder.Name);
+                        account.Cancel(new[] { targetOrder });
+                        modifiedAny = true;
+                    }
                 }
 
                 if (!modifiedAny)
@@ -130,7 +142,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             catch (Exception ex)
             {
                 var tradeId = payload?["trade_id"]?.ToString() ?? "unknown";
-                _logger.Warning($"SL modify failed for {tradeId}: {ex.Message}");
+                _logger.Error($"Order modify failed for {tradeId}: {ex.Message}");
                 _network?.SendError("ninjatrader", "order_modify_failed", $"Failed to modify order {tradeId}: {ex.Message}");
                 return false;
             }
