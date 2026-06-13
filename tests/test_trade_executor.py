@@ -1,9 +1,14 @@
 """Tests for src/services/trade_executor.py and src/gateway/executor.py."""
 
-from src.services.trade_executor import NoOpExecutor
 from src.infrastructure.gateway.executor import MultiAccountExecutor
-from tests.fakes import FakeLogger, FakeTradeExecutor, FakeTradeRepository, DummySocketIO
+from src.services.trade_executor import NoOpExecutor
 from src.services.trade_manager import TradeManager
+from tests.fakes import (
+    DummySocketIO,
+    FakeLogger,
+    FakeTradeExecutor,
+    FakeTradeRepository,
+)
 
 
 def _make_trade_manager():

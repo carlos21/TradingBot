@@ -25,7 +25,6 @@ Usage in a test::
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 from collections import deque
@@ -37,7 +36,6 @@ from src.infrastructure.gateway.protocol import (
     AuditResponseMessage,
     BarMessage,
     CommandAckMessage,
-    ConfigResponseMessage,
     ConnectMessage,
     EntryFillMessage,
     ExitFillMessage,

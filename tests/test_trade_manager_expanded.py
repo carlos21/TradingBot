@@ -9,9 +9,9 @@ from tests.fakes import (
     DummySocketIO,
     FakeAnalyticsReporter,
     FakeLogger,
+    FakeNotifier,
     FakeTradeExecutor,
     FakeTradeRepository,
-    FakeNotifier,
 )
 
 

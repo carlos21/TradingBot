@@ -10,14 +10,11 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-import pytest
-
 from src.application.parity_service import ParityCheckService
 from src.infrastructure.gateway.datasource import DataSourceState
 from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.infrastructure.parity_checker import NinjaTraderParityChecker
 from tests.e2e.conftest import E2EHarness
-
 
 # Fixed timestamp during CME ETH market hours (2024-06-10 14:00 UTC = 09:00 CDT).
 # Using time.time() makes the tests time-dependent because gaps around Friday

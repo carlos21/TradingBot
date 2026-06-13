@@ -12,15 +12,16 @@ import os
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from src.strategies.liquidity_v2.prod_config import get_prod_candle_config, get_prod_strategy_options
 from src.infrastructure.repositories.line_trigger_state_repository import (
     InMemoryLineTriggerStateRepository,
 )
 from src.services.trade_manager import TradeManager
-import dataclasses
-
 from src.strategies.liquidity_v2.base_strategy import StrategyOptions
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
+from src.strategies.liquidity_v2.prod_config import (
+    get_prod_candle_config,
+    get_prod_strategy_options,
+)
 from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
 from tests.fakes import (
     DummySocketIO,

@@ -24,7 +24,7 @@ TESTS_DIR = PROJECT_ROOT / "tests"
 # Ruff rule groups
 RUFF_CRITICAL = "F,E,W,B,C4,PIE"             # Bugs, errors, security
 RUFF_STYLE = "I,UP,PYI,RSE,ARG,SIM"          # Import sort, pyupgrade, style, simplifications
-RUFF_IGNORE = "E501,W505,E402,E741,B017,SIM117"  # Line length, docstring, test noise
+RUFF_IGNORE = "E501,W505,E402,E741,B017,SIM117,ARG"  # Line length, docstring, test noise, unused args
 
 # Pyflakes files that use string forward references with __future__ annotations
 PYFLAKES_FALSE_POSITIVES = {

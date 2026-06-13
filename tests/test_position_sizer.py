@@ -1,13 +1,13 @@
 """Tests for src/services/position_sizing/position_sizer.py."""
 
 
+from src.domain.types import Direction
 from src.services.position_sizing.position_sizer import (
     FixedRiskPositionSizer,
     PercentageRiskPositionSizer,
     PositionSize,
     TieredSLPositionSizer,
 )
-from src.domain.types import Direction
 
 
 class TestFixedRiskPositionSizer:

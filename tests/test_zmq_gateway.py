@@ -13,7 +13,10 @@ import pytest
 # Skip if zmq not installed
 zmq = pytest.importorskip("zmq")
 
-from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway  # noqa: E402
+from src.infrastructure.gateway.gateway import (  # noqa: E402
+    GatewayConfig,
+    TradingGateway,
+)
 from src.infrastructure.gateway.protocol import (  # noqa: E402
     BarMessage,
     MessageEnvelope,

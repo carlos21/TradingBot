@@ -4,6 +4,7 @@ These adapters wrap concrete messaging mechanisms (SocketIO, EventBus)
 to satisfy the application-level EventPublisher port.
 """
 
+import contextlib
 from typing import Any
 
 from src.domain.events import DomainEvent, EventType
@@ -69,8 +70,5 @@ class CompositeEventPublisher:
 
     def emit(self, event: str, data: dict[str, Any], **kwargs: Any) -> None:
         for pub in self._publishers:
-            try:
+            with contextlib.suppress(Exception):
                 pub.emit(event, data, **kwargs)
-            except Exception:
-                # Don't let one publisher failure break the others
-                pass

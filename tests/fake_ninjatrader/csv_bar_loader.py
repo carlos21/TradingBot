@@ -14,7 +14,6 @@ from zoneinfo import ZoneInfo
 
 from dateutil import parser
 
-
 DEFAULT_FMT = "%d/%m/%Y %H:%M:%S"
 PAIR_FORMATS = {"EURUSD": "%Y.%m.%d %H:%M", "MNQ": "%d/%m/%Y %H:%M:%S"}
 PAIR_TZS = {"EURUSD": "Europe/London", "MNQ": "America/Chicago"}

@@ -1183,7 +1183,7 @@ class TestQueryHandlerLoop:
 
         def _recv_and_stop(*args, **kwargs):
             gw._running = False
-            raise zmq.Again()
+            raise zmq.Again
 
         mock_socket.recv_string = _recv_and_stop
         gw._query_rep = mock_socket

@@ -3,7 +3,7 @@
 
 from src.strategies.tsi_cross.config import TsiCrossConfig, TsiCrossNumbers
 from src.strategies.tsi_cross.strategy import TsiCrossStrategy
-from tests.fakes import FakeLogger, DummySocketIO
+from tests.fakes import DummySocketIO, FakeLogger
 
 
 class FakeTradeRepository:

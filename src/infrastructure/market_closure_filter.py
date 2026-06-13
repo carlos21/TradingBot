@@ -6,8 +6,7 @@ market-closed period (daily maintenance or weekend).
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
-from typing import Literal
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
 
@@ -38,10 +37,7 @@ class MarketClosureFilter:
             return True
 
         # Daily maintenance window check (16:00 – 17:01 CDT)
-        if self._is_maintenance_gap(dt_start, dt_end):
-            return True
-
-        return False
+        return bool(self._is_maintenance_gap(dt_start, dt_end))
 
     def _is_weekend_gap(self, dt_start: datetime, dt_end: datetime) -> bool:
         """Return True if gap spans Saturday or Sunday maintenance."""
@@ -59,10 +55,7 @@ class MarketClosureFilter:
             return True
 
         # Friday after 16:00 through Sunday before 17:00
-        if day_start == 4 and dt_start.hour >= 16:
-            return True
-
-        return False
+        return bool(day_start == 4 and dt_start.hour >= 16)
 
     def _is_maintenance_gap(self, dt_start: datetime, dt_end: datetime) -> bool:
         """Return True if gap is the daily 16:00–17:01 CDT maintenance window."""
@@ -80,7 +73,4 @@ class MarketClosureFilter:
 
         # Also catch the classic 3660s gap (61 minutes)
         gap_seconds = int((dt_end - dt_start).total_seconds())
-        if gap_seconds == 3660 and start_sec >= 16 * 3600:
-            return True
-
-        return False
+        return bool(gap_seconds == 3660 and start_sec >= 16 * 3600)

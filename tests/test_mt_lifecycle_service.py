@@ -2,9 +2,10 @@
 
 from unittest.mock import MagicMock, patch
 
-
 from src.services.mt_manager_service import MetaTraderManagerService
-from src.services.platform_lifecycle.mt_lifecycle_service import MetaTraderLifecycleService
+from src.services.platform_lifecycle.mt_lifecycle_service import (
+    MetaTraderLifecycleService,
+)
 from tests.fakes import FakeLogger
 
 

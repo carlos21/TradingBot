@@ -1,5 +1,6 @@
 """Socket.IO event handlers."""
 
+import contextlib
 import threading
 
 from flask_socketio import SocketIO, emit
@@ -8,7 +9,6 @@ from src.bars_loader import BarsLoader
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.utils.app_logger import ILogger
-import contextlib
 
 
 def register_socketio_handlers(
@@ -200,15 +200,13 @@ def register_socketio_handlers(
 
     def _forward_log(level: str, message: str):
         """Forward log entries to browsers via Socket.IO."""
-        try:
+        with contextlib.suppress(Exception):
             socketio.emit('system_log', {
                 'time': __import__('time').time(),
                 'level': level,
                 'source': 'server',
                 'message': message,
             })
-        except Exception:
-            pass  # Don't let log forwarding break anything
 
     def _wrap_logger():
         """Wrap the logger's methods to also emit via Socket.IO."""

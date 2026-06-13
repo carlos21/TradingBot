@@ -4,8 +4,7 @@ from threading import RLock
 
 from src.application.ports import EventPublisher
 from src.dbexception import DBNotFoundException
-from src.domain.repositories import LineRepository
-from src.domain.repositories import TradeRepository
+from src.domain.repositories import LineRepository, TradeRepository
 from src.financial_calc import FinancialCalc
 from src.utils.app_logger import ILogger
 
@@ -178,8 +177,8 @@ class LiquidityDualM1Strategy:
                     closed = True
 
             if closed:
-                from src.financial_calc import FinancialCalc
                 from src.domain.types import Direction
+                from src.financial_calc import FinancialCalc
                 r_result, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
                     direction=Direction.from_string(t['type']),
                     entry_price=t['entry'],

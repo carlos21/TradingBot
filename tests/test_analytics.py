@@ -2,7 +2,6 @@
 
 from unittest.mock import patch
 
-
 from src.analytics import (
     AnalyticsReporter,
     DistributionData,

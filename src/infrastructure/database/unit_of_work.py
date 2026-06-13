@@ -26,14 +26,19 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from src.infrastructure.database.database import Line, LineTriggerState, Trade
 from src.dbexception import DBNotFoundException
 from src.domain.models import LineData, TradeData
 from src.domain.repositories import (
     LineRepository as ILineRepository,
-    TradeRepository as ITradeRepository,
+)
+from src.domain.repositories import (
     LineTriggerStateRepository as ILineTriggerStateRepository,
 )
+from src.domain.repositories import (
+    TradeRepository as ITradeRepository,
+)
+from src.infrastructure.database.database import Line, LineTriggerState, Trade
+
 
 class UnitOfWorkLineRepository(ILineRepository):
     """Line repository that operates within a Unit of Work session."""

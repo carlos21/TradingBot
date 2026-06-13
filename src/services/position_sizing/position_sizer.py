@@ -9,8 +9,8 @@ This module provides the Strategy pattern for different position sizing approach
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from src.financial_calc import FinancialCalc
 from src.domain.types import Direction
+from src.financial_calc import FinancialCalc
 
 
 @dataclass

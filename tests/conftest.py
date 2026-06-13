@@ -8,10 +8,9 @@ import pytest
 from src.infrastructure.database.database_protocol import Base, get_database
 from src.services.trade_logger import TradeLogger
 from src.services.trade_manager import TradeManager
-from src.strategies.liquidity_v2.base_strategy import StrategyOptions
+from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
-from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from tests.fakes import (
     DummySocketIO,
     FakeAnalyticsReporter,

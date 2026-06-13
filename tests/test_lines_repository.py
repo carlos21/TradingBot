@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.infrastructure.database.database import setup_database
 from src.dbexception import DBNotFoundException
+from src.infrastructure.database.database import setup_database
 from src.infrastructure.repositories.lines_repository import SQLLineRepository
 
 

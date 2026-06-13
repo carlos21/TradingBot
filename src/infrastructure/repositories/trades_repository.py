@@ -8,11 +8,11 @@ import uuid
 from datetime import datetime, timezone
 from threading import Lock
 
-from src.infrastructure.database.database import Trade
-from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.dbexception import DBException, DBNotFoundException
 from src.domain.models import TradeData
 from src.domain.repositories import TradeRepository as ITradeRepository
+from src.infrastructure.database.database import Trade
+from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.infrastructure.repositories.base import SQLRepositoryBase
 
 

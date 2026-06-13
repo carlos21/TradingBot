@@ -8,6 +8,7 @@ bars and ticks from trading platforms via ZeroMQ.
 from __future__ import annotations
 
 import bisect
+import contextlib
 import logging
 import threading
 import time
@@ -292,10 +293,8 @@ class ZMQDataSource(CombinedDataSource):
         """Stop receiving data."""
         monitor = getattr(self, "_readiness_monitor", None)
         if monitor is not None:
-            try:
+            with contextlib.suppress(Exception):
                 monitor.stop()
-            except Exception:
-                pass
         self._stop_heartbeat_monitor()
         if self._owns_gateway and self._gateway:
             self._gateway.stop()
@@ -441,9 +440,10 @@ class ZMQDataSource(CombinedDataSource):
 
         # DEBUG: Log every bar for the first 100 streaming bars, then every 50th
         is_streaming = self._state == DataSourceState.STREAMING
-        if is_streaming:
-            if self._stats["bars_received"] <= 100 or self._stats["bars_received"] % 50 == 0:
-                self.logger.info(
+        if is_streaming and (
+            self._stats["bars_received"] <= 100 or self._stats["bars_received"] % 50 == 0
+        ):
+            self.logger.info(
                     f"[LIVE BAR #{self._stats['bars_received']}] "
                     f"time={payload.get('time')} close={payload.get('close')} pair={payload.get('pair', self.pair)}"
                 )

@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING, Any, Optional
 from zoneinfo import ZoneInfo
 
 if TYPE_CHECKING:
-    from src.strategies.liquidity_v2.base_strategy import BaseLiquidityStrategy as _BaseLiquidityStrategy
     from src.strategies.base_strategy import BaseStrategy as _BaseStrategy
+    from src.strategies.liquidity_v2.base_strategy import (
+        BaseLiquidityStrategy as _BaseLiquidityStrategy,
+    )
     _StrategyType = _BaseLiquidityStrategy | _BaseStrategy
 
 from src.domain.types import Direction

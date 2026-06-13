@@ -1,6 +1,5 @@
 """Unit tests for NinjaTraderParityChecker."""
 
-import pytest
 
 from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.infrastructure.parity_checker import NinjaTraderParityChecker

@@ -2,9 +2,8 @@
 
 import pytest
 
-from scripts.mode_pnl import per_trade_sim, per_trade_futures, per_trade_cfd
+from scripts.mode_pnl import per_trade_cfd, per_trade_futures, per_trade_sim
 from scripts.report_utils import compute_trade_pnl
-
 
 # ---------------------------------------------------------------------------
 # per_trade_sim — Bug 1: BE trades with negative R must not lose full risk

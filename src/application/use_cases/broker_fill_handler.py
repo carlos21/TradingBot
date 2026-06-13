@@ -7,8 +7,8 @@ from the main trade manager.
 
 from src.analytics import AnalyticsReporter
 from src.application.ports import EventPublisher
-from src.financial_calc import FinancialCalc
 from src.domain.repositories import TradeRepository
+from src.financial_calc import FinancialCalc
 from src.utils.app_logger import ILogger
 
 

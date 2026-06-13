@@ -6,11 +6,11 @@ Provides both SQL and in-memory implementations for persisting trigger state.
 from datetime import datetime, timezone
 from typing import Any
 
-from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.dbexception import DBException
 from src.domain.repositories import (
     LineTriggerStateRepository as ILineTriggerStateRepository,
 )
+from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.infrastructure.repositories.base import SQLRepositoryBase
 
 

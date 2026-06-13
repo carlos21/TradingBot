@@ -8,23 +8,20 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Generator
 from dataclasses import dataclass
-from typing import Any, Generator
+from typing import Any
 
 import pytest
 
 from app_factory import AppWiring, Repositories, create_app
 from src.config.models import AccountConfig
-from src.financial_calc import FinancialCalc
 from src.infrastructure.database import database as db_module
 from src.infrastructure.database.database_protocol import Base, get_database
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
-from src.infrastructure.gateway.integration import (
-    create_live_components,
-    create_multi_account_live_components,
-)
+from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
 from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from src.strategies.liquidity_v2.prod_config import (
@@ -32,11 +29,9 @@ from src.strategies.liquidity_v2.prod_config import (
     get_prod_strategy_numbers,
     get_prod_strategy_options,
 )
-from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
-from tests.fakes import FakeAnalyticsReporter, FakeLineRepository, FakeLogger, FakeNotifier, FakeTradeRepository
 from tests.fake_ninjatrader.fake_nt import FakeNinjaTrader
 from tests.fake_ninjatrader.port_helper import get_free_ports
-
+from tests.fakes import FakeLineRepository, FakeLogger, FakeTradeRepository
 
 # Prevent Flask from needing a real secret key
 os.environ.setdefault("SECRET_KEY", "test-secret")

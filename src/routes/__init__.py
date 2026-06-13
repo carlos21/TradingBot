@@ -10,9 +10,10 @@ Each module registers routes for a specific domain:
 - socketio_handlers: WebSocket event handlers
 """
 
+from src.strategies.liquidity_v2.routes.debug_routes import register_debug_routes
+
 from .admin_routes import register_admin_routes
 from .core_routes import register_core_routes
-from src.strategies.liquidity_v2.routes.debug_routes import register_debug_routes
 from .lines_routes import register_lines_routes
 from .mt_routes import register_mt_routes
 from .nt_routes import register_nt_routes

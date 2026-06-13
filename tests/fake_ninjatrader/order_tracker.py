@@ -7,7 +7,7 @@ crash-recovery sync and command routing behave identically to real NT.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Literal
 
 
@@ -122,7 +122,7 @@ class FakeOrderTracker:
 
         entry = self._entries.get(trade_id)
         if entry is None:
-            return False, f"Trade not tracked — already closed or never opened", None
+            return False, "Trade not tracked — already closed or never opened", None
 
         if entry.account != resolved_account:
             return False, f"Account mismatch for {trade_id}", None

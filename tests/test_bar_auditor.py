@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from src.infrastructure.bar_auditor import BarComparer, NinjaTraderBarAuditor
 
 

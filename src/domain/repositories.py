@@ -18,7 +18,6 @@ from datetime import datetime
 
 from src.domain.models import LineData, TradeData
 
-
 # =============================================================================
 # Line Repository Interfaces
 # =============================================================================

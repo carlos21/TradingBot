@@ -20,7 +20,6 @@ from tests.e2e.conftest import E2EHarness, _force_ready
 from tests.e2e.test_liquidity_v2_e2e import _wait_for_trade_closed_in_repo
 from tests.fake_ninjatrader.csv_bar_loader import load_bars
 
-
 # Embedded test scenario so the e2e test is not coupled to test_scenario.yaml,
 # which can change over time.
 _TEST_SCENARIO: dict[str, Any] = {

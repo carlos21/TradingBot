@@ -4,11 +4,10 @@ from flask import Flask, jsonify, request
 
 from src.analytics import AnalyticsReporter
 from src.bars_loader import BarsLoader
+from src.domain.repositories import LineRepository, TradeRepository
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.infrastructure.data_sources.csv_datasource import CSVDataSource
 from src.notifier import Notifier
-from src.domain.repositories import LineRepository
-from src.domain.repositories import TradeRepository
 from src.services.trade_manager import TradeManager
 from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
 from src.utils.app_logger import ILogger

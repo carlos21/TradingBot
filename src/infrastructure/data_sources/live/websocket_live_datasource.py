@@ -1,10 +1,10 @@
+import contextlib
 import json
 import threading
 
 import websocket
 
 from src.infrastructure.data_sources.live.live_datasource import LiveDataSource
-import contextlib
 
 
 class WebsocketLiveDataSource(LiveDataSource):

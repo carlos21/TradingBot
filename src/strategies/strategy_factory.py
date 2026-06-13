@@ -7,8 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
-from src.strategies.tsi_cross.strategy import TsiCrossStrategy
 from src.strategies.tsi_cross.config import TsiCrossNumbers
+from src.strategies.tsi_cross.strategy import TsiCrossStrategy
 
 
 class StrategyFactory:

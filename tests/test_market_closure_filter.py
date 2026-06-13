@@ -5,8 +5,6 @@ Tests CME futures market closure detection for MNQ.
 
 from datetime import datetime, timezone
 
-import pytest
-
 from src.infrastructure.market_closure_filter import MarketClosureFilter
 
 

@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from src.application.ports import EventPublisher
-from src.financial_calc import FinancialCalc
 from src.domain.repositories import TradeRepository
+from src.financial_calc import FinancialCalc
 from src.services.trade_executor import TradeExecutor
 from src.utils.app_logger import ILogger
 

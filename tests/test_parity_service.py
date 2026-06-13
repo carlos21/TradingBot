@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import pytest
-
 from src.application.parity_service import ParityCheckService
 from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.infrastructure.parity_checker import NinjaTraderParityChecker

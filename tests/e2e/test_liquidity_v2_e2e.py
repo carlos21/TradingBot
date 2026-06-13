@@ -15,10 +15,8 @@ from typing import Any
 
 import pytest
 
-from src.infrastructure.gateway.protocol import MessageType
 from src.strategies.base_strategy import BreakevenConfig
 from tests.e2e.conftest import E2EHarness, _force_ready
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -403,8 +401,8 @@ class TestProtocolRobustness:
         nt.wait_for_command("order_open")
 
         # Manually send a duplicate with the same seq_num
-        from src.infrastructure.gateway.protocol import MessageEnvelope, OpenOrderCommand
-        dup = OpenOrderCommand(
+        from src.infrastructure.gateway.protocol import OpenOrderCommand
+        OpenOrderCommand(
             trade_id=trade_id,
             pair="MNQ",
             direction="long",
@@ -418,7 +416,7 @@ class TestProtocolRobustness:
         # was already processed.  The first command should have seq_num > 0.
         # We'll broadcast it directly from the fake NT side.
         with nt._lock:
-            dup_seq = nt._seq_num  # current seq, but we need a PROCESSED seq
+            pass  # current seq, but we need a PROCESSED seq
         # Actually, we don't know the exact seq_num.  Simpler: send the same
         # payload twice with the SAME seq_num manually via the fake NT's
         # internal queue.

@@ -13,6 +13,7 @@ Socket Layout:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 import time
@@ -34,7 +35,6 @@ from .protocol import (
     OpenOrderCommand,
     RefreshRequestMessage,
 )
-import contextlib
 
 
 @dataclass
@@ -191,7 +191,9 @@ to be:
     def _refresh_account_names(self) -> None:
         """Reload account names from DB so changes take effect without restart."""
         try:
-            from src.infrastructure.repositories.accounts_repository import NtAccountRepository
+            from src.infrastructure.repositories.accounts_repository import (
+                NtAccountRepository,
+            )
             repo = NtAccountRepository()
             accounts = repo.list_accounts()
             self._account_names = [a.name for a in accounts]

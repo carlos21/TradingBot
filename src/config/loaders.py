@@ -246,8 +246,8 @@ class DbConfigLoader:
             Session = sessionmaker(bind=engine)
             session = Session()
 
-            from src.infrastructure.database.database_protocol import Base
             from src.infrastructure.database.database import AppSetting, NtAccount
+            from src.infrastructure.database.database_protocol import Base
 
             Base.metadata.create_all(engine)
 

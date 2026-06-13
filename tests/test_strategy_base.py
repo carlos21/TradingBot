@@ -1,22 +1,19 @@
 """Tests for src/strategies/base_liquidity_strategy.py — line management, trade building, SL selection, exits."""
 
+import dataclasses
 from unittest.mock import MagicMock
 
 import pytest
 
+from src.domain.types import Direction
 from src.services.trade_manager import TradeManager
 from src.strategies.base_strategy import BreakevenConfig
-import dataclasses
-
+from src.strategies.entry_context import EntryContext
 from src.strategies.liquidity_v2.base_strategy import (
     BaseLiquidityStrategy,
     LineRemovalMode,
-    StrategyOptions,
 )
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
-from src.strategies.entry_context import EntryContext
-from src.domain.types import Direction
-
 from tests.conftest import make_bar
 from tests.fakes import (
     DummySocketIO,

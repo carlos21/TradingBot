@@ -46,7 +46,7 @@ class LineTriggerState(Base):
 
     line_id    = Column(String(50), primary_key=True)
     pair       = Column(String(10), nullable=False)
-    state_json = Column(JSON, nullable=False, default=lambda: {})
+    state_json = Column(JSON, nullable=False, default=dict)
     updated_at = Column(DateTime(timezone=True), nullable=False)
 
 

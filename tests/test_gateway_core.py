@@ -30,7 +30,6 @@ from src.infrastructure.gateway.protocol import (
 )
 from tests.fakes import FakeLogger
 
-
 # ---------------------------------------------------------------------------
 # Capturing logger
 # ---------------------------------------------------------------------------

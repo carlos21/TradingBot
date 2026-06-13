@@ -3,7 +3,12 @@
 import pytest
 from sqlalchemy import Column, Integer, String, text
 
-from src.infrastructure.database.database_protocol import Base, DatabaseProtocol, SQLiteDatabase, get_database
+from src.infrastructure.database.database_protocol import (
+    Base,
+    DatabaseProtocol,
+    SQLiteDatabase,
+    get_database,
+)
 
 
 class TestDatabaseProtocol:

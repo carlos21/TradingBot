@@ -18,7 +18,6 @@ from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
 from src.infrastructure.gateway.protocol import MessageType
 from tests.fakes import FakeLogger
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

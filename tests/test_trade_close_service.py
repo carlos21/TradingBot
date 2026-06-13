@@ -2,7 +2,6 @@
 
 from datetime import datetime, timezone
 
-
 from src.services.trade_close_service import (
     CloseReason,
     NoOpTradeEventPublisher,

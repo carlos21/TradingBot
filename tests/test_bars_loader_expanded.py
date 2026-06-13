@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.bars_loader import BarsLoader, LoaderConfig
-from tests.fakes import FakeDataSource, FakeLogger, DummySocketIO
+from tests.fakes import DummySocketIO, FakeDataSource, FakeLogger
 
 
 @pytest.fixture

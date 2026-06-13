@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -83,7 +84,7 @@ class ReadinessMonitor:
         # Notify the frontend that historical bars are available for display,
         # even if the data is not yet fresh enough for live trading.
         if self._socketio_publisher is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._socketio_publisher.emit(
                     "history_loaded",
                     {
@@ -92,8 +93,6 @@ class ReadinessMonitor:
                         "bar_count": len(bars),
                     },
                 )
-            except Exception:
-                pass
 
         self._warmup_orchestrator.run(bars, self._pair)
         self._try_warmup_complete()
@@ -213,7 +212,7 @@ class ReadinessMonitor:
                     "[Readiness] Warmup complete — ready for live trading"
                 )
             if self._socketio_publisher is not None:
-                try:
+                with contextlib.suppress(Exception):
                     self._socketio_publisher.emit(
                         "trading_ready",
                         {
@@ -221,8 +220,6 @@ class ReadinessMonitor:
                             "readiness_reason": self._state_machine.reason,
                         },
                     )
-                except Exception:
-                    pass
 
     def get_health(self) -> dict[str, Any]:
         """Return readiness-specific health fields."""

@@ -5,8 +5,6 @@ from __future__ import annotations
 import threading
 import time
 
-import pytest
-
 from src.application.live_readiness.live_bar_buffer import LiveBarBuffer
 
 
@@ -96,4 +94,4 @@ class TestLiveBarBuffer:
         buf.flush()
         # Every appended bar should have been processed exactly once
         assert len(processed) == 100
-        assert len(set(b["time"] for b in processed)) == 100
+        assert len({b["time"] for b in processed}) == 100

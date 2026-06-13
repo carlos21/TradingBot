@@ -7,7 +7,6 @@ import pytest
 
 from src.infrastructure.data_sources.csv_datasource import CSVDataSource
 
-
 CSV_CONTENT = """Date,Time,Open,High,Low,Close,Volume
 01/01/2024,09:30,5000.0,5010.0,4990.0,5005.0,1000
 01/01/2024,09:31,5005.0,5015.0,5000.0,5010.0,1500

@@ -7,11 +7,11 @@ the Unit of Work compatible implementation.
 import uuid
 from datetime import datetime, timezone
 
-from src.infrastructure.database.database import Line
-from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.dbexception import DBException, DBNotFoundException
 from src.domain.models import LineData
 from src.domain.repositories import LineRepository as ILineRepository
+from src.infrastructure.database.database import Line
+from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.infrastructure.repositories.base import SQLRepositoryBase
 
 

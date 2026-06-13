@@ -6,8 +6,8 @@ need to copy-paste the same ``_session()`` context manager.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Generator
 
 from src.infrastructure.database.database import get_db_session
 from src.infrastructure.database.database_protocol import DatabaseProtocol

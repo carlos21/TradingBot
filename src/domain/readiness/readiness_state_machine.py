@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from typing import TYPE_CHECKING, Any
 
@@ -175,11 +176,8 @@ class ReadinessStateMachine:
             f" | reason={reason}"
         )
         if self._logger is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._logger.info(message)
-            except Exception:
-                # Logging must never break readiness logic.
-                pass
         # Also print so the message is visible in console/launcher output even
         # when a file logger is slow to flush.
         print(message, flush=True)
@@ -191,23 +189,17 @@ class ReadinessStateMachine:
             "reason": reason,
         }
         if self._event_publisher is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._event_publisher.emit(
                     "readiness_changed",
                     payload,
                 )
-            except Exception:
-                # Never let a notification failure break trading logic.
-                pass
 
         # Observer list may be mutated during iteration; snapshot it.
         for observer in list(self._observers):
-            try:
+            with contextlib.suppress(Exception):
                 observer.on_readiness_changed(
                     self._state,
                     previous_state,
                     reason,
                 )
-            except Exception:
-                # Isolated observers must not break the state machine.
-                pass

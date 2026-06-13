@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from src.application.ports import EventPublisher
+from src.domain.repositories import TradeRepository
 from src.domain.types import Direction
 from src.financial_calc import FinancialCalc
-from src.domain.repositories import TradeRepository
 from src.services.trade_executor import TradeExecutor
 from src.utils.app_logger import ILogger
 

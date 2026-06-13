@@ -19,7 +19,16 @@ from src.infrastructure.data_sources.combined_datasource import CombinedDataSour
 from src.infrastructure.data_sources.csv_datasource import CSVDataSource
 from src.infrastructure.database import database
 from src.infrastructure.database.database_protocol import SQLiteDatabase
-from src.infrastructure.gateway import create_live_components, create_multi_account_live_components
+from src.infrastructure.gateway import (
+    create_live_components,
+    create_multi_account_live_components,
+)
+from src.infrastructure.repositories.accounts_repository import NtAccountRepository
+from src.infrastructure.repositories.line_trigger_state_repository import (
+    SQLiteLineTriggerStateRepository,
+)
+from src.infrastructure.repositories.lines_repository import SQLLineRepository
+from src.infrastructure.repositories.trades_repository import SQLTradeRepository
 from src.notifier import NoOpNotifier, Notifier, TelegramNotifier
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from src.strategies.liquidity_v2.prod_config import (
@@ -27,12 +36,6 @@ from src.strategies.liquidity_v2.prod_config import (
     get_prod_strategy_numbers,
     get_prod_strategy_options,
 )
-from src.infrastructure.repositories.line_trigger_state_repository import (
-    SQLiteLineTriggerStateRepository,
-)
-from src.infrastructure.repositories.lines_repository import SQLLineRepository
-from src.infrastructure.repositories.trades_repository import SQLTradeRepository
-from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.utils.app_logger import FileAndConsoleLogger
 
 
@@ -79,7 +82,7 @@ class AppBuilder:
     # Backtest
     # ------------------------------------------------------------------
     def _build_backtest(self) -> AppWiring:
-        from app_factory import create_app, Repositories
+        from app_factory import Repositories, create_app
 
         cfg = self.config
         db = SQLiteDatabase(db_url=cfg.db_path)
@@ -152,7 +155,7 @@ class AppBuilder:
     # Live
     # ------------------------------------------------------------------
     def _build_live(self) -> tuple[AppWiring, CombinedDataSource]:
-        from app_factory import create_app, Repositories
+        from app_factory import Repositories, create_app
 
         cfg = self.config
         db = SQLiteDatabase(db_url=cfg.db_path)

@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import time
 
-import pytest
-
 from src.infrastructure.gateway.datasource import DataSourceState
 from tests.e2e.conftest import E2EHarness
 

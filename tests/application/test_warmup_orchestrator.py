@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from src.application.live_readiness.warmup_orchestrator import WarmupOrchestrator
 from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
 from src.utils.app_logger import ILogger

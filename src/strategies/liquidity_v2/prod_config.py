@@ -1,8 +1,4 @@
 from src.strategies.base_strategy import BreakevenConfig
-from src.strategies.liquidity_v2.base_strategy import (
-    LineRemovalMode,
-    StrategyOptions,
-)
 from src.strategies.entry_context import (
     daily_trades_limit_filter,
     max_bounce_filter,
@@ -10,6 +6,10 @@ from src.strategies.entry_context import (
     open_trades_limit_filter,
     rollover_filter,
     time_range_filter,
+)
+from src.strategies.liquidity_v2.base_strategy import (
+    LineRemovalMode,
+    StrategyOptions,
 )
 from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from src.strategies.liquidity_v2.triggers import (

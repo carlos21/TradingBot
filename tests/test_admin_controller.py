@@ -4,12 +4,12 @@ import pytest
 from flask import Flask
 
 from src.controllers.admin_controller import AdminController
+from src.services.analytics_service import AnalyticsService
 from tests.fakes import (
     FakeLineRepository,
     FakeLogger,
     FakeTradeRepository,
 )
-from src.services.analytics_service import AnalyticsService
 
 
 @pytest.fixture

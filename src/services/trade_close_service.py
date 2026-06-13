@@ -9,9 +9,9 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import Literal, Protocol
 
-from src.financial_calc import FinancialCalc
 from src.domain.repositories import TradeRepository
 from src.domain.types import Direction
+from src.financial_calc import FinancialCalc
 
 
 class CloseReason(Enum):

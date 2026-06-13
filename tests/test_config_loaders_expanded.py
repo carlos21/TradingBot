@@ -390,8 +390,7 @@ class TestDbConfigLoader:
     def test_none_setting_value_ignored(self, tmp_path):
         db_path = f"sqlite:///{tmp_path / 'none_setting.db'}"
         setup_database(db_url=db_path)
-        from src.infrastructure.database.database import get_db_session
-        from src.infrastructure.database.database import AppSetting
+        from src.infrastructure.database.database import AppSetting, get_db_session
         session = get_db_session().__enter__()
         session.add(AppSetting(key="pair", value="ES"))
         session.add(AppSetting(key="zmq_host", value=None))

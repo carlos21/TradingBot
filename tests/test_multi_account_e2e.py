@@ -9,6 +9,7 @@ Run with:  python -m pytest tests/test_multi_account_e2e.py -v
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 from datetime import datetime
@@ -16,25 +17,22 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
-from src.services.trade_manager import TradeManager
 from src.domain.events import EventType
 from src.events.event_bus import EventBus
 from src.infrastructure.event_publisher import DomainEventBusPublisher
+from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
+from src.services.trade_manager import TradeManager
 from src.strategies.base_strategy import BreakevenConfig
-import dataclasses
-
-from src.strategies.liquidity_v2.base_strategy import BaseLiquidityStrategy, StrategyOptions
+from src.strategies.liquidity_v2.base_strategy import BaseLiquidityStrategy
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from tests.fakes import (
+    DummySocketIO,
     FakeAnalyticsReporter,
-    FakeLogger,
     FakeLineRepository,
+    FakeLogger,
     FakeTradeExecutor,
     FakeTradeRepository,
-    DummySocketIO,
 )
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Helpers

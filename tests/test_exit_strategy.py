@@ -1,5 +1,6 @@
 """Tests for ExitStrategy implementations."""
 
+from src.domain.types import Direction
 from src.strategies.liquidity_v2.exits import (
     CompositeExitStrategy,
     ExitType,
@@ -7,7 +8,6 @@ from src.strategies.liquidity_v2.exits import (
     SessionEndExitStrategy,
     SLTPExitStrategy,
 )
-from src.domain.types import Direction
 
 
 class TestSLTPExitStrategy:

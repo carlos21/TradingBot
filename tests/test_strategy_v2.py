@@ -1,12 +1,11 @@
 """Tests for src/strategies/liquidity_strategy_v2.py — V2 strategy: latching, aggregation, reset, history."""
 
+import dataclasses
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from src.services.trade_manager import TradeManager
-import dataclasses
-
-from src.strategies.liquidity_v2.base_strategy import StrategyOptions, LineRemovalMode
+from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from tests.conftest import make_bar, make_strategy
 from tests.fakes import (
@@ -324,7 +323,9 @@ class TestWarmupLineTracking:
 
     def test_old_uncrossed_line_restores_persisted_state_after_warmup(self):
         sio, lr, tr, tm = _deps()
-        from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
+        from src.infrastructure.repositories.line_trigger_state_repository import (
+            InMemoryLineTriggerStateRepository,
+        )
         repo = InMemoryLineTriggerStateRepository()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, trigger_state_repo=repo)
         strat.execution_context.warmup = True
@@ -344,7 +345,9 @@ class TestWarmupLineTracking:
 
     def test_warmup_crossed_line_state_not_overwritten_by_restore(self):
         sio, lr, tr, tm = _deps()
-        from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
+        from src.infrastructure.repositories.line_trigger_state_repository import (
+            InMemoryLineTriggerStateRepository,
+        )
         repo = InMemoryLineTriggerStateRepository()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, trigger_state_repo=repo)
         strat.execution_context.warmup = True
@@ -513,7 +516,7 @@ class TestPhantomAndReentryGuards:
         """Reentry should be blocked by time_range_filter outside RTH."""
         from src.strategies.entry_context import time_range_filter
         sio, lr, tr, tm = _deps()
-        options = dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, 
+        options = dataclasses.replace(DEFAULT_STRATEGY_OPTIONS,
             reentry_after_sl=True,
             reentry_threshold=60.0,
             entry_filters=[time_range_filter("08:00", "15:30")],
@@ -537,9 +540,12 @@ class TestPhantomAndReentryGuards:
 
     def test_reentry_bypasses_daily_limit_filter(self):
         """Reentry should NOT be blocked by daily_trades_limit_filter."""
-        from src.strategies.entry_context import daily_trades_limit_filter, time_range_filter
+        from src.strategies.entry_context import (
+            daily_trades_limit_filter,
+            time_range_filter,
+        )
         sio, lr, tr, tm = _deps()
-        options = dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, 
+        options = dataclasses.replace(DEFAULT_STRATEGY_OPTIONS,
             reentry_after_sl=True,
             reentry_threshold=60.0,
             entry_filters=[
@@ -573,7 +579,7 @@ class TestPhantomAndReentryGuards:
     def test_reentry_chains_up_to_max_attempts(self):
         """With max_reentry_attempts=2, reentry SL should create a second opportunity."""
         sio, lr, tr, tm = _deps()
-        options = dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, 
+        options = dataclasses.replace(DEFAULT_STRATEGY_OPTIONS,
             reentry_after_sl=True,
             reentry_threshold=60.0,
             max_reentry_attempts=2,

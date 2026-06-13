@@ -9,23 +9,20 @@ Focus areas:
 - Methods not well covered by test_strategy_base.py
 """
 
+import dataclasses
 from datetime import datetime, timezone
 
 import pytest
 
+from src.domain.types import Direction
 from src.services.trade_manager import TradeManager
 from src.strategies.base_strategy import BreakevenConfig
-import dataclasses
-
+from src.strategies.entry_context import EntryContext
 from src.strategies.liquidity_v2.base_strategy import (
     BaseLiquidityStrategy,
     LineRemovalMode,
-    StrategyOptions,
 )
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
-from src.strategies.entry_context import EntryContext
-from src.domain.types import Direction
-
 from tests.conftest import make_bar
 from tests.fakes import (
     DummySocketIO,
@@ -109,7 +106,7 @@ class TestMultiAccountExpansion:
             account_balance=100000.0,
             logger=FakeLogger(),
         )
-        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, 
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS,
             event_publisher=sio, trade_repo=tr, trade_manager=tm,
             account_configs=[{"name": "A1"}],
         )
@@ -652,7 +649,9 @@ class TestReentryOpportunities:
 class TestRestoreAndPersist:
 
     def test_restore_trigger_states_overlays_correctly(self):
-        from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
+        from src.infrastructure.repositories.line_trigger_state_repository import (
+            InMemoryLineTriggerStateRepository,
+        )
         repo = InMemoryLineTriggerStateRepository()
         repo.save("L1", "MNQ", {"direction": "long", "extreme": 50.0, "extra": "x"})
         strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, trigger_state_repo=repo)
@@ -666,7 +665,9 @@ class TestRestoreAndPersist:
         assert strat.strategy_lines["L1"]["creation_ts"] == 500.0
 
     def test_persist_all_line_states_writes_to_repo(self):
-        from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
+        from src.infrastructure.repositories.line_trigger_state_repository import (
+            InMemoryLineTriggerStateRepository,
+        )
         repo = InMemoryLineTriggerStateRepository()
         strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, trigger_state_repo=repo)
         strat.add_strategy_line("L1", 100.0)
@@ -891,7 +892,9 @@ class TestMiscMethods:
         assert dt.year == 1970
 
     def test_remove_strategy_line_deletes_trigger_state(self):
-        from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
+        from src.infrastructure.repositories.line_trigger_state_repository import (
+            InMemoryLineTriggerStateRepository,
+        )
         repo = InMemoryLineTriggerStateRepository()
         strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, trigger_state_repo=repo)
         strat.add_strategy_line("L1", 100.0)

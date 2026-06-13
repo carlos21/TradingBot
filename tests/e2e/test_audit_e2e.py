@@ -10,13 +10,9 @@ import threading
 import time
 from typing import Any
 
-import pytest
-
 from src.infrastructure.bar_auditor import BarComparer, NinjaTraderBarAuditor
 from src.infrastructure.gateway.datasource import DataSourceState
-from src.infrastructure.gateway.protocol import MessageType
 from tests.e2e.conftest import E2EHarness
-
 
 # ---------------------------------------------------------------------------
 # Helpers

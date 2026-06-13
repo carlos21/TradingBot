@@ -6,11 +6,10 @@ detailed gap information and market-closure filtering.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
-from src.domain.parity import GapInfo, IMarketClosureFilter, IParityChecker, ParityResult
-from src.infrastructure.bar_auditor import AuditResult, BarComparer, BarMismatch
+from src.domain.parity import GapInfo, IMarketClosureFilter, ParityResult
+from src.infrastructure.bar_auditor import BarComparer, BarMismatch
 
 
 class NinjaTraderParityChecker:

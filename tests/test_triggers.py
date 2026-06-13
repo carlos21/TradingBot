@@ -2,9 +2,9 @@
 
 from unittest.mock import MagicMock
 
-from src.strategies.liquidity_v2.config import CandleConfig
 from src.domain.types import Direction
 from src.strategies.indicators.tsi import calculate_ema as _calculate_ema
+from src.strategies.liquidity_v2.config import CandleConfig
 from src.strategies.liquidity_v2.triggers import (
     TsiCrossCondition,
     VelocityTriggerConfig,
@@ -22,7 +22,6 @@ from src.strategies.liquidity_v2.triggers import (
     three_candle_reversal_trigger,
     trigger_with_timeframes,
     tsi_cross_trigger,
-
     wick_near_line_trigger,
 )
 

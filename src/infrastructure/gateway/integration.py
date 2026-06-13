@@ -20,10 +20,9 @@ Usage:
 """
 
 
+from src.config.models import DEFAULT_HISTORY_DAYS
 from src.notifier import Notifier
 from src.utils.app_logger import ILogger
-
-from src.config.models import DEFAULT_HISTORY_DAYS
 
 from .datasource import ZMQDataSource
 from .executor import MultiAccountExecutor, ZMQTradeExecutor

@@ -5,7 +5,6 @@ Mocks ZeroMQ/platform-specific behaviour so no real sockets are created.
 
 from unittest.mock import MagicMock, patch
 
-
 from src.config.models import AccountConfig
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor

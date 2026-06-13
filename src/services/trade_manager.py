@@ -10,11 +10,11 @@ from src.application.ports import EventPublisher
 from src.application.use_cases.broker_fill_handler import BrokerFillHandler
 from src.application.use_cases.trade_close_use_case import TradeCloseUseCase
 from src.application.use_cases.trade_open_use_case import TradeOpenUseCase
+from src.domain.repositories import TradeRepository
+from src.domain.types import Direction
 from src.financial_calc import FinancialCalc
 from src.notifier import NoOpNotifier, Notifier
-from src.domain.repositories import TradeRepository
 from src.services.trade_executor import NoOpExecutor, TradeExecutor
-from src.domain.types import Direction
 from src.utils.app_logger import ILogger
 
 

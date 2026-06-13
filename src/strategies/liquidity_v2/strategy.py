@@ -8,14 +8,17 @@ from typing import Any
 from src.application.ports import EventPublisher
 from src.financial_calc import FinancialCalc
 from src.services.trade_manager import TradeManager
+from src.strategies.base_strategy import DecisionEventCategory
+from src.strategies.entry_context import EntryContext
 from src.strategies.liquidity_v2.base_strategy import (
     BaseLiquidityStrategy,
     StrategyOptions,
 )
-from src.strategies.entry_context import EntryContext
 from src.strategies.liquidity_v2.config import CandleConfig
-from src.strategies.liquidity_v2.triggers import RESCUE_TSI_TIMEFRAME, _calculate_tsi_series
-from src.strategies.base_strategy import DecisionEventCategory
+from src.strategies.liquidity_v2.triggers import (
+    RESCUE_TSI_TIMEFRAME,
+    _calculate_tsi_series,
+)
 from src.utils.app_logger import ILogger
 
 
@@ -311,29 +314,29 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                     direction="long", reason=f"depth={depth:.2f} < min_cross_depth={self.min_cross_depth}",
                                     category=DecisionEventCategory.STATE_CHANGE)
 
-                elif line['direction'] == 'short':
-                    if current_price > (line['level'] + self.max_bounce):
-                        # Skip max-bounce removal during warmup for legacy DB lines
-                        # (creation_ts == 0) so they survive live-mode startup.
-                        # Scenarios and refresh lines have real timestamps and are
-                        # still cleaned up during warmup.
-                        if not self.is_warmup or line.get('creation_ts', 0) > 0:
-                            msg = f"Price {current_price} > {line['level'] + self.max_bounce} (Max Bounce)"
-                            self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
-                                direction="short", reason="max_bounce",
-                                category=DecisionEventCategory.STATE_CHANGE)
-                            self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
-                            lines_to_remove.add(sid)
+                elif line['direction'] == 'short' and current_price > (line['level'] + self.max_bounce) and (
+                    not self.is_warmup or line.get('creation_ts', 0) > 0
+                ):
+                    # Skip max-bounce removal during warmup for legacy DB lines
+                    # (creation_ts == 0) so they survive live-mode startup.
+                    # Scenarios and refresh lines have real timestamps and are
+                    # still cleaned up during warmup.
+                    msg = f"Price {current_price} > {line['level'] + self.max_bounce} (Max Bounce)"
+                    self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
+                        direction="short", reason="max_bounce",
+                        category=DecisionEventCategory.STATE_CHANGE)
+                    self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
+                    lines_to_remove.add(sid)
 
-                elif line['direction'] == 'long':
-                    if current_price < (line['level'] - self.max_bounce):
-                        if not self.is_warmup or line.get('creation_ts', 0) > 0:
-                            msg = f"Price {current_price} < {line['level'] - self.max_bounce} (Max Bounce)"
-                            self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
-                                direction="long", reason="max_bounce",
-                                category=DecisionEventCategory.STATE_CHANGE)
-                            self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
-                            lines_to_remove.add(sid)
+                elif line['direction'] == 'long' and current_price < (line['level'] - self.max_bounce) and (
+                    not self.is_warmup or line.get('creation_ts', 0) > 0
+                ):
+                    msg = f"Price {current_price} < {line['level'] - self.max_bounce} (Max Bounce)"
+                    self.log_decision(bar_time, "1m", sid, "REMOVE", msg,
+                        direction="long", reason="max_bounce",
+                        category=DecisionEventCategory.STATE_CHANGE)
+                    self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
+                    lines_to_remove.add(sid)
 
             short_lines = [line for line in self.strategy_lines.values() if line['direction'] == 'short']
             long_lines  = [line for line in self.strategy_lines.values() if line['direction'] == 'long']
@@ -420,19 +423,18 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                                 f"Short line touched @ {bar['high']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
                                 direction="short",
                                 category=DecisionEventCategory.STATE_CHANGE)
-                elif line['direction'] == 'long':
-                    if bar['low'] < line['extreme']:
-                        old_ext = line['extreme']
-                        line['extreme'] = bar['low']
-                        if line['extreme'] <= lvl and 'interaction_ts' not in line:
-                            line['interaction_ts'] = bar_time
-                            line['touch_bar_time'] = bar_time
-                            if self.is_warmup:
-                                self.warmup_crossed_lines.add(sid)
-                            self.log_decision(bar_time, "1m", sid, "TOUCH",
-                                f"Long line touched @ {bar['low']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
-                                direction="long",
-                                category=DecisionEventCategory.STATE_CHANGE)
+                elif line['direction'] == 'long' and bar['low'] < line['extreme']:
+                    old_ext = line['extreme']
+                    line['extreme'] = bar['low']
+                    if line['extreme'] <= lvl and 'interaction_ts' not in line:
+                        line['interaction_ts'] = bar_time
+                        line['touch_bar_time'] = bar_time
+                        if self.is_warmup:
+                            self.warmup_crossed_lines.add(sid)
+                        self.log_decision(bar_time, "1m", sid, "TOUCH",
+                            f"Long line touched @ {bar['low']:.2f} (extreme {old_ext:.2f} → {line['extreme']:.2f})",
+                            direction="long",
+                            category=DecisionEventCategory.STATE_CHANGE)
 
             self._persist_all_line_states()
 
@@ -445,9 +447,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 closes = [b['close'] for b in history]
                 tsi_vals, sig_vals = _calculate_tsi_series(closes, 6, 13, 4)
 
-                if not tsi_vals or not sig_vals:
-                    if self.logger:
-                        self.logger.info(f"[TSI:{tf}] bar={bar['time']} close={bar['close']:.2f} — insufficient history for TSI ({len(history)} bars)")
+                if (not tsi_vals or not sig_vals) and self.logger:
+                    self.logger.info(f"[TSI:{tf}] bar={bar['time']} close={bar['close']:.2f} — insufficient history for TSI ({len(history)} bars)")
 
                 if tsi_vals and sig_vals:
                     # --- NEW: Detect Crossover ---

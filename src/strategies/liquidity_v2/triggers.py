@@ -5,9 +5,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
+from src.domain.types import Direction
 from src.strategies.base_strategy import DecisionEventCategory
 from src.strategies.entry_context import EntryContext, EntryTrigger
-from src.domain.types import Direction
 from src.strategies.indicators.tsi import calculate_tsi_series as _calculate_tsi_series
 
 if TYPE_CHECKING:

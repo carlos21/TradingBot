@@ -11,7 +11,6 @@ from typing import Any
 
 from src.application.live_readiness.live_bar_buffer import LiveBarBuffer
 from src.application.live_readiness.readiness_monitor import ReadinessMonitor
-from src.application.live_readiness.warmup_orchestrator import WarmupOrchestrator
 from src.domain.readiness import ReadinessStateMachine
 from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
 from tests.fakes import DummySocketIO, FakeLogger

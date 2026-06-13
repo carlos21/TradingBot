@@ -3,7 +3,6 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-
 from src.services.nt_manager_service import NtManagerService
 
 

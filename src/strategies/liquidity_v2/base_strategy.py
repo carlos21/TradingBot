@@ -6,30 +6,32 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from threading import RLock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.analytics import AnalyticsReporter, NoOpReporter
 from src.application.ports import EventPublisher
 from src.application.services.strategy_trade_service import StrategyTradeService
 from src.dbexception import DBNotFoundException
+from src.domain.events import DomainEvent, EventType
+from src.domain.repositories import (
+    LineRepository,
+    LineTriggerStateRepository,
+    TradeRepository,
+)
+from src.domain.types import Direction
 from src.financial_calc import FinancialCalc
-from src.domain.repositories import LineTriggerStateRepository
-from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
-from src.domain.repositories import LineRepository
-from src.domain.repositories import TradeRepository
+from src.infrastructure.repositories.line_trigger_state_repository import (
+    InMemoryLineTriggerStateRepository,
+)
+from src.services.trade_executor import NoOpExecutor
 from src.services.trade_manager import TradeManager
+from src.strategies.base_strategy import BreakevenConfig, DecisionEventCategory
 from src.strategies.entry_context import (
     EntryContext,
     EntryFilter,
     EntryTrigger,
 )
-from src.domain.types import Direction
-from src.domain.events import DomainEvent, EventType
-from src.services.trade_executor import NoOpExecutor
-from src.strategies.base_strategy import BreakevenConfig, DecisionEventCategory
 from src.utils.app_logger import ILogger
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from src.domain.readiness.protocols import IExecutionContext
@@ -173,7 +175,9 @@ class BaseLiquidityStrategy:
             self._execution_context = execution_context
         else:
             # Local import avoids a circular dependency with the live_readiness package.
-            from src.application.live_readiness.trading_context import AlwaysEnabledTradingContext
+            from src.application.live_readiness.trading_context import (
+                AlwaysEnabledTradingContext,
+            )
             self._execution_context = AlwaysEnabledTradingContext()
         self.warmup_crossed_lines: set[Any] = set()
 
