@@ -61,7 +61,14 @@
       "Bash(timeout 30 poetry run python scripts/run_scenarios.py --yaml tests/scenarios.yaml --source-csv csvs/NQ_live.csv --outdir ./scenarios_out --port 5002 --bars-per-second 800 --chart-selector \"#chartContainer\" --account 100000 --risk-pct 1.0 --no-snapshot --rr 5.0)",
       "Bash(poetry install:*)",
       "Bash(poetry lock:*)",
-      "Bash(./bin/run_test_scenario.sh:*)"
+      "Bash(./bin/run_test_scenario.sh:*)",
+      "Bash(/Users/carlosduclos/Documents/TradingBot/.venv/bin/python -m pytest tests/domain/test_readiness_state_machine.py tests/application/test_readiness_monitor_events.py tests/application/test_readiness_regression.py tests/application/test_warmup_orchestrator.py tests/application/test_warmup_policy.py -x -v)",
+      "Bash(/usr/bin/python3 --version)",
+      "Bash(python3.12 --version)",
+      "Bash(curl -sSL https://install.python-poetry.org)",
+      "Bash(/opt/homebrew/bin/python3.12 -)",
+      "Bash(export PATH=\"/Users/carlosduclos/.local/bin:/opt/homebrew/bin:$PATH\")",
+      "Bash(poetry --version)"
     ]
   }
 }

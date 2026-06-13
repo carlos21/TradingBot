@@ -78,7 +78,7 @@ def create_live_components(
     gateway = TradingGateway(logger, config=config, pair=pair)
 
     # Store account names for config queries from NinjaTrader
-    gateway._account_names = account_names or []
+    gateway.set_account_names(account_names or [])
 
     # Create data source that uses the gateway (logger is required first param)
     data_source = ZMQDataSource(logger, gateway=gateway, pair=pair, history_days=history_days, notifier=notifier)

@@ -308,7 +308,7 @@ class EntryFillMessage:
     stop_loss: float | None = None   # Broker-calculated SL
     take_profit: float | None = None # Broker-calculated TP
     slippage: float | None = None    # Difference from requested entry
-    contracts: int | None = None
+    contracts: int | None = None  # Not sent by C# NT connector; always None in live mode
     account: str | None = None       # NT account that reported the fill
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
@@ -340,7 +340,7 @@ class ExitFillMessage:
     trade_id: str
     exit_price: float
     result_type: Literal["SL", "TP", "SP", "CLOSE"]  # SL=Stop Loss, TP=Take Profit, SP=Session End, CLOSE=Manual
-    exit_time: int | None = None  # Unix timestamp
+    exit_time: float | None = None  # Unix timestamp (float from C# ToUnixSeconds)
     account: str | None = None    # NT account that reported the fill
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:

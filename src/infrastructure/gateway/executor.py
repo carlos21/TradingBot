@@ -178,6 +178,8 @@ class MultiAccountExecutor(TradeExecutor):
         return self.account_configs
 
     def on_trade_open(self, signal_trade: dict) -> None:
+        if self.trade_manager is None:
+            raise RuntimeError("MultiAccountExecutor.trade_manager is not wired yet — call app_factory first")
         # Guard: if this trade already has an account assigned, it's an
         # already-expanded account trade — pass through to gateway instead
         # of recursing infinitely.
@@ -245,7 +247,7 @@ class MultiAccountExecutor(TradeExecutor):
             self._last_close_time[aid] = now
 
             acct_name = self._account_for_trade(aid)
-            # Send close command to NT (tagged with account)
+            # Send close command via the executor wrapper (not directly via _gateway)
             self.gateway_executor._gateway.send_close_order(
                 trade_id=aid, reason="strategy", account=acct_name
             )

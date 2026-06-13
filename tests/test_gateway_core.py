@@ -210,7 +210,6 @@ class TestGatewayInitialization:
 
     def test_queues_initialized_with_maxlen(self, gateway):
         assert gateway._command_queue.maxlen == gateway.config.max_queue_size
-        assert gateway._outbound_queue.maxlen == gateway.config.max_queue_size
 
     def test_pending_and_retries_empty(self, gateway):
         assert gateway._pending_commands == {}
@@ -967,15 +966,14 @@ class TestCommandSending:
         gateway._send_command(env)
         assert any("NEAR CAPACITY" in m for m in logger.messages)
 
-    def test_send_command_cleanup_every_ten(self, gateway):
+    def test_send_command_cleanup_time_throttled(self, gateway):
         gateway._running = True
-        # Insert 9 commands to trigger cleanup on the 10th append
-        gateway._cleanup_counter = 9
+        # Force last cleanup to be >1s ago so cleanup fires
+        gateway._last_cleanup_time = time.time() - 2.0
         old_pending = {99: {"type": "old", "sent_time": time.time() - 120}}
         gateway._pending_commands.update(old_pending)
         env = MessageEnvelope.create(msg_type=MessageType.ORDER_OPEN, payload={}, seq_num=1)
         gateway._send_command(env)
-        assert gateway._cleanup_counter == 0
         assert 99 not in gateway._pending_commands
 
     def test_cleanup_pending_commands_removes_old(self, gateway, logger):
@@ -1372,7 +1370,6 @@ class TestLifecycle:
         gw._pending_commands[1] = {"type": "test", "sent_time": time.time()}
         gw._command_retries[1] = 1
         gw._command_queue.append(MagicMock())
-        gw._outbound_queue.append(MagicMock())
         gw._seq_num = 5
         gw._platform_connected = True
         gw._platform_info = {"foo": "bar"}
@@ -1384,7 +1381,6 @@ class TestLifecycle:
         assert len(gw._pending_commands) == 0
         assert len(gw._command_retries) == 0
         assert len(gw._command_queue) == 0
-        assert len(gw._outbound_queue) == 0
         assert gw._seq_num == 0
         assert gw._platform_connected is False
         assert gw._platform_info is None

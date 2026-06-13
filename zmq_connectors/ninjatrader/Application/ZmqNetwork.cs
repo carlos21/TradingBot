@@ -362,6 +362,42 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        /// <summary>
+        /// Query Python for open positions. Used for crash recovery when
+        /// PendingEntryInfo is lost — Python has the trade details (direction, SL, TP).
+        /// </summary>
+        public JArray QueryPositions(double timeoutMs = 2000)
+        {
+            if (_queryReq == null) return null;
+            try
+            {
+                var payload = new JObject();
+                var envelope = MessageEnvelope.Create(MessageType.PositionQuery, payload, NextSeq());
+                string response;
+                lock (_queryLock)
+                {
+                    _queryReq.SendFrame(_serializer.Serialize(envelope));
+                    if (!_queryReq.TryReceiveFrameString(TimeSpan.FromMilliseconds(timeoutMs), out response))
+                    {
+                        _logger?.Warning("QueryPositions timeout — recreating REQ socket");
+                        RecreateQueryReq();
+                        return null;
+                    }
+                }
+                var resp = _serializer.Deserialize(response);
+                if (resp?.MsgType == MessageType.PositionResponse)
+                {
+                    return resp.Payload["positions"] as JArray;
+                }
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger?.Warning($"QueryPositions failed: {ex.Message}");
+                return null;
+            }
+        }
+
         private void RecreateQueryReq()
         {
             lock (_queryLock)

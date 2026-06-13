@@ -63,6 +63,14 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 _logger.Info($"MODIFY ORDER: {tradeId} new SL={newSl} new TP={newTp} account={account.Name}");
 
+                // Reject if a modify is already pending for this trade (prevents overwrite race)
+                if (_orderTracker.TryGetPendingModify(tradeId, out _))
+                {
+                    _logger.Warning($"MODIFY REJECTED: {tradeId} already has a pending modify — wait for it to complete");
+                    _network?.SendTradeLog(tradeId, "NT:MODIFY", "Modify rejected: previous modify still pending");
+                    return false;
+                }
+
                 bool modifiedAny = false;
 
                 // --- Modify Stop Loss ---

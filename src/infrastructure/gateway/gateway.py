@@ -135,10 +135,11 @@ to be:
         self._query_lock = threading.Lock()  # Dedicated lock for REQ socket operations
         self._seq_num = 0
         self._cleanup_counter = 0  # Throttle _cleanup_pending_commands
+        self._last_cleanup_time: float = 0.0  # Time-based throttle for cleanup
 
         # Message queues for thread safety
         self._command_queue: deque = deque(maxlen=self.config.max_queue_size)
-        self._outbound_queue: deque = deque(maxlen=self.config.max_queue_size)
+        self._command_ready = threading.Event()  # Signal when command is enqueued
 
         # Retry tracking for failed command sends
         self._command_retries: dict[int, int] = {}
@@ -176,13 +177,22 @@ to be:
         self._last_heartbeat_time: float | None = None
         self._platform_info: dict[str, Any] | None = None
         self._connection_listeners: list[Callable[[bool], None]] = []
+        self._disconnect_time: float | None = None  # When disconnect was detected
+        self._reconnect_debounce_sec: float = 3.0  # Minimum disconnect duration before notifying reconnect
 
         # Pending commands for acknowledgment tracking
         self._pending_commands: dict[int, dict[str, Any]] = {}  # seq_num -> command info
         self._command_ack_timeout_sec: float = 10.0  # Timeout for command acknowledgment
 
+        # Callback for permanently dropped commands (after max retries)
+        self._on_command_dropped: Callable[[str, dict[str, Any]], None] | None = None
+
         # E2E test state tracking
         self._test_sequences: dict[str, dict[str, Any]] = {}
+
+    def set_account_names(self, names: list[str]) -> None:
+        """Set the account names used for config queries from the platform."""
+        self._account_names = list(names)
 
     # -------------------------------------------------------------------------
     # Lifecycle
@@ -276,7 +286,6 @@ to be:
             self._pending_commands.clear()
             self._command_retries.clear()
             self._command_queue.clear()
-            self._outbound_queue.clear()
             self._seq_num = 0
             self._platform_connected = False
             self._platform_info = None
@@ -376,11 +385,12 @@ to be:
         """Background thread: Send queued commands to platform."""
         while self._running:
             try:
-                # Get command from queue (non-blocking)
+                # Get command from queue (wait for signal)
                 try:
                     envelope = self._command_queue.popleft()
                 except IndexError:
-                    time.sleep(0.001)  # 1ms sleep when idle
+                    self._command_ready.clear()
+                    self._command_ready.wait(timeout=0.1)
                     continue
 
                 # Send command
@@ -400,8 +410,11 @@ to be:
                                 self.logger.warning(f"Command send failed (retry {retries}/3): {envelope.msg_type} seq={envelope.seq_num} — re-queued: {send_ex}")
                             else:
                                 self._command_retries.pop(envelope.seq_num, None)
-                                self._pending_commands.pop(envelope.seq_num, None)
+                                cmd_info = self._pending_commands.pop(envelope.seq_num, None)
                                 self.logger.error(f"Command send failed permanently after 3 retries: {envelope.msg_type} seq={envelope.seq_num}: {send_ex}")
+                                if self._on_command_dropped and cmd_info:
+                                    with contextlib.suppress(Exception):
+                                        self._on_command_dropped(envelope.msg_type.value, cmd_info)
                 else:
                     self._pending_commands.pop(envelope.seq_num, None)
                     self.logger.error(f"Command push socket not available, dropping command: {envelope.msg_type}")
@@ -494,7 +507,16 @@ to be:
                         )
                         self._query_rep.send_string(resp_envelope.to_json())
                     except Exception as send_err:
-                        self.logger.error(f"Failed to send error reply on REP socket: {send_err}")
+                        self.logger.error(f"Failed to send error reply on REP socket: {send_err} — recreating socket")
+                        # Recreate the REP socket to reset its state machine
+                        try:
+                            old_rep = self._query_rep
+                            self._query_rep = self._context.socket(zmq.REP)
+                            self._query_rep.bind(self.config.query_rep)
+                            old_rep.close(linger=0)
+                            self.logger.info("REP socket recreated successfully")
+                        except Exception as rec_err:
+                            self.logger.error(f"Failed to recreate REP socket: {rec_err}")
 
             except Exception as e:
                 self.logger.error(f"Error in query handler loop: {e}")
@@ -515,6 +537,7 @@ to be:
                     if elapsed > self.config.heartbeat_timeout_sec and self._platform_connected:
                             self.logger.warning(f"Platform heartbeat timeout ({elapsed:.1f}s) - expected every {self.config.heartbeat_interval_sec}s")
                             self._platform_connected = False
+                            self._disconnect_time = time.time()
                             for cb in self._connection_listeners:
                                 with contextlib.suppress(Exception):
                                     cb(False)
@@ -561,8 +584,10 @@ to be:
                 # Other messages - debug level
                 self.logger.debug(f"RECV: {msg_type.value} seq={envelope.seq_num}")
 
-            # Dispatch to callbacks
-            callbacks = self._callbacks.get(msg_type, [])
+            # Dispatch to callbacks (snapshot under lock for thread safety
+            # since on() can register callbacks from other threads)
+            with self._lock:
+                callbacks = list(self._callbacks.get(msg_type, []))
             for callback in callbacks:
                 try:
                     callback(envelope.payload)
@@ -605,10 +630,20 @@ to be:
                 self._last_heartbeat_time = time.time()
                 if not prev_connected:
                     self._platform_connected = True
-                    self.logger.info("Platform connected (heartbeat received)")
-                    for cb in self._connection_listeners:
-                        with contextlib.suppress(Exception):
-                            cb(True)
+                    # Only notify listeners if disconnected long enough to avoid
+                    # spurious refresh on transient network blips
+                    was_real_disconnect = (
+                        self._disconnect_time is None  # first connection ever
+                        or (time.time() - self._disconnect_time) >= self._reconnect_debounce_sec
+                    )
+                    self._disconnect_time = None
+                    if was_real_disconnect:
+                        self.logger.info("Platform connected (heartbeat received)")
+                        for cb in self._connection_listeners:
+                            with contextlib.suppress(Exception):
+                                cb(True)
+                    else:
+                        self.logger.info("Platform reconnected after brief blip — skipping refresh")
         except Exception as e:
             raw_bytes = json_msg.encode('utf-8', errors='replace') if isinstance(json_msg, str) else json_msg
             self.logger.debug(f"Error handling heartbeat: {e} | Hex: {raw_bytes[:200].hex() if isinstance(raw_bytes, bytes) else raw_bytes}")
@@ -981,6 +1016,13 @@ to be:
         """
         self.on(MessageType.POSITION_SYNC, callback)
 
+    def on_command_dropped(self, callback: Callable[[str, dict[str, Any]], None]) -> None:
+        """Register callback for permanently dropped commands (after max retries).
+
+        Called with (command_type, command_info) when a command cannot be delivered.
+        """
+        self._on_command_dropped = callback
+
     def on_connection_change(self, callback: Callable[[bool], None]) -> None:
         """Register callback for platform connection state changes.
 
@@ -1045,10 +1087,10 @@ to be:
                 'payload': envelope.payload,
             }
 
-            # Clean up old pending commands (older than 60 seconds) — throttle to every 10 calls
-            self._cleanup_counter += 1
-            if self._cleanup_counter >= 10:
-                self._cleanup_counter = 0
+            # Clean up old pending commands — throttle to at most once per second
+            now = time.time()
+            if now - self._last_cleanup_time >= 1.0:
+                self._last_cleanup_time = now
                 self._cleanup_pending_commands()
 
             # Warn if queue is at capacity (old commands will be silently dropped)
@@ -1056,12 +1098,13 @@ to be:
                 self.logger.critical(f"COMMAND QUEUE NEAR CAPACITY: {len(self._command_queue)}/{self._command_queue.maxlen} — old commands will be dropped!")
 
             self._command_queue.append(envelope)
+        self._command_ready.set()
         self.logger.debug(f"Queued: {envelope.msg_type.value} seq={envelope.seq_num}")
 
     def _cleanup_pending_commands(self) -> None:
         """Remove old pending commands that likely won't get acks."""
         now = time.time()
-        timeout = 60.0  # Clean up commands older than 60 seconds
+        timeout = self._command_ack_timeout_sec
         to_remove = [
             seq for seq, info in self._pending_commands.items()
             if now - info.get('sent_time', 0) > timeout

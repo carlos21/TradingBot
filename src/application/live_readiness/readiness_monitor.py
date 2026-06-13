@@ -122,6 +122,25 @@ class ReadinessMonitor:
             self._state_machine.live_bar_received()
         self._live_bar_processor(bar)
 
+    def on_late_history_batch(self, bar_count: int) -> None:
+        """Called when gap-fill HISTORY_BATCH arrives after READY/LIVE.
+
+        If a significant batch arrives, the indicators may have been warmed
+        on incomplete data.  Degrade so the warmup policy can re-check.
+        """
+        state = self._state_machine.state
+        if state not in (ReadinessState.READY, ReadinessState.LIVE):
+            return
+        if bar_count > 0:
+            if self._logger:
+                self._logger.warning(
+                    f"[Readiness] Late gap-fill: {bar_count} bar(s) arrived after {state.name} — "
+                    "degrading to re-check indicator warmth"
+                )
+            self._state_machine.degrade(
+                f"Gap-fill received {bar_count} bars after {state.name}"
+            )
+
     def on_gap_detected(self, gap_seconds: int, context: str) -> None:
         """Called when the data source detects a suspicious gap."""
         self._state_machine.degrade(
@@ -163,14 +182,18 @@ class ReadinessMonitor:
         def _retry() -> None:
             with self._retry_lock:
                 self._retry_timer = None
-            self._state_machine.history_retry_scheduled()
             try:
                 request_refresh()
+                self._state_machine.history_retry_scheduled()
             except Exception as e:
+                # Request failed — don't count as an attempt so backoff
+                # doesn't grow when the request never reached the platform
                 if self._logger:
                     self._logger.error(
                         f"[Readiness] History retry request failed: {e}"
                     )
+                # Re-schedule with the same attempt count
+                self._schedule_history_retry()
 
         with self._retry_lock:
             old_timer = self._retry_timer

@@ -232,6 +232,7 @@ def _setup_live_mode_callbacks(
         data_source.on_live_bar = monitor.on_live_bar
         data_source.on_gap_detected = monitor.on_gap_detected
         data_source.on_heartbeat_stale = monitor.on_heartbeat_stale
+        data_source.on_late_history_batch = monitor.on_late_history_batch
         data_source._readiness_monitor = monitor
 
         if data_source.gateway is not None:

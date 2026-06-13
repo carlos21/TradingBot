@@ -106,6 +106,7 @@ class ZMQDataSource(CombinedDataSource):
         self.on_refresh_start: Callable[[], None] | None = None
         self.on_gap_detected: Callable[[int, str], None] | None = None
         self.on_heartbeat_stale: Callable[[float], None] | None = None
+        self.on_late_history_batch: Callable[[int], None] | None = None
 
         # CombinedDataSource interface
         self._stop_event = threading.Event()
@@ -470,7 +471,8 @@ class ZMQDataSource(CombinedDataSource):
         }
 
         if self._state in (DataSourceState.CONNECTED, DataSourceState.REFRESHING):
-            self._refresh_buffer.append(bar)
+            with self._bars_lock:
+                self._refresh_buffer.append(bar)
             return  # Buffer live bars before history is ready
 
         inserted_idx = -1
@@ -573,6 +575,13 @@ class ZMQDataSource(CombinedDataSource):
 
         self.logger.info(f"RECV: history_batch | pair={pair} | bars={len(new_bars)} | unique_added={added} | total_cached={len(self._historical_bars)}")
 
+        # Notify readiness monitor if gap-fill arrives after we're already streaming
+        if self._state == DataSourceState.STREAMING and added > 0 and self.on_late_history_batch:
+            try:
+                self.on_late_history_batch(added)
+            except Exception as e:
+                self.logger.error(f"Error in on_late_history_batch: {e}")
+
     def _detect_gap(self, prev_time: int, curr_time: int, context: str) -> int:
         """Log a warning if there is a gap between two bar timestamps.
 
@@ -659,12 +668,13 @@ class ZMQDataSource(CombinedDataSource):
                 self.logger.error(f"Error in on_history_complete: {e}")
 
         # Flush any live bars that arrived during the refresh
-        if self._refresh_buffer:
-            buffered_count = len(self._refresh_buffer)
-            self.logger.info(f"Flushing {buffered_count} live bars buffered during refresh")
-            for buffered_bar in self._refresh_buffer:
-                self._on_bar(buffered_bar)
+        with self._bars_lock:
+            buffered = list(self._refresh_buffer)
             self._refresh_buffer.clear()
+        if buffered:
+            self.logger.info(f"Flushing {len(buffered)} live bars buffered during refresh")
+            for buffered_bar in buffered:
+                self._on_bar(buffered_bar)
 
     def _on_refresh_start(self, _payload: dict = None) -> None:
         """Handle refresh start - clear recent data."""
@@ -693,7 +703,8 @@ class ZMQDataSource(CombinedDataSource):
         self._current_bar = None
         self._last_bar_seq = 0
         if previous_state != DataSourceState.CONNECTED:
-            self._refresh_buffer.clear()
+            with self._bars_lock:
+                self._refresh_buffer.clear()
 
         if self.on_refresh_start:
             try:

@@ -35,5 +35,9 @@ def register_nt_routes(
         payload = request.get_json(silent=True) or {}
         username = payload.get("username", "")
         password = payload.get("password", "")
-        result = nt_service.open_nt_and_login(username, password)
-        return jsonify(result), 200
+        try:
+            result = nt_service.open_nt_and_login(username, password)
+            return jsonify(result), 200
+        except Exception as e:
+            _logger.error(f"[NT API] Unexpected error opening NinjaTrader: {e}")
+            return jsonify({"success": False, "message": f"Internal server error: {e}"}), 500

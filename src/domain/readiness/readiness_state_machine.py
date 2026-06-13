@@ -150,6 +150,18 @@ class ReadinessStateMachine:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    # Valid state transitions — any transition not listed here is logged as unexpected
+    _VALID_TRANSITIONS: dict[ReadinessState, set[ReadinessState]] = {
+        ReadinessState.DISCONNECTED: {ReadinessState.CONNECTED},
+        ReadinessState.CONNECTED: {ReadinessState.REFRESHING, ReadinessState.WAITING_FOR_HISTORY, ReadinessState.DISCONNECTED},
+        ReadinessState.WAITING_FOR_HISTORY: {ReadinessState.REFRESHING, ReadinessState.WAITING_FOR_HISTORY, ReadinessState.DISCONNECTED},
+        ReadinessState.REFRESHING: {ReadinessState.WARMING_UP, ReadinessState.WAITING_FOR_HISTORY, ReadinessState.DISCONNECTED},
+        ReadinessState.WARMING_UP: {ReadinessState.READY, ReadinessState.DISCONNECTED},
+        ReadinessState.READY: {ReadinessState.LIVE, ReadinessState.DEGRADED, ReadinessState.DISCONNECTED, ReadinessState.CONNECTED, ReadinessState.REFRESHING},
+        ReadinessState.LIVE: {ReadinessState.DEGRADED, ReadinessState.DISCONNECTED, ReadinessState.CONNECTED, ReadinessState.REFRESHING},
+        ReadinessState.DEGRADED: {ReadinessState.READY, ReadinessState.DEGRADED, ReadinessState.DISCONNECTED, ReadinessState.CONNECTED, ReadinessState.REFRESHING},
+    }
+
     def _transition(
         self,
         new_state: ReadinessState,
@@ -158,6 +170,21 @@ class ReadinessStateMachine:
         with self._lock:
             if self._state == new_state and self._reason == reason:
                 return False
+            # Same state, different reason for DEGRADED: update reason silently
+            # to avoid log noise from multiple degradation sources
+            if self._state == new_state and new_state == ReadinessState.DEGRADED:
+                self._reason = reason
+                self._log_transition(self._state, new_state, reason)
+                return False
+            # Validate transition
+            valid = self._VALID_TRANSITIONS.get(self._state, set())
+            if new_state not in valid:
+                if self._logger is not None:
+                    with contextlib.suppress(Exception):
+                        self._logger.warning(
+                            f"[ReadinessStateMachine] Unexpected transition "
+                            f"{self._state.name} -> {new_state.name} | reason={reason}"
+                        )
             previous_state = self._state
             self._state = new_state
             self._reason = reason

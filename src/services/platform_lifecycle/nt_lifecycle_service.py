@@ -71,6 +71,6 @@ class NinjaTraderLifecycleService:
             accounts_repo = getattr(self._settings_service, "_accounts", None)
             if accounts_repo is not None:
                 return bool(accounts_repo.list_accounts())
-        except Exception:
-            pass
+        except Exception as e:
+            self._logger.error(f"[NT Lifecycle] Failed to check accounts: {e}")
         return False

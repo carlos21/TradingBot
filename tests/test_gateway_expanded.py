@@ -119,7 +119,6 @@ class TestGatewayLifecycle:
         gw._pending_commands[1] = {"type": "test", "sent_time": time.time()}
         gw._command_retries[1] = 1
         gw._command_queue.append(MagicMock())
-        gw._outbound_queue.append(MagicMock())
         gw._seq_num = 5
         gw._platform_connected = True
         gw._platform_info = {"foo": "bar"}
@@ -133,7 +132,6 @@ class TestGatewayLifecycle:
         assert len(gw._pending_commands) == 0
         assert len(gw._command_retries) == 0
         assert len(gw._command_queue) == 0
-        assert len(gw._outbound_queue) == 0
         assert gw._seq_num == 0
         assert not gw._platform_connected
         assert gw._platform_info is None

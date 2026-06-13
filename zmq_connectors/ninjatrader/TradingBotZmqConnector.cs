@@ -1497,10 +1497,18 @@ namespace NinjaTrader.NinjaScript.AddOns
 
             if (string.IsNullOrEmpty(tradeId) || !_orderTracker.TryGetPendingEntry(tradeId, out var entry))
             {
-                _logger.Error($"CRITICAL: Entry fill for order '{order.Name}' not found in tracking! Cannot process fill.");
-                _network?.SendError("ninjatrader", "fill_tracking_failed",
-                    $"Entry fill for order '{order.Name}' not found in tracking");
-                return;
+                // PendingEntryInfo is lost (crash recovery scenario).
+                // Query Python for the trade details so we can still create the SL/TP bracket.
+                _logger.Warning($"PendingEntryInfo missing for {tradeId} — querying Python for trade details (crash recovery)");
+                entry = TryRecoverPendingEntryFromPython(tradeId);
+                if (entry == null)
+                {
+                    _logger.Error($"CRITICAL: Entry fill for order '{order.Name}' not found in tracking AND Python query failed! Position has NO SL/TP!");
+                    _network?.SendError("ninjatrader", "fill_tracking_failed",
+                        $"Entry fill for order '{order.Name}' not recoverable — UNPROTECTED POSITION");
+                    return;
+                }
+                _logger.Success($"[Recovery] Recovered PendingEntryInfo for {tradeId} from Python: dir={entry.Direction} sl={entry.SlPoints} rr={entry.RrRatio}");
             }
 
             var account = ResolveAccountForOrder(order);
@@ -1565,6 +1573,50 @@ namespace NinjaTrader.NinjaScript.AddOns
             _logger.Success($"ENTRY FILL: {tradeId} @ {fillPrice} SL={sl} TP={tp} account={accountName}");
             _network?.SendEntryFill(tradeId, fillPrice, sl, tp, account: accountName);
             _network?.SendTradeLog(tradeId, "NT:FILL", $"Entry filled @ {fillPrice}");
+        }
+
+        /// <summary>
+        /// Crash recovery: query Python for trade details when PendingEntryInfo is lost.
+        /// Returns a reconstructed PendingEntryInfo or null if recovery fails.
+        /// </summary>
+        private PendingEntryInfo TryRecoverPendingEntryFromPython(string tradeId)
+        {
+            try
+            {
+                var positions = _network?.QueryPositions(timeoutMs: 3000);
+                if (positions == null || positions.Count == 0) return null;
+
+                foreach (var pos in positions)
+                {
+                    var posTradeId = pos["trade_id"]?.ToString();
+                    if (posTradeId != tradeId) continue;
+
+                    var direction = pos["direction"]?.ToString();
+                    var sl = pos["stop_loss"]?.Value<double>() ?? 0;
+                    var tp = pos["take_profit"]?.Value<double>() ?? 0;
+                    var entryPrice = pos["entry_price"]?.Value<double>() ?? 0;
+
+                    if (string.IsNullOrEmpty(direction) || entryPrice <= 0 || sl <= 0)
+                    {
+                        _logger.Warning($"[Recovery] Python position for {tradeId} has incomplete data: dir={direction} entry={entryPrice} sl={sl}");
+                        return null;
+                    }
+
+                    double slPoints = Math.Abs(entryPrice - sl);
+                    double risk = slPoints;
+                    double rrRatio = risk > 0 && tp > 0 ? Math.Abs(tp - entryPrice) / risk : 5.0;
+
+                    return new PendingEntryInfo(direction, slPoints, rrRatio);
+                }
+
+                _logger.Warning($"[Recovery] Trade {tradeId} not found in Python positions");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"[Recovery] Failed to query Python for {tradeId}: {ex.Message}");
+                return null;
+            }
         }
 
         private void HandleStopLossFill(Order order, double fillPrice)
