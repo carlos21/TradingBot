@@ -33,7 +33,7 @@ class TestMarketStatusFlow:
     def test_duplicate_bar_suppressed_when_market_closed(self, e2e_harness: E2EHarness) -> None:
         nt = e2e_harness.nt
         ds = e2e_harness.app.data_source
-        ds._state = DataSourceState.LIVE
+        ds._state = DataSourceState.STREAMING
 
         # Set market closed first, then feed duplicate bars
         nt.send_market_status(market_open=False, next_open=1700004600, pair="MNQ")
@@ -54,7 +54,7 @@ class TestMarketStatusFlow:
     def test_bar_arrival_reopens_market(self, e2e_harness: E2EHarness) -> None:
         nt = e2e_harness.nt
         ds = e2e_harness.app.data_source
-        ds._state = DataSourceState.LIVE
+        ds._state = DataSourceState.STREAMING
 
         nt.send_market_status(market_open=False, next_open=1700004600, pair="MNQ")
         time.sleep(0.05)
@@ -69,7 +69,7 @@ class TestMarketStatusFlow:
         ds = e2e_harness.app.data_source
 
         ds._market_is_open = True
-        ds._state = DataSourceState.LIVE
+        ds._state = DataSourceState.STREAMING
         ds._heartbeat_check_interval_sec = 0.01
         ds._start_heartbeat_monitor()
         ds._last_completed_bar_time = time.monotonic() - 400

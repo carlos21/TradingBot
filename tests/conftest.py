@@ -19,6 +19,7 @@ from tests.fakes import (
     FakeLogger,
     FakeTradeExecutor,
     FakeTradeRepository,
+    MutableTradingContext,
 )
 
 
@@ -109,7 +110,10 @@ def make_strategy(
     logger=None,
     decision_log_repository=None,
     trigger_state_repo=None,
+    execution_context=None,
 ):
+    if execution_context is None:
+        execution_context = MutableTradingContext(trading_enabled=True, warmup=False)
     return LiquidityStrategyV2(
         min_stop_loss=min_stop_loss,
         max_bounce=max_bounce,
@@ -132,6 +136,7 @@ def make_strategy(
         logger=logger or FakeLogger(),
         decision_log_repository=decision_log_repository,
         trigger_state_repo=trigger_state_repo,
+        execution_context=execution_context,
     )
 
 

@@ -54,6 +54,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         decision_log_repository=None,
         account_configs=None,
         accounts_repo=None,
+        execution_context=None,
     ):
         self.timeframes = list(timeframes) if timeframes else ["5m"]
 
@@ -97,12 +98,12 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             decision_log_repository=decision_log_repository,
             account_configs=account_configs,
             accounts_repo=accounts_repo,
+            execution_context=execution_context,
         )
 
         self.candle_config = candle_config
         self._tf_aggregators = {}
         self._tf_histories = {}
-        self.history_complete = True  # Default True for backtest/replay; live mode overrides via data_source
 
         self.decision_logs = []
 
@@ -155,6 +156,10 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
     def _parse_tf_seconds(self, tf: str) -> int:
         from src.utils.bar_aggregator import BarAggregator
         return BarAggregator.parse_timeframe(tf)
+
+    @property
+    def internal_timeframes(self) -> list[str]:
+        return list(self._internal_timeframes)
 
     def get_history(self, tf: str, count: int) -> list[dict[str, Any]]:
         hist = self._tf_histories.get(tf, [])
@@ -432,8 +437,6 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             self._persist_all_line_states()
 
     def _on_strategy_bar(self, bar: dict[str, Any]):
-        if self.is_warmup:
-            return
         with self.lock:
             # Calculate and Emit TSI for Visualization ---
             tf = bar.get('tf')
@@ -476,8 +479,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                         'cross_type': cross_type
                     })
 
-            # Skip trigger evaluation until historical data is complete enough for TSI
-            if not self.history_complete:
+            # Skip trigger evaluation during warm-up or when trading is disabled.
+            if self.is_warmup or not self._execution_context.is_trading_enabled():
                 return
 
             for sid, line in list(self.strategy_lines.items()):

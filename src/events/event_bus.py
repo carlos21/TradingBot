@@ -189,6 +189,7 @@ class SocketIOBridge:
         self.event_bus.subscribe(EventType.STREAM_PAUSED, self._on_stream_paused)
         self.event_bus.subscribe(EventType.STREAM_ENDED, self._on_stream_ended)
         self.event_bus.subscribe(EventType.INDICATOR_UPDATE, self._on_indicator_update)
+        self.event_bus.subscribe(EventType.READINESS_CHANGED, self._on_readiness_changed)
 
     def stop(self) -> None:
         """Stop forwarding events."""
@@ -202,6 +203,7 @@ class SocketIOBridge:
         self.event_bus.unsubscribe(EventType.STREAM_PAUSED, self._on_stream_paused)
         self.event_bus.unsubscribe(EventType.STREAM_ENDED, self._on_stream_ended)
         self.event_bus.unsubscribe(EventType.INDICATOR_UPDATE, self._on_indicator_update)
+        self.event_bus.unsubscribe(EventType.READINESS_CHANGED, self._on_readiness_changed)
 
     def _on_trade_opened(self, event: DomainEvent) -> None:
         """Forward trade open event."""
@@ -243,6 +245,10 @@ class SocketIOBridge:
     def _on_indicator_update(self, event: DomainEvent) -> None:
         """Forward indicator update event."""
         self.socketio.emit('indicator_update', event.payload)
+
+    def _on_readiness_changed(self, event: DomainEvent) -> None:
+        """Forward readiness changed event."""
+        self.socketio.emit('readiness_changed', event.payload)
 
 
 # Global event bus singleton for convenience

@@ -1,70 +1,80 @@
 # src/app_factory.py
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Any, Optional, List
+
 import os
-import sys
 import time
+from dataclasses import dataclass
+from typing import Any, List, Optional
 
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO
 
-from src.bars_loader import BarsLoader
-from src.strategies.liquidity_v2.controllers.lines_controller import LinesController
-from src.controllers.trades_controller import TradesController
-from src.controllers.admin_controller import AdminController
-from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
-from src.infrastructure.database.database_protocol import DatabaseProtocol
-from src.events.event_bus import EventBus
-from src.infrastructure.bar_auditor import NinjaTraderBarAuditor
-from src.infrastructure.gateway.datasource import ZMQDataSource
-from src.infrastructure.market_closure_filter import MarketClosureFilter
-from src.infrastructure.parity_checker import NinjaTraderParityChecker
-from src.application.parity_service import ParityCheckService
-from src.infrastructure.event_publisher import (
-    CompositeEventPublisher,
-    DomainEventBusPublisher,
-    SocketIOEventPublisher,
+from src.analytics import AnalyticsReporter, NoOpReporter
+from src.application.live_readiness import (
+    AlwaysEnabledTradingContext,
+    LiveBarBuffer,
+    MinimumBarsWarmupPolicy,
+    ReadinessMonitor,
+    ReadinessTradingContext,
+    WarmupOrchestrator,
 )
-from src.services.trade_manager import TradeManager
-from src.services.trade_executor import TradeExecutor
-from src.infrastructure.gateway.executor import MultiAccountExecutor
-from src.services.trade_logger import TradeLogger
-from src.services.analytics_service import AnalyticsService
-from src.financial_calc import FinancialCalc
-from src.strategies.liquidity_v2.base_strategy import StrategyOptions, LineRemovalMode
+from src.application.parity_service import ParityCheckService
+from src.bars_loader import BarsLoader
+from src.controllers.admin_controller import AdminController
+from src.controllers.trades_controller import TradesController
+from src.domain.readiness import ReadinessStateMachine
 from src.domain.repositories import (
     LineRepository,
-    TradeRepository,
     LineTriggerStateRepository,
+    TradeRepository,
 )
-from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
-from src.infrastructure.repositories.decision_log_repository import DecisionLogRepository
-from src.infrastructure.repositories.settings_repository import SettingsRepository
+from src.events.event_bus import EventBus
+from src.financial_calc import FinancialCalc
+from src.infrastructure.bar_auditor import NinjaTraderBarAuditor
+from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
+from src.infrastructure.database.database_protocol import DatabaseProtocol
+from src.infrastructure.event_publisher import (
+    DomainEventBusPublisher,
+)
+from src.infrastructure.gateway.datasource import ZMQDataSource
+from src.infrastructure.gateway.executor import MultiAccountExecutor
+from src.infrastructure.market_closure_filter import MarketClosureFilter
+from src.infrastructure.parity_checker import NinjaTraderParityChecker
 from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.infrastructure.repositories.credentials_repository import CredentialRepository
-from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
-from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
-from src.strategies.strategy_factory import StrategyFactory
-from src.strategies.protocols import LiquidityStrategy
-from src.notifier import Notifier, NoOpNotifier
-from src.analytics import AnalyticsReporter, NoOpReporter
-from src.utils.app_logger import ILogger, ConsoleLogger, FileAndConsoleLogger
+from src.infrastructure.repositories.decision_log_repository import (
+    DecisionLogRepository,
+)
+from src.infrastructure.repositories.line_trigger_state_repository import (
+    InMemoryLineTriggerStateRepository,
+)
+from src.infrastructure.repositories.settings_repository import SettingsRepository
+from src.notifier import NoOpNotifier, Notifier
 
 # Route modules
 from src.routes import (
-    register_core_routes,
-    register_lines_routes,
-    register_trades_routes,
     register_admin_routes,
+    register_core_routes,
     register_debug_routes,
-    register_socketio_handlers,
-    register_settings_routes,
+    register_lines_routes,
     register_mt_routes,
     register_nt_routes,
+    register_settings_routes,
+    register_socketio_handlers,
     register_stream_routes,
+    register_trades_routes,
 )
+from src.services.analytics_service import AnalyticsService
+from src.services.trade_executor import TradeExecutor
+from src.services.trade_logger import TradeLogger
+from src.services.trade_manager import TradeManager
+from src.strategies.liquidity_v2.base_strategy import StrategyOptions
+from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
+from src.strategies.liquidity_v2.controllers.lines_controller import LinesController
+from src.strategies.protocols import LiquidityStrategy
+from src.strategies.strategy_factory import StrategyFactory
+from src.utils.app_logger import ConsoleLogger, FileAndConsoleLogger, ILogger
 
 
 @dataclass
@@ -125,13 +135,12 @@ def _create_bar_callbacks(
     """
     if live_mode:
         _close_commands_sent: set = set()
-        
+
         def _check_live_session_end(bar):
             """Send close commands to NinjaTrader when session ends."""
             if not trade_manager._session_end_time or not trade_manager._session_tz:
                 return
             from datetime import datetime
-            from zoneinfo import ZoneInfo
             bar_dt = datetime.fromtimestamp(bar['time'], tz=trade_manager._session_tz)
             if bar_dt.time() < trade_manager._session_end_time:
                 return
@@ -145,14 +154,14 @@ def _create_bar_callbacks(
                     trade_manager.trade_logger.log(tid, "CMD_SENT", "close_order → NinjaTrader")
                     trade_manager.trade_executor.on_trade_close(tid, bar['close'])
                     _close_commands_sent.add(tid)
-        
+
         def combined_bar_callback(bar):
             # No trade_manager.handle_new_1m_bar — NinjaTrader handles SL/TP
             strategy.on_raw_bar(bar)
             if strategy.options.breakeven or strategy.options.reentry_breakeven:
                 strategy.check_breakeven(bar)
             _check_live_session_end(bar)
-        
+
         def stream_end_callback(close_price: float, final_time: float):
             # Send close commands to NT, don't close locally
             for t in list(trade_manager.open_trades):
@@ -174,10 +183,10 @@ def _create_bar_callbacks(
                 strategy.check_breakeven(bar)
             # Reentries are handled inside strategy.on_raw_bar() on subsequent bars
             # after the SL hit. Same-bar reentries are blocked by sl_bar_time guard.
-        
+
         def stream_end_callback(close_price: float, final_time: float):
             trade_manager.close_remaining_trades_at_stream_end(close_price, final_time)
-    
+
     return combined_bar_callback, stream_end_callback
 
 
@@ -189,121 +198,51 @@ def _setup_live_mode_callbacks(
     pair: str,
     logger: ILogger,
     socketio: SocketIO,
+    readiness_state_machine: ReadinessStateMachine,
 ):
-    """Setup callbacks for live mode data source."""
-    def _do_warmup(bars):
-        """Background task: process historical bars."""
-        try:
-            strategy.is_warmup = True
-            strategy.warmup_crossed_lines.clear()
-            start = __import__('time').monotonic()
-            for i, bar in enumerate(bars):
-                strategy.on_raw_bar(bar)
+    """Wire the data source into the readiness state machine."""
+    warmup_orchestrator = WarmupOrchestrator(strategy, logger=logger)
+    warmup_policy = MinimumBarsWarmupPolicy(min_bars=30)
+    bar_buffer = LiveBarBuffer(processor=loader.bar_callback)
+    monitor = ReadinessMonitor(
+        state_machine=readiness_state_machine,
+        warmup_orchestrator=warmup_orchestrator,
+        warmup_policy=warmup_policy,
+        bar_buffer=bar_buffer,
+        live_bar_processor=loader.bar_callback,
+        data_source=data_source,
+        socketio_publisher=socketio,
+        logger=logger,
+    )
+    monitor.set_pair(pair)
 
-            strategy.is_warmup = False
-            strategy.restore_trigger_states(pair)
-            strategy.restore_open_trades()
-            strategy.restore_reentry_opportunities(pair)
-
-            # Remove lines that were touched during warmup. A touched line is a stale
-            # setup — the bounce already happened and the opportunity has passed.
-            stale_count = 0
-            for sid in list(strategy.warmup_crossed_lines):
-                line = strategy.strategy_lines.get(sid)
-                if line is None:
-                    continue
-                # Only remove if the line was actually touched (interaction_ts set)
-                if line.get('interaction_ts') is None:
-                    continue
-                if strategy.options.line_removal_mode != LineRemovalMode.NEVER:
-                    strategy.remove_strategy_line(sid)
-                    stale_count += 1
-                strategy.warmup_crossed_lines.discard(sid)
-            if stale_count:
-                logger.info(f"[LiveMode] Removed {stale_count} stale line(s) touched during warmup")
-            
-            elapsed = __import__('time').monotonic() - start
-            strategy.history_complete = getattr(data_source, '_history_complete', False)
-            logger.info(
-                f"[LiveMode] Warmup complete in {elapsed:.1f}s, "
-                f"history_complete={strategy.history_complete}, ready for live bars."
-            )
-            
-            nonlocal _warmup_done
-            _warmup_done = True
-            
-            # Tell any connected browsers to reload chart data
-            try:
-                socketio.emit('history_ready', {
-                    'count': len(bars),
-                    'history_complete': strategy.history_complete,
-                })
-            except Exception as e:
-                logger.error(f"[LiveMode] Failed to emit history_ready: {type(e).__name__}: {e}")
-        except Exception as e:
-            strategy.is_warmup = False
-            logger.error(f"[LiveMode] ERROR during warmup: {type(e).__name__}: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-    
-    import threading
-    _warmup_running = threading.Event()
-    _warmup_done = False
-    
-    def _on_history_complete(bars):
-        """Return immediately, process bars in background thread."""
-        nonlocal _warmup_done
-        if _warmup_done:
-            # History became complete after initial warmup (gap-fill arrived).
-            # Just tell browsers to reload chart data without re-running warmup.
-            try:
-                socketio.emit('history_ready', {
-                    'count': len(bars),
-                    'history_complete': True,
-                })
-                logger.info(f"[LiveMode] Gap-fill complete — emitted history_ready ({len(bars)} bars)")
-            except Exception as e:
-                logger.error(f"[LiveMode] Failed to emit history_ready: {type(e).__name__}: {e}")
-            return
-        if _warmup_running.is_set():
-            logger.warning(f"[LiveMode] Warmup already in progress, ignoring duplicate history_end ({len(bars)} bars)")
-            return
-        _warmup_running.set()
-        logger.info(f"[LiveMode] Received {len(bars)} historical bars, starting background warmup...")
-        # Start background thread to process bars - don't block HTTP response
-        def _do_warmup_guarded(bars):
-            try:
-                _do_warmup(bars)
-            finally:
-                _warmup_running.clear()
-        thread = threading.Thread(target=_do_warmup_guarded, args=(bars,), name="HistoryWarmup")
-        thread.daemon = True
-        thread.start()
-    
-    def _on_live_bar(bar):
-        # Sync history-complete flag before processing the bar
-        strategy.history_complete = getattr(data_source, '_history_complete', False)
-        # Route through BarsLoader so bars get aggregated into
-        # the current timeframe (5m, 15m, etc.) before chart emission.
-        loader._handle_message(bar)
-    
     def _on_before_refresh():
         """Reset strategy and re-add DB lines before fresh bars arrive."""
         logger.info("[LiveMode] Refresh: resetting strategy...")
         strategy.reset(preserve_trigger_state=True, preserve_histories=True)
         loader.reset()
-        # Re-add persistent lines with their real creation timestamp so the
-        # existing guards in liquidity_strategy_v2 skip historical bars that
-        # predate when the line was drawn.  creation_date is always UTC-aware
-        # (the repo enforces this), so .timestamp() gives correct epoch seconds.
         for l in repos.lines.list_lines(pair):
             strategy.add_strategy_line(l.line_id, l.price, creation_timestamp=l.creation_date.timestamp())
         logger.info("[LiveMode] Refresh: strategy reset, ready for fresh bars.")
-    
+
     if isinstance(data_source, ZMQDataSource):
-        data_source.on_history_complete = _on_history_complete
-        data_source.on_live_bar = _on_live_bar
         data_source.on_before_refresh = _on_before_refresh
+        data_source.on_refresh_start = monitor.on_refresh_start
+        data_source.on_history_complete = monitor.on_history_complete
+        data_source.on_live_bar = monitor.on_live_bar
+        data_source.on_gap_detected = monitor.on_gap_detected
+        data_source.on_heartbeat_stale = monitor.on_heartbeat_stale
+        data_source._readiness_monitor = monitor
+
+        if data_source.gateway is not None:
+            def _on_gateway_connection_change(connected: bool):
+                if connected:
+                    readiness_state_machine.connect()
+                else:
+                    readiness_state_machine.disconnect()
+            data_source.gateway.on_connection_change(_on_gateway_connection_change)
+
+    return monitor
 
 
 def create_app(
@@ -364,16 +303,16 @@ def create_app(
     # Publisher goes through EventBus; SocketIOBridge forwards to SocketIO
     # so every event reaches SocketIO exactly once.
     event_publisher = DomainEventBusPublisher(event_bus)
-    
+
     _setup_logging(app)
-    
+
     # Create the appropriate logger based on mode
     if logger is None:
         if live_mode:
             logger = FileAndConsoleLogger(log_dir="logs")
         else:
             logger = ConsoleLogger()
-    
+
     if notifier is None:
         notifier = NoOpNotifier()
     if analytics is None:
@@ -412,7 +351,18 @@ def create_app(
     # Inject trade_manager into MultiAccountExecutor (created before trade_manager existed)
     if isinstance(trade_executor, MultiAccountExecutor):
         trade_executor.trade_manager = trade_manager
-    
+
+    # Live mode uses a readiness state machine; backtest/replay always trades.
+    readiness_state_machine = None
+    if live_mode:
+        readiness_state_machine = ReadinessStateMachine(
+            event_publisher=event_publisher,
+            logger=logger,
+        )
+        execution_context = ReadinessTradingContext(readiness_state_machine)
+    else:
+        execution_context = AlwaysEnabledTradingContext()
+
     # Initialize strategy BEFORE registering ZMQ callbacks so closures can reference it safely
     tstrategy = StrategyFactory.create(
         strategy_name,
@@ -449,6 +399,7 @@ def create_app(
         decision_log_repository = repos.decision_logs,
         account_configs = getattr(numbers, 'account_configs', []),
         accounts_repo=accounts_repo,
+        execution_context=execution_context,
     )
 
     # Wire strategy to TRADE_CLOSED events so it updates state reactively
@@ -456,7 +407,7 @@ def create_app(
     from src.domain.events import EventType
     event_bus.add_subscriber(EventType.TRADE_CLOSED, tstrategy)
     event_bus.add_subscriber(EventType.TRADE_UPDATED, tstrategy)
-    
+
     # Wire up position sync handler for crash recovery (ZeroMQ only)
     # Broker (NinjaTrader) is the source of truth - it reports actual positions to Python
     if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
@@ -466,10 +417,9 @@ def create_app(
             Broker (NinjaTrader) is the source of truth. If there's a mismatch,
             we update Python's state to match the broker.
             """
-            from datetime import datetime, timezone
             positions = payload.get('positions', [])
             broker_trade_ids = {p['trade_id'] for p in positions}
-            
+
             # ------------------------------------------------------------------
             # 1. Broker has positions Python doesn't know about → CREATE them
             # ------------------------------------------------------------------
@@ -550,9 +500,9 @@ def create_app(
             for trade in list(trade_manager.open_trades):
                 if trade['trade_id'] not in broker_trade_ids:
                     logger.warning(f"[PositionSync] Trade {trade['trade_id']} not reported by broker. Keeping open in Python — will retry at session end.")
-            
+
             logger.info(f"[PositionSync] Reconciliation complete: {len(positions)} broker position(s), {len(trade_manager.open_trades)} Python position(s)")
-        
+
         data_source.gateway.on_position_sync(_handle_position_sync)
         logger.info("[ZMQ] Position sync handler registered for crash recovery")
 
@@ -591,7 +541,7 @@ def create_app(
         logger=logger,
     )
     loader.live_mode = live_mode
-    
+
     # Update callback to reference loader (for _check_live_session_end)
     bar_callback, stream_end_callback = _create_bar_callbacks(
         live_mode, trade_manager, tstrategy, loader, data_source, repos, pair, logger
@@ -601,8 +551,11 @@ def create_app(
 
     # In live mode, wire direct callbacks on the data source
     bar_auditor = None
+    readiness_monitor = None
     if live_mode:
-        _setup_live_mode_callbacks(data_source, tstrategy, loader, repos, pair, logger, socketio)
+        readiness_monitor = _setup_live_mode_callbacks(
+            data_source, tstrategy, loader, repos, pair, logger, socketio, readiness_state_machine
+        )
 
         # Start background bar auditor to verify NT bars match Python bars
         if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
@@ -639,16 +592,16 @@ def create_app(
     # Create controllers
     lines_controller = LinesController(repos.lines, loader, tstrategy, logger=logger)
     trades_controller = TradesController(loader, trade_manager, logger=logger, rr_ratio=numbers.rr_ratio, strategy=tstrategy)
-    
+
     # Initialize analytics service and admin controller
     analytics_service = AnalyticsService(repos.trades)
     admin_controller = AdminController(analytics_service, repos.lines, logger=logger, decision_log_repository=repos.decision_logs)
 
     # Initialize settings/manager/NT services from DB
-    from src.services.settings_service import SettingsService
+    from src.controllers.settings_controller import SettingsController
     from src.services.nt_manager_service import NtManagerService
     from src.services.platform_deploy_service import PlatformDeployService
-    from src.controllers.settings_controller import SettingsController
+    from src.services.settings_service import SettingsService
 
     secret_key = os.environ.get("SECRET_KEY")
     settings_repo = SettingsRepository(db=db)
@@ -661,11 +614,15 @@ def create_app(
 
     # Build platform-specific lifecycle service (SOLID: one implementation per platform)
     if _platform_type == "ninjatrader":
-        from src.services.platform_lifecycle.nt_lifecycle_service import NinjaTraderLifecycleService
+        from src.services.platform_lifecycle.nt_lifecycle_service import (
+            NinjaTraderLifecycleService,
+        )
         platform_lifecycle = NinjaTraderLifecycleService(nt_service, settings_service, logger)
     else:
-        from src.services.platform_lifecycle.mt_lifecycle_service import MetaTraderLifecycleService
         from src.services.mt_manager_service import MetaTraderManagerService
+        from src.services.platform_lifecycle.mt_lifecycle_service import (
+            MetaTraderLifecycleService,
+        )
         mt_service = MetaTraderManagerService()
         platform_lifecycle = MetaTraderLifecycleService(mt_service, logger, settings_service=settings_service)
 
@@ -692,8 +649,11 @@ def create_app(
         app, tstrategy, loader, trade_manager, repos.lines, repos.trades,
         data_source, pair, notifier, analytics, logger=logger
     )
-    register_socketio_handlers(socketio, loader, data_source, live_mode, logger, parity_service)
-    
+    register_socketio_handlers(
+        socketio, loader, data_source, live_mode, logger, parity_service,
+        readiness_monitor=readiness_monitor,
+    )
+
     from werkzeug.exceptions import HTTPException
 
     # Global error handlers for API routes

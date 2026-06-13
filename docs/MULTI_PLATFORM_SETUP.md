@@ -166,7 +166,7 @@ Check the Python logs (`logs/meta/app_YYYY-MM-DD.log`) for:
 
 ```
 [meta] [INFO] Platform connected: metatrader5 v2.0 | Pair: EURUSD | Account: ...
-[meta] [INFO] History complete: N bars cached, switching to LIVE mode
+[meta] [INFO] History complete: N bars cached, switching to STREAMING mode
 ```
 
 ## Systemd Service (Linux/WSL)

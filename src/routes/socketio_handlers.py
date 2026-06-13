@@ -18,6 +18,7 @@ def register_socketio_handlers(
     live_mode: bool,
     _logger: ILogger,
     parity_service=None,
+    readiness_monitor=None,
 ):
     """Register Socket.IO event handlers.
 
@@ -33,7 +34,10 @@ def register_socketio_handlers(
         """Emit current health snapshot if ZMQDataSource is available."""
         if isinstance(data_source, ZMQDataSource):
             with contextlib.suppress(Exception):
-                socketio.emit('health_update', data_source.get_health())
+                health = data_source.get_health()
+                if readiness_monitor is not None:
+                    health.update(readiness_monitor.get_health())
+                socketio.emit('health_update', health)
 
     @socketio.on('connect')
     def on_connect(_auth):
@@ -50,10 +54,32 @@ def register_socketio_handlers(
             'platform_connected': platform_connected,
         })
         _emit_health()
+
+        # If historical bars are already cached (e.g. server has been running),
+        # tell the frontend to draw them immediately. This avoids an empty
+        # chart while waiting for a fresh history load cycle.
         if live_mode and isinstance(data_source, ZMQDataSource):
-            # Request a refresh on browser connect. The state machine inside
-            # ZMQDataSource guards against duplicates and disconnected state.
-            data_source.request_refresh()
+            try:
+                cached = data_source.load_historical_bars("1m")
+                if cached:
+                    readiness_state = 'UNKNOWN'
+                    readiness_reason = 'Cached bars available on connect'
+                    if readiness_monitor is not None:
+                        health = readiness_monitor.get_health()
+                        readiness_state = health.get('readiness_state', readiness_state)
+                        readiness_reason = health.get('readiness_reason', readiness_reason)
+                    emit('history_loaded', {
+                        'readiness_state': readiness_state,
+                        'readiness_reason': readiness_reason,
+                        'bar_count': len(cached),
+                    })
+            except Exception:
+                pass  # Don't break connect if cached-bar lookup fails
+
+        # Note: we do NOT auto-request a refresh here. Refreshing on every
+        # browser connect duplicates the refresh already scheduled when the
+        # platform connected and causes unnecessary load on NinjaTrader.
+        # Use the explicit 'request_refresh' event to force a refresh.
 
     @socketio.on('start_stream')
     def on_start_stream(payload):

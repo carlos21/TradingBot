@@ -673,8 +673,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                             int lastCompletedIdx = Math.Max(0, bars.Bars.Count - 2);
                             _barTracker.Reset(lastCompletedIdx);
                         }
-                        _sessionIterator = new SessionIterator(bars.Bars);
-                        _logger.Info($"Live bars stream ready. Cached {bars.Bars.Count} bars, lastCompletedIdx={_barTracker.LastSentIndex}, sent {Math.Max(0, bars.Bars.Count - 1)} initial bar(s)");
+                        // Use the instrument's actual trading hours for session checks so market-status
+                        // reflects the real exchange session instead of the 24x7 BarsRequest template.
+                        _sessionIterator = new SessionIterator(_subscribedInstrument.MasterInstrument.TradingHours);
+                        _logger.Info($"Live bars stream ready. Cached {bars.Bars.Count} bars, lastCompletedIdx={_barTracker.LastSentIndex}, sent {Math.Max(0, bars.Bars.Count - 1)} initial bar(s). Market-status session: {_subscribedInstrument.MasterInstrument.TradingHours?.Name ?? "default"}");
                     }
                 }
                 catch (Exception callbackEx)

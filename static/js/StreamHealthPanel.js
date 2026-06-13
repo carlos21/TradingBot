@@ -164,32 +164,35 @@ export class StreamHealthPanel {
     if (!this.bar) return;
     this.lastHealth = data;
 
-    const state = data.state || 'UNKNOWN';
+    const dsState = data.state || 'UNKNOWN';
+    const readinessState = data.readiness_state || dsState;
+    const readinessReason = data.readiness_reason || '';
 
-    // Only show panel once streaming has started (not DISCONNECTED)
-    if (state === 'DISCONNECTED') {
+    // Only show panel once the platform is connected.
+    if (readinessState === 'DISCONNECTED') {
       this.wrapper.classList.add('hidden');
       return;
     }
     this.wrapper.classList.remove('hidden');
+
     const lastBarTime = data.last_bar_time;
     const barsCached = data.bars_cached ?? 0;
     const hbAge = data.heartbeat_age_sec;
     const duplicates = data.duplicate_count ?? 0;
     const gaps = data.gap_count ?? 0;
     const platformConnected = data.platform_connected;
-    const historyComplete = data.history_complete;
+    const isReady = readinessState === 'READY' || readinessState === 'LIVE';
 
     // Determine alert level
     let newLevel = 'ok';
-    if (state !== 'LIVE' || !platformConnected || (hbAge !== null && hbAge > 90)) {
+    if (readinessState === 'DISCONNECTED' || !platformConnected || (hbAge !== null && hbAge > 90)) {
       newLevel = 'error';
-    } else if (!historyComplete || gaps > 0 || duplicates > 0 || (hbAge !== null && hbAge > 30)) {
+    } else if (!isReady || gaps > 0 || duplicates > 0 || (hbAge !== null && hbAge > 30)) {
       newLevel = 'warn';
     }
 
-    // Compact bar
-    this.stateEl.textContent = state;
+    // Compact bar shows the readiness state
+    this.stateEl.textContent = readinessState;
     this.lastBarEl.textContent = lastBarTime ? this._fmtTime(lastBarTime) : '--';
     this.cachedEl.textContent = `${barsCached.toLocaleString()}`;
 
@@ -209,7 +212,7 @@ export class StreamHealthPanel {
     else this.stateEl.classList.add('text-green-400');
 
     // Detailed panel
-    if (this.detailState) this.detailState.textContent = state;
+    if (this.detailState) this.detailState.textContent = readinessState;
     if (this.detailLastBar) this.detailLastBar.textContent = lastBarTime ? this._fmtTimeFull(lastBarTime) : '--';
     if (this.detailCached) this.detailCached.textContent = barsCached.toLocaleString();
     if (this.detailHeartbeat) this.detailHeartbeat.textContent = hbAge !== null ? `${hbAge.toFixed(1)}s` : '--';
@@ -219,10 +222,10 @@ export class StreamHealthPanel {
     if (this.detailBatches) this.detailBatches.textContent = (data.history_batches ?? 0).toLocaleString();
     if (this.detailPlatform) this.detailPlatform.textContent = platformConnected ? 'Connected' : 'Disconnected';
 
-    // Ready badge
+    // Ready badge: green only when the readiness state machine is READY/LIVE.
     if (this.readyBadge) {
       this.readyBadge.classList.remove('hidden', 'bg-green-600', 'text-white', 'bg-red-600');
-      if (historyComplete === true) {
+      if (isReady) {
         this.readyBadge.textContent = 'READY';
         this.readyBadge.classList.add('bg-green-600', 'text-white');
       } else {
@@ -231,20 +234,20 @@ export class StreamHealthPanel {
       }
     }
 
-    // Detail history
+    // Detail history shows the readiness reason.
     if (this.detailHistory) {
-      if (historyComplete === true) {
+      if (isReady) {
         this.detailHistory.textContent = 'Complete ✅';
         this.detailHistory.className = 'font-mono text-green-400';
       } else {
-        const reason = data.history_complete_reason || 'Checking...';
+        const reason = readinessReason || 'Checking...';
         this.detailHistory.textContent = `Incomplete — ${reason}`;
         this.detailHistory.className = 'font-mono text-red-400';
       }
     }
 
-    // Refresh button state
-    const canRefresh = platformConnected && state !== 'REFRESHING';
+    // Refresh button state is driven by the data-source state.
+    const canRefresh = platformConnected && dsState !== 'REFRESHING';
     if (this.resyncBtn) this.resyncBtn.disabled = !canRefresh;
     if (this.checkParityBtn) this.checkParityBtn.disabled = !canRefresh;
 

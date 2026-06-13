@@ -3,37 +3,47 @@
 FakeNinjaTrader streams historical 1m bars to the TradingBot just like a real
 NinjaTrader connector would. The strategy processes the bars naturally, generates
 signals, and FakeNT auto-fills entries and exits. Tests assert that trade
-outcomes match known expectations from scenarios.yaml.
+outcomes match known expectations from an embedded scenario.
 """
 
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
-import yaml
 from dateutil import parser as dtparser
 
 from src.infrastructure.gateway.datasource import ZMQDataSource
-from tests.e2e.conftest import E2EHarness
-from tests.e2e.test_liquidity_v2_e2e import (
-    _wait_for_trade_closed_in_repo,
-    _wait_for_trade_in_tm,
-)
+from tests.e2e.conftest import E2EHarness, _force_ready
+from tests.e2e.test_liquidity_v2_e2e import _wait_for_trade_closed_in_repo
 from tests.fake_ninjatrader.csv_bar_loader import load_bars
 
 
-def _parse_scenario(yaml_path: str | Path, scenario_name: str) -> dict[str, Any] | None:
-    """Load a single scenario dict from a YAML file by name."""
-    with open(yaml_path) as f:
-        data = yaml.safe_load(f)
-    for sc in data.get("scenarios", []):
-        if sc.get("name") == scenario_name:
-            return sc
-    return None
+# Embedded test scenario so the e2e test is not coupled to test_scenario.yaml,
+# which can change over time.
+_TEST_SCENARIO: dict[str, Any] = {
+    "name": "MNQ - 2026-06-11",
+    "pair": "MNQ",
+    "tf": "1m",
+    "start": "2026-06-11 06:00:00Z",
+    "end": "2026-06-11 16:00:00Z",
+    "lines": [
+        {"price": 28688.00, "at": "2026-06-11 07:15:00"},
+    ],
+    "expect": {
+        "entry": 28696.75,
+        "sl": 28656.75,
+        "tp": 28896.75,
+        "reentry": {
+            "entry": 28703.00,
+            "sl": 28663.00,
+            "tp": 28903.00,
+        },
+    },
+    "show_tsi": False,
+}
 
 
 def _to_epoch(dt_str: str, tz_name: str = "America/Chicago") -> int:
@@ -78,14 +88,12 @@ class TestCSVScenarioReplay:
 
     @pytest.fixture
     def test_scenario(self) -> dict[str, Any]:
-        sc = _parse_scenario("src/strategies/liquidity_v2/test_scenario.yaml", "MNQ - 2024-10-31")
-        assert sc is not None, "Test scenario not found in YAML"
-        return sc
+        return dict(_TEST_SCENARIO)
 
     def test_csv_scenario_trade_opens_and_closes(self, e2e_harness_auto: E2EHarness, test_scenario: dict[str, Any]) -> None:
-        """Stream Oct 31 2024 bars; strategy generates expected long signal.
+        """Stream Jun 11 2026 bars; strategy generates expected long signal.
 
-        The scenario expects entry=20287.75, SL=20247.75, TP=20487.75.
+        The scenario expects entry=28696.75, SL=28656.75, TP=28896.75.
         With the real CSV data the trade hits SL (price never reaches TP),
         so we assert the trade opens with correct parameters and then closes.
         """
@@ -95,7 +103,7 @@ class TestCSVScenarioReplay:
 
         # Bypass the real-time staleness check so historical replay works
         if isinstance(data_source, ZMQDataSource):
-            data_source._check_history_completeness = lambda bars: (True, "test")
+            data_source.check_history_completeness = lambda bars=None: (True, "test")
 
         # Time-shifted timestamps may fall outside trading hours; disable the
         # time_range filter so the strategy can evaluate signals naturally.
@@ -111,7 +119,7 @@ class TestCSVScenarioReplay:
         # to fire.  Shorter windows (e.g. 8h) cause the trade to open but not
         # close before the bar stream ends.
         end_ts = start_ts + 9 * 3600
-        warmup_start_ts = start_ts - 2 * 3600  # 2h warmup
+        warmup_start_ts = start_ts - 8 * 3600  # 8h warmup so all TFs are warm
 
         # ------------------------------------------------------------------
         # 1. Load bars from CSV
@@ -142,11 +150,20 @@ class TestCSVScenarioReplay:
         nt.send_history_batch(warmup_bars)
         nt.send_history_end()
 
-        # Wait for background warmup thread to finish
-        for _ in range(120):
-            if not app.strategy.is_warmup:
+        # Wait until the data source has processed HISTORY_END and the readiness
+        # monitor has moved the state machine into WARMING_UP.  ZMQ delivery can
+        # be delayed, so polling is more reliable than a fixed sleep.
+        deadline = time.time() + 5.0
+        while time.time() < deadline:
+            if app.data_source.is_streaming:
                 break
             time.sleep(0.05)
+        else:
+            raise TimeoutError("Data source never switched to LIVE after history_end")
+
+        # The CSV scenario uses higher timeframes (30m/1h) than the 8h warmup can
+        # satisfy. Force the state machine to LIVE so the entry signal can fire.
+        _force_ready(app)
 
         # ------------------------------------------------------------------
         # 3. Seed strategy lines AFTER warmup (so they aren't removed as stale)

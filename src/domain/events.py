@@ -35,6 +35,9 @@ class EventType(Enum):
     FILTER_BLOCKED = auto()
     INDICATOR_UPDATE = auto()
 
+    # Readiness / lifecycle events
+    READINESS_CHANGED = auto()
+
     # Balance / Account events
     BALANCE_UPDATED = auto()
 

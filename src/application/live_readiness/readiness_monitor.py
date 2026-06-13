@@ -1,0 +1,232 @@
+"""Coordinates data-source events, warm-up, and readiness transitions."""
+
+from __future__ import annotations
+
+import threading
+from typing import TYPE_CHECKING, Any, Callable
+
+from src.application.ports import EventPublisher
+from src.domain.readiness import ReadinessState, ReadinessStateMachine
+from src.domain.readiness.protocols import IWarmupPolicy
+from src.utils.app_logger import ILogger
+
+from .live_bar_buffer import LiveBarBuffer
+from .warmup_orchestrator import WarmupOrchestrator
+
+if TYPE_CHECKING:
+    from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
+
+
+class ReadinessMonitor:
+    """
+    Single coordinator that turns data-source events into readiness state
+    transitions.
+
+    Responsibilities:
+      - move the state machine through WAITING_FOR_HISTORY -> REFRESHING ->
+        WARMING_UP -> READY/LIVE
+      - run the WarmupOrchestrator after a non-empty history load
+      - buffer live bars that arrive during a real warm-up
+      - drop live bars when history has not completed
+      - schedule history retries when the platform returns no historical data
+    """
+
+    def __init__(
+        self,
+        state_machine: ReadinessStateMachine,
+        warmup_orchestrator: WarmupOrchestrator,
+        warmup_policy: IWarmupPolicy,
+        bar_buffer: LiveBarBuffer,
+        live_bar_processor: Callable[[dict[str, Any]], None],
+        data_source: CombinedDataSource | None = None,
+        socketio_publisher: EventPublisher | None = None,
+        logger: ILogger | None = None,
+        retry_base_delay_sec: float = 2.0,
+        retry_max_delay_sec: float = 60.0,
+    ) -> None:
+        self._state_machine = state_machine
+        self._warmup_orchestrator = warmup_orchestrator
+        self._warmup_policy = warmup_policy
+        self._bar_buffer = bar_buffer
+        self._live_bar_processor = live_bar_processor
+        self._data_source = data_source
+        self._socketio_publisher = socketio_publisher
+        self._logger = logger
+        self._pair: str = ""
+        self._retry_base_delay_sec = retry_base_delay_sec
+        self._retry_max_delay_sec = retry_max_delay_sec
+        self._retry_timer: threading.Timer | None = None
+        self._retry_lock = threading.Lock()
+
+    def set_pair(self, pair: str) -> None:
+        self._pair = pair
+
+    def on_refresh_start(self) -> None:
+        """Called when the platform starts sending a fresh history batch."""
+        self._cancel_retry_timer()
+        self._state_machine.start_refresh()
+        self._bar_buffer.clear()
+        if self._logger:
+            self._logger.info("[Readiness] Refresh started — buffering live bars")
+
+    def on_history_complete(self, bars: list[dict[str, Any]]) -> None:
+        """Called when the full historical bar set has been received."""
+        self._cancel_retry_timer()
+
+        if not bars:
+            self._state_machine.history_empty()
+            self._schedule_history_retry()
+            return
+
+        self._state_machine.history_loaded()
+
+        # Notify the frontend that historical bars are available for display,
+        # even if the data is not yet fresh enough for live trading.
+        if self._socketio_publisher is not None:
+            try:
+                self._socketio_publisher.emit(
+                    "history_loaded",
+                    {
+                        "readiness_state": self._state_machine.state.name,
+                        "readiness_reason": self._state_machine.reason,
+                        "bar_count": len(bars),
+                    },
+                )
+            except Exception:
+                pass
+
+        self._warmup_orchestrator.run(bars, self._pair)
+        self._try_warmup_complete()
+
+    def on_live_bar(self, bar: dict[str, Any]) -> None:
+        """Called for each completed live bar."""
+        state = self._state_machine.state
+
+        # History never completed — do not let live bars stream to the strategy.
+        if state in (ReadinessState.CONNECTED, ReadinessState.WAITING_FOR_HISTORY):
+            return
+
+        if state in (ReadinessState.REFRESHING, ReadinessState.WARMING_UP):
+            self._bar_buffer.append(bar)
+            if state == ReadinessState.WARMING_UP:
+                self._try_warmup_complete()
+            return
+
+        if state == ReadinessState.DEGRADED:
+            self._live_bar_processor(bar)
+            if self._warmup_policy.is_warm(self._warmup_orchestrator.strategy):
+                self._state_machine.recover()
+            return
+
+        # READY or LIVE
+        if state == ReadinessState.READY:
+            self._state_machine.live_bar_received()
+        self._live_bar_processor(bar)
+
+    def on_gap_detected(self, gap_seconds: int, context: str) -> None:
+        """Called when the data source detects a suspicious gap."""
+        self._state_machine.degrade(
+            f"{gap_seconds}s gap detected ({context})"
+        )
+
+    def on_heartbeat_stale(self, age_seconds: float) -> None:
+        """Called when no completed bar has arrived for too long."""
+        self._state_machine.degrade(
+            f"Live bar stream stale: {age_seconds:.0f}s since last bar"
+        )
+
+    def stop(self) -> None:
+        """Cancel any pending retry timer."""
+        self._cancel_retry_timer()
+
+    def _schedule_history_retry(self) -> None:
+        """Schedule another history refresh after a backoff delay."""
+        request_refresh = getattr(self._data_source, "request_refresh", None)
+        if request_refresh is None:
+            if self._logger:
+                self._logger.warning(
+                    "[Readiness] Cannot request history retry: data source "
+                    "has no request_refresh method"
+                )
+            return
+
+        attempt = self._state_machine.retry_count
+        delay = min(
+            self._retry_base_delay_sec * (2 ** (attempt - 1)),
+            self._retry_max_delay_sec,
+        )
+
+        if self._logger:
+            self._logger.info(
+                f"[Readiness] Scheduling history retry #{attempt} in {delay:.1f}s"
+            )
+
+        def _retry() -> None:
+            with self._retry_lock:
+                self._retry_timer = None
+            self._state_machine.history_retry_scheduled()
+            try:
+                request_refresh()
+            except Exception as e:
+                if self._logger:
+                    self._logger.error(
+                        f"[Readiness] History retry request failed: {e}"
+                    )
+
+        with self._retry_lock:
+            old_timer = self._retry_timer
+            self._retry_timer = None
+            if old_timer is not None:
+                old_timer.cancel()
+            self._retry_timer = threading.Timer(delay, _retry)
+            self._retry_timer.daemon = True
+            self._retry_timer.start()
+
+    def _cancel_retry_timer(self) -> None:
+        timer = None
+        with self._retry_lock:
+            timer = self._retry_timer
+            self._retry_timer = None
+        if timer is not None:
+            timer.cancel()
+
+    def _try_warmup_complete(self) -> None:
+        """Transition to READY if data is fresh and indicators are warm."""
+        state = self._state_machine.state
+        if state == ReadinessState.WAITING_FOR_HISTORY:
+            return
+
+        if self._data_source is not None:
+            complete, reason = self._data_source.check_history_completeness()
+            if not complete:
+                if self._logger:
+                    self._logger.info(f"[Readiness] History not ready: {reason}")
+                return
+
+        if not self._warmup_policy.is_warm(self._warmup_orchestrator.strategy):
+            return
+        transitioned = self._state_machine.warmup_complete()
+        if transitioned:
+            self._bar_buffer.flush()
+            if self._logger:
+                self._logger.info(
+                    "[Readiness] Warmup complete — ready for live trading"
+                )
+            if self._socketio_publisher is not None:
+                try:
+                    self._socketio_publisher.emit(
+                        "trading_ready",
+                        {
+                            "readiness_state": self._state_machine.state.name,
+                            "readiness_reason": self._state_machine.reason,
+                        },
+                    )
+                except Exception:
+                    pass
+
+    def get_health(self) -> dict[str, Any]:
+        """Return readiness-specific health fields."""
+        return {
+            "readiness_state": self._state_machine.state.name,
+            "readiness_reason": self._state_machine.reason,
+        }

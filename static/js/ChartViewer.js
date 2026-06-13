@@ -127,7 +127,12 @@ export class ChartViewer {
     this._initPair()
       .then(() => {
         new SocketHandler(socket, this).init();
-        return this.initBars();
+        if (!this.liveMode) {
+          return this.initBars();
+        }
+        // In live mode, initBars is triggered by the history_loaded event. The
+        // server emits it immediately on connect if cached bars already exist,
+        // otherwise it fires once NinjaTrader finishes a history load cycle.
       })
       .then(() => this._initLines())
       .then(() => {
@@ -442,7 +447,7 @@ export class ChartViewer {
     }
     this._seriesBusy = true;
     try {
-      // Cancel any pending initBars from a history_ready event so they
+      // Cancel any pending initBars from a history_loaded/trading_ready event so they
       // don't race with this TF change and call setData on a half-ready series.
       clearTimeout(this._historyReadyTimer);
 

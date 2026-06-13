@@ -183,7 +183,7 @@ class TestWarmupLineTracking:
     def test_line_latches_during_warmup(self):
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
         bar = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar)
@@ -192,7 +192,7 @@ class TestWarmupLineTracking:
     def test_short_line_removed_for_max_bounce_during_warmup_with_real_ts(self):
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         # Line with a real creation timestamp (like scenarios) is removed during warmup
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
         # Latch short
@@ -206,7 +206,7 @@ class TestWarmupLineTracking:
     def test_long_line_removed_for_max_bounce_during_warmup_with_real_ts(self):
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
         # Latch long
         bar1 = make_bar(time=60, open_=101, high=103, low=100, close=102, pair="MNQ")
@@ -219,7 +219,7 @@ class TestWarmupLineTracking:
     def test_legacy_line_survives_warmup_but_removed_on_live_bar(self):
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         # Legacy DB line (creation_ts=0) survives max-bounce during warmup
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
         bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="MNQ")
@@ -228,7 +228,7 @@ class TestWarmupLineTracking:
         strat.on_raw_bar(bar2)
         assert "L1" in strat.strategy_lines  # survived warmup
         # First live bar removes it
-        strat.is_warmup = False
+        strat.execution_context.warmup = False
         bar3 = make_bar(time=180, open_=111, high=112, low=110, close=111, pair="MNQ")
         strat.on_raw_bar(bar3)
         assert "L1" not in strat.strategy_lines
@@ -236,7 +236,7 @@ class TestWarmupLineTracking:
     def test_extreme_tracks_during_warmup(self):
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
         bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar1)
@@ -248,7 +248,7 @@ class TestWarmupLineTracking:
     def test_interaction_ts_set_during_warmup(self):
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, max_bounce=10.0)
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=0)
         # Price below line, then high touches the line
         bar1 = make_bar(time=60, open_=98, high=100, low=97, close=97, pair="MNQ")
@@ -259,7 +259,7 @@ class TestWarmupLineTracking:
     def test_touched_line_added_to_warmup_crossed_lines(self):
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0)
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
         bar1 = make_bar(time=60, open_=98, high=101, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar1)
@@ -271,11 +271,11 @@ class TestWarmupLineTracking:
             sio, lr, tr, tm, min_cross_depth=0.0,
             options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, line_removal_mode=LineRemovalMode.ON_EVALUATE),
         )
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
         bar1 = make_bar(time=60, open_=98, high=101, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar1)
-        strat.is_warmup = False
+        strat.execution_context.warmup = False
         # Simulate post-warmup cleanup
         for sid in list(strat.warmup_crossed_lines):
             if sid in strat.strategy_lines:
@@ -290,11 +290,11 @@ class TestWarmupLineTracking:
             sio, lr, tr, tm, min_cross_depth=0.0,
             options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, line_removal_mode=LineRemovalMode.ON_ENTER),
         )
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
         bar1 = make_bar(time=60, open_=98, high=101, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar1)
-        strat.is_warmup = False
+        strat.execution_context.warmup = False
         # Simulate post-warmup cleanup
         for sid in list(strat.warmup_crossed_lines):
             if sid in strat.strategy_lines:
@@ -309,11 +309,11 @@ class TestWarmupLineTracking:
             sio, lr, tr, tm, min_cross_depth=0.0,
             options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, line_removal_mode=LineRemovalMode.NEVER),
         )
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
         bar1 = make_bar(time=60, open_=98, high=101, low=97, close=97, pair="MNQ")
         strat.on_raw_bar(bar1)
-        strat.is_warmup = False
+        strat.execution_context.warmup = False
         # Simulate post-warmup cleanup
         for sid in list(strat.warmup_crossed_lines):
             if sid in strat.strategy_lines:
@@ -327,14 +327,14 @@ class TestWarmupLineTracking:
         from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
         repo = InMemoryLineTriggerStateRepository()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, trigger_state_repo=repo)
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
         # Price equals line level — line never gets crossed (direction stays None)
         for t in range(60, 361, 60):
             bar = make_bar(time=t, open_=100, high=100, low=100, close=100, pair="MNQ")
             strat.on_raw_bar(bar)
         assert strat.strategy_lines["L1"]["direction"] is None
-        strat.is_warmup = False
+        strat.execution_context.warmup = False
         # Simulate pre-warmup persisted state that should be restored for uncrossed lines
         repo.save("L1", "MNQ", {"direction": "short", "extreme": 105.0, "tsi_stage": 1})
         strat.restore_trigger_states("MNQ")
@@ -347,7 +347,7 @@ class TestWarmupLineTracking:
         from src.infrastructure.repositories.line_trigger_state_repository import InMemoryLineTriggerStateRepository
         repo = InMemoryLineTriggerStateRepository()
         strat = make_strategy(sio, lr, tr, tm, min_cross_depth=0.0, trigger_state_repo=repo)
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0, creation_timestamp=30)
         # Price crosses the line during warmup
         bar1 = make_bar(time=60, open_=98, high=99, low=97, close=97, pair="MNQ")
@@ -355,7 +355,7 @@ class TestWarmupLineTracking:
         assert strat.strategy_lines["L1"]["direction"] == "short"
         assert strat.strategy_lines["L1"]["extreme"] == 99
         assert "L1" in strat.warmup_crossed_lines
-        strat.is_warmup = False
+        strat.execution_context.warmup = False
         # Inject stale persisted state (direction=None) — restore should NOT overwrite
         repo.save("L1", "MNQ", {"direction": None, "extreme": 0.0})
         strat.restore_trigger_states("MNQ")
@@ -476,7 +476,7 @@ class TestPhantomAndReentryGuards:
         """A phantom trade opened on bar N should not exit on bar N."""
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm)
-        strat.is_warmup = False
+        strat.execution_context.warmup = False
         bar = make_bar(time=1000, open_=100, close=105, high=110, low=95, pair="MNQ")
         # Manually add a phantom trade with entry_time == bar time
         strat.open_trades.append({
@@ -494,7 +494,7 @@ class TestPhantomAndReentryGuards:
         """A phantom trade should exit on the next bar if SL is hit."""
         sio, lr, tr, tm = _deps()
         strat = make_strategy(sio, lr, tr, tm)
-        strat.is_warmup = False
+        strat.execution_context.warmup = False
         entry_bar = make_bar(time=1000, open_=100, close=105, high=110, low=95, pair="MNQ")
         sl_bar = make_bar(time=1060, open_=95, close=92, high=96, low=88, pair="MNQ")
         strat.open_trades.append({
@@ -519,7 +519,7 @@ class TestPhantomAndReentryGuards:
             entry_filters=[time_range_filter("08:00", "15:30")],
         )
         strat = make_strategy(sio, lr, tr, tm, options=options)
-        strat.is_warmup = False
+        strat.execution_context.warmup = False
         # Add a reentry opportunity
         strat._reentry_opportunities.append({
             "level": 100.0, "direction": "long", "pair": "MNQ",
@@ -548,7 +548,7 @@ class TestPhantomAndReentryGuards:
             ],
         )
         strat = make_strategy(sio, lr, tr, tm, options=options)
-        strat.is_warmup = False
+        strat.execution_context.warmup = False
         # Seed a trade in the repo so daily limit is already at 1
         tr.inserted.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
@@ -579,7 +579,7 @@ class TestPhantomAndReentryGuards:
             max_reentry_attempts=2,
         )
         strat = make_strategy(sio, lr, tr, tm, options=options)
-        strat.is_warmup = False
+        strat.execution_context.warmup = False
         # Seed an open reentry trade
         strat.open_trades.append({
             "trade_id": "R1", "pair": "MNQ", "type": "long",

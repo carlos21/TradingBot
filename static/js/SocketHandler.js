@@ -49,6 +49,21 @@ export class SocketHandler {
     }
   }
 
+  _handleHistoryReady(data) {
+    const c = this.chart;
+    // Debounce: coalesce rapid history_loaded/trading_ready events (e.g. duplicate emissions)
+    clearTimeout(c._historyReadyTimer);
+    c._historyReadyTimer = setTimeout(async () => {
+      await c.initBars();
+      c.historyReady = true;
+      // Flush any bars that arrived before history was fully loaded
+      for (const bar of c.pendingBars) {
+        this._processBar(bar);
+      }
+      c.pendingBars = [];
+    }, 150);
+  }
+
   init() {
     const c = this.chart;
 
@@ -133,20 +148,16 @@ export class SocketHandler {
 
     this.socket.on('stream_end', () => { window.__done = true; });
 
-    this.socket.on('history_ready', async data => {
-      console.log('[ChartViewer] history_ready received!', data);
+    this.socket.on('history_loaded', async data => {
+      console.log('[ChartViewer] history_loaded received!', data);
       c.liveMode = true;
-      // Debounce: coalesce rapid history_ready events (e.g. duplicate emissions)
-      clearTimeout(c._historyReadyTimer);
-      c._historyReadyTimer = setTimeout(async () => {
-        await c.initBars();
-        c.historyReady = true;
-        // Flush any bars that arrived before history was fully loaded
-        for (const bar of c.pendingBars) {
-          this._processBar(bar);
-        }
-        c.pendingBars = [];
-      }, 150);
+      this._handleHistoryReady(data);
+    });
+
+    this.socket.on('trading_ready', async data => {
+      console.log('[ChartViewer] trading_ready received!', data);
+      c.liveMode = true;
+      this._handleHistoryReady(data);
     });
 
     this.socket.on('stream_status', data => {

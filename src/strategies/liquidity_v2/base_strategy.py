@@ -29,6 +29,13 @@ from src.services.trade_executor import NoOpExecutor
 from src.strategies.base_strategy import BreakevenConfig, DecisionEventCategory
 from src.utils.app_logger import ILogger
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.domain.readiness.protocols import IExecutionContext
+
+
+
 class LineRemovalMode(str, Enum):
     ON_EVALUATE = "on_evaluate"   # remove line after we evaluated it
     ON_ENTER    = "on_enter"      # remove only if we actually opened a trade
@@ -94,6 +101,7 @@ class BaseLiquidityStrategy:
         decision_log_repository=None,
         account_configs: list | None = None,
         accounts_repo=None,
+        execution_context: IExecutionContext | None = None,
     ):
         self.min_stop_loss = float(min_stop_loss)
         self.logger = logger
@@ -161,8 +169,23 @@ class BaseLiquidityStrategy:
 
         # Optional dependency for multi-TF checks
         self.htf_fetcher = htf_fetcher
-        self.is_warmup = False
+        if execution_context is not None:
+            self._execution_context = execution_context
+        else:
+            # Local import avoids a circular dependency with the live_readiness package.
+            from src.application.live_readiness.trading_context import AlwaysEnabledTradingContext
+            self._execution_context = AlwaysEnabledTradingContext()
         self.warmup_crossed_lines: set[Any] = set()
+
+    @property
+    def is_warmup(self) -> bool:
+        """Warm-up mode is derived from the injected execution context."""
+        return self._execution_context.is_warmup()
+
+    @property
+    def execution_context(self):
+        """Execution context that controls trading/warmup behavior."""
+        return self._execution_context
 
     def _get_current_account_configs(self) -> list:
         """Return fresh account configs from DB if available, else cached fallback."""

@@ -403,6 +403,15 @@ class FakeNinjaTrader:
         )
         self._publish(envelope)
 
+    def send_refresh_start(self) -> None:
+        """Signal that the platform is about to send a fresh history batch."""
+        envelope = MessageEnvelope.create(
+            msg_type=MessageType.REFRESH_START,
+            payload={},
+            seq_num=self._next_seq(),
+        )
+        self._publish(envelope)
+
     def send_tick(self, tick: dict[str, Any]) -> None:
         """Send a single tick."""
         msg = TickMessage(

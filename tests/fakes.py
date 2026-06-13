@@ -13,6 +13,21 @@ from src.notifier import Notifier
 from src.services.trade_close_service import TradeEventPublisher
 from src.services.trade_executor import TradeExecutor
 from src.utils.app_logger import ILogger
+from src.domain.readiness.protocols import IExecutionContext
+
+
+class MutableTradingContext(IExecutionContext):
+    """Test-only execution context that allows tests to toggle warmup/trading."""
+
+    def __init__(self, trading_enabled=True, warmup=False):
+        self.trading_enabled = trading_enabled
+        self.warmup = warmup
+
+    def is_trading_enabled(self) -> bool:
+        return self.trading_enabled
+
+    def is_warmup(self) -> bool:
+        return self.warmup
 
 
 class FakeLogger(ILogger):

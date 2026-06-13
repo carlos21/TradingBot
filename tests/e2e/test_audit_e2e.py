@@ -60,12 +60,12 @@ def _send_audit_and_wait(harness: E2EHarness, bars_back: int = 60, timeout: floa
 
 
 def _transition_to_live(nt, ds, delay_sec: float = 1.0) -> None:
-    """Send empty history so the data source transitions to LIVE state."""
+    """Send empty history so the data source transitions to STREAMING state."""
     nt.send_history_batch([])
     nt.send_history_end()
     # Wait for state transition
     for _ in range(200):
-        if ds.state == DataSourceState.LIVE:
+        if ds.state == DataSourceState.STREAMING:
             break
         time.sleep(0.01)
     # Extra ZMQ slow-joiner protection

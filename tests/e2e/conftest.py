@@ -331,6 +331,23 @@ def live_app_multi(
 # ---------------------------------------------------------------------------
 
 
+def _force_ready(app: AppWiring) -> None:
+    """Force the live readiness state machine to LIVE for tests.
+
+    E2E tests wire the real readiness monitor; without enough historical bars
+    the machine would stay in WARMING_UP and the strategy would not trade.
+    Tests that exercise order/command wiring can shortcut the warm-up phase.
+    """
+    ctx = getattr(app.strategy, "execution_context", None)
+    sm = getattr(ctx, "_state_machine", None)
+    if sm is None:
+        return
+    sm.connect()
+    sm.history_loaded()
+    sm.warmup_complete()
+    sm.live_bar_received()
+
+
 @pytest.fixture
 def e2e_harness(
     fake_nt: FakeNinjaTrader,
@@ -341,6 +358,7 @@ def e2e_harness(
     time.sleep(0.3)
     fake_nt.send_connect(pair="MNQ")
     time.sleep(0.1)
+    _force_ready(live_app)
     yield E2EHarness(nt=fake_nt, app=live_app)
 
 
@@ -359,6 +377,7 @@ def e2e_harness_multi(
     time.sleep(0.3)
     fake_nt.send_connect(pair="MNQ")
     time.sleep(0.1)
+    _force_ready(live_app_multi)
     yield E2EHarness(nt=fake_nt, app=live_app_multi)
 
 
@@ -371,4 +390,5 @@ def e2e_harness_auto(
     time.sleep(0.3)
     fake_nt_auto.send_connect(pair="MNQ")
     time.sleep(0.1)
+    _force_ready(live_app_scenario)
     yield E2EHarness(nt=fake_nt_auto, app=live_app_scenario)

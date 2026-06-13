@@ -17,7 +17,7 @@ import pytest
 
 from src.infrastructure.gateway.protocol import MessageType
 from src.strategies.base_strategy import BreakevenConfig
-from tests.e2e.conftest import E2EHarness
+from tests.e2e.conftest import E2EHarness, _force_ready
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +276,9 @@ class TestSessionEnd:
         nt.send_history_batch([{"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}])
         nt.send_history_end()
         time.sleep(0.3)
+        # The readiness monitor needs enough bars for indicator warm-up. Short-circuit
+        # it so the session-end path can be tested in isolation.
+        _force_ready(app)
 
         # Clear logs
         nt._commands_received.clear()
@@ -495,6 +498,8 @@ class TestStrategyDrivenFeatures:
         nt.send_history_batch([{"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}])
         nt.send_history_end()
         time.sleep(0.3)
+        # One bar is not enough for the real warm-up policy; force LIVE for this test.
+        _force_ready(app)
 
         # Seed an open trade manually (simulates a trade opened before the test)
         trade = app.trade_manager.open_trade(
@@ -561,6 +566,8 @@ class TestStrategyDrivenFeatures:
         nt.send_history_batch([{"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}])
         nt.send_history_end()
         time.sleep(0.3)
+        # One bar is not enough for the real warm-up policy; force LIVE for this test.
+        _force_ready(app)
 
         trade = app.trade_manager.open_trade(
             pair="MNQ",
@@ -637,6 +644,8 @@ class TestMultiAccountAdvanced:
         nt.send_history_batch([{"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}])
         nt.send_history_end()
         time.sleep(0.3)
+        # One bar is not enough for the real warm-up policy; force LIVE for this test.
+        _force_ready(app)
 
         signal_trade = {
             "trade_id": "S1",
@@ -911,7 +920,7 @@ class TestBarStreamStall:
     """Heartbeat monitor detects when completed bars stop arriving."""
 
     def test_no_bars_for_threshold_triggers_alert(self, e2e_harness: E2EHarness) -> None:
-        """When no bar arrives for >threshold seconds in LIVE state, alert fires."""
+        """When no bar arrives for >threshold seconds in STREAMING state, alert fires."""
         app = e2e_harness.app
         nt = e2e_harness.nt
         ds = app.data_source
@@ -924,14 +933,14 @@ class TestBarStreamStall:
         ds._start_heartbeat_monitor()
 
         now_ts = int(time.time())
-        # Send recent history so datasource transitions to LIVE
+        # Send recent history so datasource transitions to STREAMING
         nt.send_history_batch([
             {"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}
         ])
         nt.send_history_end()
         time.sleep(0.2)
 
-        assert ds.state.name == "LIVE"
+        assert ds.state.name == "STREAMING"
         assert ds._heartbeat_alert_sent is False
 
         # Wait for the heartbeat loop to detect the stall
@@ -953,7 +962,7 @@ class TestGapDetection:
         nt = e2e_harness.nt
         ds = app.data_source
 
-        ds._check_history_completeness = lambda bars: (True, "test")
+        ds.check_history_completeness = lambda bars=None: (True, "test")
 
         now_ts = int(time.time())
         # History with a 120s gap between the two bars
@@ -972,7 +981,7 @@ class TestGapDetection:
         nt = e2e_harness.nt
         ds = app.data_source
 
-        ds._check_history_completeness = lambda bars: (True, "test")
+        ds.check_history_completeness = lambda bars=None: (True, "test")
 
         now_ts = int(time.time())
         # History without gaps

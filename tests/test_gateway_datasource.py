@@ -150,10 +150,10 @@ class TestInitialization:
 
 class TestProperties:
 
-    def test_is_live(self, data_source):
-        assert data_source.is_live is False
-        data_source._state = DataSourceState.LIVE
-        assert data_source.is_live is True
+    def test_is_streaming(self, data_source):
+        assert data_source.is_streaming is False
+        data_source._state = DataSourceState.STREAMING
+        assert data_source.is_streaming is True
 
     def test_state(self, data_source):
         assert data_source.state == DataSourceState.DISCONNECTED
@@ -433,7 +433,7 @@ class TestBarHandling:
         live_bars = []
         data_source.on_live_bar = lambda bar: live_bars.append(bar)
         data_source._on_history_end()
-        assert data_source.state == DataSourceState.LIVE
+        assert data_source.state == DataSourceState.STREAMING
         # now-200 is a duplicate (in history) — skipped. now-100 is new — emitted.
         assert len(data_source._historical_bars) == 3
         assert len(live_bars) == 1
@@ -619,7 +619,7 @@ class TestHistoryEndHandling:
 
     def test_on_history_end_sets_live_mode(self, data_source):
         data_source._on_history_end()
-        assert data_source.state == DataSourceState.LIVE
+        assert data_source.state == DataSourceState.STREAMING
 
     def test_on_history_end_calls_callback(self, data_source):
         called_with = []
@@ -634,7 +634,7 @@ class TestHistoryEndHandling:
         data_source._historical_bars = [make_bar(time_val=int(time.time()) - 300, open_=10.0, high=11.0, low=9.0, close=10.5)]
         # Should not raise
         data_source._on_history_end()
-        assert data_source.is_live is True
+        assert data_source.is_streaming is True
 
     def test_on_history_end_flushes_refresh_buffer(self, data_source):
         data_source._state = DataSourceState.REFRESHING
@@ -665,29 +665,26 @@ class TestHistoryEndHandling:
             make_bar(time_val=now - 200, open_=11.0, high=12.0, low=10.0, close=11.5),
         ]
         data_source._on_history_end()
-        assert data_source.is_live is True
+        assert data_source.is_streaming is True
 
     def test_on_history_end_stale_switches_to_live_without_retry(self, data_source, mock_gateway):
-        """Stale history should switch to LIVE without sending retry refresh requests."""
+        """Stale history should switch to STREAMING without sending retry refresh requests."""
         now = int(time.time())
         data_source._historical_bars = [
             make_bar(time_val=now - 1000, open_=10.0, high=11.0, low=9.0, close=10.5),
         ]
         data_source._on_history_end()
-        assert data_source.state == DataSourceState.LIVE
+        assert data_source.state == DataSourceState.STREAMING
         mock_gateway.send_refresh_request.assert_not_called()
 
-    def test_on_history_batch_in_live_emits_history_ready_when_complete(self, data_source):
-        """Gap-fill batches arriving in LIVE state should emit history_ready when history becomes complete."""
+    def test_on_history_batch_in_live_adds_bar_without_emitting_history_complete(self, data_source):
+        """Gap-fill batches arriving in STREAMING state update the cache but do not decide readiness."""
         now = int(time.time())
         called_with = []
         data_source.on_history_complete = lambda bars: called_with.append(list(bars))
-        data_source._state = DataSourceState.LIVE
-        data_source._history_complete = False
-        data_source._history_complete_reason = "Last bar is old"
+        data_source._state = DataSourceState.STREAMING
 
         # Seed with bars that have a continuous recent sequence but the last bar is old
-        # (simulates stale history where recent data is missing)
         data_source._historical_bars = [
             make_bar(time_val=now - 180, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=now - 120, open_=10.0, high=11.0, low=9.0, close=10.5),
@@ -708,17 +705,21 @@ class TestHistoryEndHandling:
             'pair': 'MNQ',
         })
 
-        assert data_source._history_complete is True
-        assert len(called_with) == 1
-        assert len(called_with[0]) == 4
+        complete, reason = data_source.check_history_completeness()
+        assert complete is True, reason
+        # Readiness decisions are now made by the ReadinessMonitor; the data source
+        # no longer emits trading_ready from history_batch/live_bar handlers.
+        assert len(called_with) == 0
+        assert len(data_source._historical_bars) == 4
 
-    def test_on_bar_in_live_emits_history_ready_when_becomes_complete(self, data_source):
-        """Live bar that completes history should emit history_ready."""
+    def test_on_bar_in_live_adds_bar_without_emitting_history_complete(self, data_source):
+        """Live bar in STREAMING state updates the cache and notifies live_bar, but does not decide readiness."""
         now = int(time.time())
-        called_with = []
-        data_source.on_history_complete = lambda bars: called_with.append(list(bars))
-        data_source._state = DataSourceState.LIVE
-        data_source._history_complete = False
+        history_called_with = []
+        live_called_with = []
+        data_source.on_history_complete = lambda bars: history_called_with.append(list(bars))
+        data_source.on_live_bar = lambda bar: live_called_with.append(bar)
+        data_source._state = DataSourceState.STREAMING
 
         # Seed with continuous recent bars but missing the very last one
         data_source._historical_bars = [
@@ -738,17 +739,18 @@ class TestHistoryEndHandling:
             'pair': 'MNQ',
         })
 
-        assert data_source._history_complete is True
-        assert len(called_with) == 1
-        assert len(called_with[0]) == 4
+        complete, reason = data_source.check_history_completeness()
+        assert complete is True, reason
+        assert len(live_called_with) == 1
+        assert len(history_called_with) == 0
+        assert len(data_source._historical_bars) == 4
 
     def test_on_history_batch_does_not_emit_during_refreshing(self, data_source):
-        """History batches during REFRESHING state should not emit history_ready."""
+        """History batches during REFRESHING state should not emit trading_ready."""
         now = int(time.time())
         called_with = []
         data_source.on_history_complete = lambda bars: called_with.append(list(bars))
         data_source._state = DataSourceState.REFRESHING
-        data_source._history_complete = False
 
         data_source._on_history_batch({
             'bars': [{
@@ -763,7 +765,7 @@ class TestHistoryEndHandling:
             'pair': 'MNQ',
         })
 
-        assert data_source._history_complete is False  # not checked during REFRESHING
+        # Batches are cached but readiness is only signalled at history_end.
         assert len(called_with) == 0
 
 
@@ -779,7 +781,7 @@ class TestRefreshStartHandling:
         old_bar = make_bar(time_val=now - 90000, open_=10.0, high=11.0, low=9.0, close=10.5)
         new_bar = make_bar(time_val=now - 100, open_=11.0, high=12.0, low=10.0, close=11.5)
         data_source._historical_bars = [old_bar, new_bar]
-        data_source._state = DataSourceState.LIVE
+        data_source._state = DataSourceState.STREAMING
         data_source._current_bar = {"time": now}
 
         data_source._on_refresh_start()
@@ -1039,7 +1041,7 @@ class TestErrorHandling:
         data_source.on_history_complete = lambda bars: (_ for _ in ()).throw(RuntimeError("boom"))
         data_source._historical_bars = [make_bar(time_val=int(time.time()) - 300, open_=10.0, high=11.0, low=9.0, close=10.5)]
         data_source._on_history_end()
-        assert data_source.state == DataSourceState.LIVE
+        assert data_source.state == DataSourceState.STREAMING
 
     def test_on_refresh_start_callback_error_does_not_abort(self, data_source):
         data_source.on_before_refresh = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
@@ -1106,7 +1108,7 @@ class TestEndToEndFlow:
 
         # 4. History end arrives
         data_source._on_history_end()
-        assert data_source.state == DataSourceState.LIVE
+        assert data_source.state == DataSourceState.STREAMING
         assert len(history_complete) == 1
         assert len(history_complete[0]) == 2
         # Buffered bar should have been flushed
@@ -1138,7 +1140,7 @@ class TestEndToEndFlow:
         # Simulate history end through gateway
         for cb in callbacks[MessageType.HISTORY_END]:
             cb({})
-        assert data_source.state == DataSourceState.LIVE
+        assert data_source.state == DataSourceState.STREAMING
 
         # Simulate refresh start through gateway
         for cb in callbacks[MessageType.REFRESH_START]:
@@ -1192,7 +1194,7 @@ class TestHeartbeatMonitoring:
         data_source._notifier = mock_notifier
         data_source._heartbeat_check_interval_sec = 0.01
         data_source._heartbeat_alert_threshold_sec = 0.05
-        data_source._state = DataSourceState.LIVE
+        data_source._state = DataSourceState.STREAMING
         data_source._last_completed_bar_time = time.monotonic() - 0.1
         data_source._start_heartbeat_monitor()
         time.sleep(0.15)
@@ -1205,7 +1207,7 @@ class TestHeartbeatMonitoring:
         data_source.logger = logger
         data_source._heartbeat_check_interval_sec = 0.01
         data_source._heartbeat_alert_threshold_sec = 0.05
-        data_source._state = DataSourceState.LIVE
+        data_source._state = DataSourceState.STREAMING
         data_source._last_completed_bar_time = time.monotonic() - 0.1
         data_source._start_heartbeat_monitor()
         time.sleep(0.15)
@@ -1228,7 +1230,7 @@ class TestHeartbeatMonitoring:
         assert not any("🚨 ALERT" in m for m in logger.messages)
 
     def test_on_bar_updates_last_completed_bar_time(self, data_source):
-        data_source._state = DataSourceState.LIVE
+        data_source._state = DataSourceState.STREAMING
         before = time.monotonic()
         data_source._on_bar(make_bar(time_val=1000, open_=10.0, high=11.0, low=9.0, close=10.5))
         assert data_source._last_completed_bar_time >= before
@@ -1268,7 +1270,7 @@ class TestMarketStatusHandling:
         logger = RecordingLogger()
         data_source.logger = logger
         data_source._market_is_open = False
-        data_source._state = DataSourceState.LIVE
+        data_source._state = DataSourceState.STREAMING
         data_source._on_bar(make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5))
         assert data_source._market_is_open is True
         assert any("treating market as OPEN" in m for m in logger.messages)
@@ -1278,7 +1280,7 @@ class TestStaleBarFallback:
 
     def test_stale_fallback_sets_market_closed(self, data_source):
         data_source._market_is_open = True
-        data_source._state = DataSourceState.LIVE
+        data_source._state = DataSourceState.STREAMING
         data_source._heartbeat_check_interval_sec = 0.01
         data_source._start_heartbeat_monitor()
         # Set stale time AFTER starting monitor (which resets baseline)
@@ -1289,7 +1291,7 @@ class TestStaleBarFallback:
 
     def test_stale_fallback_does_not_fire_when_recent_bar(self, data_source):
         data_source._market_is_open = True
-        data_source._state = DataSourceState.LIVE
+        data_source._state = DataSourceState.STREAMING
         data_source._last_completed_bar_time = time.monotonic()
         data_source._heartbeat_check_interval_sec = 0.01
         data_source._start_heartbeat_monitor()

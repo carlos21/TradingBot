@@ -223,7 +223,7 @@ class TestDataSource:
         ds = ZMQDataSource(logger, pair="MNQ")
 
         assert ds.pair == "MNQ"
-        assert not ds.is_live
+        assert not ds.is_streaming
         assert ds._historical_bars == []
 
     def test_bar_aggregation(self):

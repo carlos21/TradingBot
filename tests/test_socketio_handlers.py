@@ -86,17 +86,21 @@ class FakeGateway:
 class FakeZMQDataSource(ZMQDataSource):
     """Lightweight ZMQDataSource that skips the heavy __init__."""
 
-    def __init__(self, gateway=None, state=DataSourceState.CONNECTED):
+    def __init__(self, gateway=None, state=DataSourceState.CONNECTED, cached_bars=None):
         # Do NOT call ZMQDataSource.__init__ to avoid side effects.
         self._gateway = gateway
         self._state = state
         self._refresh_calls = []
         self.pair = "MNQ"
         self.history_days = DEFAULT_HISTORY_DAYS
+        self._cached_bars = cached_bars or []
 
     @property
     def state(self):
         return self._state
+
+    def load_historical_bars(self, timeframe="1m", start_time=None):
+        return list(self._cached_bars)
 
     def request_refresh(self, days=None):
         if self._state == DataSourceState.REFRESHING:
@@ -164,7 +168,9 @@ class TestConnectHandler:
         assert payload["platform_connected"] is True
 
     @patch("src.routes.socketio_handlers.emit")
-    def test_connect_requests_refresh_when_not_refreshing(self, mock_emit, socketio, loader, logger):
+    def test_connect_does_not_request_refresh(self, mock_emit, socketio, loader, logger):
+        # Refreshing on every browser connect duplicates the platform-connect
+        # refresh and adds load on NinjaTrader. Explicit request_refresh only.
         gateway = FakeGateway()
         data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.CONNECTED)
         register_socketio_handlers(
@@ -177,12 +183,13 @@ class TestConnectHandler:
         handler = socketio.handlers["connect"]
         handler(None)
 
-        assert data_source._refresh_calls == [30]
+        assert data_source._refresh_calls == []
 
     @patch("src.routes.socketio_handlers.emit")
-    def test_connect_skips_refresh_when_already_refreshing(self, mock_emit, socketio, loader, logger):
+    def test_connect_emits_history_loaded_when_cached_bars_exist(self, mock_emit, socketio, loader, logger):
         gateway = FakeGateway()
-        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.REFRESHING)
+        cached = [{"time": 1, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}]
+        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.CONNECTED, cached_bars=cached)
         register_socketio_handlers(
             socketio=socketio,
             loader=loader,
@@ -193,7 +200,10 @@ class TestConnectHandler:
         handler = socketio.handlers["connect"]
         handler(None)
 
-        assert data_source._refresh_calls == []
+        emitted_events = [call[0][0] for call in mock_emit.call_args_list]
+        assert "history_loaded" in emitted_events
+        history_loaded_payload = next(call[0][1] for call in mock_emit.call_args_list if call[0][0] == "history_loaded")
+        assert history_loaded_payload["bar_count"] == 1
 
 
 class TestStartStreamHandler:

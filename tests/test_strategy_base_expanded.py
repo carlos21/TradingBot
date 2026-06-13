@@ -34,13 +34,15 @@ from tests.fakes import (
     FakeLogger,
     FakeTradeExecutor,
     FakeTradeRepository,
+    MutableTradingContext,
 )
 
 
 def _make_base(event_publisher=None, line_repo=None, trade_repo=None, trade_manager=None,
                options=None, fixed_stop_loss=20, sl_levels=None, logger=None,
                account_configs=None, broker_spread=0.0, use_fractional_lots=False,
-               risk_pct_per_trade=None, account_balance=100000.0, **kwargs):
+               risk_pct_per_trade=None, account_balance=100000.0,
+               execution_context=None, **kwargs):
     sio = event_publisher or DummySocketIO()
     lr = line_repo or FakeLineRepository()
     tr = trade_repo or FakeTradeRepository()
@@ -71,6 +73,7 @@ def _make_base(event_publisher=None, line_repo=None, trade_repo=None, trade_mana
         broker_spread=broker_spread,
         use_fractional_lots=use_fractional_lots,
         risk_pct_per_trade=risk_pct_per_trade,
+        execution_context=execution_context or MutableTradingContext(warmup=False, trading_enabled=True),
         **kwargs,
     )
 
@@ -264,7 +267,7 @@ class TestTrailingSL:
         strat = _make_base(
             options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, breakeven=BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05)),
         )
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
@@ -550,7 +553,7 @@ class TestReentryOpportunities:
 
     def test_reentry_warmup_skips(self):
         strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, reentry_after_sl=True))
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat._reentry_opportunities.append({
             "level": 100.0, "direction": "long", "pair": "MNQ",
             "extreme_excursion": 100.0,
@@ -938,7 +941,7 @@ class TestMiscMethods:
 
     def test_check_phantom_exits_warmup_skips(self):
         strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.open_trades.append({
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
@@ -950,21 +953,21 @@ class TestMiscMethods:
 
     def test_maybe_remove_line_warmup_on_evaluate_removes(self):
         strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, line_removal_mode=LineRemovalMode.ON_EVALUATE))
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0)
         strat._maybe_remove_line("L1", opened=False)
         assert "L1" not in strat.strategy_lines
 
     def test_maybe_remove_line_warmup_on_enter_keeps(self):
         strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, line_removal_mode=LineRemovalMode.ON_ENTER))
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0)
         strat._maybe_remove_line("L1", opened=False)
         assert "L1" in strat.strategy_lines
 
     def test_on_strategy_bar_warmup_skips_exits(self):
         strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
-        strat.is_warmup = True
+        strat.execution_context.warmup = True
         strat.add_strategy_line("L1", 100.0)
         strat.triggers = [lambda s, sid, line, bar: _make_ctx(s)]
         strat.entry_filters = []

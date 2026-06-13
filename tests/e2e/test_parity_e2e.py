@@ -7,6 +7,7 @@ over real ZMQ sockets with FakeNinjaTrader.
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
@@ -16,6 +17,12 @@ from src.infrastructure.gateway.datasource import DataSourceState
 from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.infrastructure.parity_checker import NinjaTraderParityChecker
 from tests.e2e.conftest import E2EHarness
+
+
+# Fixed timestamp during CME ETH market hours (2024-06-10 14:00 UTC = 09:00 CDT).
+# Using time.time() makes the tests time-dependent because gaps around Friday
+# evening / weekend are classified as market-closed.
+_MKT_HOURS_TS = int(datetime(2024, 6, 10, 14, 0, 0, tzinfo=timezone.utc).timestamp())
 
 
 # ---------------------------------------------------------------------------
@@ -42,11 +49,11 @@ def _feed_bar(nt, bar: dict[str, Any], delay_sec: float = 0.15) -> None:
 
 
 def _transition_to_live(nt, ds, delay_sec: float = 1.0) -> None:
-    """Send empty history so the data source transitions to LIVE state."""
+    """Send empty history so the data source transitions to STREAMING state."""
     nt.send_history_batch([])
     nt.send_history_end()
     for _ in range(200):
-        if ds.state == DataSourceState.LIVE:
+        if ds.state == DataSourceState.STREAMING:
             break
         time.sleep(0.01)
     time.sleep(delay_sec)
@@ -75,7 +82,7 @@ class TestParityCheckE2E:
         """Stream identical bars to Python and FakeNT, run parity, assert all good."""
         nt = e2e_harness.nt
         app = e2e_harness.app
-        now_ts = int(time.time())
+        now_ts = _MKT_HOURS_TS
 
         _transition_to_live(nt, app.data_source)
 
@@ -97,7 +104,7 @@ class TestParityCheckE2E:
         """Stream 5 bars, then manually send audit response missing one → gap detected."""
         nt = e2e_harness.nt
         app = e2e_harness.app
-        now_ts = int(time.time())
+        now_ts = _MKT_HOURS_TS
 
         _transition_to_live(nt, app.data_source)
 
@@ -129,7 +136,7 @@ class TestParityCheckE2E:
         """Stream 3 bars, tamper close in audit response → mismatch detected."""
         nt = e2e_harness.nt
         app = e2e_harness.app
-        now_ts = int(time.time())
+        now_ts = _MKT_HOURS_TS
 
         _transition_to_live(nt, app.data_source)
 
