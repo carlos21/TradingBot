@@ -901,6 +901,149 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        /// <summary>
+        /// Result of a single historical-bar request attempt.
+        /// </summary>
+        private class HistoryAttemptResult
+        {
+            public bool Success { get; set; }
+            public string ErrorMessage { get; set; }
+            public List<JObject> Bars { get; set; } = new List<JObject>();
+            public int Count => Bars?.Count ?? 0;
+            public DateTime FirstTime { get; set; }
+            public DateTime LastTime { get; set; }
+        }
+
+        /// <summary>
+        /// Perform one BarsRequest for the given lookback window and return the collected bars.
+        /// </summary>
+        private async Task<HistoryAttemptResult> TryRequestHistoryAsync(Instrument instrument, int days)
+        {
+            var result = new HistoryAttemptResult();
+            var tcs = new TaskCompletionSource<bool>();
+            var startDateTime = DateTime.UtcNow.AddDays(-days);
+            var endDateTime = DateTime.UtcNow;
+
+            _logger.Info($"[History] DateTime range | days={days} | start={startDateTime:yyyy-MM-dd HH:mm:ss} UTC | end={endDateTime:yyyy-MM-dd HH:mm:ss} UTC | requesting...");
+
+            var barsRequest = new BarsRequest(instrument, startDateTime, endDateTime)
+            {
+                BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 },
+                TradingHours = TradingHours.Get("Default 24 x 7")
+            };
+
+            try
+            {
+                barsRequest.Request((bars, errorCode, errorMessage) =>
+                {
+                    try
+                    {
+                        if (errorCode != ErrorCode.NoError)
+                        {
+                            _logger.Error($"BarsRequest failed: {errorMessage}");
+                            result.ErrorMessage = errorMessage;
+                            tcs.TrySetResult(false);
+                            return;
+                        }
+
+                        if (bars?.Bars == null)
+                        {
+                            _logger.Error("BarsRequest returned null bars");
+                            result.ErrorMessage = "null bars";
+                            tcs.TrySetResult(false);
+                            return;
+                        }
+
+                        result.Success = true;
+                        int receivedCount = bars.Bars.Count;
+
+                        if (receivedCount > 0)
+                        {
+                            result.FirstTime = bars.Bars.GetTime(0);
+                            result.LastTime = bars.Bars.GetTime(receivedCount - 1);
+                            var gapToNow = DateTime.Now - result.LastTime;
+                            _logger.Info($"[History] BarsRequest returned {receivedCount} bars | first={result.FirstTime:yyyy-MM-dd HH:mm:ss} | last={result.LastTime:yyyy-MM-dd HH:mm:ss} | gapToNow={gapToNow.TotalSeconds:F0}s");
+                        }
+                        else
+                        {
+                            _logger.Warning("[History] BarsRequest returned 0 bars");
+                        }
+
+                        for (int i = 0; i < bars.Bars.Count; i++)
+                        {
+                            result.Bars.Add(new JObject
+                            {
+                                ["time"] = ToUnixSeconds(bars.Bars.GetTime(i)),
+                                ["open"] = bars.Bars.GetOpen(i),
+                                ["high"] = bars.Bars.GetHigh(i),
+                                ["low"] = bars.Bars.GetLow(i),
+                                ["close"] = bars.Bars.GetClose(i),
+                                ["volume"] = (long)bars.Bars.GetVolume(i),
+                                ["pair"] = _config.Instrument.Split(' ')[0]
+                            });
+                        }
+
+                        tcs.TrySetResult(true);
+                    }
+                    catch (Exception callbackEx)
+                    {
+                        _logger.Error("BarsRequest callback error", callbackEx);
+                        result.ErrorMessage = callbackEx.Message;
+                        tcs.TrySetResult(false);
+                    }
+                });
+
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30));
+                var completedTask = await Task.WhenAny(tcs.Task, timeoutTask);
+                if (completedTask == timeoutTask)
+                {
+                    _logger.Error("BarsRequest timed out after 30 seconds");
+                    result.ErrorMessage = "timeout";
+                }
+            }
+            finally
+            {
+                barsRequest?.Dispose();
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Trim a multi-day bar list down to the most recent contiguous session.
+        /// When the market is closed, NinjaTrader may return bars spanning several
+        /// sessions; the user expects only the last active session (e.g. Friday).
+        /// </summary>
+        private List<JObject> TrimToLastSession(List<JObject> bars, int sessionBreakThresholdSeconds = 30 * 60)
+        {
+            if (bars == null || bars.Count < 2)
+                return bars;
+
+            int maxGap = 0;
+            int maxGapIndex = -1;
+
+            for (int i = 1; i < bars.Count; i++)
+            {
+                int gap = bars[i]["time"].Value<int>() - bars[i - 1]["time"].Value<int>();
+                if (gap > maxGap)
+                {
+                    maxGap = gap;
+                    maxGapIndex = i;
+                }
+            }
+
+            if (maxGap > sessionBreakThresholdSeconds && maxGapIndex > 0)
+            {
+                var trimmed = bars.Skip(maxGapIndex).ToList();
+                var firstTime = DateTimeOffset.FromUnixTimeSeconds(trimmed[0]["time"].Value<int>()).UtcDateTime;
+                var lastTime = DateTimeOffset.FromUnixTimeSeconds(trimmed[trimmed.Count - 1]["time"].Value<int>()).UtcDateTime;
+                _logger.Info($"[History] Trimmed to last contiguous session: {trimmed.Count} bars | first={firstTime:yyyy-MM-dd HH:mm:ss} | last={lastTime:yyyy-MM-dd HH:mm:ss} (removed {bars.Count - trimmed.Count} older bars)");
+                return trimmed;
+            }
+
+            return bars;
+        }
+
         private async Task SendHistoryAsync(int days = 30)
         {
             try
@@ -912,161 +1055,140 @@ namespace NinjaTrader.NinjaScript.AddOns
                     return;
                 }
 
-                var tcs = new TaskCompletionSource<bool>();
-                // IMPORTANT: DateTime-range BarsRequest forces NinjaTrader to load fresh data
-                // from the data provider if the range is not fully cached. The barsBack overload
-                // reads from cache only and can return stale data on startup before the cache
-                // has been warmed by real-time ticks. We use DateTime range to guarantee fresh
-                // data on every refresh, even though NT may cache the result internally.
-                var startDateTime = DateTime.UtcNow.AddDays(-days);
-                var endDateTime = DateTime.UtcNow;
-                _logger.Info($"[History] DateTime range | days={days} | start={startDateTime:yyyy-MM-dd HH:mm:ss} UTC | end={endDateTime:yyyy-MM-dd HH:mm:ss} UTC | requesting...");
-                var barsRequest = new BarsRequest(instrument, startDateTime, endDateTime)
+                const int maxHistoryDays = 30;
+                // Linear expansion: add one calendar day per attempt instead of doubling.
+                // This avoids the exponential blow-up that loaded 8 days when the user
+                // configured only 1 day.
+                var attemptDaysList = new List<int>();
+                for (int d = days; d <= maxHistoryDays; d++)
                 {
-                    BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 },
-                    TradingHours = TradingHours.Get("Default 24 x 7")
-                };
+                    attemptDaysList.Add(d);
+                }
 
                 // Notify Python that a refresh is starting so it buffers live bars
                 _network?.SendRefreshStart();
                 _logger.Info("Sending refresh_start");
 
-                try
+                HistoryAttemptResult finalResult = null;
+                int attempt = 0;
+                int attemptDays = days;
+
+                foreach (var nextDays in attemptDaysList)
                 {
-                    var batch = new List<JObject>();
-                    int count = 0;
+                    attempt++;
+                    attemptDays = nextDays;
 
-                    barsRequest.Request((bars, errorCode, errorMessage) =>
+                    var result = await TryRequestHistoryAsync(instrument, attemptDays);
+                    if (!result.Success)
                     {
-                        try
-                        {
-                            if (errorCode != ErrorCode.NoError)
-                            {
-                                _logger.Error($"BarsRequest failed: {errorMessage}");
-                                tcs.TrySetResult(false);
-                                return;
-                            }
+                        _logger.Warning($"[History] Attempt {attempt}/{attemptDaysList.Count} failed: {result.ErrorMessage}");
+                        if (attempt < attemptDaysList.Count)
+                            await Task.Delay(TimeSpan.FromMilliseconds(250));
+                        continue;
+                    }
 
-                            if (bars?.Bars == null)
-                            {
-                                _logger.Error("BarsRequest returned null bars");
-                                tcs.TrySetResult(false);
-                                return;
-                            }
-
-                            int receivedCount = bars.Bars.Count;
-                            if (receivedCount > 0)
-                            {
-                                var firstTime = bars.Bars.GetTime(0);
-                                var lastTime = bars.Bars.GetTime(receivedCount - 1);
-                                _lastHistoryBarTime = lastTime;
-                                var gapToNow = DateTime.Now - lastTime;
-                                _logger.Info($"[History] BarsRequest returned {receivedCount} bars | first={firstTime:yyyy-MM-dd HH:mm:ss} | last={lastTime:yyyy-MM-dd HH:mm:ss} | gapToNow={gapToNow.TotalSeconds:F0}s");
-                            }
-                            else
-                            {
-                                _logger.Warning("[History] BarsRequest returned 0 bars");
-                            }
-
-                            for (int i = 0; i < bars.Bars.Count; i++)
-                            {
-                                batch.Add(new JObject
-                                {
-                                    ["time"] = ToUnixSeconds(bars.Bars.GetTime(i)),
-                                    ["open"] = bars.Bars.GetOpen(i),
-                                    ["high"] = bars.Bars.GetHigh(i),
-                                    ["low"] = bars.Bars.GetLow(i),
-                                    ["close"] = bars.Bars.GetClose(i),
-                                    ["volume"] = (long)bars.Bars.GetVolume(i),
-                                    ["pair"] = _config.Instrument.Split(' ')[0]
-                                });
-                                count++;
-
-                                if (batch.Count >= _config.BatchSize)
-                                {
-                                    _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
-                                    batch.Clear();
-                                }
-                            }
-
-                            if (batch.Count > 0) _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, days);
-
-                            _barsSent = count;
-                            _logger.Info($"Sent {count} historical bars ({days} days)");
-
-                            // Gap-fill: if history ends significantly before now, try to fetch missing bars
-                            if (_lastHistoryBarTime != DateTime.MinValue)
-                            {
-                                var gapToNow = DateTime.Now - _lastHistoryBarTime;
-                                if (gapToNow.TotalMinutes > 5)
-                                {
-                                    _logger.Info($"[History] Detected {gapToNow.TotalMinutes:F0}m gap to now — attempting gap-fill from {_lastHistoryBarTime:yyyy-MM-dd HH:mm:ss} UTC");
-                                    _ = SendGapFillAsync(instrument, _lastHistoryBarTime, DateTime.UtcNow).ContinueWith(t =>
-                                    {
-                                        if (t.IsFaulted)
-                                            _logger.Error("Gap-fill failed", t.Exception?.GetBaseException());
-                                    }, TaskContinuationOptions.OnlyOnFaulted);
-                                }
-                            }
-
-                            // Internal gap-fill: scan the returned history for holes and patch them.
-                            // End-gap fill (above) only covers the tail; this catches missing bars
-                            // in the middle of the range (e.g. NT cache was incomplete at request time).
-                            if (receivedCount >= 2)
-                            {
-                                var nowUtc = DateTime.UtcNow;
-                                var fourHoursAgo = nowUtc.AddHours(-4);
-                                for (int i = 1; i < receivedCount; i++)
-                                {
-                                    var prevTime = bars.Bars.GetTime(i - 1);
-                                    var currTime = bars.Bars.GetTime(i);
-                                    var gap = currTime - prevTime;
-                                    if (gap.TotalSeconds > 60)
-                                    {
-                                        // Skip expected exchange breaks (e.g. CME 60-min daily break)
-                                        if (gap.TotalMinutes >= 30)
-                                            continue;
-                                        // Only chase recent gaps; old holes are not critical for trading
-                                        if (prevTime < fourHoursAgo)
-                                            continue;
-
-                                        _logger.Info($"[History] Detected internal gap: {gap.TotalMinutes:F0}m between {prevTime:yyyy-MM-dd HH:mm:ss} and {currTime:yyyy-MM-dd HH:mm:ss} UTC — attempting gap-fill");
-                                        _ = SendGapFillAsync(instrument, prevTime, currTime).ContinueWith(t =>
-                                        {
-                                            if (t.IsFaulted)
-                                                _logger.Error("Internal gap-fill failed", t.Exception?.GetBaseException());
-                                        }, TaskContinuationOptions.OnlyOnFaulted);
-                                    }
-                                }
-                            }
-
-                            _network?.SendHistoryEnd();
-                            tcs.TrySetResult(true);
-                        }
-                        catch (Exception callbackEx)
-                        {
-                            _logger.Error("BarsRequest callback error", callbackEx);
-                            tcs.TrySetResult(false);
-                        }
-                    });
-
-                    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30));
-                    var completedTask = await Task.WhenAny(tcs.Task, timeoutTask);
-                    if (completedTask == timeoutTask)
+                    finalResult = result;
+                    if (result.Count > 0)
                     {
-                        _logger.Error("BarsRequest timed out after 30 seconds");
-                        _network?.SendError("ninjatrader", "history_timeout", "BarsRequest timed out after 30 seconds");
+                        _logger.Info($"[History] Attempt {attempt}/{attemptDaysList.Count} succeeded with {result.Count} bar(s)");
+                        break;
+                    }
+
+                    if (attempt < attemptDaysList.Count)
+                    {
+                        _logger.Info($"[History] Attempt {attempt}/{attemptDaysList.Count} returned 0 bars — expanding lookback window to {attemptDaysList[attempt]} day(s) (+1 day)");
+                        await Task.Delay(TimeSpan.FromMilliseconds(250));
                     }
                 }
-                finally
+
+                if (finalResult == null || finalResult.Count == 0)
                 {
-                    barsRequest?.Dispose();
+                    _logger.Warning($"[History] No historical bars found after {attempt} attempt(s) up to {attemptDays} day(s)");
+                    _network?.SendHistoryEnd();
+                    return;
                 }
+
+                // When the market has been closed for several days, the search window
+                // can span multiple sessions. Trim to the most recent contiguous session
+                // so the chart/strategy only receives the last active session's bars.
+                int barsBeforeTrim = finalResult.Count;
+                finalResult.Bars = TrimToLastSession(finalResult.Bars);
+                if (finalResult.Bars.Count > 0)
+                {
+                    finalResult.LastTime = DateTimeOffset.FromUnixTimeSeconds(finalResult.Bars[finalResult.Bars.Count - 1]["time"].Value<int>()).UtcDateTime;
+                }
+
+                // Send the collected bars in batches
+                var batch = new List<JObject>();
+                foreach (var bar in finalResult.Bars)
+                {
+                    batch.Add(bar);
+                    if (batch.Count >= _config.BatchSize)
+                    {
+                        _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, attemptDays);
+                        batch.Clear();
+                    }
+                }
+                if (batch.Count > 0)
+                    _network?.SendHistoryBatch(_config.Instrument.Split(' ')[0], batch, attemptDays);
+
+                _barsSent = finalResult.Count;
+                _lastHistoryBarTime = finalResult.LastTime;
+                _logger.Info($"Sent {finalResult.Count} historical bars ({attemptDays} days requested, {barsBeforeTrim - finalResult.Count} trimmed)");
+
+                // Gap-fill: if history ends significantly before now, try to fetch missing bars
+                if (_lastHistoryBarTime != DateTime.MinValue)
+                {
+                    var gapToNow = DateTime.Now - _lastHistoryBarTime;
+                    if (gapToNow.TotalMinutes > 5)
+                    {
+                        _logger.Info($"[History] Detected {gapToNow.TotalMinutes:F0}m gap to now — attempting gap-fill from {_lastHistoryBarTime:yyyy-MM-dd HH:mm:ss} UTC");
+                        _ = SendGapFillAsync(instrument, _lastHistoryBarTime, DateTime.UtcNow).ContinueWith(t =>
+                        {
+                            if (t.IsFaulted)
+                                _logger.Error("Gap-fill failed", t.Exception?.GetBaseException());
+                        }, TaskContinuationOptions.OnlyOnFaulted);
+                    }
+                }
+
+                // Internal gap-fill: scan the returned history for holes and patch them.
+                if (finalResult.Count >= 2)
+                {
+                    var nowUtc = DateTime.UtcNow;
+                    var fourHoursAgo = nowUtc.AddHours(-4);
+                    for (int i = 1; i < finalResult.Count; i++)
+                    {
+                        var prevTime = finalResult.Bars[i - 1]["time"].Value<int>();
+                        var currTime = finalResult.Bars[i]["time"].Value<int>();
+                        var gap = currTime - prevTime;
+                        if (gap > 60)
+                        {
+                            // Skip expected exchange breaks (e.g. CME 60-min daily break)
+                            if (gap >= 30 * 60)
+                                continue;
+
+                            var prevDateTime = DateTimeOffset.FromUnixTimeSeconds(prevTime).UtcDateTime;
+                            var currDateTime = DateTimeOffset.FromUnixTimeSeconds(currTime).UtcDateTime;
+                            // Only chase recent gaps; old holes are not critical for trading
+                            if (prevDateTime < fourHoursAgo)
+                                continue;
+
+                            _logger.Info($"[History] Detected internal gap: {(gap / 60):F0}m between {prevDateTime:yyyy-MM-dd HH:mm:ss} and {currDateTime:yyyy-MM-dd HH:mm:ss} UTC — attempting gap-fill");
+                            _ = SendGapFillAsync(instrument, prevDateTime, currDateTime).ContinueWith(t =>
+                            {
+                                if (t.IsFaulted)
+                                    _logger.Error("Internal gap-fill failed", t.Exception?.GetBaseException());
+                            }, TaskContinuationOptions.OnlyOnFaulted);
+                        }
+                    }
+                }
+
+                _network?.SendHistoryEnd();
             }
             catch (Exception ex)
             {
                 _logger.Error("SendHistory error", ex);
-                _network?.SendError("ninjatrader", "history_load_failed", $"Failed to load {days} days of history", FormatExceptionDetails(ex));
+                _network?.SendError("ninjatrader", "history_load_failed", "Failed to load history", FormatExceptionDetails(ex));
             }
         }
 

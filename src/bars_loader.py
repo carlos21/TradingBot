@@ -229,6 +229,11 @@ class BarsLoader:
         self.streaming = False
         self.socketio.emit('stream_status', {'playing': False})
 
+    def _is_historical_bar(self, bar: dict) -> bool:
+        """In live mode, bars older than a few minutes are historical warm-up bars
+        and should be replayed at full speed instead of chart playback speed."""
+        return self.live_mode and bar['time'] < time.time() - 300
+
     def _process_bar(self, bar: dict):
         # Gap detection: only in live mode — replay has expected overnight gaps
         if self.live_mode and self._last_processed_bar_time > 0:
@@ -242,9 +247,12 @@ class BarsLoader:
                 )
         self._last_processed_bar_time = bar['time']
 
+        is_historical = self._is_historical_bar(bar)
+
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
             self.socketio.emit('bar', bar)
-            time.sleep(self._emit_delay)
+            if not is_historical:
+                time.sleep(self._emit_delay)
             if self._step_mode:
                 self._stop_after_step()
             return
@@ -263,7 +271,8 @@ class BarsLoader:
             if self._1m_buffer:
                 agg = self._aggregate_time_window(self._1m_buffer, self._current_group_start, window_secs)
                 self.socketio.emit('bar', agg)
-                time.sleep(self._emit_delay)
+                if not is_historical:
+                    time.sleep(self._emit_delay)
                 if self._step_mode:
                     self._stop_after_step()
             self._1m_buffer = [bar]
@@ -299,7 +308,8 @@ class BarsLoader:
                             window_secs = self.group_size * 60
                             agg = self._aggregate_time_window(self._1m_buffer, self._current_group_start, window_secs)
                             self.socketio.emit('bar', agg)
-                            time.sleep(self._emit_delay)
+                            if not self._is_historical_bar(agg):
+                                time.sleep(self._emit_delay)
                 except Exception:
                     pass
 

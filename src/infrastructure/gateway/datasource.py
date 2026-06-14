@@ -90,6 +90,10 @@ class ZMQDataSource(CombinedDataSource):
         self._gateway_config = gateway_config or GatewayConfig()
         self._owns_gateway = gateway is None
 
+        # Track the first connect so we always refresh history on startup.
+        # After that, only refresh if the disconnect lasted long enough to be "real".
+        self._first_platform_connect: bool = True
+
         # Data storage
         self._historical_bars: list[dict] = []
         self._bars_lock = threading.RLock()
@@ -775,15 +779,28 @@ class ZMQDataSource(CombinedDataSource):
 
     def on_platform_connected(self) -> None:
         """Called when the platform connects. Auto-request refresh if needed."""
-        if self._state == DataSourceState.DISCONNECTED:
-            self._state = DataSourceState.CONNECTED
-            delay = self._history_request_delay_sec
-            self.logger.info(f"Platform connected, requesting historical data refresh in {delay}s")
-            self._cancel_pending_refresh_timer()
-            self._pending_refresh_timer = threading.Timer(delay, self._do_delayed_refresh)
-            self._pending_refresh_timer.start()
-        else:
+        if self._state != DataSourceState.DISCONNECTED:
             self.logger.debug(f"Platform connected ignored: state={self._state.name}")
+            return
+
+        self._state = DataSourceState.CONNECTED
+
+        should_refresh = (
+            self._first_platform_connect
+            or self._gateway is None
+            or self._gateway.was_last_disconnect_real
+        )
+        self._first_platform_connect = False
+
+        if not should_refresh:
+            self.logger.info("Platform reconnected after brief blip — skipping history refresh")
+            return
+
+        delay = self._history_request_delay_sec
+        self.logger.info(f"Platform connected, requesting historical data refresh in {delay}s")
+        self._cancel_pending_refresh_timer()
+        self._pending_refresh_timer = threading.Timer(delay, self._do_delayed_refresh)
+        self._pending_refresh_timer.start()
 
     def on_platform_disconnected(self) -> None:
         """Called when the platform disconnects."""

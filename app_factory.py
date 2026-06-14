@@ -75,6 +75,7 @@ from src.strategies.liquidity_v2.controllers.lines_controller import LinesContro
 from src.strategies.protocols import LiquidityStrategy
 from src.strategies.strategy_factory import StrategyFactory
 from src.utils.app_logger import ConsoleLogger, FileAndConsoleLogger, ILogger
+from src.utils.history_loaded_deduper import HistoryLoadedDeduper
 
 
 @dataclass
@@ -199,6 +200,7 @@ def _setup_live_mode_callbacks(
     logger: ILogger,
     socketio: SocketIO,
     readiness_state_machine: ReadinessStateMachine,
+    history_loaded_deduper: HistoryLoadedDeduper,
 ):
     """Wire the data source into the readiness state machine."""
     warmup_orchestrator = WarmupOrchestrator(strategy, logger=logger)
@@ -212,6 +214,7 @@ def _setup_live_mode_callbacks(
         live_bar_processor=loader.bar_callback,
         data_source=data_source,
         socketio_publisher=socketio,
+        history_loaded_emitter=history_loaded_deduper.emit,
         logger=logger,
     )
     monitor.set_pair(pair)
@@ -550,12 +553,17 @@ def create_app(
     loader.bar_callback = bar_callback
     loader.stream_end_callback = stream_end_callback
 
+    # Shared deduper so the readiness monitor and the Socket.IO connect handler
+    # do not emit duplicate history_loaded events when the browser reconnects.
+    history_loaded_deduper = HistoryLoadedDeduper()
+
     # In live mode, wire direct callbacks on the data source
     bar_auditor = None
     readiness_monitor = None
     if live_mode:
         readiness_monitor = _setup_live_mode_callbacks(
-            data_source, tstrategy, loader, repos, pair, logger, socketio, readiness_state_machine
+            data_source, tstrategy, loader, repos, pair, logger, socketio,
+            readiness_state_machine, history_loaded_deduper
         )
 
         # Start background bar auditor to verify NT bars match Python bars
@@ -653,6 +661,7 @@ def create_app(
     register_socketio_handlers(
         socketio, loader, data_source, live_mode, logger, parity_service,
         readiness_monitor=readiness_monitor,
+        history_loaded_deduper=history_loaded_deduper,
     )
 
     from werkzeug.exceptions import HTTPException

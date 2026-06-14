@@ -41,6 +41,7 @@ class ReadinessMonitor:
         live_bar_processor: Callable[[dict[str, Any]], None],
         data_source: CombinedDataSource | None = None,
         socketio_publisher: EventPublisher | None = None,
+        history_loaded_emitter: Callable[[Any, dict[str, Any]], None] | None = None,
         logger: ILogger | None = None,
         retry_base_delay_sec: float = 2.0,
         retry_max_delay_sec: float = 60.0,
@@ -52,6 +53,7 @@ class ReadinessMonitor:
         self._live_bar_processor = live_bar_processor
         self._data_source = data_source
         self._socketio_publisher = socketio_publisher
+        self._history_loaded_emitter = history_loaded_emitter
         self._logger = logger
         self._pair: str = ""
         self._retry_base_delay_sec = retry_base_delay_sec
@@ -84,15 +86,16 @@ class ReadinessMonitor:
         # Notify the frontend that historical bars are available for display,
         # even if the data is not yet fresh enough for live trading.
         if self._socketio_publisher is not None:
+            payload = {
+                "readiness_state": self._state_machine.state.name,
+                "readiness_reason": self._state_machine.reason,
+                "bar_count": len(bars),
+            }
             with contextlib.suppress(Exception):
-                self._socketio_publisher.emit(
-                    "history_loaded",
-                    {
-                        "readiness_state": self._state_machine.state.name,
-                        "readiness_reason": self._state_machine.reason,
-                        "bar_count": len(bars),
-                    },
-                )
+                if self._history_loaded_emitter is not None:
+                    self._history_loaded_emitter(self._socketio_publisher, payload)
+                else:
+                    self._socketio_publisher.emit("history_loaded", payload)
 
         self._warmup_orchestrator.run(bars, self._pair)
         self._try_warmup_complete()

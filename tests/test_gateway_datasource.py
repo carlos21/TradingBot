@@ -203,6 +203,22 @@ class TestPlatformConnection:
         data_source.on_platform_connected()
         mock_gateway.send_refresh_request.assert_not_called()
 
+    def test_on_platform_connected_skips_refresh_after_brief_blip(self, data_source, mock_gateway):
+        data_source._first_platform_connect = False
+        mock_gateway.was_last_disconnect_real = False
+        data_source.on_platform_connected()
+        assert data_source.state == DataSourceState.CONNECTED
+        mock_gateway.send_refresh_request.assert_not_called()
+
+    def test_on_platform_connected_refreshes_after_real_disconnect(self, data_source, mock_gateway):
+        data_source._history_request_delay_sec = 0.1
+        data_source._first_platform_connect = False
+        mock_gateway.was_last_disconnect_real = True
+        data_source.on_platform_connected()
+        assert data_source._pending_refresh_timer is not None
+        data_source._pending_refresh_timer.join()
+        mock_gateway.send_refresh_request.assert_called_once()
+
     def test_on_platform_disconnected_cancels_pending_timer(self, data_source):
         data_source._history_request_delay_sec = 10.0
         data_source.on_platform_connected()
@@ -766,6 +782,42 @@ class TestHistoryEndHandling:
 
         # Batches are cached but readiness is only signalled at history_end.
         assert len(called_with) == 0
+
+    def test_empty_history_then_late_gap_fill_populates_chart(self, data_source):
+        """
+        Regression test for the closed-market empty-history issue.
+
+        When NinjaTrader's first BarsRequest returns 0 bars (e.g. market closed
+        and history_days=1), the C# connector expands its lookback and sends a
+        late gap-fill batch. The Python side must keep those bars so the UI can
+        display the most recent session instead of a single stale candle.
+        """
+        now = int(time.time())
+        data_source._state = DataSourceState.REFRESHING
+
+        # First history load completes with zero bars -> switches to STREAMING.
+        data_source._on_history_end()
+        assert data_source.state == DataSourceState.STREAMING
+        assert len(data_source._historical_bars) == 0
+
+        # Later, the adaptive lookback on the NT side finds older bars and
+        # sends them as a gap-fill batch while we are already streaming.
+        old_bars = [
+            {'time': now - 4 * 86400, 'open': 10.0, 'high': 11.0, 'low': 9.0, 'close': 10.5, 'volume': 100, 'pair': 'MNQ'},
+            {'time': now - 4 * 86400 + 60, 'open': 10.5, 'high': 12.0, 'low': 10.0, 'close': 11.5, 'volume': 200, 'pair': 'MNQ'},
+        ]
+        data_source._on_history_batch({
+            'bars': old_bars,
+            'pair': 'MNQ',
+        })
+
+        # Bars must be cached and returned by the public query so the chart
+        # can display historical data even though the market is closed.
+        assert len(data_source._historical_bars) == 2
+        loaded = data_source.load_historical_bars()
+        assert len(loaded) == 2
+        assert loaded[0]['time'] == old_bars[0]['time']
+        assert loaded[-1]['time'] == old_bars[-1]['time']
 
 
 # ---------------------------------------------------------------------------

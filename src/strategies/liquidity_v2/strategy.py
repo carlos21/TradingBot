@@ -110,6 +110,11 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
         self.decision_logs = []
 
+        # Track TSI activity during warm-up so we can log a single summary
+        # instead of flooding the console with one line per bar/timeframe.
+        self._tsi_warmup_stats = {"bars": 0, "crosses": 0}
+        self._tsi_summary_logged = False
+
         for tf in self._internal_timeframes:
             self._tf_aggregators[tf] = {
                 "seconds": self._parse_tf_seconds(tf),
@@ -128,6 +133,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             self._reentry_opportunities.clear()
             self.trade_manager.open_trades.clear()
             self.decision_logs.clear()
+            self._tsi_warmup_stats = {"bars": 0, "crosses": 0}
+            self._tsi_summary_logged = False
             for tf in self._internal_timeframes:
                 self._tf_aggregators[tf] = {
                     "seconds": self._parse_tf_seconds(tf),
@@ -447,38 +454,63 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 closes = [b['close'] for b in history]
                 tsi_vals, sig_vals = _calculate_tsi_series(closes, 6, 13, 4)
 
-                if (not tsi_vals or not sig_vals) and self.logger:
-                    self.logger.info(f"[TSI:{tf}] bar={bar['time']} close={bar['close']:.2f} — insufficient history for TSI ({len(history)} bars)")
+                if self.is_warmup:
+                    # Accumulate a single summary during warm-up instead of logging
+                    # thousands of per-bar TSI lines.
+                    self._tsi_warmup_stats["bars"] += 1
 
-                if tsi_vals and sig_vals:
-                    # --- NEW: Detect Crossover ---
-                    cross_type = None
-                    curr_tsi = tsi_vals[-1]
-                    curr_sig = sig_vals[-1]
-                    if len(tsi_vals) >= 2:
-                        prev_tsi = tsi_vals[-2]
-                        prev_sig = sig_vals[-2]
-
-                        # Bullish Cross: Blue crosses ABOVE Red
-                        if prev_tsi <= prev_sig and curr_tsi > curr_sig:
-                            cross_type = 'bullish'
-                        # Bearish Cross: Blue crosses BELOW Red
-                        elif prev_tsi >= prev_sig and curr_tsi < curr_sig:
-                            cross_type = 'bearish'
-
-                    if self.logger:
-                        self.logger.info(
-                            f"[TSI:{tf}] bar={bar['time']} close={bar['close']:.2f} "
-                            f"tsi={curr_tsi:+.2f} sig={curr_sig:+.2f} cross={cross_type or 'none'}"
+                    if tsi_vals and sig_vals and len(tsi_vals) >= 2:
+                        prev_tsi, curr_tsi = tsi_vals[-2], tsi_vals[-1]
+                        prev_sig, curr_sig = sig_vals[-2], sig_vals[-1]
+                        crossed = (
+                            (prev_tsi <= prev_sig and curr_tsi > curr_sig)
+                            or (prev_tsi >= prev_sig and curr_tsi < curr_sig)
                         )
+                        if crossed:
+                            self._tsi_warmup_stats["crosses"] += 1
+                else:
+                    # Log a summary once when warm-up ends, then resume normal logging.
+                    if not self._tsi_summary_logged and self._tsi_warmup_stats["bars"] > 0:
+                        if self.logger:
+                            self.logger.info(
+                                f"[TSI] Warm-up complete: {self._tsi_warmup_stats['crosses']} "
+                                f"cross(es) across {self._tsi_warmup_stats['bars']} bar(s)"
+                            )
+                        self._tsi_warmup_stats = {"bars": 0, "crosses": 0}
+                        self._tsi_summary_logged = True
 
-                    self.event_publisher.emit('indicator_update', {
-                        'tf': tf,
-                        'time': bar['time'],
-                        'tsi': tsi_vals[-1],
-                        'signal': sig_vals[-1],
-                        'cross_type': cross_type
-                    })
+                    if (not tsi_vals or not sig_vals) and self.logger:
+                        self.logger.info(f"[TSI:{tf}] bar={bar['time']} close={bar['close']:.2f} — insufficient history for TSI ({len(history)} bars)")
+
+                    if tsi_vals and sig_vals:
+                        # --- NEW: Detect Crossover ---
+                        cross_type = None
+                        curr_tsi = tsi_vals[-1]
+                        curr_sig = sig_vals[-1]
+                        if len(tsi_vals) >= 2:
+                            prev_tsi = tsi_vals[-2]
+                            prev_sig = sig_vals[-2]
+
+                            # Bullish Cross: Blue crosses ABOVE Red
+                            if prev_tsi <= prev_sig and curr_tsi > curr_sig:
+                                cross_type = 'bullish'
+                            # Bearish Cross: Blue crosses BELOW Red
+                            elif prev_tsi >= prev_sig and curr_tsi < curr_sig:
+                                cross_type = 'bearish'
+
+                        if self.logger and (cross_type or True):
+                            self.logger.info(
+                                f"[TSI:{tf}] bar={bar['time']} close={bar['close']:.2f} "
+                                f"tsi={curr_tsi:+.2f} sig={curr_sig:+.2f} cross={cross_type or 'none'}"
+                            )
+
+                        self.event_publisher.emit('indicator_update', {
+                            'tf': tf,
+                            'time': bar['time'],
+                            'tsi': tsi_vals[-1],
+                            'signal': sig_vals[-1],
+                            'cross_type': cross_type
+                        })
 
             # Skip trigger evaluation during warm-up or when trading is disabled.
             if self.is_warmup or not self._execution_context.is_trading_enabled():

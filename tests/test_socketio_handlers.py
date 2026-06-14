@@ -159,13 +159,15 @@ class TestConnectHandler:
         handler = socketio.handlers["connect"]
         handler(None)
 
-        mock_emit.assert_called_once()
-        event, payload = mock_emit.call_args[0]
-        assert event == "stream_status"
-        assert payload["playing"] is False
-        assert payload["live_mode"] is True
-        assert payload["gateway_running"] is True
-        assert payload["platform_connected"] is True
+        assert mock_emit.call_count == 2
+        first_event, first_payload = mock_emit.call_args_list[0][0]
+        assert first_event == "stream_status"
+        assert first_payload["playing"] is False
+        assert first_payload["live_mode"] is True
+        assert first_payload["gateway_running"] is True
+        assert first_payload["platform_connected"] is True
+        second_event = mock_emit.call_args_list[1][0][0]
+        assert second_event == "platform_connected"
 
     @patch("src.routes.socketio_handlers.emit")
     def test_connect_does_not_request_refresh(self, mock_emit, socketio, loader, logger):
@@ -204,6 +206,50 @@ class TestConnectHandler:
         assert "history_loaded" in emitted_events
         history_loaded_payload = next(call[0][1] for call in mock_emit.call_args_list if call[0][0] == "history_loaded")
         assert history_loaded_payload["bar_count"] == 1
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_connect_dedupes_history_loaded_on_reconnect(self, mock_emit, socketio, loader, logger):
+        gateway = FakeGateway()
+        cached = [{"time": 1, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}]
+        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.CONNECTED, cached_bars=cached)
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=True,
+            _logger=logger,
+        )
+        handler = socketio.handlers["connect"]
+
+        # Simulate three reconnects with the same cached bars.
+        handler(None)
+        handler(None)
+        handler(None)
+
+        history_loaded_calls = [call for call in mock_emit.call_args_list if call[0][0] == "history_loaded"]
+        assert len(history_loaded_calls) == 1
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_connect_re_emits_history_loaded_when_bars_change(self, mock_emit, socketio, loader, logger):
+        gateway = FakeGateway()
+        cached = [{"time": 1, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}]
+        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.CONNECTED, cached_bars=cached)
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=True,
+            _logger=logger,
+        )
+        handler = socketio.handlers["connect"]
+        handler(None)
+
+        # Change the cached bars (e.g. after a refresh).
+        data_source._cached_bars = [{"time": 2, "open": 2, "high": 3, "low": 1, "close": 2, "volume": 1, "pair": "MNQ"}]
+        handler(None)
+
+        history_loaded_calls = [call for call in mock_emit.call_args_list if call[0][0] == "history_loaded"]
+        assert len(history_loaded_calls) == 2
 
 
 class TestStartStreamHandler:
@@ -524,3 +570,20 @@ class TestConnectionChangeCallback:
         callback(False)
         assert data_source._refresh_calls == []
         assert ("platform_disconnected", (), {}) in socketio.emitted
+
+    def test_log_forwarding_is_rate_limited(self, socketio, loader, logger):
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=True,
+            _logger=logger,
+        )
+
+        for i in range(100):
+            logger.info(f"flood message {i}")
+
+        system_log_events = [e for e in socketio.emitted if e[0] == "system_log"]
+        # Bucket capacity is 40 and rate is 20/sec; 100 instantaneous calls
+        # should be capped near the capacity.
+        assert len(system_log_events) <= 50

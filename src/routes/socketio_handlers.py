@@ -2,6 +2,7 @@
 
 import contextlib
 import threading
+import time
 
 from flask_socketio import SocketIO, emit
 
@@ -9,6 +10,28 @@ from src.bars_loader import BarsLoader
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.utils.app_logger import ILogger
+
+
+class _TokenBucket:
+    """Simple thread-safe token bucket for rate limiting."""
+
+    def __init__(self, rate: float, capacity: float):
+        self._rate = rate
+        self._capacity = capacity
+        self._tokens = float(capacity)
+        self._last_update = time.monotonic()
+        self._lock = threading.Lock()
+
+    def allow(self) -> bool:
+        with self._lock:
+            now = time.monotonic()
+            elapsed = now - self._last_update
+            self._last_update = now
+            self._tokens = min(self._capacity, self._tokens + elapsed * self._rate)
+            if self._tokens >= 1.0:
+                self._tokens -= 1.0
+                return True
+            return False
 
 
 def register_socketio_handlers(
@@ -19,6 +42,7 @@ def register_socketio_handlers(
     _logger: ILogger,
     parity_service=None,
     readiness_monitor=None,
+    history_loaded_deduper=None,
 ):
     """Register Socket.IO event handlers.
 
@@ -29,6 +53,23 @@ def register_socketio_handlers(
         live_mode: Whether running in live trading mode
     """
 
+    # Track the last history-loaded signature emitted on connect so reconnects
+    # do not spam the frontend with duplicate events.
+    _last_history_loaded_signature: dict | None = None
+
+    def _history_loaded_signature(cached: list[dict]) -> dict:
+        readiness_state = 'UNKNOWN'
+        readiness_reason = 'Cached bars available on connect'
+        if readiness_monitor is not None:
+            health = readiness_monitor.get_health()
+            readiness_state = health.get('readiness_state', readiness_state)
+            readiness_reason = health.get('readiness_reason', readiness_reason)
+        return {
+            'readiness_state': readiness_state,
+            'readiness_reason': readiness_reason,
+            'bar_count': len(cached),
+            'last_bar_time': cached[-1]['time'] if cached else None,
+        }
 
     def _emit_health():
         """Emit current health snapshot if ZMQDataSource is available."""
@@ -55,24 +96,33 @@ def register_socketio_handlers(
         })
         _emit_health()
 
+        # If the platform is already connected, immediately clear the reconnect
+        # overlay for a reconnecting browser.
+        if live_mode and platform_connected:
+            emit('platform_connected')
+
         # If historical bars are already cached (e.g. server has been running),
         # tell the frontend to draw them immediately. This avoids an empty
         # chart while waiting for a fresh history load cycle.
+        # Reconnects are deduplicated by signature so the same cached batch is
+        # not emitted repeatedly.
         if live_mode and isinstance(data_source, ZMQDataSource):
             try:
                 cached = data_source.load_historical_bars("1m")
                 if cached:
-                    readiness_state = 'UNKNOWN'
-                    readiness_reason = 'Cached bars available on connect'
-                    if readiness_monitor is not None:
-                        health = readiness_monitor.get_health()
-                        readiness_state = health.get('readiness_state', readiness_state)
-                        readiness_reason = health.get('readiness_reason', readiness_reason)
-                    emit('history_loaded', {
-                        'readiness_state': readiness_state,
-                        'readiness_reason': readiness_reason,
-                        'bar_count': len(cached),
-                    })
+                    payload = _history_loaded_signature(cached)
+                    if history_loaded_deduper is not None:
+                        history_loaded_deduper.emit(socketio, payload)
+                    else:
+                        signature = _history_loaded_signature(cached)
+                        nonlocal _last_history_loaded_signature
+                        if signature != _last_history_loaded_signature:
+                            _last_history_loaded_signature = signature
+                            emit('history_loaded', {
+                                'readiness_state': signature['readiness_state'],
+                                'readiness_reason': signature['readiness_reason'],
+                                'bar_count': signature['bar_count'],
+                            })
             except Exception:
                 pass  # Don't break connect if cached-bar lookup fails
 
@@ -197,9 +247,16 @@ def register_socketio_handlers(
 
     # Wire up log forwarding to connected browsers
     _original_logger_methods = {}
+    _system_log_bucket = _TokenBucket(rate=20.0, capacity=40.0)
 
     def _forward_log(level: str, message: str):
-        """Forward log entries to browsers via Socket.IO."""
+        """Forward log entries to browsers via Socket.IO.
+
+        Rate-limited so a log storm (e.g. TSI during warm-up) cannot saturate
+        the Socket.IO connection and disconnect the browser.
+        """
+        if not _system_log_bucket.allow():
+            return
         with contextlib.suppress(Exception):
             socketio.emit('system_log', {
                 'time': __import__('time').time(),

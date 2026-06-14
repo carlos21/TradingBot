@@ -178,7 +178,8 @@ to be:
         self._platform_info: dict[str, Any] | None = None
         self._connection_listeners: list[Callable[[bool], None]] = []
         self._disconnect_time: float | None = None  # When disconnect was detected
-        self._reconnect_debounce_sec: float = 3.0  # Minimum disconnect duration before notifying reconnect
+        self._reconnect_debounce_sec: float = 3.0  # Minimum disconnect duration before treating it as a real disconnect
+        self._last_disconnect_was_real: bool = True  # Used by data source to decide whether to refresh history
 
         # Pending commands for acknowledgment tracking
         self._pending_commands: dict[int, dict[str, Any]] = {}  # seq_num -> command info
@@ -538,6 +539,7 @@ to be:
                             self.logger.warning(f"Platform heartbeat timeout ({elapsed:.1f}s) - expected every {self.config.heartbeat_interval_sec}s")
                             self._platform_connected = False
                             self._disconnect_time = time.time()
+                            self._last_disconnect_was_real = True
                             for cb in self._connection_listeners:
                                 with contextlib.suppress(Exception):
                                     cb(False)
@@ -630,20 +632,22 @@ to be:
                 self._last_heartbeat_time = time.time()
                 if not prev_connected:
                     self._platform_connected = True
-                    # Only notify listeners if disconnected long enough to avoid
-                    # spurious refresh on transient network blips
+                    # The data source uses this flag to decide whether to auto-refresh
+                    # history after a reconnect. We always notify listeners so the
+                    # readiness state machine and frontend stay in sync.
                     was_real_disconnect = (
                         self._disconnect_time is None  # first connection ever
                         or (time.time() - self._disconnect_time) >= self._reconnect_debounce_sec
                     )
                     self._disconnect_time = None
+                    self._last_disconnect_was_real = was_real_disconnect
                     if was_real_disconnect:
                         self.logger.info("Platform connected (heartbeat received)")
-                        for cb in self._connection_listeners:
-                            with contextlib.suppress(Exception):
-                                cb(True)
                     else:
-                        self.logger.info("Platform reconnected after brief blip — skipping refresh")
+                        self.logger.info("Platform reconnected after brief blip — skipping history refresh")
+                    for cb in self._connection_listeners:
+                        with contextlib.suppress(Exception):
+                            cb(True)
         except Exception as e:
             raw_bytes = json_msg.encode('utf-8', errors='replace') if isinstance(json_msg, str) else json_msg
             self.logger.debug(f"Error handling heartbeat: {e} | Hex: {raw_bytes[:200].hex() if isinstance(raw_bytes, bytes) else raw_bytes}")
@@ -661,6 +665,8 @@ to be:
         self._platform_info = payload
         self._platform_connected = True
         self._last_heartbeat_time = time.time()
+        self._disconnect_time = None
+        self._last_disconnect_was_real = True
         platform = payload.get('platform', 'unknown')
         version = payload.get('version', 'unknown')
         pair = payload.get('pair', 'unknown')
@@ -1306,6 +1312,11 @@ to be:
     def is_connected(self) -> bool:
         """Check if platform is connected and healthy."""
         return self._running and self._platform_connected
+
+    @property
+    def was_last_disconnect_real(self) -> bool:
+        """True if the last disconnect lasted long enough to warrant a history refresh."""
+        return self._last_disconnect_was_real
 
     @property
     def platform_info(self) -> dict[str, Any] | None:

@@ -424,6 +424,23 @@ class TestConnectionState:
         gateway._handle_heartbeat(env.to_json())
         assert True in calls
 
+    def test_handle_heartbeat_notifies_listeners_after_brief_blip(self, gateway):
+        gateway._platform_connected = False
+        gateway._disconnect_time = time.time() - 0.5  # < _reconnect_debounce_sec
+        calls = []
+        gateway.on_connection_change(lambda c: calls.append(c))
+        env = HeartbeatMessage(source="nt", status="ok").to_envelope(seq_num=1)
+        gateway._handle_heartbeat(env.to_json())
+        assert True in calls
+        assert gateway.was_last_disconnect_real is False
+
+    def test_handle_heartbeat_flags_real_disconnect_after_long_outage(self, gateway):
+        gateway._platform_connected = False
+        gateway._disconnect_time = time.time() - 10.0  # > _reconnect_debounce_sec
+        env = HeartbeatMessage(source="nt", status="ok").to_envelope(seq_num=1)
+        gateway._handle_heartbeat(env.to_json())
+        assert gateway.was_last_disconnect_real is True
+
     def test_handle_heartbeat_does_not_recall_if_already_connected(self, gateway):
         gateway._platform_connected = True
         calls = []

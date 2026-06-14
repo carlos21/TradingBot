@@ -1,0 +1,172 @@
+
+[ninja] [INFO] [TSI:3m] bar=1781296920 close=29699.75 tsi=+6.93 sig=+9.52 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781296920 close=29699.75 tsi=-9.76 sig=-26.32 cross=bullish
+[ninja] [INFO] [TSI:1m] bar=1781296980 close=29696.50 tsi=+1.01 sig=-15.39 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297040 close=29696.25 tsi=+6.67 sig=-6.57 cross=none
+[ninja] [INFO] [TSI:3m] bar=1781297100 close=29692.50 tsi=+5.99 sig=+8.11 cross=none
+[ninja] [INFO] [TSI:5m] bar=1781297100 close=29692.50 tsi=+11.03 sig=+13.42 cross=none
+[ninja] [INFO] [TSI:15m] bar=1781297100 close=29692.50 tsi=+10.66 sig=+9.71 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297100 close=29692.50 tsi=+6.14 sig=-1.48 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297160 close=29677.00 tsi=-8.59 sig=-4.33 cross=bearish
+[ninja] [INFO] [TSI:1m] bar=1781297220 close=29682.50 tsi=-11.25 sig=-7.10 cross=none
+[ninja] [INFO] [TSI:3m] bar=1781297280 close=29686.50 tsi=+3.10 sig=+6.11 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297280 close=29686.50 tsi=-9.19 sig=-7.93 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297340 close=29686.00 tsi=-8.31 sig=-8.08 cross=none
+[ninja] [INFO] [TSI:5m] bar=1781297400 close=29679.50 tsi=+6.56 sig=+10.68 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297400 close=29679.50 tsi=-12.58 sig=-9.88 cross=none
+[ninja] [INFO] [TSI:3m] bar=1781297460 close=29678.75 tsi=-1.73 sig=+2.97 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297460 close=29678.75 tsi=-15.84 sig=-12.27 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297520 close=29678.50 tsi=-18.22 sig=-14.65 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297580 close=29671.75 tsi=-24.83 sig=-18.72 cross=none
+[ninja] [INFO] [TSI:3m] bar=1781297640 close=29670.50 tsi=-7.96 sig=-1.40 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297640 close=29670.50 tsi=-30.02 sig=-23.24 cross=none
+[ninja] [INFO] [TSI:5m] bar=1781297700 close=29669.50 tsi=+0.30 sig=+6.53 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297700 close=29669.50 tsi=-34.26 sig=-27.65 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297760 close=29670.25 tsi=-36.13 sig=-31.04 cross=none
+[ninja] [INFO] [TSI:3m] bar=1781297820 close=29671.00 tsi=-11.91 sig=-5.61 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297820 close=29671.00 tsi=-36.26 sig=-33.13 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781297880 close=29675.00 tsi=-29.62 sig=-31.73 cross=bullish
+[ninja] [INFO] [TSI:1m] bar=1781297940 close=29683.75 tsi=-12.00 sig=-23.83 cross=none
+[ninja] [INFO] [TSI:3m] bar=1781298000 close=29682.50 tsi=-9.19 sig=-7.04 cross=none
+[ninja] [INFO] [TSI:5m] bar=1781298000 close=29682.50 tsi=+0.52 sig=+4.12 cross=none
+[ninja] [INFO] [TSI:15m] bar=1781298000 close=29682.50 tsi=+9.77 sig=+9.73 cross=none
+[ninja] [INFO] [TSI:30m] bar=1781298000 close=29682.50 tsi=+13.93 sig=+13.08 cross=none
+[ninja] [INFO] [TSI:1h] bar=1781298000 close=29682.50 tsi=+16.88 sig=+15.08 cross=none
+[ninja] [INFO] [TSI:1m] bar=1781298000 close=29682.50 tsi=-2.87 sig=-15.45 cross=none
+[Strategy] Restored trigger state for 1/3 lines
+[ninja] [INFO] [Warmup] Complete in 38.0s — 5160 bars replayed, 0 stale line(s) removed
+[ninja] [INFO] [Readiness] History not ready: Last bar is 2610m old (need < 1m)
+[ninja] [INFO] Platform connected (heartbeat received)
+[ninja] [INFO] [ReadinessStateMachine] DISCONNECTED -> CONNECTED | reason=Platform connected
+[ReadinessStateMachine] DISCONNECTED -> CONNECTED | reason=Platform connected
+[ninja] [INFO] Platform connected, requesting historical data refresh in 1.0s
+[ninja] [INFO] Requesting historical data refresh after delay
+[ninja] [DEBUG] Queued: refresh_request seq=35
+[ninja] [DEBUG] Sent command: MessageType.REFRESH_REQUEST
+[ninja] [INFO] Queued REFRESH request: 1 days
+[ninja] [DEBUG] RECV: refresh_start seq=37
+[ninja] [INFO] Refresh start - clearing recent data
+[ninja] [INFO] [LiveMode] Refresh: resetting strategy...
+[ninja] [INFO] [StrategyV2] Internal state fully reset. (preserve_histories=True)
+[ninja] [INFO] [Strategy] add_strategy_line id=83b1c08d-4310-4536-b1c0-c869c745541f level=28226.932840690974 ts=1781075760.0
+[ninja] [INFO] [Strategy] add_strategy_line id=3633f7a2-871f-494a-b8e0-10752930f958 level=29847.177284873254 ts=1781075820.0
+[ninja] [INFO] [Strategy] add_strategy_line id=5107a59b-9d28-4bcb-a3b5-c16b4f0c0a33 level=28531.943950527904 ts=1781180820.0
+[ninja] [INFO] [LiveMode] Refresh: strategy reset, ready for fresh bars.
+[ninja] [INFO] [ReadinessStateMachine] CONNECTED -> REFRESHING | reason=Historical data refresh started
+[ReadinessStateMachine] CONNECTED -> REFRESHING | reason=Historical data refresh started
+[ninja] [INFO] [Readiness] Refresh started — buffering live bars
+[ninja] [INFO] Refresh start: preserved 5160 historical bars, removed 0 recent bars
+[ninja] [DEBUG] RECV: command_ack seq=38
+[ninja] [INFO] ✅ Command ACK: refresh_request seq=35 trade=None (0.01s)
+[ninja] [INFO] RECV: history_batch seq=40 pair=MNQ | bars=500
+[ninja] [INFO] RECV: history_batch | pair=MNQ | bars=500 | unique_added=0 | total_cached=5160
+[ninja] [INFO] RECV: history_batch seq=41 pair=MNQ | bars=500
+[ninja] [INFO] RECV: history_batch | pair=MNQ | bars=500 | unique_added=0 | total_cached=5160
+[ninja] [INFO] RECV: history_batch seq=42 pair=MNQ | bars=20
+[ninja] [INFO] RECV: history_batch | pair=MNQ | bars=20 | unique_added=0 | total_cached=5160
+[ninja] [DEBUG] RECV: history_end seq=43
+[ninja] [WARN] 🕳️  History ends 156655s ago (2026-06-12 21:00:00 UTC) — NT cache is still warming. Gap-fill is in progress on NT side. Switching to STREAMING and waiting for gap-fill batches...
+[ninja] [INFO] History complete: 5160 bars cached, switching to STREAMING mode
+[ninja] [WARN] 🕳️  HISTORY SCAN: 3 total gap(s) detected in 5160 bars
+[ninja] [INFO] [ReadinessStateMachine] REFRESHING -> WARMING_UP | reason=Historical data loaded; warming up indicators
+[ReadinessStateMachine] REFRESHING -> WARMING_UP | reason=Historical data loaded; warming up indicators
+[ninja] [INFO] [Warmup] Replaying 5160 historical bars through strategy...
+[ninja] [INFO] [DECISION] LATCH | line=83b1c08d-4310-4536-b1c0-c869c745541f | dir=long | reason=depth=0.00 | Latched long @ 28993.25 (depth=0.00)
+[ninja] [INFO] [DECISION] LATCH | line=3633f7a2-871f-494a-b8e0-10752930f958 | dir=short | reason=depth=0.00 | Latched short @ 28987.75 (depth=0.00)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+11:28:02  Window opened. Click Connect to start ZMQ connection.
+11:28:08  Starting ZeroMQ connection...
+11:28:08  Connected to ZMQ endpoints: market=5555, cmd=5556
+11:28:09  *** SUCCESS *** Connected to Python TradingBot via ZeroMQ
+11:28:09  Command loop started
+11:28:09  [Sync] Reporting 0 position(s) to Python (broker is source of truth)
+11:28:09  *** SUCCESS *** [Sync] Complete: 0 positions reported
+11:28:09  Subscribed to market data for MNQ 06-26
+11:28:10  REFRESH REQUEST: 1 days
+11:28:10  Sending refresh_start
+11:28:10  [History] DateTime range | days=1 | start=2026-06-13 16:28:10 UTC | end=2026-06-14 16:28:10 UTC | requesting...
+11:28:10  *** WARNING *** [History] BarsRequest returned 0 bars
+11:28:10  [History] Attempt 1/30 returned 0 bars — expanding lookback window to 2 day(s) (+1 day)
+11:28:10  [History] DateTime range | days=2 | start=2026-06-12 16:28:10 UTC | end=2026-06-14 16:28:10 UTC | requesting...
+11:28:10  *** WARNING *** [History] BarsRequest returned 0 bars
+11:28:10  [History] Attempt 2/30 returned 0 bars — expanding lookback window to 3 day(s) (+1 day)
+11:28:10  [History] DateTime range | days=3 | start=2026-06-11 16:28:10 UTC | end=2026-06-14 16:28:10 UTC | requesting...
+11:28:10  *** WARNING *** [History] BarsRequest returned 0 bars
+11:28:10  [History] Attempt 3/30 returned 0 bars — expanding lookback window to 4 day(s) (+1 day)
+11:28:10  [History] DateTime range | days=4 | start=2026-06-10 16:28:10 UTC | end=2026-06-14 16:28:10 UTC | requesting...
+11:28:10  *** WARNING *** [History] BarsRequest returned 0 bars
+11:28:10  [History] Attempt 4/30 returned 0 bars — expanding lookback window to 5 day(s) (+1 day)
+11:28:11  [History] DateTime range | days=5 | start=2026-06-09 16:28:11 UTC | end=2026-06-14 16:28:11 UTC | requesting...
+11:28:12  [History] BarsRequest returned 5160 bars | first=2026-06-08 23:01:00 | last=2026-06-12 16:00:00 | gapToNow=156493s
+11:28:12  [History] Attempt 5/30 succeeded with 5160 bar(s)
+11:28:12  Sent 5160 historical bars (5 days requested, 0 trimmed)
+11:28:12  [History] Detected 2308m gap to now — attempting gap-fill from 2026-06-12 21:00:00 UTC
+11:28:12  [GapFill] Attempt 1/3 | requesting bars from 2026-06-12 21:00:00 UTC to 2026-06-14 16:28:12 UTC
+11:28:13  [GapFill] Attempt 1/3 | returned 1020 bars | first=2026-06-11 23:01:00 | last=2026-06-12 16:00:00 | unique_new=0
+11:28:13  *** WARNING *** [GapFill] Attempt 1/3 | no new bars received
+11:28:15  [GapFill] Attempt 2/3 | requesting bars from 2026-06-12 21:00:00 UTC to 2026-06-14 16:28:12 UTC
+11:28:15  [GapFill] Attempt 2/3 | returned 1020 bars | first=2026-06-11 23:01:00 | last=2026-06-12 16:00:00 | unique_new=0
+11:28:15  *** WARNING *** [GapFill] Attempt 2/3 | no new bars received
+11:28:17  [GapFill] Attempt 3/3 | requesting bars from 2026-06-12 21:00:00 UTC to 2026-06-14 16:28:12 UTC
+11:28:18  [GapFill] Attempt 3/3 | returned 1020 bars | first=2026-06-11 23:01:00 | last=2026-06-12 16:00:00 | unique_new=0
+11:28:18  *** WARNING *** [GapFill] Attempt 3/3 | no new bars received
+11:28:18  *** ERROR *** [GapFill] FAILED after 3 attempts — no bars received for any attempt. Gap remains from 2026-06-12 21:00:00 UTC to 2026-06-14 16:28:12 UTC
+11:28:19  [LiveBars] No tick received within 10s, creating BarsRequest anyway
+11:28:19  Subscribed to live 1m bars
+11:28:19  Live bars stream ready. Cached 2 bars, lastCompletedIdx=0, sent 1 initial bar(s). Market-status session: CME US Index Futures ETH
+11:28:49  [MarketStatus] MNQ market is CLOSED, next_open=2026-06-14 17:00:00
+11:28:52  REFRESH REQUEST: 1 days
+11:28:52  Sending refresh_start
+11:28:52  [History] DateTime range | days=1 | start=2026-06-13 16:28:52 UTC | end=2026-06-14 16:28:52 UTC | requesting...
+11:28:52  *** WARNING *** [History] BarsRequest returned 0 bars
+11:28:52  [History] Attempt 1/30 returned 0 bars — expanding lookback window to 2 day(s) (+1 day)
+11:28:52  [History] DateTime range | days=2 | start=2026-06-12 16:28:52 UTC | end=2026-06-14 16:28:52 UTC | requesting...
+11:28:53  [History] BarsRequest returned 1020 bars | first=2026-06-11 23:01:00 | last=2026-06-12 16:00:00 | gapToNow=156533s
+11:28:53  [History] Attempt 2/30 succeeded with 1020 bar(s)
+11:28:53  Sent 1020 historical bars (2 days requested, 0 trimmed)
+11:28:53  [History] Detected 2309m gap to now — attempting gap-fill from 2026-06-12 21:00:00 UTC
+11:28:53  [GapFill] Attempt 1/3 | requesting bars from 2026-06-12 21:00:00 UTC to 2026-06-14 16:28:53 UTC
+11:28:53  [GapFill] Attempt 1/3 | returned 1020 bars | first=2026-06-11 23:01:00 | last=2026-06-12 16:00:00 | unique_new=0
+11:28:53  *** WARNING *** [GapFill] Attempt 1/3 | no new bars received
+11:28:55  [GapFill] Attempt 2/3 | requesting bars from 2026-06-12 21:00:00 UTC to 2026-06-14 16:28:53 UTC
+11:28:55  [GapFill] Attempt 2/3 | returned 1020 bars | first=2026-06-11 23:01:00 | last=2026-06-12 16:00:00 | unique_new=0
+11:28:55  *** WARNING *** [GapFill] Attempt 2/3 | no new bars received
+11:28:57  [GapFill] Attempt 3/3 | requesting bars from 2026-06-12 21:00:00 UTC to 2026-06-14 16:28:53 UTC
+11:28:58  [GapFill] Attempt 3/3 | returned 1020 bars | first=2026-06-11 23:01:00 | last=2026-06-12 16:00:00 | unique_new=0
+11:28:58  *** WARNING *** [GapFill] Attempt 3/3 | no new bars received
+11:28:58  *** ERROR *** [GapFill] FAILED after 3 attempts — no bars received for any attempt. Gap remains from 2026-06-12 21:00:00 UTC to 2026-06-14 16:28:53 UTC
+11:29:00  Disconnecting: NinjaTrader shutting down
+11:29:00  Unsubscribed from live 1m bars
+11:29:00  Unsubscribed from market data for MNQ 06-26
+11:29:01  Command loop stopped
+11:29:01  ZMQ network stopping...
+11:29:01  ZMQ network stopped
+11:29:01  Disconnected from Python TradingBot
+11:32:20  Starting ZeroMQ connection...
+11:32:20  Connected to ZMQ endpoints: market=5555, cmd=5556
+11:32:20  *** SUCCESS *** Connected to Python TradingBot via ZeroMQ
+11:32:20  Command loop started
+11:32:20  [Sync] Reporting 0 position(s) to Python (broker is source of truth)
+11:32:20  *** SUCCESS *** [Sync] Complete: 0 positions reported
+11:32:20  Subscribed to market data for MNQ 06-26
+11:32:30  [LiveBars] No tick received within 10s, creating BarsRequest anyway
+11:32:30  Subscribed to live 1m bars
+11:32:30  Live bars stream ready. Cached 2 bars, lastCompletedIdx=0, sent 1 initial bar(s). Market-status session: CME US Index Futures ETH
