@@ -227,15 +227,26 @@ namespace NinjaTrader.NinjaScript.AddOns
         private Order FindOrderByName(Account account, string orderName)
         {
             if (account == null || string.IsNullOrEmpty(orderName)) return null;
-            
+
             // Snapshot to avoid collection-modified-during-enumeration
             var orders = account.Orders.ToArray();
-            foreach (var order in orders)
+            // Prefer the most recently active order — iterate in reverse and
+            // return the first live match, falling back to any match so callers
+            // can still inspect state (e.g., IsWorking check downstream).
+            Order fallback = null;
+            for (int i = orders.Length - 1; i >= 0; i--)
             {
-                if (order.Name == orderName)
+                var order = orders[i];
+                if (order.Name != orderName) continue;
+                if (order.OrderState == OrderState.Working ||
+                    order.OrderState == OrderState.Accepted ||
+                    order.OrderState == OrderState.Submitted ||
+                    order.OrderState == OrderState.PartFilled ||
+                    order.OrderState == OrderState.Filled)
                     return order;
+                if (fallback == null) fallback = order;
             }
-            return null;
+            return fallback;
         }
 
         private static bool IsWorking(Order order)

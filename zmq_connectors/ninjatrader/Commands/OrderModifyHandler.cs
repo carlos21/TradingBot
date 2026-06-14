@@ -36,6 +36,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         {
             try
             {
+                // Purge any pending modifies that never completed (broker dropped the
+                // cancel event). 60s is well above any realistic broker round-trip.
+                _orderTracker.PurgeStaleModifies(System.TimeSpan.FromSeconds(60), _logger);
+
                 var tradeId = payload?["trade_id"]?.ToString();
                 var newSl = payload?["stop_loss"]?.Value<double>() ?? 0;
                 var newTp = payload?["take_profit"]?.Value<double>() ?? 0;
@@ -43,8 +47,8 @@ namespace NinjaTrader.NinjaScript.AddOns
 
                 if (string.IsNullOrEmpty(tradeId))
                     throw new ArgumentException("trade_id is required");
-                if (newSl <= 0)
-                    throw new ArgumentException($"Invalid stop_loss: {newSl}");
+                if (newSl <= 0 && newTp <= 0)
+                    throw new ArgumentException("At least one of stop_loss or take_profit must be provided");
 
                 // ── SIMULATE MODE: Log and return success, NO account/broker lookup ──
                 if (_simulate || TradingBotZmqConnector.E2ETestRunning)

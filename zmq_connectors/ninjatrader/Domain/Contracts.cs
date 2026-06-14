@@ -51,6 +51,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         void TrackPendingModify(string tradeId, PendingModifyInfo info);
         bool TryGetPendingModify(string tradeId, out PendingModifyInfo info);
         void RemovePendingModify(string tradeId);
+        int PurgeStaleModifies(System.TimeSpan maxAge, ILogger logger);
 
         bool TryGetEntry(string tradeId, out Order order);
         bool TryGetStopLoss(string tradeId, out Order order);

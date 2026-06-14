@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import TYPE_CHECKING, Any
 
 from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
@@ -26,10 +28,19 @@ class WarmupOrchestrator:
     ) -> None:
         self._strategy = strategy
         self._logger = logger
+        self._stop_event = threading.Event()
 
     @property
     def strategy(self) -> LiquidityStrategyV2:
         return self._strategy
+
+    def cancel(self) -> None:
+        """Signal the running warmup to stop between bar replays."""
+        self._stop_event.set()
+
+    def reset_cancel(self) -> None:
+        """Clear the cancel flag before starting a new warmup run."""
+        self._stop_event.clear()
 
     def run(
         self,
@@ -42,6 +53,10 @@ class WarmupOrchestrator:
         Callers must ensure the readiness state machine is already in
         WARMING_UP before calling this method, so the strategy sees
         is_warmup() == True and is_trading_enabled() == False.
+
+        If ``cancel()`` is called while this method is running, the replay
+        will stop at the next checkpoint and return early without calling
+        the restore methods (the strategy will be reset by the caller anyway).
         """
         if not bars:
             if self._logger:
@@ -55,8 +70,15 @@ class WarmupOrchestrator:
 
         self._strategy.warmup_crossed_lines.clear()
 
-        start_time = __import__('time').monotonic()
-        for bar in bars:
+        start_time = time.monotonic()
+        for i, bar in enumerate(bars):
+            if self._stop_event.is_set():
+                if self._logger:
+                    self._logger.info(
+                        f"[Warmup] Cancelled after {i}/{len(bars)} bars — "
+                        "skipping restore (strategy will be reset)"
+                    )
+                return
             self._strategy.on_raw_bar(bar)
 
         self._strategy.restore_trigger_states(pair)
@@ -64,7 +86,7 @@ class WarmupOrchestrator:
         self._strategy.restore_reentry_opportunities(pair)
 
         stale_count = self._remove_stale_lines()
-        elapsed = __import__('time').monotonic() - start_time
+        elapsed = time.monotonic() - start_time
 
         if self._logger:
             self._logger.info(

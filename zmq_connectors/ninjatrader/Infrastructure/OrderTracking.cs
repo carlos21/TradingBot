@@ -72,6 +72,25 @@ namespace NinjaTrader.NinjaScript.AddOns
             lock (_lock) _pendingModifies.Remove(tradeId);
         }
 
+        public int PurgeStaleModifies(System.TimeSpan maxAge, ILogger logger)
+        {
+            var now = System.DateTime.UtcNow;
+            var staleKeys = new System.Collections.Generic.List<string>();
+            lock (_lock)
+            {
+                foreach (var kvp in _pendingModifies)
+                {
+                    if (now - kvp.Value.CreatedAt > maxAge)
+                        staleKeys.Add(kvp.Key);
+                }
+                foreach (var key in staleKeys)
+                    _pendingModifies.Remove(key);
+            }
+            foreach (var key in staleKeys)
+                logger?.Warning($"[OrderTracker] Purged stale pending modify slot '{key}'");
+            return staleKeys.Count;
+        }
+
         public bool TryGetEntry(string tradeId, out Order order)
         {
             lock (_lock) return _entryOrders.TryGetValue(tradeId, out order);
@@ -329,7 +348,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             order?.Name != null && order.Name.StartsWith("Entry_");
         
         private static bool IsStopOrder(Order order) =>
-            order?.Name != null && order.Name.StartsWith("Stop_");
+            (order?.Name?.StartsWith("Stop_") == true) &&
+            (order.OrderType == NinjaTrader.Cbi.OrderType.StopMarket || order.OrderType == NinjaTrader.Cbi.OrderType.StopLimit);
         
         private static bool IsTargetOrder(Order order) =>
             order?.Name != null && order.Name.StartsWith("Target_");

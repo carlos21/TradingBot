@@ -254,8 +254,9 @@ def register_socketio_handlers(
 
         Rate-limited so a log storm (e.g. TSI during warm-up) cannot saturate
         the Socket.IO connection and disconnect the browser.
+        Error-level logs always pass through to avoid dropping critical alerts.
         """
-        if not _system_log_bucket.allow():
+        if level != "ERROR" and not _system_log_bucket.allow():
             return
         with contextlib.suppress(Exception):
             socketio.emit('system_log', {

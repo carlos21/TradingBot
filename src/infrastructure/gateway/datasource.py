@@ -296,6 +296,7 @@ class ZMQDataSource(CombinedDataSource):
 
     def stop(self) -> None:
         """Stop receiving data."""
+        self._cancel_pending_refresh_timer()
         monitor = getattr(self, "_readiness_monitor", None)
         if monitor is not None:
             with contextlib.suppress(Exception):

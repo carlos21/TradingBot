@@ -133,6 +133,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             self._reentry_opportunities.clear()
             self.trade_manager.open_trades.clear()
             self.decision_logs.clear()
+            self.warmup_crossed_lines.clear()
             self._tsi_warmup_stats = {"bars": 0, "crosses": 0}
             self._tsi_summary_logged = False
             for tf in self._internal_timeframes:

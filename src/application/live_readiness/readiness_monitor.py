@@ -69,6 +69,7 @@ class ReadinessMonitor:
     def on_refresh_start(self) -> None:
         """Called when the platform starts sending a fresh history batch."""
         self._cancel_retry_timer()
+        self._cancel_warmup()
         self._state_machine.start_refresh()
         self._bar_buffer.clear()
         if self._logger:
@@ -77,6 +78,7 @@ class ReadinessMonitor:
     def on_history_complete(self, bars: list[dict[str, Any]]) -> None:
         """Called when the full historical bar set has been received."""
         self._cancel_retry_timer()
+        self._cancel_warmup()
 
         if not bars:
             self._state_machine.history_empty()
@@ -102,6 +104,7 @@ class ReadinessMonitor:
         # Run warmup in a background thread so the gateway receive loop is not
         # blocked. Blocking the receive loop prevents heartbeat processing and
         # causes a heartbeat timeout → disconnect → reconnect → refresh loop.
+        self._warmup_orchestrator.reset_cancel()
         self._warmup_in_progress = True
         bars_snapshot = list(bars)
         pair_snapshot = self._pair
@@ -173,8 +176,18 @@ class ReadinessMonitor:
         )
 
     def stop(self) -> None:
-        """Cancel any pending retry timer."""
+        """Cancel any pending retry timer and in-progress warmup."""
         self._cancel_retry_timer()
+        self._cancel_warmup()
+
+    def _cancel_warmup(self) -> None:
+        """Cancel any in-progress warmup and wait for its thread to finish."""
+        self._warmup_orchestrator.cancel()
+        thread = self._warmup_thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=5.0)
+        self._warmup_thread = None
+        self._warmup_in_progress = False
 
     def _schedule_history_retry(self) -> None:
         """Schedule another history refresh after a backoff delay."""

@@ -58,6 +58,12 @@ class _FakeWarmupOrchestrator:
     def strategy(self) -> _FakeStrategy:
         return self._strategy
 
+    def cancel(self) -> None:
+        pass
+
+    def reset_cancel(self) -> None:
+        pass
+
     def run(self, bars: list[dict[str, Any]], pair: str) -> None:
         self.ran = True
         for bar in bars:
@@ -331,6 +337,122 @@ class TestEmptyHistoryRetry:
         time.sleep(0.05)
         # Retry should have been cancelled.
         assert len(ds.requests) == 0
+
+
+class TestWarmupCancellation:
+    def test_refresh_during_warmup_cancels_old_thread(self) -> None:
+        """on_refresh_start() while warmup is running must cancel the old thread."""
+        import threading
+        import time
+
+        started = threading.Event()
+        blocked = threading.Event()
+
+        class _SlowOrchestrator:
+            """Orchestrator that blocks mid-replay until signalled."""
+
+            def __init__(self, strategy: _FakeStrategy) -> None:
+                self._strategy = strategy
+                self._stop_event = threading.Event()
+
+            @property
+            def strategy(self) -> _FakeStrategy:
+                return self._strategy
+
+            def cancel(self) -> None:
+                self._stop_event.set()
+
+            def reset_cancel(self) -> None:
+                self._stop_event.clear()
+
+            def run(self, bars, pair) -> None:
+                started.set()
+                blocked.wait(timeout=5.0)  # stall until test signals it
+
+        strategy = _FakeStrategy()
+        sm = ReadinessStateMachine()
+        orchestrator = _SlowOrchestrator(strategy)
+        monitor = ReadinessMonitor(
+            state_machine=sm,
+            warmup_orchestrator=orchestrator,
+            warmup_policy=_FakeWarmupPolicy(warm=True),
+            bar_buffer=LiveBarBuffer(processor=lambda _: None),
+            live_bar_processor=lambda _: None,
+            data_source=_FreshDataSource(),
+            logger=FakeLogger(),
+        )
+        monitor.set_pair("MNQ")
+        sm.connect()
+
+        # Start warmup — thread will block inside the slow orchestrator.
+        monitor.on_history_complete(_make_bars())
+        assert started.wait(timeout=2.0), "Warmup thread never started"
+        assert monitor._warmup_in_progress is True
+
+        # Signal: refresh arrives while warmup is blocked.
+        blocked.set()  # unblock so cancel + join don't hang
+        monitor.on_refresh_start()
+
+        # After on_refresh_start returns, the old warmup thread must be gone.
+        assert monitor._warmup_in_progress is False
+        assert monitor._warmup_thread is None
+        assert orchestrator._stop_event.is_set()
+        assert sm.state.name == "REFRESHING"
+
+    def test_second_history_load_cancels_first_warmup(self) -> None:
+        """A second on_history_complete() must cancel the first warmup thread."""
+        import threading
+
+        first_started = threading.Event()
+        first_blocked = threading.Event()
+
+        class _SlowOrchestrator2:
+            def __init__(self, strategy: _FakeStrategy) -> None:
+                self._strategy = strategy
+                self._stop_event = threading.Event()
+                self.run_count = 0
+
+            @property
+            def strategy(self) -> _FakeStrategy:
+                return self._strategy
+
+            def cancel(self) -> None:
+                self._stop_event.set()
+
+            def reset_cancel(self) -> None:
+                self._stop_event.clear()
+
+            def run(self, bars, pair) -> None:
+                self.run_count += 1
+                if self.run_count == 1:
+                    first_started.set()
+                    first_blocked.wait(timeout=5.0)
+
+        strategy = _FakeStrategy()
+        sm = ReadinessStateMachine()
+        orchestrator = _SlowOrchestrator2(strategy)
+        monitor = ReadinessMonitor(
+            state_machine=sm,
+            warmup_orchestrator=orchestrator,
+            warmup_policy=_FakeWarmupPolicy(warm=True),
+            bar_buffer=LiveBarBuffer(processor=lambda _: None),
+            live_bar_processor=lambda _: None,
+            data_source=_FreshDataSource(),
+            logger=FakeLogger(),
+        )
+        monitor.set_pair("MNQ")
+        sm.connect()
+
+        monitor.on_history_complete(_make_bars())
+        assert first_started.wait(timeout=2.0)
+
+        # Unblock so join() doesn't hang, then deliver second history.
+        first_blocked.set()
+        monitor.on_history_complete(_make_bars())
+
+        # Both warmup runs should have happened (second one ran after cancel).
+        _join_warmup(monitor)
+        assert orchestrator.run_count == 2
 
 
 class TestDegradeAndRecover:

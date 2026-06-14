@@ -127,6 +127,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         public NinjaTrader.Cbi.OrderAction OrderAction { get; }
         public int Quantity { get; }
         public bool IsTarget { get; }
+        public System.DateTime CreatedAt { get; }
 
         public PendingModifyInfo(double newPrice, NinjaTrader.Cbi.Instrument instrument, NinjaTrader.Cbi.OrderAction orderAction, int quantity, bool isTarget = false)
         {
@@ -135,6 +136,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             OrderAction = orderAction;
             Quantity = quantity;
             IsTarget = isTarget;
+            CreatedAt = System.DateTime.UtcNow;
         }
     }
 
