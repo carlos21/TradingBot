@@ -148,6 +148,8 @@ def _create_bar_callbacks(
             for t in list(trade_manager.open_trades):
                 if t['pair'] != bar['pair'] or t['entry_time'] > bar['time']:
                     continue
+                if t.get('source') in trade_manager.USER_CONTROLLED_SOURCES:
+                    continue
                 tid = t['trade_id']
                 if tid not in _close_commands_sent:
                     logger.info(f"[LiveMode] SESSION END — sending close_order to NT for {tid}")

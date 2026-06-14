@@ -29,11 +29,12 @@ def _make_manager(**overrides):
 
 
 def _add_open_trade(tm, trade_id="T1", pair="MNQ", trade_type="long",
-                    entry=100.0, sl=90.0, tp=130.0, risk=10.0, entry_time=500.0):
+                    entry=100.0, sl=90.0, tp=130.0, risk=10.0, entry_time=500.0,
+                    source=None):
     trade = {
         "trade_id": trade_id, "pair": pair, "type": trade_type,
         "entry": entry, "stop_loss": sl, "take_profit": tp,
-        "risk": risk, "entry_time": entry_time,
+        "risk": risk, "entry_time": entry_time, "source": source,
     }
     tm.open_trades.append(trade)
     tm._monitored_trades.add(trade_id)
@@ -210,6 +211,39 @@ class TestSessionEndClose:
         tm.handle_new_1m_bar(bar)
         assert len(tm.open_trades) == 1
 
+    def test_skips_test_trade_at_session_end(self):
+        tm = _make_manager(session_end_time="16:58", session_tz="America/New_York")
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500, source="test")
+        from zoneinfo import ZoneInfo
+        ny = ZoneInfo("America/New_York")
+        bar_dt = datetime(2025, 6, 15, 16, 59, tzinfo=ny)
+        bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
+        tm.handle_new_1m_bar(bar)
+        assert len(tm.open_trades) == 1
+        assert len(tm.trade_repository.closed) == 0
+
+    def test_skips_manual_trade_at_session_end(self):
+        tm = _make_manager(session_end_time="16:58", session_tz="America/New_York")
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500, source="manual")
+        from zoneinfo import ZoneInfo
+        ny = ZoneInfo("America/New_York")
+        bar_dt = datetime(2025, 6, 15, 16, 59, tzinfo=ny)
+        bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
+        tm.handle_new_1m_bar(bar)
+        assert len(tm.open_trades) == 1
+        assert len(tm.trade_repository.closed) == 0
+
+    def test_skips_broker_sync_trade_at_session_end(self):
+        tm = _make_manager(session_end_time="16:58", session_tz="America/New_York")
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500, source="broker_sync")
+        from zoneinfo import ZoneInfo
+        ny = ZoneInfo("America/New_York")
+        bar_dt = datetime(2025, 6, 15, 16, 59, tzinfo=ny)
+        bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
+        tm.handle_new_1m_bar(bar)
+        assert len(tm.open_trades) == 1
+        assert len(tm.trade_repository.closed) == 0
+
 
 class TestStreamEndClose:
 
@@ -278,6 +312,13 @@ class TestOpenTrade:
         tm = _make_manager()
         trade = tm.open_trade("MNQ", "long", 100, 90, 130, 10, 1000.0)
         assert trade["trade_id"] in tm._monitored_trades
+
+    def test_open_trade_propagates_source(self):
+        tm = _make_manager()
+        trade = tm.open_trade("MNQ", "long", 100, 90, 130, 10, 1000.0, source="test")
+        assert trade["source"] == "test"
+        assert tm.open_trades[0]["source"] == "test"
+        assert tm.trade_repository.inserted[0]["source"] == "test"
 
 
 class TestCloseTrade:

@@ -159,8 +159,8 @@ class TestOpenTradeExpanded:
             "MNQ", "long", 100, 90, 130, 10, 1000.0,
             source="strategy", account="Acc1", signal_id="SIG-42"
         )
-        # 'source' is not stored in the in-memory dict but is persisted
-        assert "source" not in trade
+        # 'source' is stored in both the in-memory dict and persisted
+        assert trade["source"] == "strategy"
         assert trade["account"] == "Acc1"
         assert trade["signal_id"] == "SIG-42"
         inserted = tm.trade_repository.inserted[0]

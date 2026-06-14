@@ -28,6 +28,10 @@ class TradeManager:
     Broker fill logic is delegated to BrokerFillHandler.
     """
 
+    # Sources that are user- or broker-controlled and should not be auto-closed
+    # by Python's session-end timer (broker/NinjaTrader manages their lifecycle).
+    USER_CONTROLLED_SOURCES = ("manual", "test", "broker_sync")
+
     def __init__(self, trade_repository: TradeRepository, socketio: EventPublisher | None = None,
                  point_value: float = 0.0, account_balance: float = 0.0,
                  logger: ILogger | None = None,
@@ -152,6 +156,7 @@ class TradeManager:
                         'entry_time':  t.entry_time.timestamp(),
                         'account':     t.account,
                         'signal_id':   t.signal_id,
+                        'source':      t.source,
                     }
                     self.open_trades.append(trade_dict)
                     open_count += 1
@@ -268,6 +273,8 @@ class TradeManager:
                 continue
             if trade['entry_time'] >= bar['time']:
                 continue
+            if trade.get('source') in self.USER_CONTROLLED_SOURCES:
+                continue
 
             try:
                 result = self._close_use_case.execute(
@@ -355,6 +362,7 @@ class TradeManager:
             'account':    result.account,
             'signal_id':  result.signal_id,
             'status':     'open',
+            'source':     source,
         }
         self.open_trades.append(trade)
         self._monitored_trades.add(result.trade_id)
