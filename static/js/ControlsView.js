@@ -95,11 +95,13 @@ export class ControlsView {
         try {
           const resp = await fetch('/api/stream/start', { method: 'POST' });
           const data = await resp.json();
-          this._setStreamingLoading(false);
           if (!resp.ok) {
             if (statusEl) statusEl.textContent = '⚠️ ' + (data.message || 'Error starting stream');
+            this._setStreamingLoading(false);
           } else {
             if (statusEl) statusEl.textContent = data.message || 'Starting…';
+            // Keep loading state — the overlay will hide once the platform connects,
+            // or stream_status/platform_disconnected events will reset the UI.
           }
         } catch (err) {
           if (statusEl) statusEl.textContent = 'Error: ' + err.message;
