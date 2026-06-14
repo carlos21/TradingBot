@@ -25,7 +25,6 @@
 [ninja] [INFO] [LiveMode] BarAuditor started
 [ninja] [INFO] [LiveMode] ParityCheckService ready
 [ninja] [INFO] [Strategy] add_strategy_line id=83b1c08d-4310-4536-b1c0-c869c745541f level=28226.932840690974 ts=1781075760.0
-[ninja] [INFO] [Strategy] add_strategy_line id=3633f7a2-871f-494a-b8e0-10752930f958 level=29847.177284873254 ts=1781075820.0
 [ninja] [INFO] [Strategy] add_strategy_line id=5107a59b-9d28-4bcb-a3b5-c16b4f0c0a33 level=28531.943950527904 ts=1781180820.0
 [Strategy] Restored 2 signal(s) from 3 account trades
 [ninja] Starting Liquid instance — pair=MNQ mode=live
@@ -47,43 +46,43 @@ WARNING: This is a development server. Do not use it in a production deployment.
  * Running on http://127.0.0.1:5001
  * Running on http://172.21.127.131:5001
 Press CTRL+C to quit
-127.0.0.1 - - [14/Jun/2026 17:08:04] "GET /socket.io/?EIO=4&transport=polling&t=Px8BNa3 HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:04] "POST /socket.io/?EIO=4&transport=polling&t=Px8BNeJ&sid=YIiXKMJP7cNT7ULuAAAA HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:04] "GET /socket.io/?EIO=4&transport=polling&t=Px8BNeJ.0&sid=YIiXKMJP7cNT7ULuAAAA HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:04] "GET /socket.io/?EIO=4&transport=polling&t=Px8BNnH HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:04] "POST /socket.io/?EIO=4&transport=polling&t=Px8BNnL&sid=komgis89IHhloWZqAAAC HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:04] "GET /socket.io/?EIO=4&transport=polling&t=Px8BNnL.0&sid=komgis89IHhloWZqAAAC HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /socket.io/?EIO=4&transport=websocket&sid=YIiXKMJP7cNT7ULuAAAA HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET / HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/css/styles.css HTTP/1.1" 304 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/css/admin.css HTTP/1.1" 304 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/js/main.js HTTP/1.1" 304 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /api/pair HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/js/DataService.js HTTP/1.1" 304 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/js/ChartViewer.js HTTP/1.1" 304 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/js/ControlsView.js HTTP/1.1" 304 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/js/NtAccountsDisplay.js HTTP/1.1" 304 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/js/StreamHealthPanel.js HTTP/1.1" 304 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/js/TSICalculator.js HTTP/1.1" 304 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/js/MarkerManager.js HTTP/1.1" 304 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/js/SocketHandler.js HTTP/1.1" 304 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /socket.io/?EIO=4&transport=polling&t=Px8BORw HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /api/pair HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /api/accounts HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /api/stream/status HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "POST /socket.io/?EIO=4&transport=polling&t=Px8BOSD&sid=AUEaRu3huJ-28pgUAAAE HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /socket.io/?EIO=4&transport=polling&t=Px8BOSD.0&sid=AUEaRu3huJ-28pgUAAAE HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /api/bars?pair=MNQ&tf=1m&start_time=null HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /socket.io/?EIO=4&transport=polling&t=Px8BOSb&sid=AUEaRu3huJ-28pgUAAAE HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /static/favicon.svg HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:44] "GET /socket.io/?EIO=4&transport=polling&t=Px8GoD8 HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:44] "POST /socket.io/?EIO=4&transport=polling&t=Px8GoPQ&sid=TfofMaNj9OYLW9FLAAAA HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:44] "GET /socket.io/?EIO=4&transport=polling&t=Px8GoPR&sid=TfofMaNj9OYLW9FLAAAA HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:44] "GET /socket.io/?EIO=4&transport=polling&t=Px8GoSl HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:44] "POST /socket.io/?EIO=4&transport=polling&t=Px8GoSr&sid=uigk995suRmN5Gh1AAAC HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:44] "GET /socket.io/?EIO=4&transport=polling&t=Px8GoSs&sid=uigk995suRmN5Gh1AAAC HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /socket.io/?EIO=4&transport=websocket&sid=uigk995suRmN5Gh1AAAC HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /.well-known/appspecific/com.chrome.devtools.json HTTP/1.1" 404 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/css/admin.css HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/css/styles.css HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/js/main.js HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /api/pair HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/js/ChartViewer.js HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/js/DataService.js HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/js/NtAccountsDisplay.js HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/js/ControlsView.js HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/js/StreamHealthPanel.js HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/js/MarkerManager.js HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/js/TSICalculator.js HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/js/SocketHandler.js HTTP/1.1" 304 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /socket.io/?EIO=4&transport=polling&t=Px8Gs9X HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /api/pair HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /api/accounts HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /api/stream/status HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "POST /socket.io/?EIO=4&transport=polling&t=Px8Gs9s&sid=KouTa7feP589l8BjAAAE HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /socket.io/?EIO=4&transport=polling&t=Px8Gs9t&sid=KouTa7feP589l8BjAAAE HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /api/bars?pair=MNQ&tf=1m&start_time=null HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /socket.io/?EIO=4&transport=polling&t=Px8GsAB&sid=KouTa7feP589l8BjAAAE HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /static/favicon.svg HTTP/1.1" 304 -
 [ninja] [INFO] [TradesController] list_trades('MNQ') found 22 trades.
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /api/trades?pair=MNQ HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:07] "GET /api/lines?pair=MNQ HTTP/1.1" 200 -
-127.0.0.1 - - [14/Jun/2026 17:08:08] "POST /api/stream/start HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /api/trades?pair=MNQ HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:31:59] "GET /api/lines?pair=MNQ HTTP/1.1" 200 -
+127.0.0.1 - - [14/Jun/2026 17:32:00] "POST /api/stream/start HTTP/1.1" 200 -
 [ninja] [INFO] [NT Lifecycle] NinjaTrader not detected after 4s, launching auto-login for FNFTCARLOSDOtFju...
 [ninja] [INFO] [NT Launch] Spawning PowerShell: powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\Users\dark_\Developer\TradingBot\bin\Start-NinjaTraderAutoLogin.ps1 -Username FNFTCARLOSDOtFju -Password kcwDN78##
-[ninja] [INFO] [NT Launch] Popen returned — PID=6695
+[ninja] [INFO] [NT Launch] Popen returned — PID=7080
 Using credentials provided via parameters.
 
 Starting NinjaTrader with auto-login for: FNFTCARLOSDOtFju
@@ -113,7 +112,6 @@ NinjaTrader is running. You may close this window.
 [ninja] [INFO] [LiveMode] Refresh: resetting strategy...
 [ninja] [INFO] [StrategyV2] Internal state fully reset. (preserve_histories=True)
 [ninja] [INFO] [Strategy] add_strategy_line id=83b1c08d-4310-4536-b1c0-c869c745541f level=28226.932840690974 ts=1781075760.0
-[ninja] [INFO] [Strategy] add_strategy_line id=3633f7a2-871f-494a-b8e0-10752930f958 level=29847.177284873254 ts=1781075820.0
 [ninja] [INFO] [Strategy] add_strategy_line id=5107a59b-9d28-4bcb-a3b5-c16b4f0c0a33 level=28531.943950527904 ts=1781180820.0
 [ninja] [INFO] [LiveMode] Refresh: strategy reset, ready for fresh bars.
 [ninja] [INFO] [ReadinessStateMachine] CONNECTED -> REFRESHING | reason=Historical data refresh started
@@ -121,64 +119,64 @@ NinjaTrader is running. You may close this window.
 [ninja] [INFO] [Readiness] Refresh started — buffering live bars
 [ninja] [INFO] Refresh start: preserved 0 historical bars, removed 0 recent bars
 [ninja] [DEBUG] RECV: command_ack seq=4
-[ninja] [INFO] ✅ Command ACK: refresh_request seq=2 trade=None (0.06s)
-[ninja] [INFO] RECV: history_batch seq=8 pair=MNQ | bars=9
-[ninja] [INFO] RECV: history_batch | pair=MNQ | bars=9 | unique_added=9 | total_cached=9
-[ninja] [DEBUG] RECV: history_end seq=9
-[ninja] [INFO] History complete: 9 bars cached, switching to STREAMING mode
+[ninja] [INFO] ✅ Command ACK: refresh_request seq=2 trade=None (0.09s)
+[ninja] [INFO] RECV: history_batch seq=10 pair=MNQ | bars=500
+[ninja] [INFO] RECV: history_batch | pair=MNQ | bars=500 | unique_added=500 | total_cached=500
+[ninja] [INFO] RECV: history_batch seq=11 pair=MNQ | bars=500
+[ninja] [INFO] RECV: history_batch | pair=MNQ | bars=500 | unique_added=500 | total_cached=1000
+[ninja] [INFO] RECV: history_batch seq=12 pair=MNQ | bars=413
+[ninja] [INFO] RECV: history_batch | pair=MNQ | bars=413 | unique_added=413 | total_cached=1413
+[ninja] [DEBUG] RECV: history_end seq=13
+[ninja] [WARN] 🕳️  GAP DETECTED [HISTORY]: 176460s hole between 2026-06-12 16:00:00 CDT and 2026-06-14 17:01:00 CDT (2941m 0s)
+[ninja] [INFO] History complete: 1413 bars cached, switching to STREAMING mode
+[ninja] [WARN] 🕳️  HISTORY SCAN: 1 total gap(s) detected in 1413 bars
 [ninja] [INFO] [ReadinessStateMachine] REFRESHING -> WARMING_UP | reason=Historical data loaded; warming up indicators
 [ReadinessStateMachine] REFRESHING -> WARMING_UP | reason=Historical data loaded; warming up indicators
-[ninja] [INFO] [Warmup] Replaying 9 historical bars through strategy...
-[ninja] [INFO] [DECISION] LATCH | line=83b1c08d-4310-4536-b1c0-c869c745541f | dir=long | reason=depth=0.00 | Latched long @ 30036.25 (depth=0.00)
-[ninja] [INFO] [DECISION] LATCH | line=3633f7a2-871f-494a-b8e0-10752930f958 | dir=long | reason=depth=22.18 | Latched long @ 30036.25 (depth=22.18)
-[ninja] [INFO] [DECISION] LATCH | line=5107a59b-9d28-4bcb-a3b5-c16b4f0c0a33 | dir=long | reason=depth=0.00 | Latched long @ 30036.25 (depth=0.00)
-[ninja] [INFO] [Warmup] Complete in 0.1s — 9 bars replayed, 1 stale line(s) removed
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [API /bars] tf=1m count=9 first_bar={'time': 1781474460, 'open': 29826.25, 'high': 30047.0, 'low': 29825.0, 'close': 30036.25, 'volume': 3170, 'pair': 'MNQ'}
-127.0.0.1 - - [14/Jun/2026 17:08:48] "GET /api/bars?pair=MNQ&tf=1m&start_time=null HTTP/1.1" 200 -
+[ninja] [INFO] [Warmup] Replaying 1413 historical bars through strategy...
+[ninja] [INFO] [LIVE BAR #1] time=1781476320.0 close=30051.25 pair=MNQ
+[ninja] [WARN] Duplicate bar at time 1781476320 (total=1)
+[ninja] [INFO] [DECISION] LATCH | line=83b1c08d-4310-4536-b1c0-c869c745541f | dir=long | reason=depth=0.00 | Latched long @ 29493.5 (depth=0.00)
+[ninja] [INFO] [DECISION] LATCH | line=5107a59b-9d28-4bcb-a3b5-c16b4f0c0a33 | dir=long | reason=depth=0.00 | Latched long @ 29493.5 (depth=0.00)
+[ninja] [INFO] [API /bars] tf=1m count=1413 first_bar={'time': 1781215260, 'open': 29450.0, 'high': 29498.0, 'low': 29445.0, 'close': 29493.5, 'volume': 2132, 'pair': 'MNQ'}
+127.0.0.1 - - [14/Jun/2026 17:32:34] "GET /api/bars?pair=MNQ&tf=1m&start_time=null HTTP/1.1" 200 -
 [ninja] [INFO] [TradesController] list_trades('MNQ') found 22 trades.
-127.0.0.1 - - [14/Jun/2026 17:08:48] "GET /api/trades?pair=MNQ HTTP/1.1" 200 -
-[ninja] [INFO] [LIVE BAR #1] time=1781474880.0 close=30042.0 pair=MNQ
-[ninja] [WARN] Duplicate bar at time 1781474880 (total=1)
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [LIVE BAR #2] time=1781474940.0 close=30064.25 pair=MNQ
-[ninja] [INFO] [LiveUpdate] Bar t=1781474940 updated from live stream
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [DEBUG] RECV: market_status seq=142
+127.0.0.1 - - [14/Jun/2026 17:32:34] "GET /api/trades?pair=MNQ HTTP/1.1" 200 -
+[ninja] [INFO] [Warmup] Complete in 6.4s — 1413 bars replayed, 0 stale line(s) removed
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [LIVE BAR #2] time=1781476380.0 close=30038.0 pair=MNQ
+[ninja] [INFO] [LiveUpdate] Bar t=1781476380 updated from live stream
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [DEBUG] RECV: market_status seq=141
 [ninja] [DEBUG] [MarketStatus] MNQ still OPEN
 [ninja] [INFO] [MarketStatus] MNQ market is OPEN, next_open=1781474400.0
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
-[ninja] [INFO] [Warmup] 3m not warm yet: 3/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
+[ninja] [INFO] [Warmup] 1h not warm yet: 24/30 bars
 
 
 
@@ -201,34 +199,54 @@ NinjaTrader is running. You may close this window.
 
 
 
-
-
-
-
-17:08:35  Window opened. Click Connect to start ZMQ connection.
-17:08:44  Starting ZeroMQ connection...
-17:08:45  Connected to ZMQ endpoints: market=5555, cmd=5556
-17:08:45  *** SUCCESS *** Connected to Python TradingBot via ZeroMQ
-17:08:45  Command loop started
-17:08:45  [Sync] Reporting 0 position(s) to Python (broker is source of truth)
-17:08:45  *** SUCCESS *** [Sync] Complete: 0 positions reported
-17:08:45  Subscribed to market data for MNQ 06-26
-17:08:46  REFRESH REQUEST: 1 days
-17:08:46  Sending refresh_start
-17:08:46  [History] DateTime range | days=1 | start=2026-06-13 22:08:46 UTC | end=2026-06-14 22:08:46 UTC | requesting...
-17:08:46  *** WARNING *** [History] BarsRequest returned 0 bars
-17:08:46  [History] Attempt 1/30 returned 0 bars — expanding lookback window to 2 day(s) (+1 day)
-17:08:46  [History] DateTime range | days=2 | start=2026-06-12 22:08:46 UTC | end=2026-06-14 22:08:46 UTC | requesting...
-17:08:46  *** WARNING *** [History] BarsRequest returned 0 bars
-17:08:46  [History] Attempt 2/30 returned 0 bars — expanding lookback window to 3 day(s) (+1 day)
-17:08:46  [History] DateTime range | days=3 | start=2026-06-11 22:08:46 UTC | end=2026-06-14 22:08:46 UTC | requesting...
-17:08:46  *** WARNING *** [History] BarsRequest returned 0 bars
-17:08:46  [History] Attempt 3/30 returned 0 bars — expanding lookback window to 4 day(s) (+1 day)
-17:08:47  [History] DateTime range | days=4 | start=2026-06-10 22:08:47 UTC | end=2026-06-14 22:08:47 UTC | requesting...
-17:08:47  Subscribed to live 1m bars
-17:08:48  [History] BarsRequest returned 3777 bars | first=2026-06-09 23:01:00 | last=2026-06-14 17:09:00 | gapToNow=-11s
-17:08:48  [History] Attempt 4/30 succeeded with 3777 bar(s)
-17:08:48  [History] Trimmed to last 1 session(s): 9 bars | first=2026-06-14 22:01:00 | last=2026-06-14 22:09:00 (removed 3768 older bars)
-17:08:48  Sent 9 historical bars (4 days requested, 3768 trimmed)
-17:08:48  Live bars stream ready. Cached 2 bars, lastCompletedIdx=0, sent 1 initial bar(s). Market-status session: CME US Index Futures ETH
-17:09:17  [MarketStatus] MNQ market is OPEN, next_open=2026-06-14 17:00:00
+17:32:24  Window opened. Click Connect to start ZMQ connection.
+17:32:30  Starting ZeroMQ connection...
+17:32:30  Connected to ZMQ endpoints: market=5555, cmd=5556
+17:32:30  *** SUCCESS *** Connected to Python TradingBot via ZeroMQ
+17:32:30  Command loop started
+17:32:30  [Sync] Reporting 0 position(s) to Python (broker is source of truth)
+17:32:30  *** SUCCESS *** [Sync] Complete: 0 positions reported
+17:32:30  Subscribed to market data for MNQ 06-26
+17:32:31  REFRESH REQUEST: 1 days
+17:32:31  Sending refresh_start
+17:32:31  [History] DateTime range | days=1 | start=2026-06-13 22:32:31 UTC | end=2026-06-14 22:32:31 UTC | requesting...
+17:32:31  *** WARNING *** [History] BarsRequest returned 0 bars
+17:32:31  [History] Attempt 1/30 returned 0 bars — expanding lookback window to 2 day(s) (+1 day)
+17:32:32  [History] DateTime range | days=2 | start=2026-06-12 22:32:32 UTC | end=2026-06-14 22:32:32 UTC | requesting...
+17:32:32  *** WARNING *** [History] BarsRequest returned 0 bars
+17:32:32  [History] Attempt 2/30 returned 0 bars — expanding lookback window to 3 day(s) (+1 day)
+17:32:32  [History] DateTime range | days=3 | start=2026-06-11 22:32:32 UTC | end=2026-06-14 22:32:32 UTC | requesting...
+17:32:32  *** WARNING *** [History] BarsRequest returned 0 bars
+17:32:32  [History] Attempt 3/30 returned 0 bars — expanding lookback window to 4 day(s) (+1 day)
+17:32:32  [History] DateTime range | days=4 | start=2026-06-10 22:32:32 UTC | end=2026-06-14 22:32:32 UTC | requesting...
+17:32:33  Subscribed to live 1m bars
+17:32:34  [History] BarsRequest returned 3813 bars | first=2026-06-09 23:01:00 | last=2026-06-14 17:33:00 | gapToNow=-26s
+17:32:34  [History] Attempt 4/30 succeeded with 3813 bar(s)
+17:32:34  [History] Trimmed to last 1 session(s): 1413 bars | first=2026-06-11 22:01:00 | last=2026-06-14 22:33:00 (removed 2400 older bars)
+17:32:34  Sent 1413 historical bars (4 days requested, 2400 trimmed)
+17:32:34  Live bars stream ready. Cached 2 bars, lastCompletedIdx=0, sent 1 initial bar(s). Market-status session: CME US Index Futures ETH
+17:33:03  [MarketStatus] MNQ market is OPEN, next_open=2026-06-14 17:00:00
+17:33:34  [ZMQ] Sent 50 partial bars (latest MNQ @30033.50)
+17:34:36  [ZMQ] Sent 100 partial bars (latest MNQ @30031.00)
+17:35:39  [ZMQ] Sent 150 partial bars (latest MNQ @30039.75)
+17:36:43  AUDIT REQUEST: returning last 60 bars
+17:36:43  AUDIT RESPONSE: sent 60 completed bars (requested 61, dropped forming bar)
+17:36:55  [ZMQ] Sent 200 partial bars (latest MNQ @30041.00)
+17:38:03  [MarketStatus] MNQ market is OPEN, next_open=2026-06-14 17:00:00
+17:38:23  [ZMQ] Sent 250 partial bars (latest MNQ @30044.00)
+17:39:34  [ZMQ] Sent 300 partial bars (latest MNQ @30035.75)
+17:40:42  [ZMQ] Sent 350 partial bars (latest MNQ @30022.75)
+17:41:45  AUDIT REQUEST: returning last 60 bars
+17:41:45  AUDIT RESPONSE: sent 60 completed bars (requested 61, dropped forming bar)
+17:41:51  [ZMQ] Sent 400 partial bars (latest MNQ @30047.00)
+17:43:03  [ZMQ] Sent 450 partial bars (latest MNQ @30042.00)
+17:43:03  [MarketStatus] MNQ market is OPEN, next_open=2026-06-14 17:00:00
+17:44:19  [ZMQ] Sent 500 partial bars (latest MNQ @30033.25)
+17:45:35  [ZMQ] Sent 550 partial bars (latest MNQ @30037.75)
+17:46:46  AUDIT REQUEST: returning last 60 bars
+17:46:46  AUDIT RESPONSE: sent 60 completed bars (requested 61, dropped forming bar)
+17:47:03  [ZMQ] Sent 600 partial bars (latest MNQ @30033.00)
+17:47:33  AUDIT REQUEST: returning last 300 bars
+17:47:33  AUDIT RESPONSE: sent 300 completed bars (requested 301, dropped forming bar)
+17:48:03  [MarketStatus] MNQ market is OPEN, next_open=2026-06-14 17:00:00
+17:48:19  [ZMQ] Sent 650 partial bars (latest MNQ @30051.25)
