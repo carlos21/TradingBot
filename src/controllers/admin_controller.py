@@ -51,6 +51,19 @@ class AdminController:
             abort(404, f"Trade {trade_id} not found")
         return jsonify(trade.to_dict()), 200
 
+    def delete_trade(self, trade_id: str):
+        """Delete a trade and any related child trades."""
+        try:
+            self._analytics.delete_trade(trade_id)
+        except Exception as exc:  # noqa: BLE001
+            # Repository already raises domain DB exceptions; surface as 404/500
+            from src.dbexception import DBNotFoundException
+            if isinstance(exc, DBNotFoundException):
+                abort(404, str(exc))
+            self.logger.error(f"Failed to delete trade {trade_id}: {exc}")
+            abort(500, "Failed to delete trade")
+        return jsonify({"deleted": True, "trade_id": trade_id}), 200
+
     def get_analytics(self, pair: str):
         """Get all analytics data for charts."""
         equity_curve = self._analytics.get_equity_curve(pair)

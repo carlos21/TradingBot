@@ -126,6 +126,10 @@ export class ApiClient {
     return this.get(`/api/admin/trades/${tradeId}`);
   }
 
+  async deleteTrade(tradeId) {
+    return this.delete(`/api/admin/trades/${tradeId}`);
+  }
+
   async getAnalytics() {
     return this.get(`/api/admin/analytics?pair=${this.pair}`);
   }

@@ -34,8 +34,8 @@ export class TradeLogs {
 
   render(trade) {
     // Title - show full trade ID and result badge with colored background
-    const resultLabel = trade.result_type || (trade.status === 'open' ? 'OPEN' : 'CLOSED');
-    const resultBadgeClass = this.getResultBadgeBackgroundClass(trade.result_type);
+    const resultLabel = trade.result_type || (trade.status === 'open' ? 'Open' : 'Close');
+    const resultBadgeClass = this.getResultBadgeBackgroundClass(resultLabel);
     this.titleEl.innerHTML = `
       Trade ${trade.trade_id} 
       <span class="px-2 py-1 rounded text-xs font-medium ${resultBadgeClass}">${resultLabel}</span>
@@ -123,6 +123,7 @@ export class TradeLogs {
       case 'SL': return 'text-red-400';
       case 'BE': return 'text-yellow-400';
       case 'SP': return 'text-blue-400';
+      case 'CLOSE': return 'text-orange-400';
       default: return 'text-gray-400';
     }
   }
@@ -133,6 +134,7 @@ export class TradeLogs {
       case 'SL': return 'bg-red-600 text-white';
       case 'BE': return 'bg-yellow-500 text-black';
       case 'SP': return 'bg-blue-500 text-white';
+      case 'CLOSE': return 'bg-orange-500 text-white';
       default: return 'bg-gray-600 text-gray-300';
     }
   }

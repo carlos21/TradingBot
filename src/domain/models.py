@@ -41,7 +41,7 @@ class TradeData:
     exit_price: float | None
     exit_time: datetime | None
     result: float | None       # e.g. PnL or +1/–1 flag
-    result_type: str | None    # "TP", "SL", "BE", or "SP"
+    result_type: str | None    # "TP", "SL", "BE", "SP", or "CLOSE" (null while open)
     fees: float | None
     pnl_usd: float | None
     params: dict[str, Any] | None

@@ -94,6 +94,10 @@ class TradeWriter(ABC):
                    fees: float | None = None, pnl_usd: float | None = None) -> TradeData:
         """Close a trade."""
 
+    @abstractmethod
+    def delete_trade(self, trade_id: str) -> None:
+        """Delete a trade and any related child trades."""
+
 
 class TradeModifier(ABC):
     """Interface for modifying existing trades."""

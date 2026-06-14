@@ -84,12 +84,13 @@ class Direction(Enum):
 class ResultType(Enum):
     """Trade result type enumeration.
 
-    Replaces string-based result types ('SL', 'TP', 'BE', 'SP').
+    Replaces string-based result types ('SL', 'TP', 'BE', 'SP', 'CLOSE').
     """
     STOP_LOSS = "SL"
     TAKE_PROFIT = "TP"
     BREAKEVEN = "BE"
-    MANUAL = "SP"  # Session end, manual close
+    MANUAL = "SP"  # Session / platform / stream-end close
+    MANUAL_CLOSE = "CLOSE"  # User-initiated broker close (NinjaTrader / MetaTrader)
 
     @classmethod
     def from_string(cls, value: str) -> "ResultType":
@@ -101,10 +102,12 @@ class ResultType(Enum):
             'TP': cls.TAKE_PROFIT,
             'BE': cls.BREAKEVEN,
             'SP': cls.MANUAL,
+            'CLOSE': cls.MANUAL_CLOSE,
             'STOP_LOSS': cls.STOP_LOSS,
             'TAKE_PROFIT': cls.TAKE_PROFIT,
             'BREAKEVEN': cls.BREAKEVEN,
             'MANUAL': cls.MANUAL,
+            'MANUAL_CLOSE': cls.MANUAL_CLOSE,
         }
 
         if normalized in mapping:
@@ -167,3 +170,26 @@ class TimeFrame(Enum):
     def to_seconds(self) -> int:
         """Get timeframe in seconds."""
         return self.seconds
+
+
+class CloseReason(Enum):
+    """Why a trade was closed.
+
+    Lives in the domain layer so pure business rules (e.g. result-type
+    classification) can depend on it without importing service modules.
+    """
+    STOP_LOSS_HIT = "stop_loss_hit"
+    TAKE_PROFIT_HIT = "take_profit_hit"
+    SESSION_END = "session_end"
+    MANUAL_CLOSE = "manual_close"
+    STREAM_END = "stream_end"
+    BROKER_FILL = "broker_fill"
+
+    @classmethod
+    def from_string(cls, value: str) -> "CloseReason":
+        """Create CloseReason from string."""
+        normalized = value.lower().strip()
+        for reason in cls:
+            if reason.value == normalized:
+                return reason
+        raise ValueError(f"Invalid close reason: {value!r}")

@@ -395,9 +395,9 @@ class TestHandleBrokerFillExpanded:
     def test_provided_result_type_used(self):
         tm = _make_manager()
         _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
-        tm.handle_broker_fill("T1", 110.0, result_type="MANUAL")
+        tm.handle_broker_fill("T1", 110.0, result_type="CLOSE")
         closed = tm.trade_repository.closed[0]
-        assert closed["result_type"] == "MANUAL"
+        assert closed["result_type"] == "CLOSE"
 
     def test_db_error_on_broker_fill_caught(self):
         repo = ExplodingTradeRepository(explode_on={"close_trade"})

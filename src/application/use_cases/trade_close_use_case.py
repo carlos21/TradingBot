@@ -9,9 +9,11 @@ TradeManager.handle_broker_fill.
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from src.application.ports import EventPublisher
 from src.domain.repositories import TradeRepository
+from src.domain.result_type_classifier import ClassificationContext, DefaultResultTypeClassifier, ResultTypeClassifier
 from src.domain.types import Direction
 from src.financial_calc import FinancialCalc
 from src.services.trade_executor import TradeExecutor
@@ -31,7 +33,7 @@ class CloseResult:
     exit_price: float
     exit_time: float
     result: float
-    result_type: str
+    result_type: Literal["BE", "SL", "TP", "SP", "CLOSE"]
     fees: float
     pnl_usd: float
 
@@ -63,6 +65,7 @@ class TradeCloseUseCase:
         point_value: float = 2.0,
         fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
         broker_spread: float = 0.0,
+        result_type_classifier: ResultTypeClassifier | None = None,
     ):
         self._repo = trade_repository
         self._executor = trade_executor
@@ -72,6 +75,7 @@ class TradeCloseUseCase:
         self._point_value = point_value
         self._fee_per_rt = fee_per_rt
         self._broker_spread = broker_spread
+        self._classifier = result_type_classifier or DefaultResultTypeClassifier()
 
     def execute(
         self,
@@ -104,7 +108,7 @@ class TradeCloseUseCase:
         entry = trade.get('entry', trade.get('entry_price'))
         contracts = trade.get('contracts') or 1
 
-        result, fees, pnl_usd, detected_result_type = FinancialCalc.calculate_close_metrics(
+        result, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
             direction=Direction.from_string(trade['type']),
             entry_price=entry,
             exit_price=exit_price,
@@ -122,7 +126,16 @@ class TradeCloseUseCase:
             pnl_usd -= spread_cost
             fees += spread_cost
 
-        result_type = result_type_override or detected_result_type
+        result_type = self._classifier.classify(
+            ClassificationContext(
+                direction=Direction.from_string(trade['type']),
+                entry_price=entry,
+                exit_price=exit_price,
+                stop_loss=sl,
+                take_profit=tp,
+                broker_result_type=result_type_override,
+            )
+        ).value
 
         # 2. Call executor FIRST (safety: don't persist if ZMQ fails)
         # Skip when broker already closed the position (broker fill) to avoid

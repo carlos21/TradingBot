@@ -226,6 +226,17 @@ class UnitOfWorkTradeRepository(ITradeRepository):
     def get_all_trades(self, pair: str) -> list[TradeData]:
         return self.list_trades(pair)
 
+    def delete_trade(self, trade_id: str) -> None:
+        trade = self._session.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+        if not trade:
+            raise DBNotFoundException(f"Trade {trade_id} not found")
+        self._session.query(Trade).filter(Trade.signal_id == trade_id).delete(
+            synchronize_session=False
+        )
+        self._session.query(Trade).filter(Trade.trade_id == trade_id).delete(
+            synchronize_session=False
+        )
+
     def append_trade_log(self, trade_id: str, event: str, message: str) -> None:
         # UoW repositories do not implement trade logging;
         # logs are handled by persistent repository implementations.

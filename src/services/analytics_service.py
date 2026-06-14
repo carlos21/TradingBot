@@ -297,6 +297,10 @@ class AnalyticsService:
             logs=logs,
         )
 
+    def delete_trade(self, trade_id: str) -> None:
+        """Delete a trade and its related child trades."""
+        self._repo.delete_trade(trade_id)
+
     def _calculate_max_drawdown(self, closed_trades: list) -> tuple[float, float]:
         """Calculate max drawdown in R and as percentage of peak equity."""
         if not closed_trades:

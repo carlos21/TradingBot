@@ -53,6 +53,10 @@ def register_admin_routes(
     def admin_trade_detail(trade_id):
         return admin_controller.get_trade_details(trade_id)
 
+    @app.route('/api/admin/trades/<string:trade_id>', methods=['DELETE'])
+    def admin_delete_trade(trade_id):
+        return admin_controller.delete_trade(trade_id)
+
     @app.route('/api/admin/analytics', methods=['GET'])
     def admin_analytics():
         pair = request.args.get('pair')

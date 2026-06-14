@@ -6,22 +6,15 @@ across BaseLiquidityStrategy, TradeManager, and other components.
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum, auto
 from typing import Literal, Protocol
 
 from src.domain.repositories import TradeRepository
-from src.domain.types import Direction
+from src.domain.result_type_classifier import ClassificationContext, DefaultResultTypeClassifier, ResultTypeClassifier
+from src.domain.types import CloseReason, Direction, ResultType
 from src.financial_calc import FinancialCalc
 
-
-class CloseReason(Enum):
-    """Enumeration of all possible trade close reasons."""
-    STOP_LOSS_HIT = auto()
-    TAKE_PROFIT_HIT = auto()
-    SESSION_END = auto()
-    MANUAL_CLOSE = auto()
-    STREAM_END = auto()
-    BROKER_FILL = auto()
+# Re-export for backward compatibility with existing callers/tests.
+__all__ = ["CloseReason", "TradeCloseService", "TradeCloseResult", "TradeEventPublisher", "NoOpTradeEventPublisher"]
 
 
 @dataclass
@@ -31,7 +24,7 @@ class TradeCloseResult:
     exit_price: float
     exit_time: datetime
     result_r: float
-    result_type: Literal["BE", "SL", "TP", "SP"]
+    result_type: Literal["BE", "SL", "TP", "SP", "CLOSE"]
     fees: float
     pnl_usd: float
     close_reason: CloseReason
@@ -77,11 +70,13 @@ class TradeCloseService:
         event_publisher: TradeEventPublisher | None = None,
         point_value: float = 5.0,
         fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
+        result_type_classifier: ResultTypeClassifier | None = None,
     ):
         self.trade_repository = trade_repository
         self.event_publisher = event_publisher or NoOpTradeEventPublisher()
         self.point_value = point_value
         self.fee_per_rt = fee_per_rt
+        self._classifier = result_type_classifier or DefaultResultTypeClassifier()
 
     def close_trade(
         self,
@@ -89,6 +84,7 @@ class TradeCloseService:
         exit_price: float,
         exit_time: datetime,
         close_reason: CloseReason,
+        broker_result_type: str | None = None,
     ) -> TradeCloseResult:
         """Close a trade with centralized logic.
 
@@ -110,8 +106,8 @@ class TradeCloseService:
         risk_points = trade.get('risk', 0) or 1.0
         contracts = trade.get('contracts', 1) or 1
 
-        # Use FinancialCalc as single source of truth
-        result_r, fees, pnl_usd, result_type = FinancialCalc.calculate_close_metrics(
+        # Use FinancialCalc for PnL / R metrics; classifier for result type.
+        result_r, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
             direction=Direction.from_string(trade_type),
             entry_price=entry_price,
             exit_price=exit_price,
@@ -123,9 +119,18 @@ class TradeCloseService:
             fee_per_rt=self.fee_per_rt,
         )
 
-        # Special handling for session end
-        if close_reason == CloseReason.SESSION_END:
-            result_type = FinancialCalc.calculate_session_end_result_type(result_r)
+        result_type = self._classifier.classify(
+            ClassificationContext(
+                direction=Direction.from_string(trade_type),
+                entry_price=entry_price,
+                exit_price=exit_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                close_reason=close_reason,
+                broker_result_type=broker_result_type,
+            )
+        )
+        result_type_str = result_type.value
 
         # Persist to database
         self.trade_repository.close_trade(
@@ -133,7 +138,7 @@ class TradeCloseService:
             exit_price=exit_price,
             exit_time=exit_time,
             result=result_r,
-            result_type=result_type,
+            result_type=result_type_str,
             fees=fees,
             pnl_usd=pnl_usd,
         )
@@ -144,7 +149,7 @@ class TradeCloseService:
             exit_price=exit_price,
             exit_time=exit_time,
             result_r=result_r,
-            result_type=result_type,
+            result_type=result_type_str,
             fees=fees,
             pnl_usd=pnl_usd,
             close_reason=close_reason,
@@ -158,7 +163,7 @@ class TradeCloseService:
             'exit_price': exit_price,
             'exit_time': exit_time.timestamp() if isinstance(exit_time, datetime) else exit_time,
             'result': result_r,
-            'result_type': result_type,
+            'result_type': result_type_str,
             'fees': fees,
             'pnl_usd': pnl_usd,
             'close_reason': close_reason.name,
@@ -235,17 +240,12 @@ class TradeCloseService:
             trade: Trade dictionary
             exit_price: Fill price from broker
             exit_time: Fill timestamp
-            result_type: Optional override (e.g., from broker signal)
+            result_type: Optional broker-provided result type (e.g. 'SL', 'TP', 'CLOSE')
         """
-        result = self.close_trade(
+        return self.close_trade(
             trade=trade,
             exit_price=exit_price,
             exit_time=exit_time,
             close_reason=CloseReason.BROKER_FILL,
+            broker_result_type=result_type,
         )
-
-        # Override result_type if provided by broker
-        if result_type:
-            result.result_type = result_type  # type: ignore
-
-        return result

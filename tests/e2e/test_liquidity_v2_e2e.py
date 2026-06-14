@@ -201,8 +201,8 @@ class TestSingleAccountLifecycle:
         assert cmd["payload"]["trade_id"] == trade_id
 
         closed = _wait_for_trade_closed_in_repo(app.trade_manager.trade_repository, trade_id)
-        # Manual closes that are neither TP nor SL are classified as "SP"
-        assert closed.result_type == "SP"
+        # Manual closes that are neither TP nor SL are classified as "CLOSE"
+        assert closed.result_type == "CLOSE"
 
     def test_modify_command_reaches_fake_nt(self, e2e_harness: E2EHarness) -> None:
         """Send an ORDER_MODIFY and verify it arrives with the new SL."""
@@ -835,11 +835,11 @@ class TestControllerAndQueries:
 
         # In live mode close_trade() already closed the trade locally; broker
         # fill is a no-op because the trade is no longer in open_trades.
-        # The result type for a manual close between SL/TP is "SP".
+        # The result type for a manual close between SL/TP is "CLOSE".
         closed = app.trade_manager.trade_repository.get_trade(trade_id)
         assert closed is not None
         assert closed.exit_time is not None
-        assert closed.result_type == "SP"
+        assert closed.result_type == "CLOSE"
 
     def test_config_query_response(self, e2e_harness: E2EHarness) -> None:
         """FakeNT queries Python for config and gets back account names."""

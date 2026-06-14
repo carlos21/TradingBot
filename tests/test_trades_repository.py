@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from src.dbexception import DBNotFoundException
 from src.infrastructure.database.database import setup_database
 from src.infrastructure.repositories.trades_repository import SQLTradeRepository
 
@@ -176,3 +177,26 @@ class TestSQLTradeRepositoryClosedTrades:
         assert trades[0].exit_price == 5200.0
         assert trades[0].result == 2.0
         assert trades[0].result_type == "TP"
+
+
+class TestSQLTradeRepositoryDelete:
+
+    def test_delete_trade(self, repo):
+        trade = _make_trade(repo)
+        repo.delete_trade(trade.trade_id)
+        assert repo.get_trade(trade.trade_id) is None
+
+    def test_delete_trade_cascades_to_child_trades(self, repo):
+        parent = _make_trade(repo, trade_id="SIGNAL_1")
+        child = _make_trade(repo, trade_id="ACCT_1", signal_id=parent.trade_id)
+        unrelated = _make_trade(repo, trade_id="OTHER_1")
+
+        repo.delete_trade(parent.trade_id)
+
+        assert repo.get_trade(parent.trade_id) is None
+        assert repo.get_trade(child.trade_id) is None
+        assert repo.get_trade(unrelated.trade_id) is not None
+
+    def test_delete_trade_missing_raises(self, repo):
+        with pytest.raises(DBNotFoundException):
+            repo.delete_trade("NONEXISTENT")

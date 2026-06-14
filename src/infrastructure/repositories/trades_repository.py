@@ -329,4 +329,25 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
             finally:
                 db.close()
 
+    def delete_trade(self, trade_id: str) -> None:
+        """Delete a trade and any child trades linked via signal_id."""
+        with self._session() as db:
+            trade = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+            if not trade:
+                db.close()
+                raise DBNotFoundException(f"Trade {trade_id} not found")
+            try:
+                db.query(Trade).filter(Trade.signal_id == trade_id).delete(
+                    synchronize_session=False
+                )
+                db.query(Trade).filter(Trade.trade_id == trade_id).delete(
+                    synchronize_session=False
+                )
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                raise DBException(str(e)) from e
+            finally:
+                db.close()
+
 

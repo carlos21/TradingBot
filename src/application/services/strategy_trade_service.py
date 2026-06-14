@@ -10,6 +10,7 @@ from typing import Any
 
 from src.application.ports import EventPublisher
 from src.domain.repositories import TradeRepository
+from src.domain.result_type_classifier import ClassificationContext, DefaultResultTypeClassifier, ResultTypeClassifier
 from src.domain.types import Direction
 from src.financial_calc import FinancialCalc
 from src.services.trade_executor import TradeExecutor
@@ -33,6 +34,7 @@ class StrategyTradeService:
         point_value: float = 2.0,
         fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
         broker_spread: float = 0.0,
+        result_type_classifier: ResultTypeClassifier | None = None,
     ):
         self._repo = trade_repository
         self._executor = trade_executor
@@ -42,6 +44,7 @@ class StrategyTradeService:
         self._point_value = point_value
         self._fee_per_rt = fee_per_rt
         self._broker_spread = broker_spread
+        self._classifier = result_type_classifier or DefaultResultTypeClassifier()
 
     def open_trade(
         self,
@@ -119,12 +122,15 @@ class StrategyTradeService:
 
         result_type = trade.get("result_type")
         if not result_type:
-            result_type = FinancialCalc.determine_result_type(
-                exit_price=trade.get("exit_price"),
-                entry_price=trade.get("entry"),
-                stop_loss=trade.get("stop_loss"),
-                take_profit=trade.get("take_profit"),
-            )
+            result_type = self._classifier.classify(
+                ClassificationContext(
+                    direction=Direction.from_string(trade["type"]),
+                    entry_price=trade.get("entry", 0.0),
+                    exit_price=trade.get("exit_price", 0.0),
+                    stop_loss=trade.get("stop_loss"),
+                    take_profit=trade.get("take_profit"),
+                )
+            ).value
             trade["result_type"] = result_type
 
         if self._publisher:

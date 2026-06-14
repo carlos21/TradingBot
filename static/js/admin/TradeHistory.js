@@ -37,7 +37,7 @@ export class TradeHistory {
 
     if (!this.trades || this.trades.length === 0) {
       console.log('[TradeHistory] No trades to display');
-      tbody.innerHTML = '<tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">No trades found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">No trades found</td></tr>';
       return;
     }
     console.log(`[TradeHistory] Rendering ${this.trades.length} trades`);
@@ -68,15 +68,20 @@ export class TradeHistory {
           <td class="px-4 py-3 ${pnlClass}">${pnlText}</td>
           <td class="px-4 py-3 ${pnlClass}">${pctText}</td>
           <td class="px-4 py-3">
-            <span class="px-2 py-1 rounded text-xs font-medium ${this.getResultBadgeClass(trade.result_type)}">
-              ${trade.result_type || '-'}
+            <span class="px-2 py-1 rounded text-xs font-medium ${this.getResultBadgeClass(this.getResultLabel(trade))}">
+              ${this.getResultLabel(trade)}
             </span>
           </td>
           <td class="px-4 py-3 text-sm text-gray-400">${this.formatTime(trade.entry_time)}</td>
           <td class="px-4 py-3">
-            <button class="view-logs-btn text-blue-400 hover:text-blue-300 text-sm" data-trade-id="${trade.trade_id}">
-              View Logs
-            </button>
+            <div class="trade-actions flex items-center gap-2">
+              <button class="action-btn view-logs-btn text-gray-400 hover:text-blue-400 p-1 rounded transition-colors" data-trade-id="${trade.trade_id}" title="View logs">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+              </button>
+              <button class="action-btn delete-trade-btn text-gray-400 hover:text-red-400 p-1 rounded transition-colors" data-trade-id="${trade.trade_id}" title="Delete trade">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              </button>
+            </div>
           </td>
         </tr>
       `;
@@ -85,10 +90,11 @@ export class TradeHistory {
     // Add click handlers
     tbody.querySelectorAll('tr').forEach(row => {
       row.addEventListener('click', (e) => {
-        if (!e.target.classList.contains('view-logs-btn')) {
-          const tradeId = row.dataset.tradeId;
-          if (this.onTradeClick) this.onTradeClick(tradeId);
+        if (e.target.closest('.action-btn')) {
+          return;
         }
+        const tradeId = row.dataset.tradeId;
+        if (this.onTradeClick) this.onTradeClick(tradeId);
       });
     });
 
@@ -97,6 +103,23 @@ export class TradeHistory {
         e.stopPropagation();
         const tradeId = btn.dataset.tradeId;
         if (this.onTradeClick) this.onTradeClick(tradeId);
+      });
+    });
+
+    tbody.querySelectorAll('.delete-trade-btn').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const tradeId = btn.dataset.tradeId;
+        if (!confirm(`Delete trade ${tradeId} and all related data? This cannot be undone.`)) {
+          return;
+        }
+        try {
+          await this.api.deleteTrade(tradeId);
+          this.load();
+        } catch (error) {
+          console.error('[TradeHistory] Failed to delete trade:', error);
+          alert('Failed to delete trade: ' + error.message);
+        }
       });
     });
   }
@@ -129,12 +152,19 @@ export class TradeHistory {
     }
   }
 
+  getResultLabel(trade) {
+    if (trade.result_type) return trade.result_type;
+    return trade.status === 'open' ? 'Open' : '-';
+  }
+
   getResultBadgeClass(resultType) {
     switch (resultType) {
       case 'TP': return 'bg-green-600 text-white';
       case 'SL': return 'bg-red-600 text-white';
       case 'BE': return 'bg-yellow-500 text-black';
       case 'SP': return 'bg-blue-500 text-white';
+      case 'CLOSE': return 'bg-orange-500 text-white';
+      case 'Open': return 'bg-gray-600 text-gray-300';
       default: return 'bg-gray-600 text-gray-300';
     }
   }
@@ -160,7 +190,7 @@ export class TradeHistory {
       t.take_profit,
       t.exit_price || '',
       t.result !== null ? t.result : '',
-      t.result_type || 'OPEN',
+      t.result_type || (t.status === 'open' ? 'Open' : '-'),
       new Date(t.entry_time * 1000).toISOString(),
       t.exit_time ? new Date(t.exit_time * 1000).toISOString() : '',
     ]);

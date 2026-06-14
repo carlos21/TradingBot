@@ -17,6 +17,9 @@ class FakeAdminController:
     def get_trade_details(self, trade_id):
         return {"trade_id": trade_id}
 
+    def delete_trade(self, trade_id):
+        return {"deleted": True, "trade_id": trade_id}
+
     def get_analytics(self, pair):
         return {"pair": pair}
 
@@ -67,6 +70,14 @@ class TestAdminRoutes:
         with app.test_client() as client:
             resp = client.get("/api/admin/trades/T1")
             assert resp.status_code == 200
+
+    def test_admin_delete_trade(self, app):
+        with app.test_client() as client:
+            resp = client.delete("/api/admin/trades/T1")
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data["deleted"] is True
+            assert data["trade_id"] == "T1"
 
     def test_admin_analytics(self, app):
         with app.test_client() as client:
