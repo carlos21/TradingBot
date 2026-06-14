@@ -86,12 +86,12 @@ class AdminApp {
       });
 
       // Initialize new manager panels
-      this.settingsManager.init();
+      await this.settingsManager.init();
       if (document.getElementById('ninjatrader-tab')) {
-        this.ntManager.init();
+        await this.ntManager.init();
       }
       if (document.getElementById('metatrader-tab')) {
-        this.mtManager.init();
+        await this.mtManager.init();
       }
 
       // Initialize Socket.IO connection for admin

@@ -32,6 +32,7 @@ export class ChartViewer {
     this._lastShadedTime = -Infinity;
     this.historyReady = false;
     this.pendingBars = [];
+    this.validTimes = new Set();
 
     // Config
     this.keepClosedTradeLines = opts.keepClosedTradeLines || false;
@@ -169,7 +170,30 @@ export class ChartViewer {
       this.shadeBars(bars);
     } finally {
       this._seriesBusy = false;
+      this._flushPendingBars();
     }
+  }
+
+  _flushPendingBars() {
+    if (this.pendingBars.length === 0) return;
+    const bars = this.pendingBars;
+    this.pendingBars = [];
+    for (const bar of bars) {
+      if (bar.time >= this.lastTime) {
+        this.series.update(bar);
+        const lastIdx = this.historicalBars.length - 1;
+        if (lastIdx >= 0 && this.historicalBars[lastIdx].time === bar.time) {
+          this.historicalBars[lastIdx] = bar;
+        } else {
+          this.historicalBars.push(bar);
+        }
+        this.validTimes.add(bar.time);
+        this.lastTime = bar.time;
+        this.lastPrice = bar.close;
+        this.shadeBar(bar);
+      }
+    }
+    this.recalculateTSI();
   }
 
   async _initLines() {
@@ -180,8 +204,7 @@ export class ChartViewer {
   async _initTrades() {
     try {
       this.allTrades = await this.dataService.fetchTrades(this.pair);
-      const validTimes = new Set(this.historicalBars.map(b => b.time));
-      this.markers.update(this.allTrades, this.lastTime, validTimes);
+      this.markers.update(this.allTrades, this.lastTime, this.validTimes);
     } catch (e) { console.error(e); }
   }
 
@@ -199,13 +222,12 @@ export class ChartViewer {
     }
 
     const times = bars.map(b => b.time);
-    const validTimes = new Set(times);
     this.markers.setTSIMarkers(detectCrosses(tsiRaw, signalRaw, times));
 
     try {
       if (this.tsiSeries) this.tsiSeries.setData(tsiData);
       if (this.sigSeries) this.sigSeries.setData(signalData);
-      this.markers.update(this.allTrades, this.lastTime, validTimes);
+      this.markers.update(this.allTrades, this.lastTime, this.validTimes);
     } catch (err) {
       console.error(err);
     }
@@ -218,6 +240,8 @@ export class ChartViewer {
     if (valid.length !== bars.length) {
       console.warn(`[ChartViewer] dropped ${bars.length - valid.length} bars with null OHLC`);
     }
+    // Rebuild validTimes from the displayed bars
+    this.validTimes = new Set(valid.map(b => b.time));
     // Set data first, then clear markers to avoid "Value is null" error
     // This can happen when setMarkers is called on a series with no data
     this.series.setData(valid);
@@ -319,6 +343,25 @@ export class ChartViewer {
 
   // --- Trade Lines ---
 
+  _createTradeLines(trade, { slPrice } = {}) {
+    const n = this.allTrades.findIndex(t => t.trade_id === trade.trade_id) + 1;
+    const isOppCross = trade.close_on_opposite_cross;
+    const entryLabel = (isOppCross ? 'Entry #' + n : (n > 1 ? 'Re-entry #' + n : 'Entry #' + n)) + (isOppCross ? ' \u2192 OppCross' : '');
+
+    this.tradeEntryLine = this.series.createPriceLine({ price: trade.entry, color: 'yellow', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: entryLabel });
+
+    const sl = slPrice || trade.stop_loss || trade.stopLoss;
+    this.tradeSLLine = this.series.createPriceLine({ price: sl, color: 'red', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'SL #' + n });
+
+    if (isOppCross) {
+      this.tradeTPLine = this.series.createPriceLine({ price: trade.entry, color: '#4CAF50', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Exit: next opp. cross' });
+    } else {
+      this.tradeTPLine = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP #' + n });
+    }
+
+    this.allTradeLines.push(this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine);
+  }
+
   drawTradeLines(trade) {
     const isSameTrade = this.activeTrade && this.activeTrade.trade_id === trade.trade_id;
     if (isSameTrade || !this.keepClosedTradeLines) {
@@ -327,19 +370,7 @@ export class ChartViewer {
     } else {
       [this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine].forEach(h => h && h.applyOptions({ lineStyle: LightweightCharts.LineStyle.Dashed, lineWidth: 1 }));
     }
-    const n = this.allTrades.findIndex(t => t.trade_id === trade.trade_id) + 1;
-    const isOppCross = trade.close_on_opposite_cross;
-    // TSI cross strategy has no re-entry concept — every trade is an independent entry
-    const entryLabel = (isOppCross ? 'Entry #' + n : (n > 1 ? 'Re-entry #' + n : 'Entry #' + n)) + (isOppCross ? ' → OppCross' : '');
-    this.tradeEntryLine = this.series.createPriceLine({ price: trade.entry, color: 'yellow', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: entryLabel });
-    this.tradeSLLine = this.series.createPriceLine({ price: trade.stop_loss || trade.stopLoss, color: 'red', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'SL #' + n });
-    if (isOppCross) {
-      // No fixed TP — draw a faint "floating" label line instead
-      this.tradeTPLine = this.series.createPriceLine({ price: trade.entry, color: '#4CAF50', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Exit: next opp. cross' });
-    } else {
-      this.tradeTPLine = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP #' + n });
-    }
-    this.allTradeLines.push(this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine);
+    this._createTradeLines(trade);
   }
 
   clearAllTradeLines() {
@@ -354,30 +385,17 @@ export class ChartViewer {
     this.clearAllTradeLines();
     const trade = this.allTrades.find(t => t.trade_id === tradeId);
     if (!trade) return;
-    const n = this.allTrades.findIndex(t => t.trade_id === tradeId) + 1;
-    const isOppCross = trade.close_on_opposite_cross;
-    // TSI cross strategy has no re-entry concept — every trade is an independent entry
-    const entryLabel = (isOppCross ? 'Entry #' + n : (n > 1 ? 'Re-entry #' + n : 'Entry #' + n)) + (isOppCross ? ' → OppCross' : '');
-    this.tradeEntryLine = this.series.createPriceLine({ price: trade.entry, color: 'yellow', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: entryLabel });
     // Always show the ORIGINAL SL as the primary line
     const origSL = trade.orig_sl || trade.stop_loss || trade.stopLoss;
-    this.tradeSLLine = this.series.createPriceLine({ price: origSL, color: 'red', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'SL #' + n });
-    if (isOppCross) {
-      this.tradeTPLine = this.series.createPriceLine({ price: trade.entry, color: '#4CAF50', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Exit: next opp. cross' });
-    } else {
-      this.tradeTPLine = this.series.createPriceLine({ price: trade.take_profit || trade.takeProfit, color: 'green', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: 'TP #' + n });
-    }
-    this.allTradeLines.push(this.tradeEntryLine, this.tradeSLLine, this.tradeTPLine);
+    this._createTradeLines(trade, { slPrice: origSL });
     // If SL was moved, show the adjusted SL as a thin dashed line
+    const n = this.allTrades.findIndex(t => t.trade_id === tradeId) + 1;
     const currSL = trade.stop_loss || trade.stopLoss;
     if (currSL && origSL && Math.abs(currSL - origSL) > 0.01) {
       this.allTradeLines.push(this.series.createPriceLine({ price: currSL, color: '#ff5252', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'Adj SL #' + n }));
     }
     // Hide markers from other trades so the snapshot shows only this trade
-    const validTimes = this.historicalBars && this.historicalBars.length > 0
-      ? new Set(this.historicalBars.map(b => b.time))
-      : null;
-    this.markers.update([trade], this.lastTime, validTimes);
+    this.markers.update([trade], this.lastTime, this.validTimes.size > 0 ? this.validTimes : null);
   }
 
   // --- Interaction ---
@@ -402,7 +420,7 @@ export class ChartViewer {
       this._displayChart(slice);
       this.historicalBars = slice;
       this.recalculateTSI();
-      this.markers.update(this.allTrades, this.lastTime);
+      this.markers.update(this.allTrades, this.lastTime, this.validTimes);
       this.socket.emit('seek', { fromTime: this.lastTime });
     }
   }
@@ -484,6 +502,7 @@ export class ChartViewer {
       this.shadeBars(bars);
     } finally {
       this._seriesBusy = false;
+      this._flushPendingBars();
     }
   }
 

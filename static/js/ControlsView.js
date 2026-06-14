@@ -95,9 +95,9 @@ export class ControlsView {
         try {
           const resp = await fetch('/api/stream/start', { method: 'POST' });
           const data = await resp.json();
+          this._setStreamingLoading(false);
           if (!resp.ok) {
             if (statusEl) statusEl.textContent = '⚠️ ' + (data.message || 'Error starting stream');
-            this._setStreamingLoading(false);
           } else {
             if (statusEl) statusEl.textContent = data.message || 'Starting…';
           }
@@ -153,56 +153,35 @@ export class ControlsView {
     });
   }
 
+  async _sendTestTrade(direction) {
+    try {
+      const resp = await fetch('/api/trades/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pair: this.chartViewer.pair, direction })
+      });
+      const contentType = resp.headers.get('content-type') || '';
+      let data = {};
+      if (contentType.includes('application/json')) {
+        data = await resp.json();
+      } else {
+        data = { error: (await resp.text()).trim() || resp.statusText };
+      }
+      if (resp.ok) {
+        alert(`Test ${direction.charAt(0).toUpperCase() + direction.slice(1)} sent: ` + data.trade_id);
+      } else {
+        alert('Failed: ' + (data.error || resp.statusText));
+      }
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  }
+
   _bindTestTradeEvents() {
     if (!this.testLongBtn || !this.testShortBtn) return;
 
-    this.testLongBtn.addEventListener('click', async () => {
-      try {
-        const resp = await fetch('/api/trades/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pair: this.chartViewer.pair, direction: 'long' })
-        });
-        const contentType = resp.headers.get('content-type') || '';
-        let data = {};
-        if (contentType.includes('application/json')) {
-          data = await resp.json();
-        } else {
-          data = { error: (await resp.text()).trim() || resp.statusText };
-        }
-        if (resp.ok) {
-          alert('Test Long sent: ' + data.trade_id);
-        } else {
-          alert('Failed: ' + (data.error || resp.statusText));
-        }
-      } catch (err) {
-        alert('Error: ' + err.message);
-      }
-    });
-
-    this.testShortBtn.addEventListener('click', async () => {
-      try {
-        const resp = await fetch('/api/trades/test', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ pair: this.chartViewer.pair, direction: 'short' })
-        });
-        const contentType = resp.headers.get('content-type') || '';
-        let data = {};
-        if (contentType.includes('application/json')) {
-          data = await resp.json();
-        } else {
-          data = { error: (await resp.text()).trim() || resp.statusText };
-        }
-        if (resp.ok) {
-          alert('Test Short sent: ' + data.trade_id);
-        } else {
-          alert('Failed: ' + (data.error || resp.statusText));
-        }
-      } catch (err) {
-        alert('Error: ' + err.message);
-      }
-    });
+    this.testLongBtn.addEventListener('click', () => this._sendTestTrade('long'));
+    this.testShortBtn.addEventListener('click', () => this._sendTestTrade('short'));
 
     if (this.closeAllBtn) {
       this.closeAllBtn.addEventListener('click', async () => {

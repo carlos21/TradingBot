@@ -55,7 +55,27 @@ export class LogPanel {
       this.entries.shift();
     }
 
-    this.render();
+    // Use incremental append when no filters are active to avoid full re-render
+    if (this.container && !this._hasActiveFilters() && this._matchesFilters(entry)) {
+      // Remove the "no logs" placeholder if present
+      const placeholder = this.container.querySelector('.text-center');
+      if (placeholder) placeholder.remove();
+
+      this._appendEntry(entry);
+
+      // Remove oldest DOM node if over display limit
+      while (this.container.children.length > 200) {
+        this.container.removeChild(this.container.firstChild);
+      }
+
+      this.container.scrollTop = this.container.scrollHeight;
+    } else {
+      this.render();
+    }
+  }
+
+  _hasActiveFilters() {
+    return !!(this.levelFilter?.value || this.sourceFilter?.value || this.searchFilter?.value);
   }
 
   clear() {
@@ -129,6 +149,23 @@ export class LogPanel {
 
     // Auto-scroll to bottom
     this.container.scrollTop = this.container.scrollHeight;
+  }
+
+  _appendEntry(entry) {
+    const timeStr = new Date(entry.time * 1000).toLocaleTimeString('en-US', {
+      hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
+    });
+    const colorClass = this._levelColor(entry.level);
+    const bgClass = this._levelBg(entry.level);
+
+    const div = document.createElement('div');
+    div.className = `log-entry text-xs font-mono border-l-2 ${colorClass} ${bgClass} rounded px-2 py-1.5`;
+    div.innerHTML =
+      `<span class="text-gray-500">${timeStr}</span>` +
+      `<span class="font-bold ml-2">${entry.level}</span>` +
+      `<span class="text-gray-400 ml-2">[${entry.source}]</span>` +
+      `<span class="ml-2 text-gray-300">${this._escapeHtml(entry.message)}</span>`;
+    this.container.appendChild(div);
   }
 
   _escapeHtml(text) {

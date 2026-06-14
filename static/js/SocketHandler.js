@@ -31,7 +31,10 @@ export class SocketHandler {
 
   _processBar(bar) {
     const c = this.chart;
-    if (c._seriesBusy) return;
+    if (c._seriesBusy) {
+      c.pendingBars.push(bar);
+      return;
+    }
     if (bar.time >= c.lastTime) {
       c.series.update(bar);
 
@@ -42,10 +45,11 @@ export class SocketHandler {
         c.historicalBars.push(bar);
       }
 
+      c.validTimes.add(bar.time);
       c.lastTime = bar.time;
       c.lastPrice = bar.close;
       c.shadeBar(bar);
-      c.recalculateTSI();  // passes validTimes built from historicalBars internally
+      c.recalculateTSI();
     }
   }
 
@@ -54,13 +58,17 @@ export class SocketHandler {
     // Debounce: coalesce rapid history_loaded/trading_ready events (e.g. duplicate emissions)
     clearTimeout(c._historyReadyTimer);
     c._historyReadyTimer = setTimeout(async () => {
-      await c.initBars();
-      c.historyReady = true;
-      // Flush any bars that arrived before history was fully loaded
-      for (const bar of c.pendingBars) {
-        this._processBar(bar);
+      try {
+        await c.initBars();
+      } catch (err) {
+        console.error('[SocketHandler] initBars failed during history ready:', err);
+      } finally {
+        c.historyReady = true;
+        // Flush any bars that arrived before history was fully loaded
+        // (initBars also flushes via _flushPendingBars, but if it threw
+        // early there may still be queued bars)
+        c._flushPendingBars();
       }
-      c.pendingBars = [];
     }, 150);
   }
 
@@ -86,7 +94,7 @@ export class SocketHandler {
 
         if (data.cross_type) {
           c.markers.appendTSIMarker(data.cross_type, data.time);
-          c.markers.update(c.allTrades, c.lastTime, new Set(c.historicalBars.map(b => b.time)));
+          c.markers.update(c.allTrades, c.lastTime, c.validTimes);
         }
       }
     });
@@ -97,7 +105,7 @@ export class SocketHandler {
       if (idx !== -1) c.allTrades[idx] = trade;
       else c.allTrades.push(trade);
       c.drawTradeLines(trade);
-      if (!c._seriesBusy) c.markers.update(c.allTrades, c.lastTime, new Set(c.historicalBars.map(b => b.time)));
+      if (!c._seriesBusy) c.markers.update(c.allTrades, c.lastTime, c.validTimes);
     });
 
     this.socket.on('trade_close', trade => {
@@ -110,7 +118,7 @@ export class SocketHandler {
         [c.tradeEntryLine, c.tradeSLLine, c.tradeTPLine].forEach(h => h && c.series.removePriceLine(h));
         c.allTradeLines = c.allTradeLines.filter(h => h !== c.tradeEntryLine && h !== c.tradeSLLine && h !== c.tradeTPLine);
       }
-      if (!c._seriesBusy) c.markers.update(c.allTrades, c.lastTime, new Set(c.historicalBars.map(b => b.time)));
+      if (!c._seriesBusy) c.markers.update(c.allTrades, c.lastTime, c.validTimes);
     });
 
     this.socket.on('trade_update', update => {
@@ -135,7 +143,7 @@ export class SocketHandler {
         c.activeTrade.risk = update.risk;
         c.drawTradeLines(c.activeTrade);
       }
-      if (!c._seriesBusy) c.markers.update(c.allTrades, c.lastTime, new Set(c.historicalBars.map(b => b.time)));
+      if (!c._seriesBusy) c.markers.update(c.allTrades, c.lastTime, c.validTimes);
     });
 
     this.socket.on('line_removed', ({ id }) => {
