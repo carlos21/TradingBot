@@ -1010,69 +1010,21 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         /// <summary>
-        /// Trim a bar list to the last N meaningful trading sessions.
-        /// When the market is closed or has just opened, the lookback window may span
-        /// multiple sessions. This trims to the last N *meaningful* sessions, where a
-        /// meaningful session has at least MinSessionBars bars.
-        ///
-        /// Stub sessions (e.g. 9 bars at Sunday ETH open) are included in the output
-        /// but do not count toward the `days` parameter.
-        ///
-        /// A "session boundary" is any gap > sessionBreakThresholdSeconds (default 30 min).
-        /// For days=1 just after Sunday ETH open: keeps Friday's full session + Sunday stub.
-        /// For days=1 mid-session: keeps only the current (meaningful) session.
-        /// For days=2: keeps the last 2 meaningful sessions (plus any trailing stub).
+        /// Keep the last N days worth of 1m bars (days * 1440 bars).
         /// </summary>
-        private List<JObject> TrimToLastSession(List<JObject> bars, int days = 1, int sessionBreakThresholdSeconds = 30 * 60)
+        private List<JObject> TrimToLastSession(List<JObject> bars, int days = 1)
         {
             if (bars == null || bars.Count < 2)
                 return bars;
 
-            const int MinSessionBars = 60;
-
-            // Find every index where a new session starts (gap > threshold).
-            var sessionBreaks = new List<int>();
-            for (int i = 1; i < bars.Count; i++)
-            {
-                int gap = bars[i]["time"].Value<int>() - bars[i - 1]["time"].Value<int>();
-                if (gap > sessionBreakThresholdSeconds)
-                    sessionBreaks.Add(i);
-            }
-
-            if (sessionBreaks.Count == 0)
+            int maxBars = days * 24 * 60;
+            if (bars.Count <= maxBars)
                 return bars;
 
-            // Walk session boundaries from newest to oldest, counting only meaningful
-            // sessions (>= MinSessionBars). Stub sessions are skipped in the count but
-            // are still included in the result because we keep everything from trimIndex onward.
-            int meaningfulCount = 0;
-            int trimIndex = -1;
-
-            for (int i = sessionBreaks.Count - 1; i >= 0; i--)
-            {
-                int segStart = sessionBreaks[i];
-                int segEnd = (i < sessionBreaks.Count - 1) ? sessionBreaks[i + 1] : bars.Count;
-                int segBars = segEnd - segStart;
-
-                if (segBars >= MinSessionBars)
-                {
-                    meaningfulCount++;
-                    if (meaningfulCount >= days)
-                    {
-                        trimIndex = segStart;
-                        break;
-                    }
-                }
-            }
-
-            // Not enough meaningful sessions found — keep everything.
-            if (trimIndex < 0)
-                return bars;
-
-            var trimmed = bars.Skip(trimIndex).ToList();
+            var trimmed = bars.Skip(bars.Count - maxBars).ToList();
             var firstTime = DateTimeOffset.FromUnixTimeSeconds(trimmed[0]["time"].Value<int>()).UtcDateTime;
             var lastTime = DateTimeOffset.FromUnixTimeSeconds(trimmed[trimmed.Count - 1]["time"].Value<int>()).UtcDateTime;
-            _logger.Info($"[History] Trimmed to last {days} session(s): {trimmed.Count} bars | first={firstTime:yyyy-MM-dd HH:mm:ss} | last={lastTime:yyyy-MM-dd HH:mm:ss} (removed {bars.Count - trimmed.Count} older bars)");
+            _logger.Info($"[History] Trimmed to last {days} day(s): {trimmed.Count} bars | first={firstTime:yyyy-MM-dd HH:mm:ss} | last={lastTime:yyyy-MM-dd HH:mm:ss} (removed {bars.Count - trimmed.Count} older bars)");
             return trimmed;
         }
 

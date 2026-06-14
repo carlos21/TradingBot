@@ -17,20 +17,43 @@ class MinimumBarsWarmupPolicy(IWarmupPolicy):
     The strategy's triggers need a continuous history of closes to compute
     TSI and other indicators.  This policy requires at least *min_bars* of
     history for every internal timeframe the strategy aggregates.
+
+    For higher timeframes (e.g. 1h) a single trading session may not contain
+    enough bars to reach *min_bars*.  When the available data is exhausted
+    (no more historical bars exist) the policy accepts a lower floor so that
+    trading is not blocked for hours waiting on live bars.
     """
 
-    def __init__(self, min_bars: int = 30) -> None:
+    def __init__(self, min_bars: int = 30, min_bars_floor: int = 20) -> None:
         if min_bars <= 0:
             raise ValueError("min_bars must be positive")
+        if min_bars_floor <= 0 or min_bars_floor > min_bars:
+            raise ValueError("min_bars_floor must be between 1 and min_bars")
         self._min_bars = min_bars
+        self._min_bars_floor = min_bars_floor
 
     def is_warm(self, strategy: LiquidityStrategyV2) -> bool:
         for tf in strategy.internal_timeframes:
-            history = strategy.get_history(tf, self._min_bars)
-            if len(history) < self._min_bars:
+            available = len(strategy.get_history(tf, self._min_bars))
+            if available >= self._min_bars:
+                continue
+
+            # Check if history is exhausted for this timeframe (requesting
+            # one more bar returns the same count → no more data exists).
+            total = len(strategy.get_history(tf, self._min_bars + 1))
+            data_limited = (total == available)
+
+            if data_limited and available >= self._min_bars_floor:
                 if strategy.logger:
                     strategy.logger.info(
-                        f"[Warmup] {tf} not warm yet: {len(history)}/{self._min_bars} bars"
+                        f"[Warmup] {tf} data-limited: {available}/{self._min_bars} bars "
+                        f"(accepted, above floor of {self._min_bars_floor})"
                     )
-                return False
+                continue
+
+            if strategy.logger:
+                strategy.logger.info(
+                    f"[Warmup] {tf} not warm yet: {available}/{self._min_bars} bars"
+                )
+            return False
         return True
