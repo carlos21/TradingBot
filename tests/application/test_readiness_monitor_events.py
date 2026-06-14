@@ -156,6 +156,12 @@ class _RetryCancellingDataSource:
         self.requests.append(days)
 
 
+def _join_warmup(monitor) -> None:
+    """Wait for the background warmup thread to finish (test helper)."""
+    if monitor._warmup_thread is not None:
+        monitor._warmup_thread.join(timeout=5.0)
+
+
 class TestReadinessMonitorEvents:
     def test_history_loaded_emitted_on_complete(self) -> None:
         socketio = DummySocketIO()
@@ -165,6 +171,7 @@ class TestReadinessMonitorEvents:
         monitor._state_machine.connect()
 
         monitor.on_history_complete(_make_bars())
+        _join_warmup(monitor)
 
         assert monitor._state_machine.state.name == "WARMING_UP"
         events = [event for event, _payload in socketio.events]
@@ -178,6 +185,7 @@ class TestReadinessMonitorEvents:
         monitor._state_machine.connect()
 
         monitor.on_history_complete(_make_bars())
+        _join_warmup(monitor)
 
         assert monitor._state_machine.state.name == "READY"
         events = [event for event, _payload in socketio.events]
@@ -193,6 +201,7 @@ class TestReadinessMonitorEvents:
         monitor._state_machine.connect()
 
         monitor.on_history_complete(_make_bars())
+        _join_warmup(monitor)
 
         assert monitor._state_machine.state.name == "WARMING_UP"
         events = [event for event, _payload in socketio.events]

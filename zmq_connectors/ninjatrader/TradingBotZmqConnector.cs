@@ -1010,38 +1010,40 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         /// <summary>
-        /// Trim a multi-day bar list down to the most recent contiguous session.
-        /// When the market is closed, NinjaTrader may return bars spanning several
-        /// sessions; the user expects only the last active session (e.g. Friday).
+        /// Trim a bar list to the last N trading sessions.
+        /// When the market is closed and the lookback window had to be expanded
+        /// (e.g. searching on Sunday finds Friday data via a 5-day window), this
+        /// trims back to the number of sessions the user actually configured.
+        ///
+        /// A "session boundary" is any gap > sessionBreakThresholdSeconds (default 30 min).
+        /// For days=1 on a Sunday: keeps only Friday's session (~1020 bars).
+        /// For days=2: keeps Thursday + Friday sessions, etc.
         /// </summary>
-        private List<JObject> TrimToLastSession(List<JObject> bars, int sessionBreakThresholdSeconds = 30 * 60)
+        private List<JObject> TrimToLastSession(List<JObject> bars, int days = 1, int sessionBreakThresholdSeconds = 30 * 60)
         {
             if (bars == null || bars.Count < 2)
                 return bars;
 
-            int maxGap = 0;
-            int maxGapIndex = -1;
-
+            // Find every index where a new session starts (gap > threshold).
+            var sessionBreaks = new List<int>();
             for (int i = 1; i < bars.Count; i++)
             {
                 int gap = bars[i]["time"].Value<int>() - bars[i - 1]["time"].Value<int>();
-                if (gap > maxGap)
-                {
-                    maxGap = gap;
-                    maxGapIndex = i;
-                }
+                if (gap > sessionBreakThresholdSeconds)
+                    sessionBreaks.Add(i);
             }
 
-            if (maxGap > sessionBreakThresholdSeconds && maxGapIndex > 0)
-            {
-                var trimmed = bars.Skip(maxGapIndex).ToList();
-                var firstTime = DateTimeOffset.FromUnixTimeSeconds(trimmed[0]["time"].Value<int>()).UtcDateTime;
-                var lastTime = DateTimeOffset.FromUnixTimeSeconds(trimmed[trimmed.Count - 1]["time"].Value<int>()).UtcDateTime;
-                _logger.Info($"[History] Trimmed to last contiguous session: {trimmed.Count} bars | first={firstTime:yyyy-MM-dd HH:mm:ss} | last={lastTime:yyyy-MM-dd HH:mm:ss} (removed {bars.Count - trimmed.Count} older bars)");
-                return trimmed;
-            }
+            // Keep the last `days` sessions.  If we have fewer session boundaries
+            // than requested, keep everything (nothing to trim).
+            if (sessionBreaks.Count < days)
+                return bars;
 
-            return bars;
+            int trimIndex = sessionBreaks[sessionBreaks.Count - days];
+            var trimmed = bars.Skip(trimIndex).ToList();
+            var firstTime = DateTimeOffset.FromUnixTimeSeconds(trimmed[0]["time"].Value<int>()).UtcDateTime;
+            var lastTime = DateTimeOffset.FromUnixTimeSeconds(trimmed[trimmed.Count - 1]["time"].Value<int>()).UtcDateTime;
+            _logger.Info($"[History] Trimmed to last {days} session(s): {trimmed.Count} bars | first={firstTime:yyyy-MM-dd HH:mm:ss} | last={lastTime:yyyy-MM-dd HH:mm:ss} (removed {bars.Count - trimmed.Count} older bars)");
+            return trimmed;
         }
 
         private async Task SendHistoryAsync(int days = 30)
@@ -1112,7 +1114,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // can span multiple sessions. Trim to the most recent contiguous session
                 // so the chart/strategy only receives the last active session's bars.
                 int barsBeforeTrim = finalResult.Count;
-                finalResult.Bars = TrimToLastSession(finalResult.Bars);
+                finalResult.Bars = TrimToLastSession(finalResult.Bars, days);
                 if (finalResult.Bars.Count > 0)
                 {
                     finalResult.LastTime = DateTimeOffset.FromUnixTimeSeconds(finalResult.Bars[finalResult.Bars.Count - 1]["time"].Value<int>()).UtcDateTime;

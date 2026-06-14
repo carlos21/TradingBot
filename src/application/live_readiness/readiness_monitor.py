@@ -60,6 +60,8 @@ class ReadinessMonitor:
         self._retry_max_delay_sec = retry_max_delay_sec
         self._retry_timer: threading.Timer | None = None
         self._retry_lock = threading.Lock()
+        self._warmup_in_progress: bool = False
+        self._warmup_thread: threading.Thread | None = None
 
     def set_pair(self, pair: str) -> None:
         self._pair = pair
@@ -97,8 +99,22 @@ class ReadinessMonitor:
                 else:
                     self._socketio_publisher.emit("history_loaded", payload)
 
-        self._warmup_orchestrator.run(bars, self._pair)
-        self._try_warmup_complete()
+        # Run warmup in a background thread so the gateway receive loop is not
+        # blocked. Blocking the receive loop prevents heartbeat processing and
+        # causes a heartbeat timeout → disconnect → reconnect → refresh loop.
+        self._warmup_in_progress = True
+        bars_snapshot = list(bars)
+        pair_snapshot = self._pair
+
+        def _run_warmup() -> None:
+            try:
+                self._warmup_orchestrator.run(bars_snapshot, pair_snapshot)
+            finally:
+                self._warmup_in_progress = False
+                self._try_warmup_complete()
+
+        self._warmup_thread = threading.Thread(target=_run_warmup, daemon=True, name="WarmupReplay")
+        self._warmup_thread.start()
 
     def on_live_bar(self, bar: dict[str, Any]) -> None:
         """Called for each completed live bar."""
@@ -217,8 +233,13 @@ class ReadinessMonitor:
 
     def _try_warmup_complete(self) -> None:
         """Transition to READY if data is fresh and indicators are warm."""
+        # Don't check while the warmup thread is still replaying bars.
+        if self._warmup_in_progress:
+            return
         state = self._state_machine.state
-        if state == ReadinessState.WAITING_FOR_HISTORY:
+        # Only transition from WARMING_UP; if a refresh started after warmup
+        # kicked off, we're in a different state and must not interfere.
+        if state != ReadinessState.WARMING_UP:
             return
 
         if self._data_source is not None:

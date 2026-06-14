@@ -216,6 +216,9 @@ class TestReadinessRegression:
         assert state_machine.state.name == "REFRESHING"
 
         monitor.on_history_complete(warmup_bars_raw)
+        # Warmup runs in a background thread; wait for it before asserting.
+        if monitor._warmup_thread is not None:
+            monitor._warmup_thread.join(timeout=30.0)
         assert state_machine.state.name in ("READY", "WARMING_UP")
 
         # Higher timeframes (30m/1h) need more than 8h of bars. Force LIVE so the
