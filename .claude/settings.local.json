@@ -68,7 +68,10 @@
       "Bash(curl -sSL https://install.python-poetry.org)",
       "Bash(/opt/homebrew/bin/python3.12 -)",
       "Bash(export PATH=\"/Users/carlosduclos/.local/bin:/opt/homebrew/bin:$PATH\")",
-      "Bash(poetry --version)"
+      "Bash(poetry --version)",
+      "Bash(sqlite3 /Users/carlosduclos/Documents/TradingBot/meta.db \".tables\")",
+      "Bash(sqlite3 /Users/carlosduclos/Documents/TradingBot/meta.db \"SELECT * FROM settings WHERE key LIKE '%history%';\")",
+      "Bash(sqlite3:*)"
     ]
   }
 }
