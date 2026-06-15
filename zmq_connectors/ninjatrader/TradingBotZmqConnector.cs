@@ -1511,6 +1511,16 @@ namespace NinjaTrader.NinjaScript.AddOns
                         _orderTracker.RemoveTrade(oid);
                     }
 
+                    // Cancel confirmed for a close-pending entry — no fill will come, safe to clean up
+                    if (order.OrderState == OrderState.Cancelled && IsEntryOrder(order) && !string.IsNullOrEmpty(oid))
+                    {
+                        if (_orderTracker.IsClosePending(oid))
+                        {
+                            _logger.Info($"[Close-Pending] Entry cancel confirmed for {oid} — cleaning up tracking");
+                            _orderTracker.RemoveTrade(oid);
+                        }
+                    }
+
                     // Only suppress cancelled notifications for stop/target orders that we EXPECTED to cancel
                     // (e.g., via Python close command or our own modify workflow). Unexpected cancellations
                     // (broker risk management, manual user cancel, margin issues) must be reported.
@@ -1623,6 +1633,31 @@ namespace NinjaTrader.NinjaScript.AddOns
                     return;
                 }
                 _logger.Success($"[Recovery] Recovered PendingEntryInfo for {tradeId} from Python: dir={entry.Direction} sl={entry.SlPoints} rr={entry.RrRatio}");
+            }
+
+            // If a close was already requested for this trade (e.g. session end fired before
+            // the broker confirmed the cancel), skip bracket creation and immediately flatten.
+            if (_orderTracker.IsClosePending(tradeId))
+            {
+                _logger.Warning($"[Close-Pending] Entry {tradeId} filled @ {fillPrice} despite cancel — flattening position immediately");
+                var flatAccount = ResolveAccountForOrder(order);
+                if (flatAccount != null && order.Instrument != null)
+                {
+                    bool isLong = entry.Direction == "long";
+                    var flatAction = isLong ? OrderAction.Sell : OrderAction.BuyToCover;
+                    int flatQty = order.Filled > 0 ? order.Filled : order.Quantity;
+                    var flatOrder = flatAccount.CreateOrder(
+                        order.Instrument, flatAction, OrderType.Market, OrderEntry.Automated,
+                        TimeInForce.Gtc, flatQty, 0, 0, null, $"Close_{tradeId}", DateTime.MinValue, null);
+                    if (flatOrder != null)
+                    {
+                        flatAccount.Submit(new[] { flatOrder });
+                        _logger.Success($"[Close-Pending] Submitted market close for {tradeId}: {flatAction} {flatQty} contracts");
+                    }
+                }
+                _network?.SendTradeLog(tradeId, "NT:CLOSE_PENDING_FILL", $"Entry filled @ {fillPrice} after close request — flattened immediately");
+                _orderTracker.RemoveTrade(tradeId);
+                return;
             }
 
             var account = ResolveAccountForOrder(order);

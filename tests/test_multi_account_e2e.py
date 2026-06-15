@@ -195,6 +195,54 @@ class TestMultiAccountExpansion:
         assert executor.signal_to_accounts.get("S1") == []
         assert len(gateway.open_orders) == 0
 
+    def test_source_propagates_to_account_trades(self):
+        """source='test' on signal must be inherited by all account trades.
+
+        Regression: TradeOpenUseCase was building trade_for_executor without
+        the 'source' field, so MultiAccountExecutor always saw source=None and
+        stored account trades with source='strategy'. Session end then closed
+        them because 'strategy' is not in USER_CONTROLLED_SOURCES.
+        """
+        tm = _make_trade_manager()
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+
+        executor = MultiAccountExecutor(
+            trade_manager=tm,
+            account_configs=[AccountConfig("A1"), AccountConfig("A2")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+
+        signal = {**_signal_trade("S1"), "source": "test"}
+        executor.on_trade_open(signal)
+
+        for aid in executor.signal_to_accounts["S1"]:
+            t = tm.trade_repository.get_trade(aid)
+            assert t.source == "test", (
+                f"Account trade {aid} has source={t.source!r}, expected 'test'. "
+                "Check that TradeOpenUseCase.execute() includes 'source' in trade_for_executor."
+            )
+
+    def test_source_strategy_is_default_when_not_set(self):
+        """Signals without explicit source default to 'strategy' on account trades."""
+        tm = _make_trade_manager()
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+
+        executor = MultiAccountExecutor(
+            trade_manager=tm,
+            account_configs=[AccountConfig("A1")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+
+        executor.on_trade_open(_signal_trade("S1"))  # no source key
+
+        aid = executor.signal_to_accounts["S1"][0]
+        t = tm.trade_repository.get_trade(aid)
+        assert t.source == "strategy"
+
     def test_account_trade_passes_through_without_recursion(self):
         """An already-expanded account trade must not recurse infinitely.
 
@@ -1167,6 +1215,69 @@ class TestMultiAccountReentryIntegration:
 
         # Dedup window should suppress the redundant close command
         assert len(gateway.close_orders) == 0
+
+    def test_test_source_account_trades_exempt_from_session_end(self):
+        """Account trades expanded from a test-sourced signal must survive session end.
+
+        Regression: when source='test' was missing from trade_for_executor, account
+        trades were stored with source='strategy' and closed by session end. This
+        test verifies the full path: signal(source='test') → MultiAccountExecutor
+        → account trades with source='test' → session-end bar → still open.
+        """
+        from zoneinfo import ZoneInfo
+        from tests.conftest import make_bar
+
+        event_bus = EventBus()
+        publisher = DomainEventBusPublisher(event_bus)
+        tr = FakeTradeRepository()
+        gateway = FakeGateway()
+        zmq_ex = FakeZMQExecutor(gateway, FakeLogger())
+        executor = MultiAccountExecutor(
+            trade_manager=None,
+            account_configs=[AccountConfig("A1"), AccountConfig("A2")],
+            gateway_executor=zmq_ex,
+            logger=FakeLogger(),
+        )
+        tm = TradeManager(
+            trade_repository=tr,
+            socketio=publisher,
+            trade_executor=executor,
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+            session_end_time="16:58",
+            session_tz="America/New_York",
+        )
+        executor.trade_manager = tm
+
+        # Open a test-sourced signal — both account trades should inherit source='test'
+        signal = {**_signal_trade("S1"), "source": "test"}
+        executor.on_trade_open(signal)
+        aid1, aid2 = executor.signal_to_accounts["S1"]
+
+        # Verify source was stored correctly before the session-end check
+        for aid in (aid1, aid2):
+            t = tr.get_trade(aid)
+            assert t.source == "test", (
+                f"Precondition failed: account trade {aid} source={t.source!r}, expected 'test'"
+            )
+
+        # Fire a session-end bar (16:59 NY)
+        ny = ZoneInfo("America/New_York")
+        bar_dt = datetime(2025, 6, 15, 16, 59, tzinfo=ny)
+        bar = make_bar(time=int(bar_dt.timestamp()), close=105, pair="MNQ")
+        tm.handle_new_1m_bar(bar)
+
+        # Account trades with source='test' must NOT be closed
+        assert len(tr.closed) == 0, (
+            f"Session end closed {len(tr.closed)} test-sourced account trade(s) — "
+            "source='test' must be in USER_CONTROLLED_SOURCES and must flow from signal "
+            "through TradeOpenUseCase into account trades."
+        )
+        assert len(gateway.close_orders) == 0, (
+            "Session end sent close commands to gateway for test-sourced trades"
+        )
 
     def test_restore_open_trades_preserves_reentry_state(self):
         """Crash recovery must preserve line_level and is_reentry from DB."""

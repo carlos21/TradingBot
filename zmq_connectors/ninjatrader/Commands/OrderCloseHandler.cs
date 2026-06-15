@@ -196,9 +196,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                 }
                 else
                 {
-                    // Entry was cancelled but stop/target were working - just removed them
-                    _logger.Info($"[Close:{tradeId}] Cancelled {cancelledCount} working orders. No filled position to close.");
-                    _orderTracker.RemoveTrade(tradeId);
+                    // Entry cancel was requested but the broker may still fill it (race condition).
+                    // Keep PendingEntryInfo alive and mark close-pending so HandleEntryFill can
+                    // flatten the position immediately if the entry fills despite the cancel.
+                    _logger.Info($"[Close:{tradeId}] Cancelled {cancelledCount} working orders. Marking close-pending in case entry fills despite cancel.");
+                    _orderTracker.MarkClosePending(tradeId);
                 }
                 
                 _logger.Info($">>> CLOSE ORDER END: {tradeId}");

@@ -70,6 +70,10 @@ namespace NinjaTrader.NinjaScript.AddOns
         void ExpectCancellation(string orderName);
         bool IsExpectedCancellation(string orderName);
         void RemoveExpectedCancellation(string orderName);
+
+        // Close-pending tracking: entry cancel was requested but fill may still arrive
+        void MarkClosePending(string tradeId);
+        bool IsClosePending(string tradeId);
         
         // Recovery methods
         void RestoreFromBrokerOrders(Account account, ILogger logger);

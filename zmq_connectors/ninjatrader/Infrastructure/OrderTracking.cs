@@ -23,6 +23,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private readonly Dictionary<string, PendingModifyInfo> _pendingModifies = new Dictionary<string, PendingModifyInfo>();
 
         private readonly HashSet<string> _expectedCancellations = new HashSet<string>();  // order names we expect to be cancelled
+        private readonly HashSet<string> _closePendingTrades = new HashSet<string>();     // entry cancel sent, fill may still arrive
         private readonly object _lock = new object();
         
         public bool IsRestored { get; private set; } = false;
@@ -176,6 +177,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _takeProfitOrders.Remove(tradeId);
                 _closeOrders.Remove(tradeId);
                 _pendingEntries.Remove(tradeId);
+                _closePendingTrades.Remove(tradeId);
                 // Clean up both keyed modify slots (tradeId:sl and tradeId:tp)
                 _pendingModifies.Remove(tradeId);
                 _pendingModifies.Remove(tradeId + ":sl");
@@ -194,6 +196,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 _pendingEntries.Clear();
                 _pendingModifies.Clear();
                 _expectedCancellations.Clear();
+                _closePendingTrades.Clear();
             }
         }
 
@@ -206,6 +209,18 @@ namespace NinjaTrader.NinjaScript.AddOns
                 foreach (var id in _entryOrders.Keys) ids.Add(id);
                 return ids;
             }
+        }
+
+        public void MarkClosePending(string tradeId)
+        {
+            if (tradeId == null) throw new System.ArgumentNullException(nameof(tradeId));
+            lock (_lock) _closePendingTrades.Add(tradeId);
+        }
+
+        public bool IsClosePending(string tradeId)
+        {
+            if (tradeId == null) return false;
+            lock (_lock) return _closePendingTrades.Contains(tradeId);
         }
 
         public void ExpectCancellation(string orderName)

@@ -178,6 +178,7 @@ class TradeOpenUseCase:
             'risk_pct': risk_pct,
             'contracts': contracts,
             'account': account,
+            'source': source,
         }
         try:
             self._executor.on_trade_open(trade_for_executor)
