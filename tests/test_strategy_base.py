@@ -220,23 +220,21 @@ class TestOnTradeClosed:
         assert len(strat._reentry_opportunities) == 0
 
     def test_sl_creates_reentry_when_payload_lacks_line_level(self):
-        """Live multi-account: account trade payload lacks line_level,
-        but strategy trade still has it — fallback must create reentry."""
+        """Live: payload line_level may be None, but strategy trade still has it."""
         strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.options.reentry_after_sl = True
         strat.open_trades.append({
-            "trade_id": "signal-abc", "pair": "MNQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "line_level": 95.0,
             "is_reentry": False,
         })
-        # Payload mimics what arrives from TradeCloseUseCase for an account trade
         strat._on_trade_closed({
-            "trade_id": "account1-xyz", "result_type": "SL",
+            "trade_id": "T1", "result_type": "SL",
             "exit_price": 90.0,
-            # line_level omitted (None from account trade)
-            # is_reentry omitted (None from account trade)
-            "signal_id": "signal-abc", "is_phantom": False,
+            "line_level": None,
+            "is_reentry": None,
+            "is_phantom": False,
         })
         assert len(strat.open_trades) == 0
         assert len(strat._reentry_opportunities) == 1
@@ -247,15 +245,15 @@ class TestOnTradeClosed:
         strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.options.reentry_after_sl = True
         strat.open_trades.append({
-            "trade_id": "signal-abc", "pair": "MNQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "line_level": 95.0,
             "is_reentry": True,
         })
         strat._on_trade_closed({
-            "trade_id": "account1-xyz", "result_type": "SL",
+            "trade_id": "T1", "result_type": "SL",
             "exit_price": 90.0,
-            "signal_id": "signal-abc", "is_phantom": False,
+            "is_phantom": False,
         })
         assert len(strat.open_trades) == 0
         assert len(strat._reentry_opportunities) == 0

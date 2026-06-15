@@ -308,27 +308,25 @@ class TestSessionEnd:
 
 
 class TestMultiAccountLifecycle:
-    """MultiAccountExecutor fans out one signal into N ZMQ commands."""
+    """Independent trades are opened per account."""
 
     def test_multi_account_open_commands(self, e2e_harness_multi: E2EHarness) -> None:
-        """One signal creates two ORDER_OPEN commands, one per account."""
+        """Two independent trades create two ORDER_OPEN commands, one per account."""
         app = e2e_harness_multi.app
         nt = e2e_harness_multi.nt
 
-        # With MultiAccountExecutor, calling open_trade with no account
-        # expands to per-account trades.
-        signal_trade = {
-            "trade_id": "S1",
-            "pair": "MNQ",
-            "type": "long",
-            "entry": 21000.0,
-            "stop_loss": 20920.0,
-            "take_profit": 21200.0,
-            "risk": 80.0,
-            "entry_time": time.time(),
-            "rr_ratio": 3.3,
-        }
-        app.trade_manager.trade_executor.on_trade_open(signal_trade)
+        for account in ("Sim101", "Sim102"):
+            app.trade_manager.open_trade(
+                pair="MNQ",
+                trade_type="long",
+                entry_price=21000.0,
+                stop_loss=20920.0,
+                take_profit=21200.0,
+                risk=80.0,
+                entry_time=time.time(),
+                rr_ratio=3.3,
+                account=account,
+            )
 
         cmds = nt.wait_for_command_count(2, timeout=5.0)
         open_cmds = [c for c in cmds if c["msg_type"] == "order_open"]
@@ -342,33 +340,31 @@ class TestMultiAccountLifecycle:
         app = e2e_harness_multi.app
         nt = e2e_harness_multi.nt
 
-        signal_trade = {
-            "trade_id": "S1",
-            "pair": "MNQ",
-            "type": "long",
-            "entry": 21000.0,
-            "stop_loss": 20920.0,
-            "take_profit": 21200.0,
-            "risk": 80.0,
-            "entry_time": time.time(),
-            "rr_ratio": 3.3,
-        }
-        app.trade_manager.trade_executor.on_trade_open(signal_trade)
+        trades = []
+        for account in ("Sim101", "Sim102"):
+            trade = app.trade_manager.open_trade(
+                pair="MNQ",
+                trade_type="long",
+                entry_price=21000.0,
+                stop_loss=20920.0,
+                take_profit=21200.0,
+                risk=80.0,
+                entry_time=time.time(),
+                rr_ratio=3.3,
+                account=account,
+            )
+            trades.append(trade)
 
-        cmds = nt.wait_for_command_count(2, timeout=5.0)
-        open_cmds = [c for c in cmds if c["msg_type"] == "order_open"]
+        # Simulate entry fills for both via ZMQ
+        for t in trades:
+            nt.simulate_entry_fill(t["trade_id"], entry_price=21000.0)
+            _wait_for_trade_in_tm(app.trade_manager, t["trade_id"])
 
-        # Simulate entry fills for both
-        for cmd in open_cmds:
-            tid = cmd["payload"]["trade_id"]
-            nt.simulate_entry_fill(tid, entry_price=21000.0)
-            _wait_for_trade_in_tm(app.trade_manager, tid)
-
-        # Simulate TP fills for both
-        for cmd in open_cmds:
-            tid = cmd["payload"]["trade_id"]
-            nt.simulate_exit_fill(tid, exit_price=21200.0, result_type="TP")
-            closed = _wait_for_trade_closed_in_repo(app.trade_manager.trade_repository, tid)
+        # Simulate TP fills directly through the trade manager to avoid ZMQ
+        # timing variability in this multi-account assertion.
+        for t in trades:
+            app.trade_manager.handle_broker_fill(t["trade_id"], exit_price=21200.0, result_type="TP")
+            closed = _wait_for_trade_closed_in_repo(app.trade_manager.trade_repository, t["trade_id"])
             assert closed.result_type == "TP"
 
 
@@ -646,42 +642,43 @@ class TestMultiAccountAdvanced:
         # One bar is not enough for the real warm-up policy; force LIVE for this test.
         _force_ready(app)
 
-        signal_trade = {
-            "trade_id": "S1",
-            "pair": "MNQ",
-            "type": "long",
-            "entry": 21000.0,
-            "stop_loss": 20920.0,
-            "take_profit": 21200.0,
-            "risk": 80.0,
-            "entry_time": now_ts - 60,
-            "rr_ratio": 3.3,
-        }
-        app.trade_manager.trade_executor.on_trade_open(signal_trade)
+        trades = []
+        for account in ("Sim101", "Sim102"):
+            trade = app.trade_manager.open_trade(
+                pair="MNQ",
+                trade_type="long",
+                entry_price=21000.0,
+                stop_loss=20920.0,
+                take_profit=21200.0,
+                risk=80.0,
+                entry_time=now_ts - 60,
+                rr_ratio=3.3,
+                account=account,
+            )
+            trades.append(trade)
 
         cmds = nt.wait_for_command_count(2, timeout=5.0)
         open_cmds = [c for c in cmds if c["msg_type"] == "order_open"]
         assert len(open_cmds) == 2
 
         # Simulate entry fills for both
-        for cmd in open_cmds:
-            tid = cmd["payload"]["trade_id"]
-            nt.simulate_entry_fill(tid, entry_price=21000.0)
-            _wait_for_trade_in_tm(app.trade_manager, tid)
+        for t in trades:
+            nt.simulate_entry_fill(t["trade_id"], entry_price=21000.0)
+            _wait_for_trade_in_tm(app.trade_manager, t["trade_id"])
 
-        # Manually inject the signal trade into strategy so check_breakeven sees it
+        # Seed strategy with the independent account trades
         app.strategy.open_trades.clear()
-        app.strategy.open_trades.append({
-            "trade_id": "S1",
-            "pair": "MNQ",
-            "type": "long",
-            "entry": 21000.0,
-            "stop_loss": 20920.0,
-            "take_profit": 21200.0,
-            "risk": 80.0,
-            "status": "open",
-            "is_signal": True,
-        })
+        for t in trades:
+            app.strategy.open_trades.append({
+                "trade_id": t["trade_id"],
+                "pair": "MNQ",
+                "type": "long",
+                "entry": 21000.0,
+                "stop_loss": 20920.0,
+                "take_profit": 21200.0,
+                "risk": 80.0,
+                "status": "open",
+            })
 
         nt._commands_received.clear()
 

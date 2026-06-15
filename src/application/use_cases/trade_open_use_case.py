@@ -120,6 +120,7 @@ class TradeOpenUseCase:
         risk_per_trade_override: float | None = None,
         risk_pct_per_trade_override: float | None = None,
         trade_id: str | None = None,
+        params: dict | None = None,
     ) -> OpenResult:
         """Open a new trade with precomputed parameters."""
         risk_per_contract = risk * self._point_value
@@ -140,7 +141,7 @@ class TradeOpenUseCase:
             take_profit=take_profit,
             risk=risk,
             entry_time=datetime.fromtimestamp(entry_time, tz=timezone.utc),
-            params={},
+            params=params or {},
             risk_dollars=risk_dollars,
             risk_pct=risk_pct,
             contracts=contracts,

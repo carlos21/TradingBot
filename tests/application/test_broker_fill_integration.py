@@ -1,7 +1,7 @@
-"""Integration tests for broker entry fill propagation.
+"""Integration tests for broker entry fill handling.
 
-These tests verify that when NinjaTrader reports an entry fill for a
-per-account child trade, the visible parent signal trade is updated too.
+Every trade is independent; a fill for one account trade must not leak into
+another account's trade.
 """
 
 from src.config.models import AccountConfig
@@ -60,12 +60,15 @@ def _make_multi_account_manager(accounts):
     return manager, multi, repo, socketio
 
 
-class TestMultiAccountEntryFillPropagation:
-    def test_account_fill_propagates_to_signal_trade(self):
-        accounts = [AccountConfig(name="Sim101", risk_usd=500.0, rr_ratio=5.0)]
+class TestBrokerEntryFillIsolation:
+    def test_fill_updates_only_target_trade(self):
+        accounts = [
+            AccountConfig(name="Sim101", risk_usd=500.0, rr_ratio=5.0),
+            AccountConfig(name="Sim102", risk_usd=500.0, rr_ratio=5.0),
+        ]
         manager, multi, repo, socketio = _make_multi_account_manager(accounts)
 
-        signal = manager.open_trade(
+        t1 = manager.open_trade(
             pair="MNQ",
             trade_type="long",
             entry_price=30156.0,
@@ -75,41 +78,41 @@ class TestMultiAccountEntryFillPropagation:
             entry_time=1000.0,
             rr_ratio=5.0,
             source="test",
+            account="Sim101",
         )
-        signal_trade_id = signal["trade_id"]
-
-        # Signal trade + one account trade should be open
-        assert len(manager.open_trades) == 2
-        account_trade = next(
-            t for t in manager.open_trades if t["trade_id"] != signal_trade_id
+        t2 = manager.open_trade(
+            pair="MNQ",
+            trade_type="long",
+            entry_price=30156.0,
+            stop_loss=30136.0,
+            take_profit=30256.0,
+            risk=20.0,
+            entry_time=1000.0,
+            rr_ratio=5.0,
+            source="test",
+            account="Sim102",
         )
-        account_id = account_trade["trade_id"]
 
-        # Simulate NinjaTrader entry fill on the account trade
-        manager.handle_broker_entry_fill(account_id, 30157.27)
+        manager.handle_broker_entry_fill(t1["trade_id"], 30157.27)
 
-        # Both in-memory records show the real fill price
-        assert account_trade["entry"] == 30157.27
-        signal = next(t for t in manager.open_trades if t["trade_id"] == signal_trade_id)
-        assert signal["entry"] == 30157.27
+        assert manager.open_trades[0]["entry"] == 30157.27
+        assert manager.open_trades[1]["entry"] == 30156.0
 
-        # DB records also updated
-        db_signal = repo.get_trade(signal_trade_id)
-        db_account = repo.get_trade(account_id)
-        assert db_signal.entry_price == 30157.27
-        assert db_account.entry_price == 30157.27
+        db1 = repo.get_trade(t1["trade_id"])
+        db2 = repo.get_trade(t2["trade_id"])
+        assert db1.entry_price == 30157.27
+        assert db2.entry_price == 30156.0
 
-        # Frontend receives trade_entry_update for both trades
         updates = [e for e in socketio.events if e[0] == "trade_entry_update"]
         trade_ids = {e[1]["trade_id"] for e in updates}
-        assert signal_trade_id in trade_ids
-        assert account_id in trade_ids
+        assert t1["trade_id"] in trade_ids
+        assert t2["trade_id"] not in trade_ids
 
-    def test_signal_trade_keeps_strategy_sl_tp(self):
+    def test_fill_keeps_strategy_sl_tp(self):
         accounts = [AccountConfig(name="Sim101", risk_usd=500.0, rr_ratio=3.0)]
         manager, multi, repo, _ = _make_multi_account_manager(accounts)
 
-        signal = manager.open_trade(
+        trade = manager.open_trade(
             pair="MNQ",
             trade_type="long",
             entry_price=100.0,
@@ -119,26 +122,14 @@ class TestMultiAccountEntryFillPropagation:
             entry_time=1000.0,
             rr_ratio=5.0,
             source="test",
-        )
-        signal_trade_id = signal["trade_id"]
-
-        account_trade = next(
-            t for t in manager.open_trades if t["trade_id"] != signal_trade_id
+            account="Sim101",
         )
 
-        # Broker reports a different fill and its own SL/TP
         manager.handle_broker_entry_fill(
-            account_trade["trade_id"], 101.0, stop_loss=91.0, take_profit=131.0
+            trade["trade_id"], 101.0, stop_loss=91.0, take_profit=131.0
         )
 
-        signal = next(t for t in manager.open_trades if t["trade_id"] == signal_trade_id)
-        # Parent keeps the strategy SL/TP, only entry/risk is updated
-        assert signal["entry"] == 101.0
-        assert signal["stop_loss"] == 90.0
-        assert signal["take_profit"] == 150.0
-        assert signal["risk"] == 11.0  # |101-90|
-
-        # Child gets broker SL/TP
-        assert account_trade["entry"] == 101.0
-        assert account_trade["stop_loss"] == 91.0
-        assert account_trade["take_profit"] == 131.0
+        updated = manager.open_trades[0]
+        assert updated["entry"] == 101.0
+        assert updated["stop_loss"] == 91.0
+        assert updated["take_profit"] == 131.0

@@ -7,8 +7,10 @@ calls.
 
 from datetime import datetime, timezone
 from typing import Any
+import uuid
 
 from src.application.ports import EventPublisher
+from src.application.use_cases.trade_open_use_case import TradeOpenUseCase
 from src.domain.repositories import TradeRepository
 from src.domain.result_type_classifier import ClassificationContext, DefaultResultTypeClassifier, ResultTypeClassifier
 from src.domain.types import Direction
@@ -35,6 +37,12 @@ class StrategyTradeService:
         fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
         broker_spread: float = 0.0,
         result_type_classifier: ResultTypeClassifier | None = None,
+        account_balance: float = 0.0,
+        risk_per_trade: float | None = None,
+        risk_pct_per_trade: float | None = None,
+        use_fractional_lots: bool = False,
+        accounts_repo=None,
+        instrument: str | None = None,
     ):
         self._repo = trade_repository
         self._executor = trade_executor
@@ -45,58 +53,139 @@ class StrategyTradeService:
         self._fee_per_rt = fee_per_rt
         self._broker_spread = broker_spread
         self._classifier = result_type_classifier or DefaultResultTypeClassifier()
+        self._open_use_case = None
+        self._account_balance = account_balance
+        self._risk_per_trade = risk_per_trade
+        self._risk_pct_per_trade = risk_pct_per_trade
+        self._use_fractional_lots = use_fractional_lots
+        self._accounts_repo = accounts_repo
+        self._instrument = instrument
+
+    def _get_open_use_case(self) -> TradeOpenUseCase:
+        """Lazy init so account balance can be updated before first use."""
+        if self._open_use_case is None:
+            self._open_use_case = TradeOpenUseCase(
+                trade_repository=self._repo,
+                trade_executor=self._executor,
+                event_publisher=self._publisher,
+                logger=self._logger,
+                trade_logger=self._trade_logger,
+                point_value=self._point_value,
+                account_balance=self._account_balance,
+                risk_per_trade=self._risk_per_trade,
+                risk_pct_per_trade=self._risk_pct_per_trade,
+                use_fractional_lots=self._use_fractional_lots,
+                accounts_repo=self._accounts_repo,
+                instrument=self._instrument,
+            )
+        return self._open_use_case
+
+    def update_account_balance(self, account_balance: float) -> None:
+        """Update balance used for sizing and propagate to the open use case."""
+        self._account_balance = account_balance
+        if self._open_use_case is not None:
+            self._open_use_case.update_account_balance(account_balance)
+
+    def _make_trade_dict(self, base_trade: dict[str, Any], result: Any) -> dict[str, Any]:
+        """Build a strategy-level trade dict from an OpenResult."""
+        return {
+            "trade_id": result.trade_id,
+            "pair": result.pair,
+            "type": result.trade_type,
+            "entry": result.entry_price,
+            "stop_loss": result.stop_loss,
+            "take_profit": result.take_profit,
+            "risk": result.risk,
+            "risk_dollars": result.risk_dollars,
+            "risk_pct": result.risk_pct,
+            "contracts": result.contracts,
+            "entry_time": result.entry_time,
+            "rr_ratio": result.rr_ratio if hasattr(result, "rr_ratio") else base_trade.get("rr_ratio", 5.0),
+            "account": result.account,
+            "line_level": base_trade.get("line_level"),
+            "is_reentry": base_trade.get("is_reentry", False),
+            "reentry_attempt": base_trade.get("reentry_attempt", 0),
+            "status": "open",
+        }
 
     def open_trade(
         self,
         trade: dict[str, Any],
         is_warmup: bool,
         account_configs: list,
-    ) -> str | None:
-        """Persist a new trade and return its generated trade_id.
+    ) -> list[dict[str, Any]]:
+        """Open independent trade(s) and return the opened trade dict(s).
 
-        If warmup or phantom, no DB persistence occurs.
+        One trade is opened per configured account. With no account configs,
+        a single strategy trade is opened. Warmup/phantom modes return empty list
+        or the phantom dict without persisting.
         """
         if is_warmup:
-            return None
+            return []
 
         if trade.get("is_phantom"):
             trade["trade_id"] = f"phantom-{trade['entry_time']}"
             if self._logger:
                 self._logger.info(f"[StrategyTradeService] Phantom trade opened @ {trade['entry']:.2f}")
-            return trade["trade_id"]
+            return [trade]
 
-        source = "signal" if account_configs else "strategy"
-        td = self._repo.insert_trade(
-            pair=trade["pair"],
-            trade_type=trade["type"],
-            entry_price=trade["entry"],
-            stop_loss=trade["stop_loss"],
-            take_profit=trade["take_profit"],
-            risk=trade["risk"],
-            entry_time=self._ts_to_dt(trade["entry_time"]),
-            params={
+        opened: list[dict[str, Any]] = []
+        use_case = self._get_open_use_case()
+        base_rr = trade.get("rr_ratio", 5.0)
+        group_signal_id = str(uuid.uuid4()) if len(account_configs or []) > 1 else None
+
+        configs = account_configs or [None]
+        for acct in configs:
+            rr = base_rr
+            account_name = None
+            risk_usd_override = None
+            risk_pct_override = None
+            if acct is not None:
+                account_name = acct.name
+                rr = acct.rr_ratio if acct.rr_ratio is not None else base_rr
+                risk_usd_override = acct.risk_usd
+                risk_pct_override = acct.risk_pct
+
+            # Recalculate take-profit for this account's RR ratio
+            entry = trade["entry"]
+            risk_pts = trade["risk"]
+            if trade["type"] == "long":
+                account_take_profit = entry + (rr * risk_pts)
+            else:
+                account_take_profit = entry - (rr * risk_pts)
+
+            params = {
                 "line_level": trade.get("line_level"),
                 "is_reentry": trade.get("is_reentry", False),
-            },
-            source=source,
-            risk_dollars=trade.get("risk_dollars"),
-            risk_pct=trade.get("risk_pct"),
-            contracts=trade.get("contracts"),
-        )
-        trade["trade_id"] = td.trade_id
-        if account_configs:
-            trade["is_signal"] = True
+                "reentry_attempt": trade.get("reentry_attempt", 0),
+            }
 
-        if self._publisher:
-            self._publisher.emit("trade_open", {**trade})
-
-        self._executor.on_trade_open(trade)
+            result = use_case.execute(
+                pair=trade["pair"],
+                trade_type=trade["type"],
+                entry_price=entry,
+                stop_loss=trade["stop_loss"],
+                take_profit=account_take_profit,
+                risk=risk_pts,
+                entry_time=trade["entry_time"],
+                rr_ratio=rr,
+                source=trade.get("source") or "strategy",
+                account=account_name,
+                signal_id=group_signal_id,
+                risk_per_trade_override=risk_usd_override,
+                risk_pct_per_trade_override=risk_pct_override,
+                params=params,
+            )
+            opened_trade = self._make_trade_dict(trade, result)
+            opened_trade["rr_ratio"] = rr
+            opened_trade["signal_id"] = group_signal_id
+            opened.append(opened_trade)
 
         if self._trade_logger:
-            log_msg = "expand_signal → MultiAccountExecutor" if account_configs else "place_order → NinjaTrader"
-            self._trade_logger.log(trade["trade_id"], "CMD_SENT", log_msg)
+            for opened_trade in opened:
+                self._trade_logger.log(opened_trade["trade_id"], "CMD_SENT", "place_order → NinjaTrader")
 
-        return td.trade_id
+        return opened
 
     def close_trade(self, trade: dict[str, Any]) -> None:
         """Close a trade: calculate metrics, emit event, persist to DB."""

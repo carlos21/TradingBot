@@ -382,27 +382,29 @@ class AnalyticsService:
         # Calculate average across all months with trades
         return sum(monthly_pnl.values()) / len(monthly_pnl)
 
+    def _visible_trades(self, pair: str) -> list:
+        """Return all trades for a pair, sorted by entry time descending."""
+        trades = self._repo.get_all_trades(pair)
+        trades.sort(key=lambda t: t.entry_time, reverse=True)
+        return trades
+
     def get_paginated_trades(
         self,
         pair: str,
         limit: int = 50,
-        offset: int = 0
+        offset: int = 0,
+        account: str | None = None,
     ) -> dict[str, Any]:
         """Get paginated trade list.
 
-        Shows only executed trades: child account trades in multi-account mode,
-        and top-level trades when no multi-account expansion occurred.
-        Internal parent signal trades are hidden so the list displays one row
-        per account that took the trade.
+        Every trade is an independent DB row with its own account. Optionally
+        filter by account name.
         """
-        trades = self._repo.get_all_trades(pair)
+        visible_trades = self._visible_trades(pair)
 
-        # Identify parent signal trades (any trade_id referenced as another trade's signal_id)
-        parent_signal_ids = {t.signal_id for t in trades if t.signal_id}
-        visible_trades = [t for t in trades if t.trade_id not in parent_signal_ids]
-
-        # Sort by entry time descending
-        visible_trades.sort(key=lambda t: t.entry_time, reverse=True)
+        if account and account.strip():
+            account = account.strip()
+            visible_trades = [t for t in visible_trades if t.account == account]
 
         total = len(visible_trades)
         paginated = visible_trades[offset:offset + limit]
@@ -470,3 +472,12 @@ class AnalyticsService:
             results.append(stats.to_dict())
 
         return results
+
+    def get_trade_accounts(self, pair: str) -> list[str]:
+        """Return sorted distinct account names present in visible trades."""
+        visible_trades = self._visible_trades(pair)
+        accounts = {
+            t.account for t in visible_trades
+            if t.account and str(t.account).strip()
+        }
+        return sorted(accounts)

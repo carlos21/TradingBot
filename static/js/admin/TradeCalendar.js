@@ -8,22 +8,28 @@ export class TradeCalendar {
     this.trades = [];
     this.months = [];
     this.currentMonthIndex = 0;
+    this.selectedAccount = '';
     this.onTradeClick = null;
   }
 
   async load() {
     try {
       console.log('[TradeCalendar] Loading trades...');
-      // Load all trades (no pagination for calendar view)
-      const result = await this.api.getTrades(10000, 0);
+      // Load all trades (no pagination for calendar view), filtered by account
+      const result = await this.api.getTrades(10000, 0, this.selectedAccount);
       this.trades = result.trades || [];
       console.log(`[TradeCalendar] Loaded ${this.trades.length} trades`);
-      
+
       this.processMonths();
       this.render();
     } catch (error) {
       console.error('[TradeCalendar] Failed to load trades:', error);
     }
+  }
+
+  setAccount(account) {
+    this.selectedAccount = account;
+    this.load();
   }
 
   processMonths() {

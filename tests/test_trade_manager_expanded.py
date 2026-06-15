@@ -214,20 +214,21 @@ class TestOpenTradeExpanded:
 
 class TestCloseTradeExpanded:
 
-    def test_close_trade_by_signal_id_removes_all_account_trades(self):
+    def test_close_trade_closes_only_target_trade(self):
         tm = _make_manager()
         tm.open_trades.append({
-            "trade_id": "AT1", "pair": "MNQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "entry_time": 500, "signal_id": "S1",
+            "risk": 10, "entry_time": 500,
         })
         tm.open_trades.append({
-            "trade_id": "AT2", "pair": "MNQ", "type": "long",
+            "trade_id": "T2", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "entry_time": 500, "signal_id": "S1",
+            "risk": 10, "entry_time": 500,
         })
-        result = tm.close_trade("S1", 110, 2000.0)
-        assert len(tm.open_trades) == 0
+        result = tm.close_trade("T1", 110, 2000.0)
+        assert len(tm.open_trades) == 1
+        assert tm.open_trades[0]["trade_id"] == "T2"
         assert result["result"] == 1.0
 
     def test_close_trade_not_in_memory_fetches_from_db(self):
@@ -300,28 +301,22 @@ class TestLoadOpenTradesErrorHandling:
         assert len(analytics.exceptions) == 1
         assert "DB read failure" in str(analytics.exceptions[0][0])
 
-    def test_load_skips_signal_trades(self):
+    def test_load_includes_all_open_sources(self):
         repo = FakeTradeRepository()
         repo.insert_trade(
             pair="MNQ", trade_type="long", entry_price=100,
             stop_loss=90, take_profit=130, risk=10,
             entry_time=datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc),
-            source="signal",
+            source="strategy",
         )
-        tm = _make_manager(trade_repository=repo)
-        assert len(tm.open_trades) == 0
-
-    def test_load_includes_non_signal_trades(self):
-        repo = FakeTradeRepository()
         repo.insert_trade(
             pair="MNQ", trade_type="long", entry_price=100,
             stop_loss=90, take_profit=130, risk=10,
-            entry_time=datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc),
+            entry_time=datetime(2025, 1, 1, 12, 1, tzinfo=timezone.utc),
             source="manual",
         )
         tm = _make_manager(trade_repository=repo)
-        assert len(tm.open_trades) == 1
-        assert tm.open_trades[0]["trade_id"] is not None
+        assert len(tm.open_trades) == 2
 
 
 # ============================================================================
@@ -623,21 +618,21 @@ class TestNotifyStrategyCloseEventTypes:
 
 class TestUpdateLocalTradeSLExpanded:
 
-    def test_updates_by_signal_id(self):
+    def test_updates_only_target_trade(self):
         tm = _make_manager()
         tm.open_trades.append({
-            "trade_id": "AT1", "pair": "MNQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "entry_time": 500, "signal_id": "S1",
+            "risk": 10, "entry_time": 500,
         })
         tm.open_trades.append({
-            "trade_id": "AT2", "pair": "MNQ", "type": "long",
+            "trade_id": "T2", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "entry_time": 500, "signal_id": "S1",
+            "risk": 10, "entry_time": 500,
         })
-        tm.update_local_trade_sl("S1", 85.0)
+        tm.update_local_trade_sl("T1", 85.0)
         assert tm.open_trades[0]["stop_loss"] == 85.0
-        assert tm.open_trades[1]["stop_loss"] == 85.0
+        assert tm.open_trades[1]["stop_loss"] == 90.0
 
     def test_logs_warning_for_unknown_trade(self):
         logger = FakeLogger()

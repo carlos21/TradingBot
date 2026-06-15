@@ -139,12 +139,11 @@ class ZMQTradeExecutor(TradeExecutor):
 
 class MultiAccountExecutor(TradeExecutor):
     """
-    Expands a single Signal into N per-account trades and broadcasts
-    commands through a single ZMQTradeExecutor.
+    Passthrough executor that routes commands to the underlying gateway executor.
 
-    Each account trade gets its own DB record, trade_id, and risk settings.
-    The strategy works with Signals (one per entry decision); this executor
-    handles the expansion to account trades and routes fills back.
+    Every trade is now opened as an independent DB row with its own account.
+    This executor only ensures close/modify commands include the correct account
+    name by looking it up from the DB trade record.
     """
 
     def __init__(
@@ -160,156 +159,50 @@ class MultiAccountExecutor(TradeExecutor):
         self.gateway_executor = gateway_executor
         self.logger = logger
         self._accounts_repo = accounts_repo
-        self.signal_to_accounts: dict[str, list[str]] = {}
-        self.account_to_signal: dict[str, str] = {}
-        self._lock = threading.RLock()
-        # Dedup recent close commands (same account trade closed twice within window)
+        # Dedup recent close commands (same trade closed twice within window)
         self._last_close_time: dict[str, float] = {}
         self._close_dedup_seconds = 5.0
 
-    def _get_current_account_configs(self):
-        """Return fresh account configs from DB if available, else cached fallback."""
-        if self._accounts_repo is not None:
-            try:
-                accounts = self._accounts_repo.list_accounts()
-                if accounts:
-                    return accounts
-            except Exception:
-                pass
-        return self.account_configs
-
-    def on_trade_open(self, signal_trade: dict) -> None:
+    def _account_for_trade(self, trade_id: str) -> str | None:
+        """Look up the account name for a trade by checking DB."""
         if self.trade_manager is None:
-            raise RuntimeError("MultiAccountExecutor.trade_manager is not wired yet — call app_factory first")
-        # Guard: if this trade already has an account assigned, it's an
-        # already-expanded account trade — pass through to gateway instead
-        # of recursing infinitely.
-        if signal_trade.get("account"):
-            self.gateway_executor.on_trade_open(signal_trade)
-            return
+            return None
+        try:
+            trade = self.trade_manager.trade_repository.get_trade(trade_id)
+            if trade and trade.account:
+                return trade.account
+        except Exception as e:
+            self.logger.warning(f"MultiAccount: failed to look up account for {trade_id}: {e}")
+        return None
 
-        signal_id = signal_trade["trade_id"]
-        account_trade_ids: list[str] = []
-
-        for acct in self._get_current_account_configs():
-            try:
-                # Recalculate take_profit per account using account-specific rr_ratio
-                entry = signal_trade["entry"]
-                sl = signal_trade["stop_loss"]
-                risk = signal_trade["risk"]
-                rr = acct.rr_ratio if acct.rr_ratio is not None else signal_trade.get("rr_ratio", 5.0)
-                if signal_trade["type"] == "long":
-                    tp = entry + (rr * risk)
-                else:
-                    tp = entry - (rr * risk)
-
-                account_trade = self.trade_manager.open_trade(
-                    pair=signal_trade.get("pair", signal_trade.get("pair")),
-                    trade_type=signal_trade["type"],
-                    entry_price=entry,
-                    stop_loss=sl,
-                    take_profit=tp,
-                    risk=risk,
-                    entry_time=signal_trade["entry_time"],
-                    rr_ratio=rr,
-                    source=signal_trade.get("source") or "strategy",
-                    account=acct.name,
-                    signal_id=signal_id,
-                    risk_per_trade_override=acct.risk_usd,
-                    risk_pct_per_trade_override=acct.risk_pct,
-                )
-                account_trade_ids.append(account_trade["trade_id"])
-                # Only send via gateway if trade_manager's executor won't do it
-                # (avoids double-send when TradeManager uses this same MultiAccountExecutor)
-                if self.trade_manager.trade_executor is not self:
-                    self.gateway_executor.on_trade_open(account_trade)
-            except Exception as e:
-                self.logger.error(f"MultiAccount: failed to open trade for account {acct.name} (signal {signal_id}): {e}")
-
-        with self._lock:
-            self.signal_to_accounts[signal_id] = account_trade_ids
-            for aid in account_trade_ids:
-                self.account_to_signal[aid] = signal_id
-
-        self.logger.info(f"MultiAccount: expanded signal {signal_id} into {len(account_trade_ids)} account trades")
+    def on_trade_open(self, trade: dict) -> None:
+        if trade.get("account") is None:
+            raise RuntimeError(
+                "MultiAccountExecutor.on_trade_open received a trade with no account. "
+                "Every trade must have an account assigned before reaching the executor."
+            )
+        self.gateway_executor.on_trade_open(trade)
 
     def on_trade_close(self, trade_id: str, exit_price: float) -> None:
-        resolved = self._resolve_ids(trade_id)
-        if not resolved:
-            self.logger.warning(f"MultiAccount: close for {trade_id} resolved to empty list — nothing to close")
-            return
         now = time.time()
-        for aid in resolved:
-            # Dedup: skip if we already sent a close for this account trade very recently
-            last_close = self._last_close_time.get(aid, 0)
-            if now - last_close < self._close_dedup_seconds:
-                self.logger.info(f"MultiAccount: skipping duplicate close for {aid} (last close {now - last_close:.2f}s ago)")
-                continue
-            self._last_close_time[aid] = now
+        last_close = self._last_close_time.get(trade_id, 0)
+        if now - last_close < self._close_dedup_seconds:
+            self.logger.info(f"MultiAccount: skipping duplicate close for {trade_id} (last close {now - last_close:.2f}s ago)")
+            return
+        self._last_close_time[trade_id] = now
 
-            acct_name = self._account_for_trade(aid)
-            # Send close command via the executor wrapper (not directly via _gateway)
-            self.gateway_executor._gateway.send_close_order(
-                trade_id=aid, reason="strategy", account=acct_name
-            )
-            self.logger.info(f"MultiAccount: sent close order for account trade {aid} (signal {trade_id})")
+        account = self._account_for_trade(trade_id)
+        self.gateway_executor._gateway.send_close_order(
+            trade_id=trade_id, reason="strategy", account=account
+        )
+        self.logger.info(f"MultiAccount: sent close order for {trade_id} account={account}")
 
     def on_sl_update(self, trade_id: str, new_sl: float) -> None:
-        for aid in self._resolve_ids(trade_id):
-            acct_name = self._account_for_trade(aid)
-            self.gateway_executor._gateway.send_modify_order(
-                trade_id=aid, stop_loss=new_sl, account=acct_name
-            )
-            self.logger.info(f"MultiAccount: updated SL for account trade {aid} account={acct_name}")
-
-    def get_signal_id(self, account_trade_id: str) -> str | None:
-        with self._lock:
-            return self.account_to_signal.get(account_trade_id)
-
-    def all_account_trades_closed(self, signal_id: str) -> bool:
-        with self._lock:
-            account_ids = self.signal_to_accounts.get(signal_id, [])
-        open_ids = {t["trade_id"] for t in self.trade_manager.open_trades}
-        return all(aid not in open_ids for aid in account_ids)
-
-    def _resolve_ids(self, trade_id: str) -> list[str]:
-        """Return account trade IDs. If trade_id is a signal, expand it.
-        Falls back to open_trades lookup if in-memory mapping is stale."""
-        with self._lock:
-            if trade_id in self.signal_to_accounts:
-                return list(self.signal_to_accounts[trade_id])
-
-        # Fallback: scan open_trades for account trades with this signal_id
-        # This recovers from lost in-memory state (e.g. restart, reconnect)
-        fallback_ids = [
-            t["trade_id"]
-            for t in self.trade_manager.open_trades
-            if t.get("signal_id") == trade_id
-        ]
-        if fallback_ids:
-            self.logger.warning(
-                f"MultiAccount: recovered {len(fallback_ids)} account trade(s) from open_trades "
-                f"for signal {trade_id} (in-memory mapping was stale). Rebuilding cache."
-            )
-            with self._lock:
-                self.signal_to_accounts[trade_id] = fallback_ids
-                for aid in fallback_ids:
-                    self.account_to_signal[aid] = trade_id
-            return fallback_ids
-
-        # Not a known signal — treat as raw account trade id
-        return [trade_id]
-
-    def _account_for_trade(self, account_trade_id: str) -> str:
-        """Look up the account name for an account trade by checking DB."""
-        trade = self.trade_manager.trade_repository.get_trade(account_trade_id)
-        if trade and trade.account:
-            return trade.account
-        # Fallback: try to infer from config names
-        for acct in self.account_configs:
-            if account_trade_id.startswith(acct.name + "-") or account_trade_id.endswith("-" + acct.name):
-                return acct.name
-        return self.account_configs[0].name if self.account_configs else ""
+        account = self._account_for_trade(trade_id)
+        self.gateway_executor._gateway.send_modify_order(
+            trade_id=trade_id, stop_loss=new_sl, account=account
+        )
+        self.logger.info(f"MultiAccount: updated SL for {trade_id} account={account}")
 
 
 def create_zmq_executor(

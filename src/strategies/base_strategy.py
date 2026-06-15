@@ -114,6 +114,12 @@ class BaseStrategy:
             point_value=point_value,
             fee_per_rt=fee_per_rt,
             broker_spread=broker_spread,
+            account_balance=account_balance,
+            risk_per_trade=risk_per_trade,
+            risk_pct_per_trade=risk_pct_per_trade,
+            use_fractional_lots=use_fractional_lots,
+            accounts_repo=accounts_repo,
+            instrument=None,
         )
 
         self.open_trades: list[dict[str, Any]] = []
@@ -293,10 +299,8 @@ class BaseStrategy:
     def _on_trade_updated(self, payload: dict[str, Any]) -> None:
         """Sync strategy trade dict with broker-reported updates (entry fill, SL move, etc.)."""
         trade_id = payload.get("trade_id")
-        signal_id = payload.get("signal_id")
         trade = next(
-            (t for t in self.open_trades
-             if t.get("trade_id") == trade_id or t.get("trade_id") == signal_id),
+            (t for t in self.open_trades if t.get("trade_id") == trade_id),
             None,
         )
         if not trade or trade.get("status") != "open":
@@ -320,13 +324,18 @@ class BaseStrategy:
         trade['stop_loss'] = new_sl
 
         try:
-            self.trade_repository.update_stop_loss(trade['trade_id'], new_sl)
-            self.trade_manager.update_local_trade_sl(trade['trade_id'], new_sl)
-            # Multi-account: also update account trade DB records
-            if self._account_configs and self.trade_manager:
+            # Update this trade and any sibling trades from the same signal
+            trades_to_update = [trade]
+            signal_id = trade.get('signal_id')
+            if signal_id and self.trade_manager:
                 for t in self.trade_manager.open_trades:
-                    if t.get('signal_id') == trade['trade_id']:
-                        self.trade_repository.update_stop_loss(t['trade_id'], new_sl)
+                    if t.get('signal_id') == signal_id and t['trade_id'] != trade['trade_id']:
+                        trades_to_update.append(t)
+
+            for t in trades_to_update:
+                self.trade_repository.update_stop_loss(t['trade_id'], new_sl)
+                self.trade_manager.update_local_trade_sl(t['trade_id'], new_sl)
+                t['stop_loss'] = new_sl
         except Exception as e:
             if self.logger:
                 self.logger.error(f"[Strategy] Failed to update SL in DB: {e}")
@@ -357,10 +366,8 @@ class BaseStrategy:
 
     def _on_trade_closed(self, payload: dict[str, Any]) -> None:
         trade_id = payload.get("trade_id")
-        signal_id = payload.get("signal_id")
         trade = next(
-            (t for t in self.open_trades
-             if t.get("trade_id") == trade_id or t.get("trade_id") == signal_id),
+            (t for t in self.open_trades if t.get("trade_id") == trade_id),
             None,
         )
         if not trade or trade.get("status") != "open":
@@ -535,37 +542,41 @@ class BaseStrategy:
         }
 
     def _store_and_emit_open(self, trade: dict[str, Any]):
-        trade_id = self._trade_service.open_trade(
+        opened_trades = self._trade_service.open_trade(
             trade=trade,
             is_warmup=self.is_warmup,
             account_configs=self._get_current_account_configs(),
         )
-        if trade_id is None:
-            if trade.get("is_phantom"):
-                self.open_trades.append(trade)
+        if not opened_trades:
             return
 
-        self.open_trades.append(trade)
+        # Copy generated fields (trade_id, account, etc.) back to the original
+        # trade dict so callers can reference the opened trade immediately.
+        trade.update(opened_trades[0])
 
-        if self.trade_manager and not trade.get("is_signal") and not trade.get("is_phantom"):
-            tm_trade = {
-                'trade_id':    trade["trade_id"],
-                'pair':        trade["pair"],
-                'type':        trade["type"],
-                'entry':       trade["entry"],
-                'stop_loss':   trade["stop_loss"],
-                'take_profit': trade["take_profit"],
-                'risk':        trade["risk"],
-                'risk_dollars': trade.get("risk_dollars"),
-                'risk_pct':    trade.get("risk_pct"),
-                'contracts':   trade.get("contracts"),
-                'entry_time':  trade["entry_time"],
-                'status':      'open',
-                'line_level':  trade.get("line_level"),
-                'is_reentry':  trade.get("is_reentry", False),
-            }
-            self.trade_manager.open_trades.append(tm_trade)
-            self.trade_manager._monitored_trades.add(trade["trade_id"])
+        for opened_trade in opened_trades:
+            self.open_trades.append(opened_trade)
+
+            if self.trade_manager and not opened_trade.get("is_phantom"):
+                tm_trade = {
+                    'trade_id':    opened_trade["trade_id"],
+                    'pair':        opened_trade["pair"],
+                    'type':        opened_trade["type"],
+                    'entry':       opened_trade["entry"],
+                    'stop_loss':   opened_trade["stop_loss"],
+                    'take_profit': opened_trade["take_profit"],
+                    'risk':        opened_trade["risk"],
+                    'risk_dollars': opened_trade.get("risk_dollars"),
+                    'risk_pct':    opened_trade.get("risk_pct"),
+                    'contracts':   opened_trade.get("contracts"),
+                    'entry_time':  opened_trade["entry_time"],
+                    'account':     opened_trade.get("account"),
+                    'status':      'open',
+                    'line_level':  opened_trade.get("line_level"),
+                    'is_reentry':  opened_trade.get("is_reentry", False),
+                }
+                self.trade_manager.open_trades.append(tm_trade)
+                self.trade_manager._monitored_trades.add(opened_trade["trade_id"])
 
     def _store_and_emit_close(self, trade: dict[str, Any]):
         self._trade_service.close_trade(trade)

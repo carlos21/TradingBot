@@ -143,6 +143,12 @@ class BaseLiquidityStrategy:
             point_value=point_value,
             fee_per_rt=fee_per_rt,
             broker_spread=broker_spread,
+            account_balance=account_balance,
+            risk_per_trade=risk_per_trade,
+            risk_pct_per_trade=risk_pct_per_trade,
+            use_fractional_lots=use_fractional_lots,
+            accounts_repo=accounts_repo,
+            instrument=None,
         )
 
         self.strategy_lines: dict[Any, dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }
@@ -319,47 +325,7 @@ class BaseLiquidityStrategy:
         with self.lock:
             if self.open_trades:
                 return
-            if self._account_configs and self.trade_manager.open_trades:
-                # Multi-account: reconstruct Signals from AccountTrades
-                from collections import defaultdict
-                by_signal: dict[str, list[dict]] = defaultdict(list)
-                for t in self.trade_manager.open_trades:
-                    if t.get('status') == 'open' and t.get('signal_id'):
-                        by_signal[t['signal_id']].append(t)
-                for signal_id, account_trades in by_signal.items():
-                    if not account_trades:
-                        continue
-                    prototype = account_trades[0]
-                    # Fetch signal trade metadata from DB (account trades lack line_level/is_reentry)
-                    line_level = None
-                    is_reentry = False
-                    if self.trade_repository is not None:
-                        signal_db = self.trade_repository.get_trade(signal_id)
-                        if signal_db and signal_db.params:
-                            line_level = signal_db.params.get("line_level")
-                            is_reentry = signal_db.params.get("is_reentry", False)
-                    signal = {
-                        'trade_id': signal_id,
-                        'pair': prototype['pair'],
-                        'type': prototype['type'],
-                        'entry': prototype['entry'],
-                        'stop_loss': prototype['stop_loss'],
-                        'take_profit': prototype['take_profit'],
-                        'risk': prototype['risk'],
-                        'risk_dollars': prototype.get('risk_dollars'),
-                        'risk_pct': prototype.get('risk_pct'),
-                        'contracts': prototype.get('contracts'),
-                        'entry_time': prototype['entry_time'],
-                        'rr_ratio': prototype.get('rr_ratio', 5.0),
-                        'status': 'open',
-                        'is_signal': True,
-                        'line_level': line_level,
-                        'is_reentry': is_reentry,
-                    }
-                    self.open_trades.append(signal)
-                if self.open_trades:
-                    print(f"[Strategy] Restored {len(self.open_trades)} signal(s) from {len(self.trade_manager.open_trades)} account trades")
-            elif self.trade_manager.open_trades:
+            if self.trade_manager.open_trades:
                 for t in self.trade_manager.open_trades:
                     if t.get('status') == 'open':
                         self.open_trades.append(dict(t))
@@ -387,12 +353,6 @@ class BaseLiquidityStrategy:
             if t.exit_time is None or t.exit_time < cutoff:
                 continue
             line_level = t.params.get("line_level") if t.params else None
-            # Multi-account: account trades may not have line_level in params;
-            # look it up from the parent signal trade
-            if line_level is None and t.signal_id:
-                signal_trade = self.trade_repository.get_trade(t.signal_id)
-                if signal_trade and signal_trade.params:
-                    line_level = signal_trade.params.get("line_level")
             if line_level is None:
                 continue
             attempt = t.params.get("reentry_attempt", 0) if t.params else 0
@@ -608,15 +568,19 @@ class BaseLiquidityStrategy:
         # 1. Update In-Memory State
         trade['stop_loss'] = new_sl
 
-        # 2. Update Database
+        # 2. Update Database (this trade and any sibling trades from the same signal)
         try:
-            self.trade_repository.update_stop_loss(trade['trade_id'], new_sl)
-            self.trade_manager.update_local_trade_sl(trade['trade_id'], new_sl)
-            # Multi-account: also update account trade DB records
-            if self._account_configs and self.trade_manager:
+            trades_to_update = [trade]
+            signal_id = trade.get('signal_id')
+            if signal_id and self.trade_manager:
                 for t in self.trade_manager.open_trades:
-                    if t.get('signal_id') == trade['trade_id']:
-                        self.trade_repository.update_stop_loss(t['trade_id'], new_sl)
+                    if t.get('signal_id') == signal_id and t['trade_id'] != trade['trade_id']:
+                        trades_to_update.append(t)
+
+            for t in trades_to_update:
+                self.trade_repository.update_stop_loss(t['trade_id'], new_sl)
+                self.trade_manager.update_local_trade_sl(t['trade_id'], new_sl)
+                t['stop_loss'] = new_sl
         except Exception as e:
             self.logger.error(f"[Strategy] Failed to update SL in DB: {e}")
             self.analytics.capture_exception(e, {"op": "update_sl", "trade_id": trade['trade_id']})
@@ -737,10 +701,8 @@ class BaseLiquidityStrategy:
         """Sync strategy trade dict with broker-reported updates (entry fill, SL move, etc.)."""
         with self.lock:
             trade_id = payload.get("trade_id")
-            signal_id = payload.get("signal_id")
             trade = next(
-                (t for t in self.open_trades
-                 if t.get("trade_id") == trade_id or t.get("trade_id") == signal_id),
+                (t for t in self.open_trades if t.get("trade_id") == trade_id),
                 None,
             )
             if not trade or trade.get("status") != "open":
@@ -765,10 +727,8 @@ class BaseLiquidityStrategy:
         """
         with self.lock:
             trade_id = payload.get("trade_id")
-            signal_id = payload.get("signal_id")
             trade = next(
-                (t for t in self.open_trades
-                 if t.get("trade_id") == trade_id or t.get("trade_id") == signal_id),
+                (t for t in self.open_trades if t.get("trade_id") == trade_id),
                 None,
             )
             if not trade or trade.get("status") != "open":
@@ -1018,43 +978,46 @@ class BaseLiquidityStrategy:
             "rr_ratio":     self.rr_ratio,
             "status":       "open",
             "entry_time":   bar["time"],
+            "reentry_attempt": 0,
         }
 
     def _store_and_emit_open(self, trade: dict[str, Any]):
-        trade_id = self._trade_service.open_trade(
+        opened_trades = self._trade_service.open_trade(
             trade=trade,
             is_warmup=self.is_warmup,
             account_configs=self._get_current_account_configs(),
         )
-        if trade_id is None:
-            # Warmup or phantom — trade dict already mutated by service
-            if trade.get("is_phantom"):
-                self.open_trades.append(trade)
+        if not opened_trades:
             return
 
-        self.open_trades.append(trade)
+        # Copy generated fields (trade_id, account, etc.) back to the original
+        # trade dict so callers can reference the opened trade immediately.
+        trade.update(opened_trades[0])
 
-        # Also register with trade_manager so it can track SL/TP hits
-        # Skip phantom trades (strategy-only, no DB/broker) and signal trades (multi-account)
-        if self.trade_manager and not trade.get("is_signal") and not trade.get("is_phantom"):
-            tm_trade = {
-                'trade_id':    trade["trade_id"],
-                'pair':        trade["pair"],
-                'type':        trade["type"],
-                'entry':       trade["entry"],
-                'stop_loss':   trade["stop_loss"],
-                'take_profit': trade["take_profit"],
-                'risk':        trade["risk"],
-                'risk_dollars': trade.get("risk_dollars"),
-                'risk_pct':    trade.get("risk_pct"),
-                'contracts':   trade.get("contracts"),
-                'entry_time':  trade["entry_time"],
-                'status':      'open',
-                'line_level':  trade.get("line_level"),
-                'is_reentry':  trade.get("is_reentry", False),
-            }
-            self.trade_manager.open_trades.append(tm_trade)
-            self.trade_manager._monitored_trades.add(trade["trade_id"])
+        for opened_trade in opened_trades:
+            self.open_trades.append(opened_trade)
+
+            # Also register with trade_manager so it can track SL/TP hits
+            if self.trade_manager and not opened_trade.get("is_phantom"):
+                tm_trade = {
+                    'trade_id':    opened_trade["trade_id"],
+                    'pair':        opened_trade["pair"],
+                    'type':        opened_trade["type"],
+                    'entry':       opened_trade["entry"],
+                    'stop_loss':   opened_trade["stop_loss"],
+                    'take_profit': opened_trade["take_profit"],
+                    'risk':        opened_trade["risk"],
+                    'risk_dollars': opened_trade.get("risk_dollars"),
+                    'risk_pct':    opened_trade.get("risk_pct"),
+                    'contracts':   opened_trade.get("contracts"),
+                    'entry_time':  opened_trade["entry_time"],
+                    'account':     opened_trade.get("account"),
+                    'status':      'open',
+                    'line_level':  opened_trade.get("line_level"),
+                    'is_reentry':  opened_trade.get("is_reentry", False),
+                }
+                self.trade_manager.open_trades.append(tm_trade)
+                self.trade_manager._monitored_trades.add(opened_trade["trade_id"])
 
     def _store_and_emit_close(self, trade: dict[str, Any]):
         self._trade_service.close_trade(trade)

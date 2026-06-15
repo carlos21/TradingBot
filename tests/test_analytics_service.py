@@ -390,9 +390,9 @@ class TestAnalyticsServicePaginatedTrades:
         assert page["trades"] == []
         assert page["total"] == 0
 
-    def test_hides_parent_signal_trades_and_shows_account_column(self):
+    def test_shows_all_independent_trades_and_account_column(self):
         repo = FakeTradeRepository()
-        signal = repo.insert_trade(
+        repo.insert_trade(
             pair="MNQ",
             trade_type="long",
             entry_price=100.0,
@@ -400,27 +400,27 @@ class TestAnalyticsServicePaginatedTrades:
             take_profit=130.0,
             risk=10.0,
             entry_time=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
-            trade_id="signal_1",
-        )
-        account = repo.insert_trade(
-            pair="MNQ",
-            trade_type="long",
-            entry_price=100.0,
-            stop_loss=90.0,
-            take_profit=130.0,
-            risk=10.0,
-            entry_time=datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
-            trade_id="acct_1",
+            trade_id="T1",
             account="Sim101",
-            signal_id="signal_1",
+        )
+        repo.insert_trade(
+            pair="MNQ",
+            trade_type="long",
+            entry_price=100.0,
+            stop_loss=90.0,
+            take_profit=130.0,
+            risk=10.0,
+            entry_time=datetime(2024, 1, 1, 10, 5, tzinfo=timezone.utc),
+            trade_id="T2",
+            account="Sim102",
         )
         svc = AnalyticsService(repo)
         page = svc.get_paginated_trades("MNQ")
 
-        assert page["total"] == 1
-        assert len(page["trades"]) == 1
-        assert page["trades"][0]["trade_id"] == "acct_1"
-        assert page["trades"][0]["account"] == "Sim101"
+        assert page["total"] == 2
+        assert len(page["trades"]) == 2
+        accounts = {t["account"] for t in page["trades"]}
+        assert accounts == {"Sim101", "Sim102"}
 
     def test_shows_single_account_trade_when_no_children(self):
         repo = FakeTradeRepository()

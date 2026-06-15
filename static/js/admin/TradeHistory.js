@@ -9,13 +9,14 @@ export class TradeHistory {
     this.total = 0;
     this.limit = 50;
     this.offset = 0;
+    this.selectedAccount = '';
     this.onTradeClick = null;
   }
 
   async load() {
     try {
       console.log('[TradeHistory] Loading trades...');
-      const result = await this.api.getTrades(this.limit, this.offset);
+      const result = await this.api.getTrades(this.limit, this.offset, this.selectedAccount);
       console.log('[TradeHistory] Got result:', result);
       this.trades = result.trades || [];
       this.total = result.total || 0;
@@ -25,6 +26,40 @@ export class TradeHistory {
       console.error('[TradeHistory] Failed to load trades:', error);
       alert('Failed to load trades: ' + error.message);
     }
+  }
+
+  setAccount(account) {
+    this.selectedAccount = account;
+    this.offset = 0;
+    this.load();
+  }
+
+  async loadAccounts() {
+    try {
+      const result = await this.api.getTradeAccounts();
+      const accounts = result.accounts || [];
+      const select = document.getElementById('trades-account-filter');
+      if (!select) return;
+
+      const currentValue = select.value;
+      select.innerHTML = '<option value="">All Accounts</option>' +
+        accounts.map(a => `<option value="${this.escapeHtml(a)}">${this.escapeHtml(a)}</option>`).join('');
+
+      // Preserve current selection if it's still valid, otherwise reset
+      if (currentValue && accounts.includes(currentValue)) {
+        select.value = currentValue;
+      } else {
+        select.value = this.selectedAccount || '';
+      }
+    } catch (error) {
+      console.error('[TradeHistory] Failed to load accounts:', error);
+    }
+  }
+
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
   }
 
   render() {

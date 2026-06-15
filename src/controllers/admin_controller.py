@@ -39,10 +39,21 @@ class AdminController:
         stats = self._analytics.calculate_statistics(pair)
         return jsonify(stats.to_dict()), 200
 
-    def get_trade_history(self, pair: str, limit: int = 50, offset: int = 0):
-        """Get paginated trade history."""
-        result = self._analytics.get_paginated_trades(pair, limit, offset)
+    def get_trade_history(
+        self,
+        pair: str,
+        limit: int = 50,
+        offset: int = 0,
+        account: str | None = None,
+    ):
+        """Get paginated trade history with optional account filter."""
+        result = self._analytics.get_paginated_trades(pair, limit, offset, account)
         return jsonify(result), 200
+
+    def get_trade_accounts(self, pair: str):
+        """Get distinct account names present in trade history."""
+        accounts = self._analytics.get_trade_accounts(pair)
+        return jsonify({"accounts": accounts}), 200
 
     def get_trade_details(self, trade_id: str):
         """Get detailed trade information with logs."""

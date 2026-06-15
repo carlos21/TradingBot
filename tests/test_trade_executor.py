@@ -1,7 +1,7 @@
 """Tests for src/services/trade_executor.py and src/gateway/executor.py."""
 
 from src.infrastructure.gateway.executor import MultiAccountExecutor
-from src.services.trade_executor import NoOpExecutor
+from src.services.trade_executor import NoOpExecutor, TradeExecutor
 from src.services.trade_manager import TradeManager
 from tests.fakes import (
     DummySocketIO,
@@ -9,6 +9,33 @@ from tests.fakes import (
     FakeTradeExecutor,
     FakeTradeRepository,
 )
+
+
+class FakeGateway:
+    def __init__(self):
+        self.closes = []
+        self.modifies = []
+
+    def send_close_order(self, trade_id, reason, account=None):
+        self.closes.append((trade_id, account))
+
+    def send_modify_order(self, trade_id, stop_loss, account=None):
+        self.modifies.append((trade_id, stop_loss, account))
+
+
+class FakeGatewayExecutor(TradeExecutor):
+    def __init__(self):
+        self._gateway = FakeGateway()
+        self.opens = []
+
+    def on_trade_open(self, trade):
+        self.opens.append(trade)
+
+    def on_trade_close(self, trade_id, exit_price):
+        pass
+
+    def on_sl_update(self, trade_id, new_sl):
+        pass
 
 
 def _make_trade_manager():
@@ -39,118 +66,102 @@ class TestNoOpExecutor:
 
 class TestMultiAccountExecutor:
 
-    def test_on_trade_open_continues_on_single_account_failure(self):
-        """Regression: one account failing must not abort the entire expansion."""
+    def test_on_trade_open_forwards_with_account(self):
+        """Trades with an account are forwarded to the gateway executor."""
         tm = _make_trade_manager()
-        gateway = FakeTradeExecutor()
-
-        class BadAccountConfig:
-            name = "bad_account"
-            risk_usd = None
-            risk_pct = None
-            rr_ratio = 5.0
-
-        class GoodAccountConfig:
-            name = "good_account"
-            risk_usd = None
-            risk_pct = None
-            rr_ratio = 5.0
-
-        # Patch trade_manager.open_trade to fail for the bad account
-        original_open_trade = tm.open_trade
-        def failing_open_trade(*args, account=None, **kwargs):
-            if account == "bad_account":
-                raise RuntimeError("Simulated DB failure")
-            return original_open_trade(*args, account=account, **kwargs)
-        tm.open_trade = failing_open_trade
-
+        gateway = FakeGatewayExecutor()
         executor = MultiAccountExecutor(
             trade_manager=tm,
-            account_configs=[BadAccountConfig(), GoodAccountConfig()],
+            account_configs=[],
             gateway_executor=gateway,
             logger=FakeLogger(),
         )
 
-        signal_trade = {
-            "trade_id": "S1",
+        trade = {
+            "trade_id": "T1",
             "pair": "MNQ",
             "type": "long",
             "entry": 100.0,
-            "stop_loss": 90.0,
-            "take_profit": 130.0,
-            "risk": 10.0,
-            "entry_time": 1000.0,
-            "rr_ratio": 5.0,
+            "account": "acct1",
         }
-        executor.on_trade_open(signal_trade)
+        executor.on_trade_open(trade)
 
-        # Should have exactly 1 account trade (good_account)
-        assert len(executor.signal_to_accounts["S1"]) == 1
-        # The single account trade should be the one that succeeded
-        account_trade_id = executor.signal_to_accounts["S1"][0]
-        assert account_trade_id in executor.account_to_signal
-        assert executor.account_to_signal[account_trade_id] == "S1"
-        # Gateway should have received exactly 1 open order
         assert len(gateway.opens) == 1
+        assert gateway.opens[0]["trade_id"] == "T1"
 
-    def test_on_trade_close_resolves_signal_to_accounts(self):
-        """Closing a signal trade should expand to all account trades."""
+    def test_on_trade_open_rejects_missing_account(self):
+        """Trades without an account are rejected instead of recursing."""
         tm = _make_trade_manager()
-
-        class FakeGatewayExecutor:
-            def __init__(self):
-                self.closes = []
-                self._gateway = FakeGateway()
-
-            def on_trade_open(self, trade):
-                pass
-
-            def on_trade_close(self, trade_id, exit_price):
-                pass
-
-        class FakeGateway:
-            def send_close_order(self, trade_id, reason, account=None):
-                FakeGatewayExecutor.closes.append((trade_id, account))
-
-        gateway_ex = FakeGatewayExecutor()
-        gateway_ex._gateway = FakeGateway()
-        # Monkey-patch the class method to record on the instance
-        def capture_send_close(self, trade_id, reason, account=None):
-            gateway_ex.closes.append((trade_id, account))
-        FakeGateway.send_close_order = capture_send_close
-
-        class AccountConfig:
-            name = "acct1"
-            risk_usd = None
-            risk_pct = None
-            rr_ratio = 5.0
-
+        gateway = FakeGatewayExecutor()
         executor = MultiAccountExecutor(
             trade_manager=tm,
-            account_configs=[AccountConfig()],
+            account_configs=[],
+            gateway_executor=gateway,
+            logger=FakeLogger(),
+        )
+
+        trade = {"trade_id": "T1", "pair": "MNQ", "type": "long"}
+        try:
+            executor.on_trade_open(trade)
+        except RuntimeError as e:
+            assert "no account" in str(e)
+        else:
+            raise AssertionError("Expected RuntimeError for missing account")
+
+    def test_on_trade_close_looks_up_account_from_db(self):
+        """Close uses the account stored on the DB trade record."""
+        tm = _make_trade_manager()
+        repo = tm.trade_repository
+        repo.insert_trade(
+            pair="MNQ",
+            trade_type="long",
+            entry_price=100.0,
+            stop_loss=90.0,
+            take_profit=130.0,
+            risk=10.0,
+            entry_time=1000.0,
+            trade_id="T1",
+            account="acct1",
+        )
+
+        gateway_ex = FakeGatewayExecutor()
+        executor = MultiAccountExecutor(
+            trade_manager=tm,
+            account_configs=[],
             gateway_executor=gateway_ex,
             logger=FakeLogger(),
         )
 
-        signal_trade = {
-            "trade_id": "S1",
-            "pair": "MNQ",
-            "type": "long",
-            "entry": 100.0,
-            "stop_loss": 90.0,
-            "take_profit": 130.0,
-            "risk": 10.0,
-            "entry_time": 1000.0,
-            "rr_ratio": 5.0,
-        }
-        executor.on_trade_open(signal_trade)
+        executor.on_trade_close("T1", 110.0)
+        assert len(gateway_ex._gateway.closes) == 1
+        assert gateway_ex._gateway.closes[0] == ("T1", "acct1")
 
-        # Close by signal ID
-        executor.on_trade_close("S1", 110.0)
-        assert len(gateway_ex.closes) == 1
-        # The close should be for the account trade, not the signal ID
-        assert gateway_ex.closes[0][0] != "S1"
-        assert gateway_ex.closes[0][0].startswith("T")
-        assert gateway_ex.closes[0][1] == "acct1"
+    def test_on_trade_close_dedup_within_window(self):
+        """Duplicate close commands within the dedup window are ignored."""
+        tm = _make_trade_manager()
+        repo = tm.trade_repository
+        repo.insert_trade(
+            pair="MNQ",
+            trade_type="long",
+            entry_price=100.0,
+            stop_loss=90.0,
+            take_profit=130.0,
+            risk=10.0,
+            entry_time=1000.0,
+            trade_id="T1",
+            account="acct1",
+        )
+
+        gateway_ex = FakeGatewayExecutor()
+        executor = MultiAccountExecutor(
+            trade_manager=tm,
+            account_configs=[],
+            gateway_executor=gateway_ex,
+            logger=FakeLogger(),
+        )
+
+        executor.on_trade_close("T1", 110.0)
+        executor.on_trade_close("T1", 110.0)
+        assert len(gateway_ex._gateway.closes) == 1
 
 

@@ -304,15 +304,7 @@ def create_app(
     event_bus = EventBus()
     from src.events.event_bus import SocketIOBridge
 
-    def _is_parent_signal(trade_id: str) -> bool:
-        """Return True if trade_id is a parent signal with child account trades."""
-        try:
-            trades = repos.trades.get_all_trades(pair)
-            return any(t.signal_id == trade_id for t in trades)
-        except Exception:
-            return False
-
-    socketio_bridge = SocketIOBridge(socketio, event_bus, is_parent_signal=_is_parent_signal)
+    socketio_bridge = SocketIOBridge(socketio, event_bus)
     socketio_bridge.start()
 
     # Publisher goes through EventBus; SocketIOBridge forwards to SocketIO

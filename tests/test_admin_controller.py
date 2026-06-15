@@ -54,6 +54,48 @@ class TestAdminControllerTradeHistory:
         assert "trades" in data
         assert data["total"] == 0
 
+    def test_get_trade_history_filters_by_account(self, controller):
+        ctrl, repo, _ = controller
+        from datetime import datetime, timezone
+        repo.insert_trade(
+            pair="MNQ", trade_type="long", entry_price=100.0,
+            stop_loss=90.0, take_profit=130.0, risk=10.0,
+            entry_time=datetime.now(timezone.utc), account="Sim101",
+        )
+        repo.insert_trade(
+            pair="MNQ", trade_type="short", entry_price=110.0,
+            stop_loss=120.0, take_profit=80.0, risk=10.0,
+            entry_time=datetime.now(timezone.utc), account="Live1",
+        )
+        resp, status = ctrl.get_trade_history("MNQ", limit=10, offset=0, account="Sim101")
+        assert status == 200
+        data = resp.get_json()
+        assert data["total"] == 1
+        assert data["trades"][0]["account"] == "Sim101"
+
+    def test_get_trade_accounts(self, controller):
+        ctrl, repo, _ = controller
+        from datetime import datetime, timezone
+        repo.insert_trade(
+            pair="MNQ", trade_type="long", entry_price=100.0,
+            stop_loss=90.0, take_profit=130.0, risk=10.0,
+            entry_time=datetime.now(timezone.utc), account="Sim101",
+        )
+        repo.insert_trade(
+            pair="MNQ", trade_type="short", entry_price=110.0,
+            stop_loss=120.0, take_profit=80.0, risk=10.0,
+            entry_time=datetime.now(timezone.utc), account="Live1",
+        )
+        repo.insert_trade(
+            pair="MNQ", trade_type="long", entry_price=105.0,
+            stop_loss=95.0, take_profit=135.0, risk=10.0,
+            entry_time=datetime.now(timezone.utc),
+        )
+        resp, status = ctrl.get_trade_accounts("MNQ")
+        assert status == 200
+        data = resp.get_json()
+        assert data["accounts"] == ["Live1", "Sim101"]
+
 
 class TestAdminControllerTradeDetails:
 

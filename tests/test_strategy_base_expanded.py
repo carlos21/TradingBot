@@ -11,6 +11,7 @@ Focus areas:
 
 import dataclasses
 from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
@@ -51,6 +52,18 @@ def _make_base(event_publisher=None, line_repo=None, trade_repo=None, trade_mana
         account_balance=account_balance,
         logger=FakeLogger(),
     )
+    # Accept plain dicts for account_configs in tests
+    if account_configs:
+        account_configs = [
+            SimpleNamespace(
+                name=ac.get("name"),
+                risk_usd=ac.get("risk_usd"),
+                risk_pct=ac.get("risk_pct"),
+                rr_ratio=ac.get("rr_ratio"),
+            )
+            if isinstance(ac, dict) else ac
+            for ac in account_configs
+        ]
     return BaseLiquidityStrategy(
         min_stop_loss=10.0,
         max_bounce=90.0,
@@ -95,7 +108,7 @@ def _make_ctx(strat, direction=Direction.LONG, close=100.0, extreme=90.0, level=
 
 class TestMultiAccountExpansion:
 
-    def test_store_and_emit_open_creates_signal_trade(self):
+    def test_store_and_emit_open_creates_independent_account_trade(self):
         sio = DummySocketIO()
         tr = FakeTradeRepository()
         tm = TradeManager(
@@ -116,10 +129,10 @@ class TestMultiAccountExpansion:
             "entry_time": 1000, "status": "open", "line_level": 100,
         }
         strat._store_and_emit_open(trade)
-        assert trade.get("is_signal") is True
         assert trade["trade_id"] is not None
+        assert trade["account"] == "A1"
         assert len(tr.inserted) == 1
-        assert tr.inserted[0]["source"] == "signal"
+        assert tr.inserted[0]["source"] == "strategy"
         assert tr.inserted[0]["params"]["is_reentry"] is False
         open_events = [e for e in sio.events if e[0] == "trade_open"]
         assert len(open_events) == 1
@@ -135,24 +148,23 @@ class TestMultiAccountExpansion:
             account_balance=100000.0,
             logger=FakeLogger(),
         )
-        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, event_publisher=sio, trade_repo=tr, trade_manager=tm, account_configs=[{"name": "A1"}])
-        # Seed trade_manager with account trades referencing a signal
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, event_publisher=sio, trade_repo=tr, trade_manager=tm)
+        # Seed trade_manager with independent account trades
         tm.open_trades.append({
             "trade_id": "AT1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open", "signal_id": "S1",
+            "risk": 10, "status": "open",
             "entry_time": 500,
         })
         tm.open_trades.append({
             "trade_id": "AT2", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
-            "risk": 10, "status": "open", "signal_id": "S1",
+            "risk": 10, "status": "open",
             "entry_time": 500,
         })
         strat.restore_open_trades()
-        assert len(strat.open_trades) == 1
-        assert strat.open_trades[0]["trade_id"] == "S1"
-        assert strat.open_trades[0].get("is_signal") is True
+        assert len(strat.open_trades) == 2
+        assert {t["trade_id"] for t in strat.open_trades} == {"AT1", "AT2"}
 
     def test_restore_open_trades_single_account(self):
         sio = DummySocketIO()
@@ -329,35 +341,33 @@ class TestEdgeCasesTradeManagement:
         assert strat._reentry_opportunities[0]["level"] == 100
         assert strat._reentry_opportunities[0]["direction"] == "long"
 
-    def test_sl_event_with_signal_id_creates_reentry(self):
-        """Multi-account: account trade ID in payload, signal trade in strategy."""
+    def test_sl_event_creates_reentry_with_trade_id(self):
+        """Independent trades: payload trade_id matches strategy trade."""
         strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, reentry_after_sl=True))
         strat.open_trades.append({
-            "trade_id": "S1", "pair": "MNQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "line_level": 100,
         })
-        # Payload has account trade ID, but signal_id matches strategy's trade
         strat._on_trade_closed({
-            "trade_id": "AT1", "signal_id": "S1", "result_type": "SL",
+            "trade_id": "T1", "result_type": "SL",
             "exit_price": 90.0, "line_level": 100,
             "is_reentry": False, "is_phantom": False,
         })
         assert len(strat._reentry_opportunities) == 1
         assert strat._reentry_opportunities[0]["level"] == 100
         assert strat._reentry_opportunities[0]["direction"] == "long"
-        # Strategy's trade should be removed from open_trades
         assert len(strat.open_trades) == 0
 
     def test_trade_updated_syncs_entry_fill(self):
         strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, reentry_after_sl=True))
         strat.open_trades.append({
-            "trade_id": "S1", "pair": "MNQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "line_level": 100,
         })
         strat._on_trade_updated({
-            "trade_id": "AT1", "signal_id": "S1",
+            "trade_id": "T1",
             "entry_price": 99.5, "stop_loss": 89.5,
             "take_profit": 131.0, "risk": 10.5, "contracts": 2,
         })
@@ -373,14 +383,14 @@ class TestEdgeCasesTradeManagement:
         from src.domain.events import DomainEvent, EventType
         strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, reentry_after_sl=True))
         strat.open_trades.append({
-            "trade_id": "S1", "pair": "MNQ", "type": "long",
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open", "line_level": 100,
         })
         strat.on_event(DomainEvent(
             EventType.TRADE_ENTRY_UPDATED,
             payload={
-                "trade_id": "AT1", "signal_id": "S1",
+                "trade_id": "T1",
                 "entry_price": 99.5, "stop_loss": 89.5,
                 "take_profit": 131.0, "risk": 10.5, "contracts": 2,
             },

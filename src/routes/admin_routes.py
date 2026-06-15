@@ -47,7 +47,15 @@ def register_admin_routes(
             abort(400, "Query param 'pair' is required")
         limit = request.args.get('limit', 50, type=int)
         offset = request.args.get('offset', 0, type=int)
-        return admin_controller.get_trade_history(pair, limit, offset)
+        account = request.args.get('account') or None
+        return admin_controller.get_trade_history(pair, limit, offset, account)
+
+    @app.route('/api/admin/trade-accounts', methods=['GET'])
+    def admin_trade_accounts():
+        pair = request.args.get('pair')
+        if not pair:
+            abort(400, "Query param 'pair' is required")
+        return admin_controller.get_trade_accounts(pair)
 
     @app.route('/api/admin/trades/<string:trade_id>', methods=['GET'])
     def admin_trade_detail(trade_id):

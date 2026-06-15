@@ -87,49 +87,30 @@ class TestSocketIOBridge:
 
         assert len(socketio.events) == 0
 
-    def test_skips_parent_signal_trade_open(self):
+    def test_forwards_trade_open(self):
         socketio = DummySocketIO()
         bus = EventBus()
-        bridge = SocketIOBridge(
-            socketio, bus, is_parent_signal=lambda trade_id: trade_id == "signal_1"
-        )
+        bridge = SocketIOBridge(socketio, bus)
         bridge.start()
 
         bus.publish(DomainEvent(
             EventType.TRADE_OPENED,
-            payload={"trade_id": "signal_1", "signal_id": None},
-        ))
-
-        assert len(socketio.events) == 0
-
-    def test_forwards_account_trade_open(self):
-        socketio = DummySocketIO()
-        bus = EventBus()
-        bridge = SocketIOBridge(
-            socketio, bus, is_parent_signal=lambda trade_id: trade_id == "signal_1"
-        )
-        bridge.start()
-
-        bus.publish(DomainEvent(
-            EventType.TRADE_OPENED,
-            payload={"trade_id": "acct_1", "signal_id": "signal_1", "account": "Sim101"},
+            payload={"trade_id": "T1", "account": "Sim101"},
         ))
 
         assert len(socketio.events) == 1
         assert socketio.events[0][0] == "trade_open"
 
-    def test_forwards_single_account_trade_open(self):
-        """Trades with no signal_id and no children are forwarded."""
+    def test_forwards_trade_open_with_signal_id(self):
+        """Trades with a signal_id sibling tag are still forwarded."""
         socketio = DummySocketIO()
         bus = EventBus()
-        bridge = SocketIOBridge(
-            socketio, bus, is_parent_signal=lambda trade_id: False
-        )
+        bridge = SocketIOBridge(socketio, bus)
         bridge.start()
 
         bus.publish(DomainEvent(
             EventType.TRADE_OPENED,
-            payload={"trade_id": "T1", "signal_id": None},
+            payload={"trade_id": "acct_1", "signal_id": "group_1", "account": "Sim101"},
         ))
 
         assert len(socketio.events) == 1

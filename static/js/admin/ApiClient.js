@@ -118,8 +118,14 @@ export class ApiClient {
     return this.get(`/api/admin/stats?pair=${this.pair}`);
   }
 
-  async getTrades(limit = 50, offset = 0) {
-    return this.get(`/api/admin/trades?pair=${this.pair}&limit=${limit}&offset=${offset}`);
+  async getTrades(limit = 50, offset = 0, account = '') {
+    let url = `/api/admin/trades?pair=${this.pair}&limit=${limit}&offset=${offset}`;
+    if (account) url += `&account=${encodeURIComponent(account)}`;
+    return this.get(url);
+  }
+
+  async getTradeAccounts() {
+    return this.get(`/api/admin/trade-accounts?pair=${this.pair}`);
   }
 
   async getTradeDetail(tradeId) {

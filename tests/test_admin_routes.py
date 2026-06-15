@@ -11,8 +11,11 @@ class FakeAdminController:
     def get_dashboard_stats(self, pair):
         return {"pair": pair, "trades": 0}
 
-    def get_trade_history(self, pair, limit, offset):
-        return {"trades": [], "total": 0}
+    def get_trade_history(self, pair, limit, offset, account=None):
+        return {"trades": [], "total": 0, "account": account}
+
+    def get_trade_accounts(self, pair):
+        return {"accounts": ["Sim101"]}
 
     def get_trade_details(self, trade_id):
         return {"trade_id": trade_id}
@@ -65,6 +68,20 @@ class TestAdminRoutes:
         with app.test_client() as client:
             resp = client.get("/api/admin/trades?pair=MNQ")
             assert resp.status_code == 200
+
+    def test_admin_trades_with_account_filter(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/trades?pair=MNQ&account=Sim101")
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data["account"] == "Sim101"
+
+    def test_admin_trade_accounts(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/trade-accounts?pair=MNQ")
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert "accounts" in data
 
     def test_admin_trade_detail(self, app):
         with app.test_client() as client:

@@ -69,6 +69,9 @@ class AdminApp {
       // Set up view toggle buttons
       this.setupViewToggle();
 
+      // Set up account filter
+      this.setupAccountFilter();
+
       // Set up decision logs filters
       this.decisionLogs.bindFilters();
 
@@ -137,6 +140,9 @@ class AdminApp {
       const newPair = e.target.value;
       console.log(`[AdminApp] Pair changed to: ${newPair}`);
       this.api.setPair(newPair);
+      // Reset account filter for the new pair
+      this.resetAccountFilter();
+      this.loadTradeAccounts();
       // Reload current tab data
       this.switchTab(this.currentTab);
     });
@@ -253,6 +259,32 @@ class AdminApp {
     } else {
       this.tradeCalendar.load();
     }
+  }
+
+  setupAccountFilter() {
+    const select = document.getElementById('trades-account-filter');
+    if (!select) return;
+
+    select.addEventListener('change', (e) => {
+      const account = e.target.value;
+      console.log(`[AdminApp] Account filter changed to: ${account || 'All Accounts'}`);
+      this.tradeHistory.setAccount(account);
+      this.tradeCalendar.setAccount(account);
+    });
+
+    // Initial population
+    this.loadTradeAccounts();
+  }
+
+  async loadTradeAccounts() {
+    await this.tradeHistory.loadAccounts();
+  }
+
+  resetAccountFilter() {
+    const select = document.getElementById('trades-account-filter');
+    if (select) select.value = '';
+    this.tradeHistory.selectedAccount = '';
+    this.tradeCalendar.selectedAccount = '';
   }
 
   async loadOverviewData() {

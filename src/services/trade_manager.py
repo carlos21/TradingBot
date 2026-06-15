@@ -135,14 +135,40 @@ class TradeManager:
     # ------------------------------------------------------------------
     # DB resume
     # ------------------------------------------------------------------
+    def _current_account_names(self) -> set[str]:
+        if self._accounts_repo is None:
+            return set()
+        try:
+            return {a.name for a in self._accounts_repo.list_accounts() if a.name}
+        except Exception:
+            return set()
+
     def _load_open_trades_from_db(self):
         try:
             all_trades = self.trade_repository.list_trades(self.pair)
             open_count = 0
             closed_count = 0
+            current_accounts = self._current_account_names()
 
             for t in all_trades:
-                if t.exit_time is None and t.source != "signal":
+                if t.exit_time is None:
+                    # Skip stale open trades whose account is no longer configured.
+                    if current_accounts and t.account and t.account not in current_accounts:
+                        self.logger.warning(
+                            f"[TradeManager] Stale open trade {t.trade_id} belongs to "
+                            f"unconfigured account {t.account}; closing as ORPHAN."
+                        )
+                        self.trade_repository.close_trade(
+                            trade_id=t.trade_id,
+                            exit_price=t.entry_price,
+                            exit_time=datetime.now(tz=timezone.utc),
+                            result=0.0,
+                            result_type="ORPHAN",
+                            fees=0.0,
+                            pnl_usd=0.0,
+                        )
+                        continue
+
                     trade_dict = {
                         'trade_id':    t.trade_id,
                         'pair':        t.pair,
@@ -338,6 +364,20 @@ class TradeManager:
         self._open_use_case.update_account_balance(self.account_balance)
         self._broker_handler.update_balance(self.account_balance)
 
+        # In live multi-account mode, callers like the manual/test controller may
+        # not specify an account. Fall back to the first configured account so the
+        # executor can route the order correctly.
+        if account is None:
+            current_accounts = self._current_account_names()
+            if current_accounts:
+                account = next(iter(current_accounts))
+            else:
+                # Some executors (e.g. MultiAccountExecutor) carry their own
+                # account list when no accounts repo is wired yet.
+                executor_configs = getattr(self.trade_executor, "account_configs", None)
+                if executor_configs:
+                    account = next((getattr(c, "name", None) for c in executor_configs if getattr(c, "name", None)), None)
+
         result = self._open_use_case.execute(
             pair=pair, trade_type=trade_type, entry_price=entry_price,
             stop_loss=stop_loss, take_profit=take_profit, risk=risk,
@@ -382,12 +422,6 @@ class TradeManager:
             (t for t in self.open_trades if t['trade_id'] == trade_id), None
         )
 
-        # Multi-account: trade_id may be a signal_id
-        if not trade:
-            trade = next(
-                (t for t in self.open_trades if t.get('signal_id') == trade_id), None
-            )
-
         if not trade:
             self.logger.warning(f"[TradeManager] Trade {trade_id} not in memory, fetching from DB.")
             trade_data = self.trade_repository.get_trade(trade_id)
@@ -418,11 +452,6 @@ class TradeManager:
                     result=0.0,
                     result_type="SP"
                 )
-                # Clean up any zombie account trades with this signal_id
-                self.open_trades = [
-                    t for t in self.open_trades
-                    if t.get('signal_id') != trade_id
-                ]
                 return {'trade_id': trade_id, 'exit_price': exit_price, 'result': 0.0}
 
         result = self._close_use_case.execute(
@@ -437,14 +466,7 @@ class TradeManager:
         self.account_balance += result.pnl_usd
         self._open_use_case.update_account_balance(self.account_balance)
 
-        # Remove the closed trade AND any sibling account trades with the same signal_id
-        signal_id = trade.get('signal_id')
-        if signal_id:
-            self.open_trades = [
-                t for t in self.open_trades
-                if t['trade_id'] != trade['trade_id'] and t.get('signal_id') != signal_id
-            ]
-        elif trade in self.open_trades:
+        with contextlib.suppress(ValueError):
             self.open_trades.remove(trade)
 
         return {
@@ -513,10 +535,10 @@ class TradeManager:
     def update_local_trade_sl(self, trade_id: str, new_sl: float):
         found = False
         for t in self.open_trades:
-            if t['trade_id'] == trade_id or t.get('signal_id') == trade_id:
+            if t['trade_id'] == trade_id:
                 old_sl = t['stop_loss']
                 t['stop_loss'] = new_sl
-                self.logger.info(f"[TradeManager] Synced SL for {t['trade_id']} (signal={trade_id}): {old_sl} -> {new_sl}")
+                self.logger.info(f"[TradeManager] Synced SL for {t['trade_id']}: {old_sl} -> {new_sl}")
                 found = True
         if not found:
             self.logger.warning(f"[TradeManager] Could not find trade {trade_id} to update SL")
@@ -533,19 +555,6 @@ class TradeManager:
 
         self._broker_handler.update_balance(self.account_balance)
         self._broker_handler.handle_entry_fill(trade, entry_price, stop_loss, take_profit)
-
-        # In multi-account mode the visible signal trade is the parent; propagate
-        # the real broker fill so the chart/admin list show the actual entry price.
-        signal_id = trade.get('signal_id')
-        if signal_id and signal_id != trade_id:
-            parent = next((t for t in self.open_trades if t['trade_id'] == signal_id), None)
-            if parent:
-                self._broker_handler.handle_entry_fill(parent, entry_price, None, None)
-            elif self.logger:
-                self.logger.warning(
-                    f"[TradeManager] Entry fill for account trade {trade_id} references "
-                    f"missing parent signal {signal_id}"
-                )
 
     def handle_broker_fill(self, trade_id: str, exit_price: float, result_type: str = None):
         trade = next((t for t in self.open_trades if t['trade_id'] == trade_id), None)
