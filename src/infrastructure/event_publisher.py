@@ -36,7 +36,7 @@ class DomainEventBusPublisher:
         "trade_open": EventType.TRADE_OPENED,
         "trade_close": EventType.TRADE_CLOSED,
         "trade_update": EventType.TRADE_UPDATED,
-        "trade_entry_update": EventType.TRADE_UPDATED,
+        "trade_entry_update": EventType.TRADE_ENTRY_UPDATED,
         "line_added": EventType.LINE_ADDED,
         "line_removed": EventType.LINE_REMOVED,
         "line_updated": EventType.LINE_UPDATED,

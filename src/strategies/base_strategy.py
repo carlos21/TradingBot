@@ -349,10 +349,10 @@ class BaseStrategy:
     # ------------------------------------------------------------------
 
     def on_event(self, event: DomainEvent) -> None:
-        """EventSubscriber protocol: react to TRADE_CLOSED and TRADE_UPDATED domain events."""
+        """EventSubscriber protocol: react to domain trade events."""
         if event.event_type == EventType.TRADE_CLOSED:
             self._on_trade_closed(event.payload)
-        elif event.event_type == EventType.TRADE_UPDATED:
+        elif event.event_type in (EventType.TRADE_UPDATED, EventType.TRADE_ENTRY_UPDATED):
             self._on_trade_updated(event.payload)
 
     def _on_trade_closed(self, payload: dict[str, Any]) -> None:

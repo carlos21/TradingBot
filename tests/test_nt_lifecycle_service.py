@@ -28,12 +28,16 @@ class FakeAccountsRepo:
 
 
 class FakeSettingsService:
-    def __init__(self, accounts=None, credentials=None):
+    def __init__(self, accounts=None, credentials=None, instrument="MNQ 09-26"):
         self._accounts = FakeAccountsRepo(accounts)
         self._credentials = credentials or {}
+        self._instrument = instrument
 
     def get_full_settings(self):
-        return {"credentials": self._credentials}
+        return {
+            "credentials": self._credentials,
+            "trading": {"instrument": self._instrument},
+        }
 
 
 class TestNinjaTraderLifecycleService:
@@ -53,6 +57,14 @@ class TestNinjaTraderLifecycleService:
         ok, err = lifecycle.validate_before_start(FakeDataSource())
         assert ok is False
         assert "No NinjaTrader accounts configured" in err
+
+    def test_validate_before_start_without_instrument(self):
+        nt_svc = MagicMock(spec=NtManagerService)
+        settings = FakeSettingsService(accounts=[{"name": "Sim101"}], instrument="")
+        lifecycle = NinjaTraderLifecycleService(nt_svc, settings, FakeLogger())
+        ok, err = lifecycle.validate_before_start(FakeDataSource())
+        assert ok is False
+        assert "No trading instrument configured" in err
 
     def test_validate_before_start_no_repo(self):
         nt_svc = MagicMock(spec=NtManagerService)

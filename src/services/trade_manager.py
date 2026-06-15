@@ -45,7 +45,8 @@ class TradeManager:
                  trade_logger=None,
                  notifier: Notifier = None,
                  analytics: AnalyticsReporter = None,
-                 accounts_repo=None):
+                 accounts_repo=None,
+                 instrument: str | None = None):
         self.open_trades = []
         self.trade_repository = trade_repository
         self.socketio         = socketio
@@ -91,6 +92,7 @@ class TradeManager:
             risk_pct_per_trade=risk_pct_per_trade,
             use_fractional_lots=use_fractional_lots,
             accounts_repo=accounts_repo,
+            instrument=instrument,
         )
         self._close_use_case = TradeCloseUseCase(
             trade_repository=trade_repository,
@@ -361,6 +363,7 @@ class TradeManager:
             'rr_ratio':   rr_ratio,
             'account':    result.account,
             'signal_id':  result.signal_id,
+            'instrument': result.instrument,
             'status':     'open',
             'source':     source,
         }
@@ -530,6 +533,19 @@ class TradeManager:
 
         self._broker_handler.update_balance(self.account_balance)
         self._broker_handler.handle_entry_fill(trade, entry_price, stop_loss, take_profit)
+
+        # In multi-account mode the visible signal trade is the parent; propagate
+        # the real broker fill so the chart/admin list show the actual entry price.
+        signal_id = trade.get('signal_id')
+        if signal_id and signal_id != trade_id:
+            parent = next((t for t in self.open_trades if t['trade_id'] == signal_id), None)
+            if parent:
+                self._broker_handler.handle_entry_fill(parent, entry_price, None, None)
+            elif self.logger:
+                self.logger.warning(
+                    f"[TradeManager] Entry fill for account trade {trade_id} references "
+                    f"missing parent signal {signal_id}"
+                )
 
     def handle_broker_fill(self, trade_id: str, exit_price: float, result_type: str = None):
         trade = next((t for t in self.open_trades if t['trade_id'] == trade_id), None)

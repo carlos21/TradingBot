@@ -44,11 +44,14 @@ namespace NinjaTrader.NinjaScript.AddOns
                     throw new ArgumentException("trade_id is required");
 
                 var accountName = payload?["account"]?.ToString();
+                var instrumentName = payload?["instrument"]?.ToString();
+                if (string.IsNullOrEmpty(instrumentName))
+                    throw new InvalidOperationException("instrument is required in ORDER_CLOSE payload");
 
                 // ── SIMULATE MODE: Send fake exit fill instantly, NO account/broker lookup ──
                 if (_simulate || TradingBotZmqConnector.E2ETestRunning)
                 {
-                    _logger.Info($"🧪 SIMULATE CLOSE: {tradeId} account={accountName ?? "default"}");
+                    _logger.Info($"🧪 SIMULATE CLOSE: {tradeId} {instrumentName} account={accountName ?? "default"}");
                     _network?.SendExitFill(tradeId, 0, "CLOSE", account: accountName);
                     _network?.SendTradeLog(tradeId, "NT:SIMULATE", "Simulated exit fill (close)");
                     return true;
@@ -81,11 +84,11 @@ namespace NinjaTrader.NinjaScript.AddOns
                     return true;
                 }
 
-                _logger.Info($">>> CLOSE ORDER START: {tradeId} account={account.Name}");
+                _logger.Info($">>> CLOSE ORDER START: {tradeId} {instrumentName} account={account.Name}");
 
-                var instrument = Instrument.GetInstrument(_instrument);
+                var instrument = Instrument.GetInstrument(instrumentName);
                 if (instrument == null)
-                    throw new InvalidOperationException($"Instrument '{_instrument}' not found");
+                    throw new InvalidOperationException($"Instrument '{instrumentName}' not found");
 
                 // Get tracked orders for this trade
                 var entryOrder = FindOrderByName(account, $"Entry_{tradeId}");

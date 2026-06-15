@@ -44,6 +44,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 var newSl = payload?["stop_loss"]?.Value<double>() ?? 0;
                 var newTp = payload?["take_profit"]?.Value<double>() ?? 0;
                 var accountName = payload?["account"]?.ToString();
+                var instrumentName = payload?["instrument"]?.ToString();
+                if (string.IsNullOrEmpty(instrumentName))
+                    throw new InvalidOperationException("instrument is required in ORDER_MODIFY payload");
 
                 if (string.IsNullOrEmpty(tradeId))
                     throw new ArgumentException("trade_id is required");
@@ -53,7 +56,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 // ── SIMULATE MODE: Log and return success, NO account/broker lookup ──
                 if (_simulate || TradingBotZmqConnector.E2ETestRunning)
                 {
-                    _logger.Info($"🧪 SIMULATE MODIFY: {tradeId} new SL={newSl} new TP={newTp} account={accountName ?? "default"}");
+                    _logger.Info($"🧪 SIMULATE MODIFY: {tradeId} {instrumentName} new SL={newSl} new TP={newTp} account={accountName ?? "default"}");
                     _network?.SendTradeLog(tradeId, "NT:SIMULATE", $"Simulated modify SL={newSl} TP={newTp}");
                     return true;
                 }

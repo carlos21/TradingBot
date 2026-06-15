@@ -37,7 +37,7 @@ export class TradeHistory {
 
     if (!this.trades || this.trades.length === 0) {
       console.log('[TradeHistory] No trades to display');
-      tbody.innerHTML = '<tr><td colspan="8" class="px-4 py-8 text-center text-gray-500">No trades found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="px-4 py-8 text-center text-gray-500">No trades found</td></tr>';
       return;
     }
     console.log(`[TradeHistory] Rendering ${this.trades.length} trades`);
@@ -63,6 +63,7 @@ export class TradeHistory {
               ${trade.type.toUpperCase()}
             </span>
           </td>
+          <td class="px-4 py-3 text-sm text-gray-400">${trade.account || '-'}</td>
           <td class="px-4 py-3">${trade.entry.toFixed(2)}</td>
           <td class="px-4 py-3">${trade.exit_price ? trade.exit_price.toFixed(2) : '-'}</td>
           <td class="px-4 py-3 ${pnlClass}">${pnlText}</td>
@@ -181,10 +182,11 @@ export class TradeHistory {
   }
 
   exportToCSV() {
-    const headers = ['Trade ID', 'Type', 'Entry Price', 'Stop Loss', 'Take Profit', 'Exit Price', 'P&L', 'Result', 'Entry Time', 'Exit Time'];
+    const headers = ['Trade ID', 'Type', 'Account', 'Entry Price', 'Stop Loss', 'Take Profit', 'Exit Price', 'P&L', 'Result', 'Entry Time', 'Exit Time'];
     const rows = this.trades.map(t => [
       t.trade_id,
       t.type,
+      t.account || '',
       t.entry,
       t.stop_loss,
       t.take_profit,

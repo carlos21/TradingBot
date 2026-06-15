@@ -223,6 +223,7 @@ class OpenOrderCommand:
     take_profit: float
     risk_points: float  # Distance from entry to SL in points
     rr_ratio: float     # Risk:Reward ratio
+    instrument: str     # Full NinjaTrader instrument name (e.g. "MNQ 09-26")
     risk_usd: float | None = None   # For position sizing
     risk_pct: float | None = None   # Alternative: % of account
     account: str | None = None      # Target NT account name
@@ -237,6 +238,7 @@ class OpenOrderCommand:
             "take_profit": self.take_profit,
             "risk_points": self.risk_points,
             "rr_ratio": self.rr_ratio,
+            "instrument": self.instrument,
         }
         if self.risk_usd is not None:
             payload["risk_usd"] = self.risk_usd
@@ -256,11 +258,15 @@ class OpenOrderCommand:
 class CloseOrderCommand:
     """Command to close a position."""
     trade_id: str
+    instrument: str
     reason: str | None = None  # "session_end", "manual", "strategy"
     account: str | None = None  # Target NT account name
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
-        payload = {"trade_id": self.trade_id}
+        payload = {
+            "trade_id": self.trade_id,
+            "instrument": self.instrument,
+        }
         if self.reason is not None:
             payload["reason"] = self.reason
         if self.account is not None:
@@ -276,12 +282,16 @@ class CloseOrderCommand:
 class ModifyOrderCommand:
     """Command to modify an existing order (e.g., move SL to breakeven)."""
     trade_id: str
+    instrument: str
     stop_loss: float | None = None
     take_profit: float | None = None
     account: str | None = None  # Target NT account name
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
-        payload = {"trade_id": self.trade_id}
+        payload = {
+            "trade_id": self.trade_id,
+            "instrument": self.instrument,
+        }
         if self.stop_loss is not None:
             payload["stop_loss"] = self.stop_loss
         if self.take_profit is not None:

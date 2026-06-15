@@ -19,6 +19,7 @@ class EventType(Enum):
     TRADE_OPENED = auto()
     TRADE_CLOSED = auto()
     TRADE_UPDATED = auto()  # SL moved, etc.
+    TRADE_ENTRY_UPDATED = auto()  # broker entry fill price applied
 
     # Line events
     LINE_ADDED = auto()

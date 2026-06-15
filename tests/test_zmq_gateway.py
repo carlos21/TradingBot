@@ -103,12 +103,14 @@ class TestProtocol:
             take_profit=21080,
             risk_points=80,
             rr_ratio=1.0,
+            instrument="MNQ 09-26",
         )
         envelope = cmd.to_envelope(seq_num=1)
 
         assert envelope.msg_type == MessageType.ORDER_OPEN
         assert envelope.payload["trade_id"] == "test_123"
         assert envelope.payload["direction"] == "long"
+        assert envelope.payload["instrument"] == "MNQ 09-26"
 
 
 class TestGateway:
@@ -177,7 +179,7 @@ class TestIntegration:
             heartbeat_pub=f"tcp://127.0.0.1:{base_port + 3}",
         )
         logger = ConsoleLogger()
-        gateway = TradingGateway(logger, config=config, pair="TEST")
+        gateway = TradingGateway(logger, config=config, pair="TEST", instrument="MNQ 09-26")
         yield gateway
         gateway.stop()
 
@@ -335,7 +337,7 @@ class TestMultiAccountE2E:
         from src.infrastructure.gateway.gateway import TradingGateway
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
-        gw = TradingGateway(logger=ConsoleLogger())
+        gw = TradingGateway(logger=ConsoleLogger(), instrument="MNQ 09-26")
         gw._running = True  # pretend started
 
         gw._handle_test_start({
@@ -355,7 +357,7 @@ class TestMultiAccountE2E:
         from src.infrastructure.gateway.gateway import TradingGateway
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
-        gw = TradingGateway(logger=ConsoleLogger())
+        gw = TradingGateway(logger=ConsoleLogger(), instrument="MNQ 09-26")
         gw._running = True
 
         gw._handle_test_start({
@@ -381,7 +383,7 @@ class TestMultiAccountE2E:
         from src.infrastructure.gateway.gateway import TradingGateway
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
-        gw = TradingGateway(logger=ConsoleLogger())
+        gw = TradingGateway(logger=ConsoleLogger(), instrument="MNQ 09-26")
         gw._running = True
 
         gw._handle_test_start({

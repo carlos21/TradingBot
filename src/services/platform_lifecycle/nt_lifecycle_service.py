@@ -22,7 +22,7 @@ class NinjaTraderLifecycleService:
         self._logger = logger
 
     def validate_before_start(self, data_source) -> tuple[bool, str | None]:
-        """Ensure at least one NinjaTrader account is configured."""
+        """Ensure at least one NinjaTrader account and an instrument are configured."""
         try:
             accounts_repo = getattr(self._settings_service, "_accounts", None)
             if accounts_repo is not None:
@@ -34,6 +34,18 @@ class NinjaTraderLifecycleService:
                     )
         except Exception as e:
             self._logger.error(f"[NT Lifecycle] Failed to check accounts: {e}")
+
+        try:
+            settings = self._settings_service.get_full_settings()
+            instrument = settings.get("trading", {}).get("instrument", "")
+            if not instrument:
+                return (
+                    False,
+                    "No trading instrument configured. Go to Admin → Settings and set the Instrument (e.g. 'MNQ 09-26') before starting streaming.",
+                )
+        except Exception as e:
+            self._logger.error(f"[NT Lifecycle] Failed to check instrument: {e}")
+
         return True, None
 
     def maybe_launch_after_delay(self, data_source) -> None:

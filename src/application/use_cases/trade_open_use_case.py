@@ -31,6 +31,7 @@ class OpenResult:
     entry_time: float
     account: str | None
     signal_id: str | None
+    instrument: str | None
 
 
 class TradeOpenUseCase:
@@ -49,6 +50,7 @@ class TradeOpenUseCase:
         risk_pct_per_trade: float | None = None,
         use_fractional_lots: bool = False,
         accounts_repo=None,
+        instrument: str | None = None,
     ):
         self._repo = trade_repository
         self._executor = trade_executor
@@ -61,6 +63,7 @@ class TradeOpenUseCase:
         self._risk_pct_per_trade = risk_pct_per_trade
         self._use_fractional_lots = use_fractional_lots
         self._accounts_repo = accounts_repo
+        self._instrument = instrument
 
     def _get_current_risk(self) -> tuple[float | None, float | None]:
         """Return (risk_per_trade, risk_pct_per_trade) from DB if available, else fallbacks."""
@@ -161,6 +164,7 @@ class TradeOpenUseCase:
             entry_time=entry_time,
             account=account,
             signal_id=signal_id,
+            instrument=self._instrument,
         )
 
         # Send to broker/platform
@@ -179,6 +183,7 @@ class TradeOpenUseCase:
             'contracts': contracts,
             'account': account,
             'source': source,
+            'instrument': self._instrument,
         }
         try:
             self._executor.on_trade_open(trade_for_executor)

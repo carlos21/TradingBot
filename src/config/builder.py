@@ -195,6 +195,7 @@ class AppBuilder:
                 accounts_repo=accounts_repo,
                 history_days=cfg.history_days,
                 notifier=notifier,
+                instrument=cfg.instrument,
             )
         else:
             ds, executor = create_live_components(
@@ -210,6 +211,7 @@ class AppBuilder:
                 heartbeat_port=cfg.zmq_heartbeat_port,
                 history_days=cfg.history_days,
                 notifier=notifier,
+                instrument=cfg.instrument,
             )
 
         numbers = get_prod_strategy_numbers(

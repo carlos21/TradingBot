@@ -115,10 +115,12 @@ to be:
         logger: ILogger,
         config: GatewayConfig | None = None,
         pair: str = "MNQ",
+        instrument: str | None = None,
     ):
         self.logger = logger
         self.config = config or GatewayConfig()
         self.pair = pair
+        self.instrument = instrument
 
         # ZMQ context and sockets
         self._context: zmq.Context | None = None
@@ -813,6 +815,7 @@ to be:
             take_profit=tp,
             risk_points=risk_points,
             rr_ratio=rr_ratio,
+            instrument=self.instrument,
         )
         self.logger.info(f"✅ TEST: Queued open order command for {trade_id}")
 
@@ -847,6 +850,7 @@ to be:
                 risk_points=risk_points,
                 rr_ratio=rr_ratio,
                 account=account,
+                instrument=self.instrument,
             )
             self.logger.info(f"✅ TEST: Queued open order for {trade_id} account={account}")
 
@@ -886,7 +890,7 @@ to be:
                 # All entries filled — send close orders for all
                 for tid in trade_ids:
                     account = self._test_sequences[tid].get('account')
-                    self.send_close_order(trade_id=tid, reason="test", account=account)
+                    self.send_close_order(trade_id=tid, reason="test", account=account, instrument=self.instrument)
                     self.logger.info(f"✅ TEST: Queued close order for {tid} account={account}")
 
         elif stage == 'exit_fill':
@@ -1119,6 +1123,13 @@ to be:
             cmd_info = self._pending_commands.pop(seq)
             self.logger.warning(f"Command timed out waiting for ack: {cmd_info['type']} seq={seq}")
 
+    def _resolve_instrument(self, instrument: str | None) -> str:
+        """Return the effective instrument for an order command."""
+        resolved = instrument if instrument is not None else self.instrument
+        if not resolved:
+            raise ValueError("instrument is required for order commands (configure it in Admin → Settings)")
+        return resolved
+
     def send_open_order(
         self,
         trade_id: str,
@@ -1132,8 +1143,10 @@ to be:
         risk_usd: float | None = None,
         risk_pct: float | None = None,
         account: str | None = None,
+        instrument: str | None = None,
     ) -> None:
         """Send open order command to platform."""
+        resolved_instrument = self._resolve_instrument(instrument)
         cmd = OpenOrderCommand(
             trade_id=trade_id,
             pair=pair or self.pair,
@@ -1143,20 +1156,33 @@ to be:
             take_profit=take_profit,
             risk_points=risk_points,
             rr_ratio=rr_ratio,
+            instrument=resolved_instrument,
             risk_usd=risk_usd,
             risk_pct=risk_pct,
             account=account,
         )
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
-        self.logger.info(f"Queued OPEN order: {trade_id} {direction} @ {entry_price} account={account}")
+        self.logger.info(f"Queued OPEN order: {trade_id} {direction} {resolved_instrument} @ {entry_price} account={account}")
 
-    def send_close_order(self, trade_id: str, reason: str | None = None, account: str | None = None) -> None:
+    def send_close_order(
+        self,
+        trade_id: str,
+        reason: str | None = None,
+        account: str | None = None,
+        instrument: str | None = None,
+    ) -> None:
         """Send close order command to platform."""
-        cmd = CloseOrderCommand(trade_id=trade_id, reason=reason, account=account)
+        resolved_instrument = self._resolve_instrument(instrument)
+        cmd = CloseOrderCommand(
+            trade_id=trade_id,
+            instrument=resolved_instrument,
+            reason=reason,
+            account=account,
+        )
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
-        self.logger.info(f"Queued CLOSE order: {trade_id} (reason: {reason}) account={account}")
+        self.logger.info(f"Queued CLOSE order: {trade_id} {resolved_instrument} (reason: {reason}) account={account}")
 
     def send_modify_order(
         self,
@@ -1164,12 +1190,20 @@ to be:
         stop_loss: float | None = None,
         take_profit: float | None = None,
         account: str | None = None,
+        instrument: str | None = None,
     ) -> None:
         """Send modify order command to platform."""
-        cmd = ModifyOrderCommand(trade_id=trade_id, stop_loss=stop_loss, take_profit=take_profit, account=account)
+        resolved_instrument = self._resolve_instrument(instrument)
+        cmd = ModifyOrderCommand(
+            trade_id=trade_id,
+            instrument=resolved_instrument,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            account=account,
+        )
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
-        self.logger.info(f"Queued MODIFY order: {trade_id} SL={stop_loss} TP={take_profit} account={account}")
+        self.logger.info(f"Queued MODIFY order: {trade_id} {resolved_instrument} SL={stop_loss} TP={take_profit} account={account}")
 
     def send_refresh_request(self, days: int = 1) -> None:
         """Request historical data refresh."""

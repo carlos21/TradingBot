@@ -76,7 +76,7 @@ def logger():
 
 @pytest.fixture
 def gateway(logger):
-    return TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+    return TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ", instrument="MNQ 09-26")
 
 
 # ---------------------------------------------------------------------------
@@ -1016,6 +1016,7 @@ class TestCommandSending:
             rr_ratio=1.0,
         )
         assert len(gateway._pending_commands) == 1
+        assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("OPEN order" in m for m in logger.messages)
 
     def test_send_open_order_all_args(self, gateway):
@@ -1032,20 +1033,50 @@ class TestCommandSending:
             risk_usd=500.0,
             risk_pct=0.01,
             account="Sim101",
+            instrument="ES 09-26",
         )
         assert len(gateway._pending_commands) == 1
+        assert gateway._pending_commands[1]["payload"]["instrument"] == "ES 09-26"
+
+    def test_send_open_order_without_instrument_raises(self, logger):
+        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw._running = True
+        with pytest.raises(ValueError, match="instrument is required"):
+            gw.send_open_order(
+                trade_id="T1",
+                direction="long",
+                entry_price=100.0,
+                stop_loss=90.0,
+                take_profit=110.0,
+                risk_points=10.0,
+                rr_ratio=1.0,
+            )
 
     def test_send_close_order(self, gateway, logger):
         gateway._running = True
         gateway.send_close_order("T1", reason="manual", account="Sim101")
         assert len(gateway._pending_commands) == 1
+        assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("CLOSE order" in m for m in logger.messages)
+
+    def test_send_close_order_without_instrument_raises(self, logger):
+        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw._running = True
+        with pytest.raises(ValueError, match="instrument is required"):
+            gw.send_close_order("T1", reason="manual", account="Sim101")
 
     def test_send_modify_order(self, gateway, logger):
         gateway._running = True
         gateway.send_modify_order("T1", stop_loss=95.0, take_profit=115.0, account="Sim101")
         assert len(gateway._pending_commands) == 1
+        assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("MODIFY order" in m for m in logger.messages)
+
+    def test_send_modify_order_without_instrument_raises(self, logger):
+        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw._running = True
+        with pytest.raises(ValueError, match="instrument is required"):
+            gw.send_modify_order("T1", stop_loss=95.0, account="Sim101")
 
     def test_send_refresh_request(self, gateway, logger):
         gateway._running = True

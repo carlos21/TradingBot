@@ -165,7 +165,7 @@ def live_app(
         heartbeat_pub=free_ports["heartbeat"],
         platform_connects=True,
     )
-    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ")
+    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
     data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ")
     trade_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
 
@@ -213,7 +213,7 @@ def live_app_scenario(
         heartbeat_pub=free_ports["heartbeat"],
         platform_connects=True,
     )
-    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ")
+    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
     data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ")
     trade_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
 
@@ -281,7 +281,7 @@ def live_app_multi(
         heartbeat_pub=free_ports["heartbeat"],
         platform_connects=True,
     )
-    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ")
+    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
     data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ")
 
     # Share the same gateway between data_source and trade executor

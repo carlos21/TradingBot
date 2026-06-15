@@ -161,6 +161,14 @@ class TestEventSubscriber:
         assert len(subscriber.events) == 0
 
 
+class TestEventTypes:
+    def test_trade_entry_updated_is_unique(self):
+        """TRADE_ENTRY_UPDATED must exist and be distinct from TRADE_UPDATED."""
+        assert EventType.TRADE_ENTRY_UPDATED is not None
+        assert EventType.TRADE_ENTRY_UPDATED != EventType.TRADE_UPDATED
+        assert EventType.TRADE_ENTRY_UPDATED != EventType.TRADE_OPENED
+
+
 class TestTradeEvents:
     def test_trade_opened_event(self):
         event = TradeOpenedEvent(

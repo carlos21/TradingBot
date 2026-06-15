@@ -411,6 +411,7 @@ class TestProtocolRobustness:
             take_profit=21200.0,
             risk_points=80.0,
             rr_ratio=3.3,
+            instrument="MNQ 09-26",
         )
         # We need the exact seq_num that was used. Let's just pick one that
         # was already processed.  The first command should have seq_num > 0.

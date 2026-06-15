@@ -94,6 +94,7 @@ class ZMQTradeExecutor(TradeExecutor):
                 risk_usd=risk_usd,
                 risk_pct=risk_pct,
                 account=trade.get("account"),
+                instrument=trade.get("instrument"),
             )
             self.logger.info(f"Sent open order for trade {trade['trade_id']}")
 

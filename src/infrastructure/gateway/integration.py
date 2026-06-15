@@ -43,6 +43,7 @@ def create_live_components(
     heartbeat_port: int = 5558,
     history_days: int = DEFAULT_HISTORY_DAYS,
     notifier: Notifier | None = None,
+    instrument: str | None = None,
 ) -> tuple[ZMQDataSource, ZMQTradeExecutor]:
     """
     Create ZeroMQ-based data source and trade executor for live trading.
@@ -75,7 +76,7 @@ def create_live_components(
     )
 
     # Create gateway with logger (logger is required first param)
-    gateway = TradingGateway(logger, config=config, pair=pair)
+    gateway = TradingGateway(logger, config=config, pair=pair, instrument=instrument)
 
     # Store account names for config queries from NinjaTrader
     gateway.set_account_names(account_names or [])
@@ -115,6 +116,7 @@ def create_multi_account_live_components(
     accounts_repo=None,
     history_days: int = DEFAULT_HISTORY_DAYS,
     notifier: Notifier | None = None,
+    instrument: str | None = None,
 ) -> tuple[ZMQDataSource, MultiAccountExecutor]:
     """
     Create ZeroMQ components for multi-account live trading.
@@ -152,6 +154,7 @@ def create_multi_account_live_components(
         query_port=query_port,
         heartbeat_port=heartbeat_port,
         history_days=history_days,
+        instrument=instrument,
     )
 
     # MultiAccountExecutor will be wired with TradeManager inside app_factory
@@ -181,6 +184,7 @@ def create_gateway_only(
     command_port: int = 5556,
     query_port: int = 5557,
     heartbeat_port: int = 5558,
+    instrument: str | None = None,
 ) -> TradingGateway:
     """
     Create just the ZeroMQ gateway for advanced use cases.
@@ -208,7 +212,7 @@ def create_gateway_only(
         platform_connects=True,
     )
 
-    return TradingGateway(logger, config=config, pair=pair)
+    return TradingGateway(logger, config=config, pair=pair, instrument=instrument)
 
 
 def get_platform_addresses(

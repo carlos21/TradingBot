@@ -42,6 +42,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 var (tradeId, direction, slPoints, rrRatio) = ParsePayload(payload);
                 var accountName = payload?["account"]?.ToString();
+                var instrumentName = payload?["instrument"]?.ToString();
+                if (string.IsNullOrEmpty(instrumentName))
+                    throw new InvalidOperationException("instrument is required in ORDER_OPEN payload");
 
                 // ── SIMULATE MODE: Send fake fill instantly, NO account/broker lookup ──
                 if (_simulate || TradingBotZmqConnector.E2ETestRunning)
@@ -51,7 +54,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                     double takeProfit = payload?["take_profit"]?.Value<double>() ?? 0;
                     int simQty = payload?["contracts"]?.Value<int>() ?? 1;
 
-                    _logger.Info($"🧪 SIMULATE OPEN: {tradeId} {direction} {_instrument} x{simQty} @ {entryPrice} SL={stopLoss} TP={takeProfit} account={accountName ?? "default"}");
+                    _logger.Info($"🧪 SIMULATE OPEN: {tradeId} {direction} {instrumentName} x{simQty} @ {entryPrice} SL={stopLoss} TP={takeProfit} account={accountName ?? "default"}");
                     _network?.SendEntryFill(tradeId, entryPrice, stopLoss, takeProfit, account: accountName);
                     _network?.SendTradeLog(tradeId, "NT:SIMULATE", $"Simulated entry fill {direction} x{simQty} @ {entryPrice}");
                     return true;
@@ -83,9 +86,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                     return true;
                 }
 
-                var instrument = Instrument.GetInstrument(_instrument);
+                var instrument = Instrument.GetInstrument(instrumentName);
                 if (instrument == null)
-                    throw new InvalidOperationException($"Instrument '{_instrument}' not found");
+                    throw new InvalidOperationException($"Instrument '{instrumentName}' not found");
 
                 bool isLong = direction == "long";
                 var orderAction = isLong ? OrderAction.Buy : OrderAction.SellShort;

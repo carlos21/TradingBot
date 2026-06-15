@@ -30,11 +30,12 @@ def _make_manager(**overrides):
 
 def _add_open_trade(tm, trade_id="T1", pair="MNQ", trade_type="long",
                     entry=100.0, sl=90.0, tp=130.0, risk=10.0, entry_time=500.0,
-                    source=None):
+                    source=None, account=None, signal_id=None):
     trade = {
         "trade_id": trade_id, "pair": pair, "type": trade_type,
         "entry": entry, "stop_loss": sl, "take_profit": tp,
         "risk": risk, "entry_time": entry_time, "source": source,
+        "account": account, "signal_id": signal_id,
     }
     tm.open_trades.append(trade)
     tm._monitored_trades.add(trade_id)
@@ -501,4 +502,62 @@ class TestBrokerEntryFill:
         assert t["entry"] == 99.0
         assert t["stop_loss"] == 109.0
         assert t["take_profit"] == 69.0
-        assert t["risk"] == 10.0  # |109-99|
+
+    def test_propagates_fill_to_parent_signal_trade(self):
+        """Regression: account trade fills must update the visible signal trade."""
+        tm = _make_manager()
+        parent = _add_open_trade(
+            tm, trade_id="signal_1", entry=100, sl=90, tp=130, risk=10,
+            source="test"
+        )
+        child = _add_open_trade(
+            tm, trade_id="acct_1", entry=100, sl=90, tp=130, risk=10,
+            source="test", signal_id="signal_1"
+        )
+
+        tm.handle_broker_entry_fill("acct_1", 101.0, stop_loss=91.0, take_profit=131.0)
+
+        # Child account trade updated with broker SL/TP
+        assert child["entry"] == 101.0
+        assert child["stop_loss"] == 91.0
+        assert child["take_profit"] == 131.0
+
+        # Parent signal trade entry updated but keeps original strategy SL/TP
+        assert parent["entry"] == 101.0
+        assert parent["stop_loss"] == 90.0
+        assert parent["take_profit"] == 130.0
+        assert parent["risk"] == 11.0  # |101-90|
+
+    def test_emits_trade_entry_update_for_parent_and_child(self):
+        sio = DummySocketIO()
+        tm = _make_manager(socketio=sio)
+        _add_open_trade(
+            tm, trade_id="signal_1", entry=100, sl=90, tp=130, risk=10,
+            source="test"
+        )
+        _add_open_trade(
+            tm, trade_id="acct_1", entry=100, sl=90, tp=130, risk=10,
+            source="test", signal_id="signal_1"
+        )
+
+        tm.handle_broker_entry_fill("acct_1", 101.0)
+
+        updates = [e for e in sio.events if e[0] == "trade_entry_update"]
+        trade_ids = {e[1]["trade_id"] for e in updates}
+        assert "signal_1" in trade_ids
+        assert "acct_1" in trade_ids
+        for event, payload in updates:
+            assert payload["entry_price"] == 101.0
+
+    def test_no_infinite_loop_when_signal_id_equals_trade_id(self):
+        tm = _make_manager()
+        _add_open_trade(
+            tm, trade_id="signal_1", entry=100, sl=90, tp=130, risk=10,
+            source="test", signal_id="signal_1"
+        )
+
+        tm.handle_broker_entry_fill("signal_1", 101.0)
+
+        assert len(tm.open_trades) == 1
+        assert tm.open_trades[0]["entry"] == 101.0
+        assert tm.open_trades[0]["risk"] == 11.0  # |101-90|

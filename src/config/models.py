@@ -39,6 +39,10 @@ class AppConfig:
     """Trading instrument (e.g. ``"MNQ"``, ``"MNQ"``, ``"ES"``).
     Passed to data sources, strategies, and repositories."""
 
+    instrument: str | None = None
+    """Full NinjaTrader instrument name (e.g. ``"MNQ 09-26"``).
+    Sent to NinjaTrader in every order command. Required for live trading."""
+
     # ------------------------------------------------------------------
     # Strategy selection
     # ------------------------------------------------------------------

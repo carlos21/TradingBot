@@ -368,6 +368,30 @@ class TestEdgeCasesTradeManagement:
         assert trade["risk"] == 10.5
         assert trade["contracts"] == 2
 
+    def test_trade_entry_updated_event_syncs_entry_fill(self):
+        """Regression: TRADE_ENTRY_UPDATED must update strategy trade dict."""
+        from src.domain.events import DomainEvent, EventType
+        strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, reentry_after_sl=True))
+        strat.open_trades.append({
+            "trade_id": "S1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "open", "line_level": 100,
+        })
+        strat.on_event(DomainEvent(
+            EventType.TRADE_ENTRY_UPDATED,
+            payload={
+                "trade_id": "AT1", "signal_id": "S1",
+                "entry_price": 99.5, "stop_loss": 89.5,
+                "take_profit": 131.0, "risk": 10.5, "contracts": 2,
+            },
+        ))
+        trade = strat.open_trades[0]
+        assert trade["entry"] == 99.5
+        assert trade["stop_loss"] == 89.5
+        assert trade["take_profit"] == 131.0
+        assert trade["risk"] == 10.5
+        assert trade["contracts"] == 2
+
     def test_tp_event_does_not_create_reentry(self):
         strat = _make_base(options=dataclasses.replace(DEFAULT_STRATEGY_OPTIONS, reentry_after_sl=True))
         strat.open_trades.append({

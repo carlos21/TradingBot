@@ -262,6 +262,17 @@ class FakeNinjaTrader:
         entry_price = float(payload.get("entry_price", 0))
         stop_loss = float(payload.get("stop_loss", 0))
         take_profit = float(payload.get("take_profit", 0))
+        instrument = payload.get("instrument")
+
+        if not instrument:
+            self._send_command_ack(
+                command_type="order_open",
+                seq_num=seq_num,
+                success=False,
+                trade_id=trade_id,
+                message="instrument is required",
+            )
+            return
 
         ok, reason = self._tracker.track_entry(
             trade_id=trade_id,

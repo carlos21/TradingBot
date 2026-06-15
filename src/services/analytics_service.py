@@ -388,14 +388,24 @@ class AnalyticsService:
         limit: int = 50,
         offset: int = 0
     ) -> dict[str, Any]:
-        """Get paginated trade list."""
+        """Get paginated trade list.
+
+        Shows only executed trades: child account trades in multi-account mode,
+        and top-level trades when no multi-account expansion occurred.
+        Internal parent signal trades are hidden so the list displays one row
+        per account that took the trade.
+        """
         trades = self._repo.get_all_trades(pair)
 
-        # Sort by entry time descending
-        trades.sort(key=lambda t: t.entry_time, reverse=True)
+        # Identify parent signal trades (any trade_id referenced as another trade's signal_id)
+        parent_signal_ids = {t.signal_id for t in trades if t.signal_id}
+        visible_trades = [t for t in trades if t.trade_id not in parent_signal_ids]
 
-        total = len(trades)
-        paginated = trades[offset:offset + limit]
+        # Sort by entry time descending
+        visible_trades.sort(key=lambda t: t.entry_time, reverse=True)
+
+        total = len(visible_trades)
+        paginated = visible_trades[offset:offset + limit]
 
         trade_list = []
         for t in paginated:
@@ -416,6 +426,7 @@ class AnalyticsService:
                 "result": t.result,
                 "result_type": t.result_type,
                 "status": "closed" if t.exit_time else "open",
+                "account": t.account,
             })
 
         return {

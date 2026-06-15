@@ -170,9 +170,11 @@ class SocketIOBridge:
         self,
         socketio: Any,  # flask_socketio.SocketIO
         event_bus: EventBus,
+        is_parent_signal: Callable[[str], bool] | None = None,
     ):
         self.socketio = socketio
         self.event_bus = event_bus
+        self._is_parent_signal = is_parent_signal
 
     def start(self) -> None:
         """Start forwarding events to SocketIO.
@@ -182,6 +184,7 @@ class SocketIOBridge:
         self.event_bus.subscribe(EventType.TRADE_OPENED, self._on_trade_opened)
         self.event_bus.subscribe(EventType.TRADE_CLOSED, self._on_trade_closed)
         self.event_bus.subscribe(EventType.TRADE_UPDATED, self._on_trade_updated)
+        self.event_bus.subscribe(EventType.TRADE_ENTRY_UPDATED, self._on_trade_entry_updated)
         self.event_bus.subscribe(EventType.LINE_ADDED, self._on_line_added)
         self.event_bus.subscribe(EventType.LINE_REMOVED, self._on_line_removed)
         self.event_bus.subscribe(EventType.LINE_UPDATED, self._on_line_updated)
@@ -196,6 +199,7 @@ class SocketIOBridge:
         self.event_bus.unsubscribe(EventType.TRADE_OPENED, self._on_trade_opened)
         self.event_bus.unsubscribe(EventType.TRADE_CLOSED, self._on_trade_closed)
         self.event_bus.unsubscribe(EventType.TRADE_UPDATED, self._on_trade_updated)
+        self.event_bus.unsubscribe(EventType.TRADE_ENTRY_UPDATED, self._on_trade_entry_updated)
         self.event_bus.unsubscribe(EventType.LINE_ADDED, self._on_line_added)
         self.event_bus.unsubscribe(EventType.LINE_REMOVED, self._on_line_removed)
         self.event_bus.unsubscribe(EventType.LINE_UPDATED, self._on_line_updated)
@@ -205,17 +209,43 @@ class SocketIOBridge:
         self.event_bus.unsubscribe(EventType.INDICATOR_UPDATE, self._on_indicator_update)
         self.event_bus.unsubscribe(EventType.READINESS_CHANGED, self._on_readiness_changed)
 
+    def _is_internal_parent_signal(self, payload: dict[str, Any]) -> bool:
+        """Return True if this payload belongs to a parent signal trade.
+
+        Parent signal trades are internal coordination rows created by
+        MultiAccountExecutor. The actual executed trades are the child
+        account trades (signal_id is set). Single-account/backtest trades
+        have no children and should still be forwarded.
+        """
+        signal_id = payload.get('signal_id')
+        if signal_id is not None:
+            return False  # account trade -> visible
+        trade_id = payload.get('trade_id')
+        if trade_id is None or self._is_parent_signal is None:
+            return False
+        return self._is_parent_signal(trade_id)
+
+    def _forward_trade_event(self, event_name: str, payload: dict[str, Any]) -> None:
+        """Forward a trade-related event unless it is an internal parent signal."""
+        if self._is_internal_parent_signal(payload):
+            return
+        self.socketio.emit(event_name, payload)
+
     def _on_trade_opened(self, event: DomainEvent) -> None:
         """Forward trade open event."""
-        self.socketio.emit('trade_open', event.payload)
+        self._forward_trade_event('trade_open', event.payload)
 
     def _on_trade_closed(self, event: DomainEvent) -> None:
         """Forward trade close event."""
-        self.socketio.emit('trade_close', event.payload)
+        self._forward_trade_event('trade_close', event.payload)
 
     def _on_trade_updated(self, event: DomainEvent) -> None:
         """Forward trade update event (e.g., SL moved)."""
-        self.socketio.emit('trade_update', event.payload)
+        self._forward_trade_event('trade_update', event.payload)
+
+    def _on_trade_entry_updated(self, event: DomainEvent) -> None:
+        """Forward broker entry fill update event."""
+        self._forward_trade_event('trade_entry_update', event.payload)
 
     def _on_line_added(self, event: DomainEvent) -> None:
         """Forward line added event."""

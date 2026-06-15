@@ -151,11 +151,13 @@ class TestOpenOrderCommand:
             take_profit=130.0,
             risk_points=10.0,
             rr_ratio=3.0,
+            instrument="MNQ 09-26",
         )
         env = cmd.to_envelope()
         assert env.msg_type == MessageType.ORDER_OPEN
         assert env.payload["trade_id"] == "T1"
         assert env.payload["direction"] == "long"
+        assert env.payload["instrument"] == "MNQ 09-26"
 
 
 class TestEntryFillMessage:
