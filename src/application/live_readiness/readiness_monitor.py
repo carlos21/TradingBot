@@ -120,8 +120,15 @@ class ReadinessMonitor:
         self._warmup_thread.start()
 
     def on_live_bar(self, bar: dict[str, Any]) -> None:
-        """Called for each completed live bar."""
+        """Called for each live bar (completed or partial)."""
         state = self._state_machine.state
+
+        # Partial bars are UI-only updates: never buffer them and never feed
+        # them to the strategy. Process them immediately so the chart reflects
+        # the current forming candle while the system warms up.
+        if bar.get("partial"):
+            self._live_bar_processor(bar)
+            return
 
         # History never completed — do not let live bars stream to the strategy.
         if state in (ReadinessState.CONNECTED, ReadinessState.WAITING_FOR_HISTORY):

@@ -662,18 +662,34 @@ class FakeNinjaTrader:
         self,
         count: int,
         timeout: float = 5.0,
+        msg_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Block until at least `count` commands have been received."""
+        """Block until at least `count` commands have been received.
+
+        If ``msg_type`` is given, only commands of that type are counted.
+        This keeps tests stable when the connector sends auxiliary commands
+        such as ``subscribe`` before trading commands.
+        """
+
+        def _matching() -> list[dict[str, Any]]:
+            if msg_type is None:
+                return list(self._commands_received)
+            return [c for c in self._commands_received if c.get("msg_type") == msg_type]
+
         deadline = time.time() + timeout
         with self._lock:
-            while len(self._commands_received) < count:
+            while len(_matching()) < count:
                 remaining = deadline - time.time()
                 if remaining <= 0:
                     break
                 self._command_condition.wait(timeout=min(0.05, remaining))
-            if len(self._commands_received) < count:
-                raise TimeoutError(f"Timed out waiting for {count} commands (got {len(self._commands_received)})")
-            return list(self._commands_received)
+            matched = _matching()
+            if len(matched) < count:
+                raise TimeoutError(
+                    f"Timed out waiting for {count} '{msg_type or 'any'}' command(s) "
+                    f"(got {len(matched)} of {len(self._commands_received)} total)"
+                )
+            return matched
 
     @property
     def is_connected(self) -> bool:

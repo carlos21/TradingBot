@@ -270,6 +270,29 @@ class PlatformDeployService:
             except Exception as e:
                 errors.append(f"AddOns/TradingBot: {e}")
 
+        # 4. Write a fresh connector config file. The instrument is intentionally
+        # omitted because the Python app now sends it via the subscribe command.
+        config = {
+            "host": "127.0.0.1",
+            "marketPort": 5555,
+            "commandPort": 5556,
+            "queryPort": 5557,
+            "heartbeatPort": 5558,
+            "historyDays": 30,
+            "batchSize": 500,
+            "maxTicksPerSecond": 10,
+            "platformVersion": "2.0.0-refactored",
+            "autoConnectOnStartup": False,
+            "autoShowWindow": True,
+        }
+        config_path = custom_dir / "TradingBotZmqConfig.json"
+        try:
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(config, f, separators=(",", ":"))
+            copied.append("TradingBotZmqConfig.json")
+        except Exception as e:
+            errors.append(f"TradingBotZmqConfig.json: {e}")
+
         success = len(errors) == 0
         return {
             "success": success,

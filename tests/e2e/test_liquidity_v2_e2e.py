@@ -328,8 +328,7 @@ class TestMultiAccountLifecycle:
                 account=account,
             )
 
-        cmds = nt.wait_for_command_count(2, timeout=5.0)
-        open_cmds = [c for c in cmds if c["msg_type"] == "order_open"]
+        open_cmds = nt.wait_for_command_count(2, timeout=5.0, msg_type="order_open")
         assert len(open_cmds) == 2
 
         accounts = {c["payload"].get("account") for c in open_cmds}
@@ -657,8 +656,7 @@ class TestMultiAccountAdvanced:
             )
             trades.append(trade)
 
-        cmds = nt.wait_for_command_count(2, timeout=5.0)
-        open_cmds = [c for c in cmds if c["msg_type"] == "order_open"]
+        open_cmds = nt.wait_for_command_count(2, timeout=5.0, msg_type="order_open")
         assert len(open_cmds) == 2
 
         # Simulate entry fills for both
@@ -693,8 +691,7 @@ class TestMultiAccountAdvanced:
             "pair": "MNQ",
         })
 
-        cmds = nt.wait_for_command_count(2, timeout=5.0)
-        modify_cmds = [c for c in cmds if c["msg_type"] == "order_modify"]
+        modify_cmds = nt.wait_for_command_count(2, timeout=5.0, msg_type="order_modify")
         assert len(modify_cmds) == 2
 
         accounts = {c["payload"].get("account") for c in modify_cmds}
@@ -726,7 +723,7 @@ class TestGracefulShutdown:
             risk=80.0, entry_time=now_ts - 60, rr_ratio=3.3,
         )
 
-        nt.wait_for_command_count(2, timeout=5.0)
+        nt.wait_for_command_count(2, timeout=5.0, msg_type="order_open")
         nt.simulate_entry_fill(trade1["trade_id"], entry_price=21000.0)
         nt.simulate_entry_fill(trade2["trade_id"], entry_price=21100.0)
         _wait_for_trade_in_tm(app.trade_manager, trade1["trade_id"])
@@ -737,8 +734,7 @@ class TestGracefulShutdown:
         # Invoke the stream-end callback directly (simulates end-of-day)
         app.loader.stream_end_callback(21050.0, float(now_ts))
 
-        cmds = nt.wait_for_command_count(2, timeout=5.0)
-        close_cmds = [c for c in cmds if c["msg_type"] == "order_close"]
+        close_cmds = nt.wait_for_command_count(2, timeout=5.0, msg_type="order_close")
         assert len(close_cmds) == 2
         tids = {c["payload"]["trade_id"] for c in close_cmds}
         assert tids == {trade1["trade_id"], trade2["trade_id"]}
@@ -767,7 +763,7 @@ class TestGracefulShutdown:
         )
         tid1, tid2 = trade1["trade_id"], trade2["trade_id"]
 
-        nt.wait_for_command_count(2, timeout=5.0)
+        nt.wait_for_command_count(2, timeout=5.0, msg_type="order_open")
         nt.simulate_entry_fill(tid1, entry_price=21000.0)
         nt.simulate_entry_fill(tid2, entry_price=21050.0)
         _wait_for_trade_in_tm(app.trade_manager, tid1)

@@ -72,9 +72,7 @@ class TestEntryFillE2E:
         trade_id = response[0].json["trade_id"]
 
         # 2) Wait for the order to reach NinjaTrader.
-        commands = nt.wait_for_command_count(count=1, timeout=5.0)
-        open_commands = [c for c in commands if c["msg_type"] == "order_open"]
-        assert len(open_commands) == 1
+        open_commands = [nt.wait_for_command("order_open", timeout=5.0)]
         assert open_commands[0]["payload"]["trade_id"] == trade_id
 
         # 3) Simulate NT entry fill at a different price than requested.

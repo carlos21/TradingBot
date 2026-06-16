@@ -36,7 +36,7 @@ class TestSettingsServiceGetFullSettings:
         svc = _make_service()
         settings = svc.get_full_settings()
         assert settings["trading"]["pair"] == "MNQ"
-        assert settings["trading"]["instrument"] == "MNQ 06-26"
+        assert settings["trading"]["instrument"] == ""
         assert settings["network"]["flask_port"] == "5001"
         assert settings["network"]["zmq_host"] == "127.0.0.1"
         assert settings["accounts"] == []

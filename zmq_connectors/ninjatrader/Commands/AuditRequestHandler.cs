@@ -25,13 +25,13 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private readonly ZmqNetwork _network;
         private readonly ILogger _logger;
-        private readonly string _instrument;
+        private readonly Func<string> _getInstrument;
 
-        public AuditRequestHandler(ZmqNetwork network, ILogger logger, string instrument)
+        public AuditRequestHandler(ZmqNetwork network, ILogger logger, Func<string> getInstrument)
         {
             _network = network ?? throw new ArgumentNullException(nameof(network));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _instrument = instrument ?? throw new ArgumentNullException(nameof(instrument));
+            _getInstrument = getInstrument ?? throw new ArgumentNullException(nameof(getInstrument));
         }
 
         public bool Handle(JObject payload)
@@ -42,12 +42,19 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (barsBack < 1) barsBack = 60;
                 if (barsBack > 5000) barsBack = 5000; // Safety cap
 
-                _logger.Info($"AUDIT REQUEST: returning last {barsBack} bars");
+                var instrumentName = payload?["instrument"]?.Value<string>() ?? _getInstrument();
+                if (string.IsNullOrWhiteSpace(instrumentName))
+                {
+                    _logger.Error("AUDIT REQUEST: missing instrument in payload and no active instrument configured");
+                    return false;
+                }
 
-                var instrument = Instrument.GetInstrument(_instrument);
+                _logger.Info($"AUDIT REQUEST: returning last {barsBack} bars for {instrumentName}");
+
+                var instrument = Instrument.GetInstrument(instrumentName);
                 if (instrument == null)
                 {
-                    _logger.Error($"Instrument '{_instrument}' not found for audit");
+                    _logger.Error($"Instrument '{instrumentName}' not found for audit");
                     return false;
                 }
 
@@ -86,12 +93,12 @@ namespace NinjaTrader.NinjaScript.AddOns
                                     ["low"] = bars.Bars.GetLow(i),
                                     ["close"] = bars.Bars.GetClose(i),
                                     ["volume"] = (long)bars.Bars.GetVolume(i),
-                                    ["pair"] = _instrument.Split(' ')[0]
+                                    ["pair"] = instrumentName.Split(' ')[0]
                                 });
                             }
                         }
 
-                        _network?.SendAuditResponse(_instrument.Split(' ')[0], batch);
+                        _network?.SendAuditResponse(instrumentName.Split(' ')[0], batch);
                         _logger.Info($"AUDIT RESPONSE: sent {batch.Count} completed bars (requested {barsBack + 1}, dropped forming bar)");
                     }
                     catch (Exception callbackEx)

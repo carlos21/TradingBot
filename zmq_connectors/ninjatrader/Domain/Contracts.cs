@@ -92,6 +92,20 @@ namespace NinjaTrader.NinjaScript.AddOns
     }
 
     /// <summary>
+    /// Orchestrates live market-data and live-bar streaming for a given instrument.
+    /// Implementations are responsible for UI-thread marshalling required by NinjaTrader.
+    /// </summary>
+    public interface IStreamingCoordinator
+    {
+        string CurrentInstrument { get; }
+        bool IsStreaming { get; }
+        NinjaTrader.Data.SessionIterator SessionIterator { get; }
+        (long ticks, long bars, long partials) GetStats();
+        bool Start(string instrument);
+        void Stop();
+    }
+
+    /// <summary>
     /// Strategy pattern: Logging abstraction for testability.
     /// </summary>
     public interface ILogger

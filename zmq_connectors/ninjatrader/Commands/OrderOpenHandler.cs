@@ -22,16 +22,14 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private readonly ZmqNetwork _network;
         private readonly ILogger _logger;
-        private readonly string _instrument;
         private readonly IOrderTracker _orderTracker;
         private readonly bool _simulate;
 
         public OrderOpenHandler(ZmqNetwork network, ILogger logger,
-            string instrument, IOrderTracker orderTracker, bool simulate = false)
+            IOrderTracker orderTracker, bool simulate = false)
         {
             _network = network ?? throw new ArgumentNullException(nameof(network));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _instrument = instrument;
             _orderTracker = orderTracker ?? throw new ArgumentNullException(nameof(orderTracker));
             _simulate = simulate;
         }

@@ -74,7 +74,7 @@ class SettingsService:
         return {
             "trading": {
                 "pair": all_settings.get("pair", "MNQ"),
-                "instrument": all_settings.get("instrument", "MNQ 06-26"),
+                "instrument": all_settings.get("instrument", ""),
                 "session_end": all_settings.get("session_end", "16:58"),
                 "history_days": all_settings.get("history_days", str(DEFAULT_HISTORY_DAYS)),
             },

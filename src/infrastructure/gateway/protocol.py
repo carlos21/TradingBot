@@ -47,6 +47,7 @@ class MessageType(str, Enum):
     DISCONNECT = "disconnect"
     REFRESH_REQUEST = "refresh_request"
     REFRESH_START = "refresh_start"
+    SUBSCRIBE = "subscribe"  # Python → Platform: instrument to use for live/historical data
 
     # Queries (Bidirectional)
     POSITION_QUERY = "position_query"
@@ -458,14 +459,31 @@ class ConnectMessage:
 
 
 @dataclass
-class RefreshRequestMessage:
-    """Request historical data refresh."""
-    days: int = 1
+class SubscribeMessage:
+    """Tell the platform which instrument to use for live/historical data."""
+    instrument: str
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
+            msg_type=MessageType.SUBSCRIBE,
+            payload={"instrument": self.instrument},
+            seq_num=seq_num,
+        )
+
+
+@dataclass
+class RefreshRequestMessage:
+    """Request historical data refresh."""
+    days: int = 1
+    instrument: str | None = None
+
+    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        payload = {"days": self.days}
+        if self.instrument is not None:
+            payload["instrument"] = self.instrument
+        return MessageEnvelope.create(
             msg_type=MessageType.REFRESH_REQUEST,
-            payload={"days": self.days},
+            payload=payload,
             seq_num=seq_num,
         )
 
@@ -474,11 +492,15 @@ class RefreshRequestMessage:
 class AuditRequestMessage:
     """Request recent bars for verification (read-only audit)."""
     bars_back: int = 60
+    instrument: str | None = None
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        payload = {"bars_back": self.bars_back}
+        if self.instrument is not None:
+            payload["instrument"] = self.instrument
         return MessageEnvelope.create(
             msg_type=MessageType.AUDIT_REQUEST,
-            payload={"bars_back": self.bars_back},
+            payload=payload,
             seq_num=seq_num,
         )
 

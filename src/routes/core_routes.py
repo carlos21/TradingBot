@@ -1,5 +1,7 @@
 """Core HTTP routes - index page and basic API."""
 
+import time
+
 from flask import Flask, jsonify, render_template
 
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
@@ -34,6 +36,13 @@ def register_core_routes(
         tf       = request.args.get('tf', '5m')
         start_ts = request.args.get('start_time', type=int)
         bars     = data_source.load_historical_bars(tf, start_ts)
+
+        # Trim bars whose open time is still in the future relative to this host.
+        # NinjaTrader may include the currently forming bar with a timestamp
+        # slightly ahead of the local clock; displaying it would cause live bars
+        # to be dropped by the frontend until real time catches up.
+        now = time.time()
+        bars = [b for b in bars if b.get('time') and b['time'] <= now]
 
         # Debug: Check for problematic bars that could cause "Value is null" in charts
         if bars and len(bars) > 0:

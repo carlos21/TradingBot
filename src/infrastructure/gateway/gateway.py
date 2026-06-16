@@ -34,6 +34,7 @@ from .protocol import (
     ModifyOrderCommand,
     OpenOrderCommand,
     RefreshRequestMessage,
+    SubscribeMessage,
 )
 
 
@@ -1205,19 +1206,32 @@ to be:
         self._send_command(envelope)
         self.logger.info(f"Queued MODIFY order: {trade_id} {resolved_instrument} SL={stop_loss} TP={take_profit} account={account}")
 
-    def send_refresh_request(self, days: int = 1) -> None:
-        """Request historical data refresh."""
-        cmd = RefreshRequestMessage(days=days)
+    def send_subscribe(self, instrument: str) -> None:
+        """Tell the platform which instrument to use for live/historical data."""
+        cmd = SubscribeMessage(instrument=instrument)
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
-        self.logger.info(f"Queued REFRESH request: {days} days")
+        self.logger.info(f"Queued SUBSCRIBE command: {instrument}")
 
-    def send_audit_request(self, bars_back: int = 60) -> None:
-        """Request recent bars for verification (read-only audit)."""
-        cmd = AuditRequestMessage(bars_back=bars_back)
+    def send_refresh_request(self, days: int = 1, instrument: str | None = None) -> None:
+        """Request historical data refresh."""
+        resolved = instrument if instrument is not None else self.instrument
+        if not resolved:
+            raise ValueError("instrument is required for refresh requests (configure it in Admin → Settings)")
+        cmd = RefreshRequestMessage(days=days, instrument=resolved)
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
-        self.logger.info(f"Queued AUDIT request: last {bars_back} bars")
+        self.logger.info(f"Queued REFRESH request: {days} days, instrument={resolved}")
+
+    def send_audit_request(self, bars_back: int = 60, instrument: str | None = None) -> None:
+        """Request recent bars for verification (read-only audit)."""
+        resolved = instrument if instrument is not None else self.instrument
+        if not resolved:
+            raise ValueError("instrument is required for audit requests (configure it in Admin → Settings)")
+        cmd = AuditRequestMessage(bars_back=bars_back, instrument=resolved)
+        envelope = cmd.to_envelope(seq_num=self._next_seq())
+        self._send_command(envelope)
+        self.logger.info(f"Queued AUDIT request: last {bars_back} bars, instrument={resolved}")
 
     def on_audit_response(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """Register callback for audit response.

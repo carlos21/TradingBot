@@ -234,6 +234,14 @@ class BarsLoader:
         and should be replayed at full speed instead of chart playback speed."""
         return self.live_mode and bar['time'] < time.time() - 300
 
+    def on_live_bar(self, bar: dict) -> None:
+        """Process a live bar (completed or partial) from the platform.
+
+        Partial bars are emitted to the chart only; completed bars are also
+        forwarded to the strategy callback.
+        """
+        self._handle_message(bar)
+
     def _process_bar(self, bar: dict):
         # Gap detection: only in live mode — replay has expected overnight gaps
         if self.live_mode and self._last_processed_bar_time > 0:
@@ -251,7 +259,7 @@ class BarsLoader:
 
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
             self.socketio.emit('bar', bar)
-            if not is_historical:
+            if not self.live_mode and not is_historical:
                 time.sleep(self._emit_delay)
             if self._step_mode:
                 self._stop_after_step()
@@ -271,7 +279,7 @@ class BarsLoader:
             if self._1m_buffer:
                 agg = self._aggregate_time_window(self._1m_buffer, self._current_group_start, window_secs)
                 self.socketio.emit('bar', agg)
-                if not is_historical:
+                if not self.live_mode and not is_historical:
                     time.sleep(self._emit_delay)
                 if self._step_mode:
                     self._stop_after_step()

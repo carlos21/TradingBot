@@ -18,9 +18,9 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         private readonly ZmqNetwork _network;
         private readonly ILogger _logger;
-        private readonly Func<int, Task> _sendHistoryFunc;
+        private readonly Func<string, int, Task> _sendHistoryFunc;
 
-        public RefreshRequestHandler(ZmqNetwork network, ILogger logger, Func<int, Task> sendHistoryFunc)
+        public RefreshRequestHandler(ZmqNetwork network, ILogger logger, Func<string, int, Task> sendHistoryFunc)
         {
             _network = network ?? throw new ArgumentNullException(nameof(network));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
@@ -32,8 +32,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             try
             {
                 var days = payload?["days"]?.Value<int>() ?? 1;
-                _logger.Info($"REFRESH REQUEST: {days} days");
-                _ = _sendHistoryFunc(days).ContinueWith(t =>
+                var instrument = payload?["instrument"]?.Value<string>();
+                if (string.IsNullOrWhiteSpace(instrument))
+                {
+                    _logger.Error("REFRESH REQUEST: missing instrument in payload");
+                    return false;
+                }
+                _logger.Info($"REFRESH REQUEST: {days} days, instrument={instrument}");
+                _ = _sendHistoryFunc(instrument, days).ContinueWith(t =>
                 {
                     if (t.IsFaulted) _logger.Error("Refresh history send failed", t.Exception?.GetBaseException());
                 }, TaskContinuationOptions.OnlyOnFaulted);

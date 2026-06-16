@@ -103,7 +103,7 @@ function Save-EnvFile {
 
 function Read-ZmqConfig {
     $ntExe = Find-NinjaTraderExe
-    if (-not $ntExe) { return @{ instrument = "MNQ 06-26" } }
+    if (-not $ntExe) { return @{} }
     $ntCustom = Get-NinjaTraderCustomDir -NtExePath $ntExe
     $path = Join-Path $ntCustom "TradingBotZmqConfig.json"
     if (Test-Path $path) {
@@ -112,7 +112,10 @@ function Read-ZmqConfig {
         $obj.PSObject.Properties | ForEach-Object { $ht[$_.Name] = $_.Value }
         return $ht
     }
-    return @{ instrument = "MNQ 06-26" }
+    return @{
+        # Instrument is intentionally not stored here; it is configured in
+        # Admin → Settings and sent to NinjaTrader via the subscribe command.
+    }
 }
 
 function Save-ZmqConfig {
@@ -277,7 +280,7 @@ function Update-DashboardSummary {
     param([hashtable]$EnvVals, [hashtable]$ZmqVals)
     $mode = if ($EnvVals["MODE"]) { $EnvVals["MODE"] } else { "live" }
     $pair = if ($EnvVals["PAIR"]) { $EnvVals["PAIR"] } else { "MNQ" }
-    $inst = if ($ZmqVals["instrument"]) { $ZmqVals["instrument"] } else { "MNQ 06-26" }
+    $inst = if ($ZmqVals["instrument"]) { $ZmqVals["instrument"] } else { "(set in Admin Settings)" }
     $script:lblConfigSummary.Text = "Mode: $mode  |  Pair: $pair  |  Instrument: $inst  |  Accounts: see Admin Settings"
 }
 
@@ -498,7 +501,7 @@ $gy += 28
 # Trading settings
 $tradingMap = @(
     @{ Label = "Pair"; Key = "PAIR"; Default = "MNQ" },
-    @{ Label = "Instrument"; Key = "INSTRUMENT"; Default = "MNQ 06-26"; IsZmq = $true }
+    @{ Label = "Instrument"; Key = "INSTRUMENT"; Default = "" }
 )
 
 foreach ($item in $tradingMap) {

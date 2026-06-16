@@ -98,11 +98,12 @@ All other fields are optional and will use hard-coded defaults if omitted. Examp
   "commandPort": 5556,
   "queryPort": 5557,
   "heartbeatPort": 5558,
-  "instrument": "MNQ 06-26",
   "autoConnectOnStartup": true,
   "autoShowWindow": true
 }
 ```
+
+> **Note:** The `instrument` field has been removed from this file. Set the instrument in **Admin → Settings**; the Python app sends it to NinjaTrader automatically when the connector starts.
 
 > **Security note:** This JSON file does **not** contain your login credentials. Those are stored separately by `Set-NTCredential.ps1`.
 

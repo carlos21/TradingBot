@@ -6,6 +6,7 @@ import pytest
 
 from src.infrastructure.gateway.gateway import GatewayConfig
 from src.infrastructure.gateway.protocol import (
+    AuditRequestMessage,
     BarMessage,
     CommandAckMessage,
     EntryFillMessage,
@@ -15,6 +16,8 @@ from src.infrastructure.gateway.protocol import (
     MessageEnvelope,
     MessageType,
     OpenOrderCommand,
+    RefreshRequestMessage,
+    SubscribeMessage,
     TickMessage,
 )
 
@@ -158,6 +161,48 @@ class TestOpenOrderCommand:
         assert env.payload["trade_id"] == "T1"
         assert env.payload["direction"] == "long"
         assert env.payload["instrument"] == "MNQ 09-26"
+
+
+class TestSubscribeMessage:
+
+    def test_to_envelope(self):
+        msg = SubscribeMessage(instrument="MNQ 09-26")
+        env = msg.to_envelope(seq_num=3)
+        assert env.msg_type == MessageType.SUBSCRIBE
+        assert env.payload["instrument"] == "MNQ 09-26"
+        assert env.seq_num == 3
+
+
+class TestRefreshRequestMessage:
+
+    def test_to_envelope_includes_instrument(self):
+        msg = RefreshRequestMessage(days=5, instrument="MNQ 09-26")
+        env = msg.to_envelope()
+        assert env.msg_type == MessageType.REFRESH_REQUEST
+        assert env.payload["days"] == 5
+        assert env.payload["instrument"] == "MNQ 09-26"
+
+    def test_to_envelope_omits_instrument_when_none(self):
+        msg = RefreshRequestMessage(days=2)
+        env = msg.to_envelope()
+        assert env.payload["days"] == 2
+        assert "instrument" not in env.payload
+
+
+class TestAuditRequestMessage:
+
+    def test_to_envelope_includes_instrument(self):
+        msg = AuditRequestMessage(bars_back=30, instrument="MNQ 09-26")
+        env = msg.to_envelope()
+        assert env.msg_type == MessageType.AUDIT_REQUEST
+        assert env.payload["bars_back"] == 30
+        assert env.payload["instrument"] == "MNQ 09-26"
+
+    def test_to_envelope_omits_instrument_when_none(self):
+        msg = AuditRequestMessage(bars_back=60)
+        env = msg.to_envelope()
+        assert env.payload["bars_back"] == 60
+        assert "instrument" not in env.payload
 
 
 class TestEntryFillMessage:

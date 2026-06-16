@@ -207,13 +207,13 @@ def _setup_live_mode_callbacks(
     """Wire the data source into the readiness state machine."""
     warmup_orchestrator = WarmupOrchestrator(strategy, logger=logger)
     warmup_policy = MinimumBarsWarmupPolicy(min_bars=30)
-    bar_buffer = LiveBarBuffer(processor=loader.bar_callback)
+    bar_buffer = LiveBarBuffer(processor=loader.on_live_bar)
     monitor = ReadinessMonitor(
         state_machine=readiness_state_machine,
         warmup_orchestrator=warmup_orchestrator,
         warmup_policy=warmup_policy,
         bar_buffer=bar_buffer,
-        live_bar_processor=loader.bar_callback,
+        live_bar_processor=loader.on_live_bar,
         data_source=data_source,
         socketio_publisher=socketio,
         history_loaded_emitter=history_loaded_deduper.emit,

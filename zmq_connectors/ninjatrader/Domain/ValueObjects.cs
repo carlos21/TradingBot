@@ -39,7 +39,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             int commandPort = 5556,
             int queryPort = 5557,
             int heartbeatPort = 5558,
-            string instrument = "MNQ 06-26",
+            string instrument = "",
             int historyDays = 30,
             int batchSize = 500,
             int maxTicksPerSecond = 10,

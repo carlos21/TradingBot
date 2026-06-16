@@ -786,6 +786,15 @@ class ZMQDataSource(CombinedDataSource):
 
         self._state = DataSourceState.CONNECTED
 
+        gateway = self._ensure_gateway()
+        instrument = gateway.instrument
+        if not instrument:
+            self.logger.error(
+                "Instrument is not configured in Admin → Settings. "
+                "Live data will not start and the chart will not load."
+            )
+            return
+
         should_refresh = (
             self._first_platform_connect
             or self._gateway is None
@@ -797,8 +806,11 @@ class ZMQDataSource(CombinedDataSource):
             self.logger.info("Platform reconnected after brief blip — skipping history refresh")
             return
 
+        # Tell NinjaTrader which instrument to use before requesting history/live bars.
+        gateway.send_subscribe(instrument)
+
         delay = self._history_request_delay_sec
-        self.logger.info(f"Platform connected, requesting historical data refresh in {delay}s")
+        self.logger.info(f"Platform connected, instrument={instrument}, requesting historical data refresh in {delay}s")
         self._cancel_pending_refresh_timer()
         self._pending_refresh_timer = threading.Timer(delay, self._do_delayed_refresh)
         self._pending_refresh_timer.start()

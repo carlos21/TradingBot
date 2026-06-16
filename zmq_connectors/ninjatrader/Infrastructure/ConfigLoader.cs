@@ -31,7 +31,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                 commandPort: 5556,
                 queryPort: 5557,
                 heartbeatPort: 5558,
-                instrument: "MNQ 06-26",
                 historyDays: 30,
                 batchSize: 500,
                 maxTicksPerSecond: 10,
@@ -57,7 +56,6 @@ namespace NinjaTrader.NinjaScript.AddOns
                     commandPort: dto.commandPort ?? defaults.CommandPort,
                     queryPort: dto.queryPort ?? defaults.QueryPort,
                     heartbeatPort: dto.heartbeatPort ?? defaults.HeartbeatPort,
-                    instrument: dto.instrument ?? defaults.Instrument,
                     historyDays: dto.historyDays ?? defaults.HistoryDays,
                     batchSize: dto.batchSize ?? defaults.BatchSize,
                     maxTicksPerSecond: dto.maxTicksPerSecond ?? defaults.MaxTicksPerSecond,
@@ -94,7 +92,6 @@ namespace NinjaTrader.NinjaScript.AddOns
             public int? commandPort;
             public int? queryPort;
             public int? heartbeatPort;
-            public string instrument;
             public int? historyDays;
             public int? batchSize;
             public int? maxTicksPerSecond;

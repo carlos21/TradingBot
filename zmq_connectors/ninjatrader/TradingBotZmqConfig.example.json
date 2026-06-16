@@ -4,7 +4,6 @@
   "commandPort": 5556,
   "queryPort": 5557,
   "heartbeatPort": 5558,
-  "instrument": "MNQ 06-26",
   "historyDays": 30,
   "batchSize": 500,
   "maxTicksPerSecond": 10,

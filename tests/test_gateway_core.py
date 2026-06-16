@@ -1082,7 +1082,35 @@ class TestCommandSending:
         gateway._running = True
         gateway.send_refresh_request(days=5)
         assert len(gateway._pending_commands) == 1
+        assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("REFRESH" in m for m in logger.messages)
+
+    def test_send_refresh_request_without_instrument_raises(self, logger):
+        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw._running = True
+        with pytest.raises(ValueError, match="instrument is required"):
+            gw.send_refresh_request(days=5)
+
+    def test_send_subscribe(self, gateway, logger):
+        gateway._running = True
+        gateway.send_subscribe("MNQ 09-26")
+        assert len(gateway._pending_commands) == 1
+        assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
+        assert any("SUBSCRIBE" in m for m in logger.messages)
+
+    def test_send_audit_request(self, gateway, logger):
+        gateway._running = True
+        gateway.send_audit_request(bars_back=30)
+        assert len(gateway._pending_commands) == 1
+        assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
+        assert gateway._pending_commands[1]["payload"]["bars_back"] == 30
+        assert any("AUDIT" in m for m in logger.messages)
+
+    def test_send_audit_request_without_instrument_raises(self, logger):
+        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw._running = True
+        with pytest.raises(ValueError, match="instrument is required"):
+            gw.send_audit_request(bars_back=30)
 
     def test_send_error_with_details(self, gateway, logger):
         gateway._running = True

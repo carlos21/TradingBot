@@ -412,7 +412,7 @@ function Copy-AddOnFiles {
 }
 
 function New-ZmqConfig {
-    param([string]$CustomDir, [string]$Instrument)
+    param([string]$CustomDir)
 
     $path = Join-Path $CustomDir "TradingBotZmqConfig.json"
     $json = @{
@@ -421,7 +421,8 @@ function New-ZmqConfig {
         commandPort          = 5556
         queryPort            = 5557
         heartbeatPort        = 5558
-        instrument           = $Instrument
+        # Instrument is intentionally omitted; it is configured in Admin → Settings
+        # and sent to NinjaTrader via the subscribe command.
         historyDays          = 30
         batchSize            = 500
         maxTicksPerSecond    = 10
@@ -718,10 +719,8 @@ try {
     # AddOn files
     Copy-AddOnFiles -AddOnsDir (Join-Path $ntCustomDir "AddOns")
 
-    # ZMQ JSON config
-    $instInput = Read-Host "Instrument [default: MNQ 06-26]"
-    $instrument = if ($instInput) { $instInput } else { "MNQ 06-26" }
-    New-ZmqConfig -CustomDir $ntCustomDir -Instrument $instrument
+    # ZMQ JSON config (instrument is configured in Admin → Settings)
+    New-ZmqConfig -CustomDir $ntCustomDir
 
     Write-Divider
 

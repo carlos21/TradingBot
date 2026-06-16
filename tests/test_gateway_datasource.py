@@ -34,6 +34,7 @@ def mock_gateway():
     gateway = MagicMock(spec=TradingGateway)
     gateway.is_connected = True
     gateway.pair = "MNQ"
+    gateway.instrument = "MNQ 06-26"
 
     # Store registered callbacks by message type
     gateway._callbacks = {}
@@ -45,6 +46,7 @@ def mock_gateway():
     gateway.start = MagicMock()
     gateway.stop = MagicMock()
     gateway.send_refresh_request = MagicMock()
+    gateway.send_subscribe = MagicMock()
     return gateway
 
 
@@ -193,6 +195,7 @@ class TestPlatformConnection:
         data_source._history_request_delay_sec = 0.1  # 100ms for test speed
         data_source.on_platform_connected()
         assert data_source.state == DataSourceState.CONNECTED
+        mock_gateway.send_subscribe.assert_called_once_with("MNQ 06-26")
         assert data_source._pending_refresh_timer is not None
         # Wait for the timer to fire
         data_source._pending_refresh_timer.join()
@@ -208,6 +211,8 @@ class TestPlatformConnection:
         mock_gateway.was_last_disconnect_real = False
         data_source.on_platform_connected()
         assert data_source.state == DataSourceState.CONNECTED
+        # Already subscribed before the blip; no need to resubscribe or refresh
+        mock_gateway.send_subscribe.assert_not_called()
         mock_gateway.send_refresh_request.assert_not_called()
 
     def test_on_platform_connected_refreshes_after_real_disconnect(self, data_source, mock_gateway):
@@ -215,6 +220,7 @@ class TestPlatformConnection:
         data_source._first_platform_connect = False
         mock_gateway.was_last_disconnect_real = True
         data_source.on_platform_connected()
+        mock_gateway.send_subscribe.assert_called_once_with("MNQ 06-26")
         assert data_source._pending_refresh_timer is not None
         data_source._pending_refresh_timer.join()
         mock_gateway.send_refresh_request.assert_called_once()
@@ -237,6 +243,14 @@ class TestPlatformConnection:
         # Wait to ensure the timer callback does not run (or aborts cleanly)
         timer.join(timeout=0.5)
         mock_gateway.send_refresh_request.assert_not_called()
+
+    def test_on_platform_connected_no_instrument_does_not_subscribe(self, data_source, mock_gateway):
+        mock_gateway.instrument = ""
+        data_source.on_platform_connected()
+        assert data_source.state == DataSourceState.CONNECTED
+        mock_gateway.send_subscribe.assert_not_called()
+        mock_gateway.send_refresh_request.assert_not_called()
+        assert data_source._pending_refresh_timer is None
 
 
 # ---------------------------------------------------------------------------

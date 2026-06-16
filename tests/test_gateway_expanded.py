@@ -734,10 +734,11 @@ class TestCommandSending:
 
     def test_send_refresh_request(self):
         logger = FakeLogger()
-        gw = TradingGateway(logger)
+        gw = TradingGateway(logger, instrument="MNQ 09-26")
         gw._running = True
         gw.send_refresh_request(days=5)
         assert len(gw._pending_commands) == 1
+        assert gw._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("REFRESH" in m for m in logger.messages)
 
     def test_send_error(self):

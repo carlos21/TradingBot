@@ -184,7 +184,7 @@ trade_executor = ZMQTradeExecutor(gateway=gateway, risk_usd=500)
 ```
 [ZMQ] Connected to Python TradingBot via ZeroMQ
 [ZMQ] Command loop started
-[ZMQ] Subscribed to market data for MNQ 06-26
+[ZMQ] Subscribed to market data for <YOUR_INSTRUMENT>
 ```
 
 ## Advanced Usage
