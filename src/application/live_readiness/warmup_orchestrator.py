@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+import traceback
 from typing import TYPE_CHECKING, Any
 
 from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
@@ -46,7 +47,7 @@ class WarmupOrchestrator:
         self,
         bars: list[dict[str, Any]],
         pair: str,
-    ) -> None:
+    ) -> bool:
         """
         Replay *bars* through the strategy.
 
@@ -57,11 +58,14 @@ class WarmupOrchestrator:
         If ``cancel()`` is called while this method is running, the replay
         will stop at the next checkpoint and return early without calling
         the restore methods (the strategy will be reset by the caller anyway).
+
+        Returns ``True`` if the replay completed successfully, ``False`` if it
+        was cancelled or failed.
         """
         if not bars:
             if self._logger:
                 self._logger.info("[Warmup] No historical bars to replay")
-            return
+            return True
 
         if self._logger:
             self._logger.info(
@@ -71,28 +75,44 @@ class WarmupOrchestrator:
         self._strategy.warmup_crossed_lines.clear()
 
         start_time = time.monotonic()
-        for i, bar in enumerate(bars):
-            if self._stop_event.is_set():
-                if self._logger:
+        progress_interval = max(1, len(bars) // 10)
+        try:
+            for i, bar in enumerate(bars):
+                if self._stop_event.is_set():
+                    if self._logger:
+                        self._logger.info(
+                            f"[Warmup] Cancelled after {i}/{len(bars)} bars — "
+                            "skipping restore (strategy will be reset)"
+                        )
+                    return False
+                self._strategy.on_raw_bar(bar)
+                if self._logger and (i + 1) % progress_interval == 0:
                     self._logger.info(
-                        f"[Warmup] Cancelled after {i}/{len(bars)} bars — "
-                        "skipping restore (strategy will be reset)"
+                        f"[Warmup] Replay progress: {i + 1}/{len(bars)} bars"
                     )
-                return
-            self._strategy.on_raw_bar(bar)
 
-        self._strategy.restore_trigger_states(pair)
-        self._strategy.restore_open_trades()
-        self._strategy.restore_reentry_opportunities(pair)
+            if self._logger:
+                self._logger.info("[Warmup] Replay loop finished; restoring persisted state...")
+            self._strategy.restore_trigger_states(pair)
+            self._strategy.restore_open_trades()
+            self._strategy.restore_reentry_opportunities(pair)
 
-        stale_count = self._remove_stale_lines()
-        elapsed = time.monotonic() - start_time
+            if self._logger:
+                self._logger.info("[Warmup] Removing stale lines touched during replay...")
+            stale_count = self._remove_stale_lines()
+            elapsed = time.monotonic() - start_time
 
-        if self._logger:
-            self._logger.info(
-                f"[Warmup] Complete in {elapsed:.1f}s — "
-                f"{len(bars)} bars replayed, {stale_count} stale line(s) removed"
-            )
+            if self._logger:
+                self._logger.info(
+                    f"[Warmup] Complete in {elapsed:.1f}s — "
+                    f"{len(bars)} bars replayed, {stale_count} stale line(s) removed"
+                )
+            return True
+        except Exception as e:
+            if self._logger:
+                self._logger.error(f"[Warmup] Replay failed: {e}")
+                self._logger.error(traceback.format_exc())
+            return False
 
     def _remove_stale_lines(self) -> int:
         """Remove lines that were touched during warm-up."""

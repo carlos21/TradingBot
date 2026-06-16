@@ -675,6 +675,36 @@ class TestCommandAckHandling:
         assert 6 not in gateway._pending_commands
         assert any("Command FAILED" in m for m in logger.messages)
 
+    def test_failure_notifies_registered_listener(self, gateway):
+        failures = []
+        gateway.on_command_failed(lambda *args: failures.append(args))
+        gateway._pending_commands[7] = {
+            "type": "order_open",
+            "sent_time": time.time(),
+            "payload": {"trade_id": "T1"},
+        }
+        ack = CommandAckMessage(
+            command_type="order_open",
+            seq_num=7,
+            success=False,
+            trade_id="T1",
+            message="rej",
+        )
+        gateway._handle_command_ack(ack.to_envelope(seq_num=10).payload)
+        assert failures == [("order_open", "T1", 7, "rej")]
+
+    def test_timeout_notifies_registered_listener(self, gateway):
+        failures = []
+        gateway.on_command_failed(lambda *args: failures.append(args))
+        gateway._pending_commands[8] = {
+            "type": "order_modify",
+            "sent_time": time.time() - 120,
+            "payload": {"trade_id": "T2"},
+        }
+        gateway._cleanup_pending_commands()
+        assert 8 not in gateway._pending_commands
+        assert failures == [("order_modify", "T2", 8, "timeout")]
+
     def test_unknown_ack_logged_debug(self, gateway, logger):
         ack = CommandAckMessage(command_type="order_open", seq_num=999, success=True, trade_id="T1")
         env = ack.to_envelope(seq_num=10)

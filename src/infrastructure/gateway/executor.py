@@ -5,13 +5,19 @@ This module provides a TradeExecutor implementation that uses the
 ZeroMQ gateway to send trade commands to the platform.
 """
 
+from __future__ import annotations
+
 import threading
 import time
+from typing import TYPE_CHECKING
 
 from src.services.trade_executor import TradeExecutor
 from src.utils.app_logger import ILogger
 
 from .gateway import TradingGateway
+
+if TYPE_CHECKING:
+    from src.services.trade_manager import TradeManager
 
 
 class ZMQTradeExecutor(TradeExecutor):
@@ -51,6 +57,36 @@ class ZMQTradeExecutor(TradeExecutor):
         self.logger = logger
         self._risk_usd = risk_usd
         self._risk_pct = risk_pct
+        self.trade_manager: TradeManager | None = None
+
+    def on_command_failed(self, command_type: str, trade_id: str, seq_num: int, reason: str) -> None:
+        """Called by the gateway when a command is NACK'd or times out.
+
+        Cleans up trades that never actually entered the market and logs/alarms
+        on close or modify failures.
+        """
+        if command_type == "order_open":
+            if self.trade_manager is not None:
+                self.trade_manager.cancel_trade(trade_id, reason=f"ORDER_OPEN_FAILED:{reason}")
+            else:
+                self.logger.error(
+                    f"order_open failed for {trade_id} (seq={seq_num}, reason={reason}) "
+                    "but no trade_manager is set; cannot roll back"
+                )
+        elif command_type == "order_close":
+            self.logger.error(
+                f"order_close failed for {trade_id} (seq={seq_num}, reason={reason}). "
+                "Broker position may still be open."
+            )
+        elif command_type == "order_modify":
+            self.logger.error(
+                f"order_modify failed for {trade_id} (seq={seq_num}, reason={reason}). "
+                "Stop loss/take profit may be out of sync with broker."
+            )
+        else:
+            self.logger.warning(
+                f"Command {command_type} failed for {trade_id} (seq={seq_num}, reason={reason})"
+            )
 
     def on_trade_open(self, trade: dict) -> None:
         """

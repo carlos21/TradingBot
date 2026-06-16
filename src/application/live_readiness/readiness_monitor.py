@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+import traceback
 from typing import TYPE_CHECKING, Any, Callable
 
 from src.application.ports import EventPublisher
@@ -94,6 +95,7 @@ class ReadinessMonitor:
                 "readiness_state": self._state_machine.state.name,
                 "readiness_reason": self._state_machine.reason,
                 "bar_count": len(bars),
+                "last_bar_time": bars[-1].get("time") if bars else None,
             }
             with contextlib.suppress(Exception):
                 if self._history_loaded_emitter is not None:
@@ -110,11 +112,28 @@ class ReadinessMonitor:
         pair_snapshot = self._pair
 
         def _run_warmup() -> None:
+            if self._logger:
+                self._logger.info("[Readiness] Starting warmup replay thread")
             try:
-                self._warmup_orchestrator.run(bars_snapshot, pair_snapshot)
+                success = self._warmup_orchestrator.run(bars_snapshot, pair_snapshot)
             finally:
                 self._warmup_in_progress = False
+
+            # Only attempt the READY transition if warmup completed successfully.
+            # A failed or cancelled warmup must not promote a broken strategy.
+            # Backwards compatibility: orchestrators that return None (older fakes)
+            # are treated as successful; only an explicit False means failure.
+            if self._logger:
+                self._logger.info(
+                    f"[Readiness] Warmup replay thread finished (success={success})"
+                )
+            if success is not False:
                 self._try_warmup_complete()
+            elif self._logger:
+                self._logger.warning(
+                    "[Readiness] Warmup did not complete successfully; "
+                    "staying in WARMING_UP until the next history cycle"
+                )
 
         self._warmup_thread = threading.Thread(target=_run_warmup, daemon=True, name="WarmupReplay")
         self._warmup_thread.start()
@@ -122,6 +141,11 @@ class ReadinessMonitor:
     def on_live_bar(self, bar: dict[str, Any]) -> None:
         """Called for each live bar (completed or partial)."""
         state = self._state_machine.state
+
+        # Disconnected: drop everything. The gateway will drive a reconnect/refresh
+        # cycle before we accept bars again.
+        if state == ReadinessState.DISCONNECTED:
+            return
 
         # Partial bars are UI-only updates: never buffer them and never feed
         # them to the strategy. Process them immediately so the chart reflects
@@ -262,31 +286,38 @@ class ReadinessMonitor:
         if state != ReadinessState.WARMING_UP:
             return
 
-        if self._data_source is not None:
-            complete, reason = self._data_source.check_history_completeness()
-            if not complete:
-                if self._logger:
-                    self._logger.info(f"[Readiness] History not ready: {reason}")
-                return
+        try:
+            if self._data_source is not None:
+                complete, reason = self._data_source.check_history_completeness()
+                if not complete:
+                    if self._logger:
+                        self._logger.info(f"[Readiness] History not ready: {reason}")
+                    return
 
-        if not self._warmup_policy.is_warm(self._warmup_orchestrator.strategy):
-            return
-        transitioned = self._state_machine.warmup_complete()
-        if transitioned:
-            self._bar_buffer.flush()
-            if self._logger:
-                self._logger.info(
-                    "[Readiness] Warmup complete — ready for live trading"
-                )
-            if self._socketio_publisher is not None:
-                with contextlib.suppress(Exception):
-                    self._socketio_publisher.emit(
-                        "trading_ready",
-                        {
-                            "readiness_state": self._state_machine.state.name,
-                            "readiness_reason": self._state_machine.reason,
-                        },
+            if not self._warmup_policy.is_warm(self._warmup_orchestrator.strategy):
+                if self._logger:
+                    self._logger.info("[Readiness] Indicators not warm yet")
+                return
+            transitioned = self._state_machine.warmup_complete()
+            if transitioned:
+                self._bar_buffer.flush()
+                if self._logger:
+                    self._logger.info(
+                        "[Readiness] Warmup complete — ready for live trading"
                     )
+                if self._socketio_publisher is not None:
+                    with contextlib.suppress(Exception):
+                        self._socketio_publisher.emit(
+                            "trading_ready",
+                            {
+                                "readiness_state": self._state_machine.state.name,
+                                "readiness_reason": self._state_machine.reason,
+                            },
+                        )
+        except Exception as e:
+            if self._logger:
+                self._logger.error(f"[Readiness] Warmup completion check failed: {e}")
+                self._logger.error(traceback.format_exc())
 
     def get_health(self) -> dict[str, Any]:
         """Return readiness-specific health fields."""

@@ -153,7 +153,9 @@ class ReadinessStateMachine:
     # Valid state transitions — any transition not listed here is logged as unexpected
     _VALID_TRANSITIONS: dict[ReadinessState, set[ReadinessState]] = {
         ReadinessState.DISCONNECTED: {ReadinessState.CONNECTED},
-        ReadinessState.CONNECTED: {ReadinessState.REFRESHING, ReadinessState.WAITING_FOR_HISTORY, ReadinessState.DISCONNECTED},
+        # CONNECTED may receive a fresh/complete history batch directly (e.g. after
+        # a brief reconnect), so WARMING_UP is a legal target.
+        ReadinessState.CONNECTED: {ReadinessState.REFRESHING, ReadinessState.WAITING_FOR_HISTORY, ReadinessState.WARMING_UP, ReadinessState.DISCONNECTED},
         ReadinessState.WAITING_FOR_HISTORY: {ReadinessState.REFRESHING, ReadinessState.WAITING_FOR_HISTORY, ReadinessState.DISCONNECTED},
         ReadinessState.REFRESHING: {ReadinessState.WARMING_UP, ReadinessState.WAITING_FOR_HISTORY, ReadinessState.DISCONNECTED},
         ReadinessState.WARMING_UP: {ReadinessState.READY, ReadinessState.DISCONNECTED},

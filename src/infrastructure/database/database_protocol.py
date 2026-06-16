@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 Base = declarative_base()
 
@@ -24,11 +25,16 @@ class SQLiteDatabase(DatabaseProtocol):
 
     def __init__(self, db_url="sqlite:///./database.db"):
         self.db_url = db_url
-        # Enable connection pooling and WAL mode for better concurrent performance
+        # In-memory databases must share a single connection across threads,
+        # otherwise each new connection gets a fresh empty database. File-based
+        # databases use SQLAlchemy's default pool (QueuePool) so connections are
+        # reused across threads, matching the original live-trading behavior.
+        is_in_memory = ":memory:" in db_url or "mode=memory" in db_url
+        pool_kwargs = {"poolclass": StaticPool} if is_in_memory else {}
         self.engine = create_engine(
             self.db_url,
             connect_args={"check_same_thread": False},
-            poolclass=None,  # Use NullPool for SQLite (connections can't be shared across threads)
+            **pool_kwargs,
             # SQLite optimizations for concurrent access
             execution_options={"sqlite_pragma": {"journal_mode": "WAL", "synchronous": "NORMAL"}}
         )

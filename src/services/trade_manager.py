@@ -417,6 +417,114 @@ class TradeManager:
 
         return trade
 
+    def cancel_trade(self, trade_id: str, reason: str = "CANCELLED") -> None:
+        """Close a trade locally without sending a command to the broker.
+
+        Used when the broker has already rejected or timed out the original
+        command, so the trade never actually entered the market.
+        """
+        with self._lock:
+            trade = next(
+                (t for t in self.open_trades if t['trade_id'] == trade_id), None
+            )
+            if trade:
+                self.open_trades.remove(trade)
+
+        trade_data = self.trade_repository.get_trade(trade_id)
+        if trade_data is None or trade_data.exit_time is not None:
+            return
+
+        self.trade_repository.close_trade(
+            trade_id=trade_id,
+            exit_price=trade_data.entry_price,
+            exit_time=datetime.now(tz=timezone.utc),
+            result=0.0,
+            result_type=reason,
+            fees=0.0,
+            pnl_usd=0.0,
+        )
+        if self.logger:
+            self.logger.warning(f"[TradeManager] Cancelled trade {trade_id} ({reason})")
+
+    def create_synced_trade(
+        self,
+        trade_id: str,
+        pair: str,
+        trade_type: str,
+        entry_price: float,
+        stop_loss: float,
+        take_profit: float,
+        quantity: float,
+        account: str | None,
+    ) -> dict:
+        """Create a trade locally from a broker position without sending an order.
+
+        Used during POSITION_SYNC when the broker reports a position Python does
+        not know about. The position already exists on the broker, so we must not
+        send a new order_open command.
+        """
+        risk = abs(entry_price - stop_loss)
+        risk_per_contract = risk * self.point_value
+        risk_budget = FinancialCalc.risk_budget(
+            self.account_balance,
+            self.risk_per_trade,
+            self.risk_pct_per_trade,
+        )
+        if self.use_fractional_lots:
+            contracts = FinancialCalc.lots(risk_budget, risk_per_contract) if risk_budget > 0 else 0.01
+        else:
+            contracts = FinancialCalc.contracts(risk_budget, risk_per_contract) if risk_budget > 0 else 1
+        contracts = quantity if quantity > 0 else contracts
+        risk_dollars = risk_per_contract * contracts
+        risk_pct = (
+            (risk_dollars / self.account_balance * 100)
+            if self.account_balance > 0 else None
+        )
+        entry_time = datetime.now(tz=timezone.utc)
+
+        trade_data = self.trade_repository.insert_trade(
+            pair=pair,
+            trade_type=trade_type,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            risk=risk,
+            entry_time=entry_time,
+            risk_dollars=risk_dollars,
+            risk_pct=risk_pct,
+            contracts=contracts,
+            source="broker_sync",
+            account=account,
+            trade_id=trade_id,
+        )
+
+        trade = {
+            'trade_id': trade_data.trade_id,
+            'pair': trade_data.pair,
+            'type': trade_data.trade_type,
+            'entry': trade_data.entry_price,
+            'stop_loss': trade_data.stop_loss,
+            'take_profit': trade_data.take_profit,
+            'risk': trade_data.risk,
+            'risk_dollars': trade_data.risk_dollars,
+            'risk_pct': trade_data.risk_pct,
+            'contracts': trade_data.contracts,
+            'entry_time': trade_data.entry_time.timestamp(),
+            'account': trade_data.account,
+            'status': 'open',
+            'source': 'broker_sync',
+        }
+        with self._lock:
+            self.open_trades.append(trade)
+        self._monitored_trades.add(trade_id)
+
+        if self.logger:
+            self.logger.info(
+                f"[PositionSync] Created trade {trade_id} from broker position "
+                f"({trade_type} @ {entry_price}, qty={quantity})"
+            )
+        return trade
+
     def close_trade(self, trade_id: str, exit_price: float, exit_time: float):
         trade = next(
             (t for t in self.open_trades if t['trade_id'] == trade_id), None

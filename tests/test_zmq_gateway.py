@@ -169,14 +169,14 @@ class TestIntegration:
     @pytest.fixture
     def gateway(self):
         """Create a test gateway with unique ports."""
-        import random
-        base_port = random.randint(30000, 40000)
+        from tests.fake_ninjatrader.port_helper import get_free_ports
+        ports = get_free_ports(4)
 
         config = GatewayConfig(
-            market_data_pub=f"tcp://127.0.0.1:{base_port}",
-            command_pull=f"tcp://127.0.0.1:{base_port + 1}",
-            query_rep=f"tcp://127.0.0.1:{base_port + 2}",
-            heartbeat_pub=f"tcp://127.0.0.1:{base_port + 3}",
+            market_data_pub=f"tcp://127.0.0.1:{ports[0]}",
+            command_pull=f"tcp://127.0.0.1:{ports[1]}",
+            query_rep=f"tcp://127.0.0.1:{ports[2]}",
+            heartbeat_pub=f"tcp://127.0.0.1:{ports[3]}",
         )
         logger = ConsoleLogger()
         gateway = TradingGateway(logger, config=config, pair="TEST", instrument="MNQ 09-26")

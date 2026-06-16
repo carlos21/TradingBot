@@ -63,6 +63,7 @@ class FakeNinjaTrader:
         logger: ILogger,
         auto_fill_entries: bool = False,
         auto_fill_exits: bool = False,
+        heartbeat_interval_sec: float = 5.0,
     ) -> None:
         self._addresses = addresses
         self._accounts = accounts
@@ -70,6 +71,7 @@ class FakeNinjaTrader:
         self._tracker = FakeOrderTracker(accounts)
         self._auto_fill_entries = auto_fill_entries
         self._auto_fill_exits = auto_fill_exits
+        self._heartbeat_interval_sec = heartbeat_interval_sec
 
         # ZMQ
         self._context: zmq.Context | None = None
@@ -98,6 +100,12 @@ class FakeNinjaTrader:
 
         # Auto-fill exit tracking: trade_id -> {direction, entry, stop_loss, take_profit}
         self._auto_filled_trades: dict[str, dict[str, Any]] = {}
+
+        # Test-control flags
+        self._heartbeat_paused = threading.Event()
+        self._reject_next_order_open = False
+        self._reject_next_order_close = False
+        self._reject_next_order_modify = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -177,6 +185,34 @@ class FakeNinjaTrader:
 
         self._logger.info("FakeNinjaTrader stopped")
 
+    def pause_heartbeats(self) -> None:
+        """Stop sending heartbeats so the gateway detects a disconnect."""
+        self._heartbeat_paused.set()
+
+    def resume_heartbeats(self) -> None:
+        """Resume sending heartbeats so the gateway detects reconnect."""
+        self._heartbeat_paused.clear()
+
+    def clear_commands(self) -> None:
+        """Drop all recorded commands (useful between phases of a test)."""
+        with self._lock:
+            self._commands_received.clear()
+
+    def reject_next_order_open(self) -> None:
+        """Cause the next ORDER_OPEN command to be negatively acknowledged."""
+        with self._lock:
+            self._reject_next_order_open = True
+
+    def reject_next_order_close(self) -> None:
+        """Cause the next ORDER_CLOSE command to be negatively acknowledged."""
+        with self._lock:
+            self._reject_next_order_close = True
+
+    def reject_next_order_modify(self) -> None:
+        """Cause the next ORDER_MODIFY command to be negatively acknowledged."""
+        with self._lock:
+            self._reject_next_order_modify = True
+
     # ------------------------------------------------------------------
     # Background loops
     # ------------------------------------------------------------------
@@ -198,12 +234,15 @@ class FakeNinjaTrader:
                 self._logger.error(f"FakeNT command loop error: {e}")
 
     def _heartbeat_loop(self) -> None:
-        """Send heartbeats every 5 seconds."""
+        """Send heartbeats at the configured interval."""
         while self._running:
             try:
-                self._send_heartbeat()
-                # Sleep in small increments so we exit promptly
-                for _ in range(50):
+                if not self._heartbeat_paused.is_set():
+                    self._send_heartbeat()
+                # Sleep in small increments so we exit promptly and respond
+                # quickly to pause/resume commands.
+                ticks = max(1, int(self._heartbeat_interval_sec * 10))
+                for _ in range(ticks):
                     if not self._running:
                         break
                     time.sleep(0.1)
@@ -274,6 +313,20 @@ class FakeNinjaTrader:
             )
             return
 
+        with self._lock:
+            reject = self._reject_next_order_open
+            self._reject_next_order_open = False
+
+        if reject:
+            self._send_command_ack(
+                command_type="order_open",
+                seq_num=seq_num,
+                success=False,
+                trade_id=trade_id,
+                message="rejected by test",
+            )
+            return
+
         ok, reason = self._tracker.track_entry(
             trade_id=trade_id,
             account=account,
@@ -311,6 +364,20 @@ class FakeNinjaTrader:
         trade_id = payload.get("trade_id", "")
         account = payload.get("account")
 
+        with self._lock:
+            reject = self._reject_next_order_close
+            self._reject_next_order_close = False
+
+        if reject:
+            self._send_command_ack(
+                command_type="order_close",
+                seq_num=seq_num,
+                success=False,
+                trade_id=trade_id,
+                message="rejected by test",
+            )
+            return
+
         ok, reason, entry = self._tracker.track_close(trade_id, account)
 
         self._send_command_ack(
@@ -328,6 +395,20 @@ class FakeNinjaTrader:
         trade_id = payload.get("trade_id", "")
         account = payload.get("account")
         new_sl = payload.get("stop_loss")
+
+        with self._lock:
+            reject = self._reject_next_order_modify
+            self._reject_next_order_modify = False
+
+        if reject:
+            self._send_command_ack(
+                command_type="order_modify",
+                seq_num=seq_num,
+                success=False,
+                trade_id=trade_id,
+                message="rejected by test",
+            )
+            return
 
         if new_sl is None:
             self._send_command_ack(

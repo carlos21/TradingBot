@@ -841,7 +841,10 @@ class TestControllerAndQueries:
         nt = e2e_harness.nt
 
         # Seed account names directly on the gateway (DB is empty in tests)
-        app.data_source.gateway._account_names = ["Sim101"]
+        gateway = app.data_source.gateway
+        gateway._account_names = ["Sim101"]
+        # Prevent the query handler from refreshing the seeded names from the empty DB.
+        gateway._refresh_account_names = lambda: None
 
         payload = nt.send_config_query(key="accounts")
         assert "accounts" in payload
@@ -852,7 +855,9 @@ class TestControllerAndQueries:
         app = e2e_harness_multi.app
         nt = e2e_harness_multi.nt
 
-        app.data_source.gateway._account_names = ["Sim101", "Sim102"]
+        gateway = app.data_source.gateway
+        gateway._account_names = ["Sim101", "Sim102"]
+        gateway._refresh_account_names = lambda: None
 
         payload = nt.send_config_query(key="all")
         assert "accounts" in payload

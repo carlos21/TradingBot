@@ -209,9 +209,16 @@ class TestPlatformConnection:
     def test_on_platform_connected_skips_refresh_after_brief_blip(self, data_source, mock_gateway):
         data_source._first_platform_connect = False
         mock_gateway.was_last_disconnect_real = False
+        # Cached history must be fresh/complete for the brief-blip fast path.
+        now = int(time.time())
+        data_source._historical_bars = [
+            {"time": now - 180, "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 1, "pair": "MNQ"},
+            {"time": now - 120, "open": 1.5, "high": 2.5, "low": 1.0, "close": 2.0, "volume": 1, "pair": "MNQ"},
+            {"time": now - 60, "open": 2.0, "high": 3.0, "low": 1.5, "close": 2.5, "volume": 1, "pair": "MNQ"},
+        ]
         data_source.on_platform_connected()
-        assert data_source.state == DataSourceState.CONNECTED
-        # Already subscribed before the blip; no need to resubscribe or refresh
+        assert data_source.state == DataSourceState.STREAMING
+        # Already subscribed before the blip and history is fresh; no refresh needed.
         mock_gateway.send_subscribe.assert_not_called()
         mock_gateway.send_refresh_request.assert_not_called()
 

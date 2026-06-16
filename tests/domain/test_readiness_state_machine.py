@@ -68,6 +68,12 @@ class TestValidTransitions:
         assert sm.state == ReadinessState.WARMING_UP
         assert sm.retry_count == 0
 
+    def test_history_loaded_from_connected_after_brief_reconnect(self, sm: ReadinessStateMachine) -> None:
+        """A fresh history batch can move CONNECTED directly to WARMING_UP."""
+        sm.connect()
+        assert sm.history_loaded() is True
+        assert sm.state == ReadinessState.WARMING_UP
+
     def test_warmup_complete(self, sm: ReadinessStateMachine) -> None:
         sm.connect()
         sm.history_loaded()

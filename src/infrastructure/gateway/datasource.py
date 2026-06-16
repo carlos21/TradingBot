@@ -625,6 +625,9 @@ class ZMQDataSource(CombinedDataSource):
 
     def _on_history_end(self, _payload: dict = None) -> None:
         """Handle end of historical data."""
+        # History is complete; the pending delayed refresh is no longer needed.
+        self._cancel_pending_refresh_timer()
+
         with self._bars_lock:
             if self._historical_bars:
                 self._last_history_time = self._historical_bars[-1]["time"]
@@ -775,6 +778,13 @@ class ZMQDataSource(CombinedDataSource):
         if self._state == DataSourceState.DISCONNECTED:
             self.logger.info("Delayed refresh aborted: platform disconnected")
             return
+        # If history arrived before the delay expired we are already past the
+        # CONNECTED state; requesting another refresh would be redundant.
+        if self._state != DataSourceState.CONNECTED:
+            self.logger.info(
+                f"Delayed refresh aborted: already in {self._state.name}"
+            )
+            return
         self.logger.info("Requesting historical data refresh after delay")
         self.request_refresh()
 
@@ -803,8 +813,28 @@ class ZMQDataSource(CombinedDataSource):
         self._first_platform_connect = False
 
         if not should_refresh:
-            self.logger.info("Platform reconnected after brief blip — skipping history refresh")
-            return
+            # Brief reconnect. If cached history is still fresh/complete we can
+            # resume streaming immediately; otherwise treat it as a real reconnect.
+            complete, reason = self.check_history_completeness()
+            if complete:
+                self.logger.info(
+                    "Platform reconnected after brief blip — cached history is fresh; resuming streaming"
+                )
+                with self._bars_lock:
+                    bars_copy = list(self._historical_bars)
+                self._state = DataSourceState.STREAMING
+                self._last_completed_bar_time = time.monotonic()
+                if self.on_history_complete:
+                    try:
+                        self.on_history_complete(bars_copy)
+                    except Exception as e:
+                        self.logger.error(f"Error re-notifying history complete: {e}")
+                return
+            else:
+                self.logger.info(
+                    f"Platform reconnected after brief blip — cached history stale ({reason}); treating as real reconnect"
+                )
+                should_refresh = True
 
         # Tell NinjaTrader which instrument to use before requesting history/live bars.
         gateway.send_subscribe(instrument)

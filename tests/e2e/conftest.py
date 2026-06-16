@@ -387,3 +387,90 @@ def e2e_harness_auto(
     time.sleep(0.1)
     _force_ready(live_app_scenario)
     yield E2EHarness(nt=fake_nt_auto, app=live_app_scenario)
+
+
+# ---------------------------------------------------------------------------
+# Resilience harness: fast heartbeats, no forced-ready
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def fake_nt_fast(
+    free_ports: dict[str, str],
+    e2e_logger: FakeLogger,
+) -> Generator[FakeNinjaTrader, None, None]:
+    """FakeNinjaTrader with a 0.2s heartbeat for disconnect/reconnect tests."""
+    nt = FakeNinjaTrader(
+        addresses=free_ports,
+        accounts=["Sim101"],
+        logger=e2e_logger,
+        heartbeat_interval_sec=0.2,
+    )
+    nt.start()
+    try:
+        yield nt
+    finally:
+        nt.stop()
+
+
+@pytest.fixture
+def live_app_resilience(
+    free_ports: dict[str, str],
+    e2e_logger: FakeLogger,
+) -> Generator[AppWiring, None, None]:
+    """Live app wired with a 1s heartbeat timeout for resilience tests."""
+    original_db = db_module.db
+    test_db = _setup_in_memory_db()
+
+    config = GatewayConfig(
+        market_data_pub=free_ports["market_data"],
+        command_pull=free_ports["commands"],
+        query_rep=free_ports["queries"],
+        heartbeat_pub=free_ports["heartbeat"],
+        platform_connects=True,
+        heartbeat_interval_sec=0.2,
+        heartbeat_timeout_sec=1.0,
+    )
+    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ")
+    trade_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
+
+    repos = Repositories(
+        lines=FakeLineRepository(),
+        trades=FakeTradeRepository(),
+    )
+
+    wiring = create_app(
+        pair="MNQ",
+        data_source=data_source,
+        repos=repos,
+        numbers=_default_numbers(),
+        options=DEFAULT_STRATEGY_OPTIONS,
+        candle_config=CandleConfig(),
+        timeframes=["5m"],
+        live_mode=True,
+        trade_executor=trade_executor,
+        logger=e2e_logger,
+        db=test_db,
+        session_end_time="23:59",
+    )
+
+    data_source.start()
+    try:
+        yield wiring
+    finally:
+        data_source.stop()
+        _teardown_in_memory_db(original_db, test_db)
+
+
+@pytest.fixture
+def e2e_harness_resilience(
+    fake_nt_fast: FakeNinjaTrader,
+    live_app_resilience: AppWiring,
+) -> Generator[E2EHarness, None, None]:
+    """Resilience harness: connected but not forced-ready."""
+    time.sleep(0.3)
+    fake_nt_fast.send_connect(pair="MNQ")
+    time.sleep(0.1)
+    # Tests drive the full readiness state machine.
+    yield E2EHarness(nt=fake_nt_fast, app=live_app_resilience)

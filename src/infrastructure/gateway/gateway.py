@@ -191,6 +191,9 @@ to be:
         # Callback for permanently dropped commands (after max retries)
         self._on_command_dropped: Callable[[str, dict[str, Any]], None] | None = None
 
+        # Callbacks notified when a command is NACK'd or times out waiting for an ACK
+        self._command_failure_listeners: list[Callable[[str, str, int, str], None]] = []
+
         # E2E test state tracking
         self._test_sequences: dict[str, dict[str, Any]] = {}
 
@@ -734,6 +737,12 @@ to be:
                         self.logger.info(f"✅ Command ACK: {ack.command_type} seq={seq_num} trade={ack.trade_id} ({elapsed:.2f}s)")
                     else:
                         self.logger.error(f"❌ Command FAILED: {ack.command_type} seq={seq_num} error='{ack.message}' ({elapsed:.2f}s)")
+                        self._notify_command_failed(
+                            ack.command_type,
+                            ack.trade_id or cmd_info.get("payload", {}).get("trade_id"),
+                            seq_num,
+                            ack.message or "NACK",
+                        )
                 else:
                     # Ack for unknown command (possibly duplicate detection or late ack)
                     status = "✅" if ack.success else "❌"
@@ -741,6 +750,20 @@ to be:
 
         except Exception as e:
             self.logger.error(f"Error handling command ack: {e}")
+
+    def _notify_command_failed(
+        self,
+        command_type: str,
+        trade_id: str | None,
+        seq_num: int,
+        reason: str,
+    ) -> None:
+        """Notify registered listeners that a command failed."""
+        if trade_id is None:
+            return
+        for cb in list(self._command_failure_listeners):
+            with contextlib.suppress(Exception):
+                cb(command_type, trade_id, seq_num, reason)
 
     def _handle_error(self, payload: dict[str, Any]) -> None:
         """Handle error notification from platform."""
@@ -1034,6 +1057,15 @@ to be:
         """
         self._on_command_dropped = callback
 
+    def on_command_failed(self, callback: Callable[[str, str, int, str], None]) -> None:
+        """Register callback for commands that were NACK'd or timed out.
+
+        Called with (command_type, trade_id, seq_num, reason) when the platform
+        negatively acknowledges a command or when no ACK arrives before the
+        timeout expires.
+        """
+        self._command_failure_listeners.append(callback)
+
     def on_connection_change(self, callback: Callable[[bool], None]) -> None:
         """Register callback for platform connection state changes.
 
@@ -1123,6 +1155,12 @@ to be:
         for seq in to_remove:
             cmd_info = self._pending_commands.pop(seq)
             self.logger.warning(f"Command timed out waiting for ack: {cmd_info['type']} seq={seq}")
+            self._notify_command_failed(
+                cmd_info['type'],
+                cmd_info.get('payload', {}).get('trade_id'),
+                seq,
+                "timeout",
+            )
 
     def _resolve_instrument(self, instrument: str | None) -> str:
         """Return the effective instrument for an order command."""

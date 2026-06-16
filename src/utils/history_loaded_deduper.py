@@ -22,6 +22,7 @@ class HistoryLoadedDeduper:
             payload.get("readiness_state"),
             payload.get("readiness_reason"),
             payload.get("bar_count"),
+            payload.get("last_bar_time"),
         )
 
     def emit(self, socketio, payload: dict[str, Any]) -> None:

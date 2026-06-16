@@ -38,7 +38,7 @@ from src.infrastructure.event_publisher import (
     DomainEventBusPublisher,
 )
 from src.infrastructure.gateway.datasource import ZMQDataSource
-from src.infrastructure.gateway.executor import MultiAccountExecutor
+from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
 from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.infrastructure.parity_checker import NinjaTraderParityChecker
 from src.infrastructure.repositories.accounts_repository import NtAccountRepository
@@ -355,9 +355,14 @@ def create_app(
         accounts_repo=accounts_repo,
     )
 
-    # Inject trade_manager into MultiAccountExecutor (created before trade_manager existed)
+    # Inject trade_manager into executors that are created before trade_manager existed
     if isinstance(trade_executor, MultiAccountExecutor):
         trade_executor.trade_manager = trade_manager
+    if isinstance(trade_executor, ZMQTradeExecutor):
+        trade_executor.trade_manager = trade_manager
+        # Wire async NACK/timeout cleanup back to the executor.
+        if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
+            data_source.gateway.on_command_failed(trade_executor.on_command_failed)
 
     # Live mode uses a readiness state machine; backtest/replay always trades.
     readiness_state_machine = None
@@ -459,7 +464,8 @@ def create_app(
                 if db_trade and db_trade.exit_time is not None:
                     logger.error(f"[PositionSync] DISCREPANCY: Broker has open position {trade_id} but DB shows it closed at {db_trade.exit_time}. Re-opening from broker data.")
 
-                # Create trade from broker data so session-end close can manage it
+                # Create trade from broker data so session-end close can manage it.
+                # Do NOT send a new order_open — the broker already holds this position.
                 direction = pos.get('direction', 'long')
                 entry_price = float(pos.get('entry_price', 0))
                 stop_loss = pos.get('stop_loss')
@@ -473,28 +479,17 @@ def create_app(
                 if take_profit is None:
                     take_profit = entry_price + 100.0 if direction == 'long' else entry_price - 100.0
 
-                risk = abs(entry_price - stop_loss)
-                entry_time = time.time()
-                rr_ratio = numbers.rr_ratio if 'numbers' in dir() else 5.0
-
                 try:
-                    trade = trade_manager.open_trade(
+                    trade = trade_manager.create_synced_trade(
+                        trade_id=trade_id,
                         pair=pair,
                         trade_type=direction,
                         entry_price=entry_price,
                         stop_loss=stop_loss,
                         take_profit=take_profit,
-                        risk=risk,
-                        entry_time=entry_time,
-                        rr_ratio=rr_ratio,
-                        source="broker_sync",
+                        quantity=quantity,
                         account=account_name,
-                        trade_id=trade_id,  # Preserve broker trade_id so future fills match
                     )
-                    # Override contracts to match broker quantity
-                    for ot in trade_manager.open_trades:
-                        if ot['trade_id'] == trade['trade_id']:
-                            ot['contracts'] = quantity
                     logger.info(f"[PositionSync] Created trade {trade['trade_id']} from broker position {trade_id} ({direction} @ {entry_price}, qty={quantity})")
                 except Exception as e:
                     logger.error(f"[PositionSync] Failed to create trade from broker position {trade_id}: {e}")
