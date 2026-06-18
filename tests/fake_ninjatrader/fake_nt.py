@@ -644,6 +644,8 @@ class FakeNinjaTrader:
         exit_price: float,
         result_type: Literal["TP", "SL", "CLOSE", "SP"],
         account: str | None = None,
+        realized_pnl: float | None = None,
+        commission: float | None = None,
     ) -> None:
         """Simulate an exit fill and send EXIT_FILL to Python."""
         entry = self._tracker.get_entry(trade_id)
@@ -657,6 +659,8 @@ class FakeNinjaTrader:
             exit_price=exit_price,
             result_type=result_type,  # type: ignore[arg-type]
             account=acct,
+            realized_pnl=realized_pnl,
+            commission=commission,
         )
         self._publish(msg.to_envelope(seq_num=self._next_seq()))
         self._send_trade_log(trade_id, "NT:FILL", f"Exit fill @ {exit_price} ({result_type})")

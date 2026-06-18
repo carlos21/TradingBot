@@ -167,6 +167,7 @@ class TestStrategyTradeServiceExpansion:
                 AccountConfig("A2", rr_ratio=5.0),
                 AccountConfig("A3", rr_ratio=2.0),
             ],
+            account_balance=100000.0,
         )
 
         assert len(opened) == 3
@@ -188,6 +189,7 @@ class TestStrategyTradeServiceExpansion:
                 AccountConfig("A1", rr_ratio=2.0),
                 AccountConfig("A2", rr_ratio=4.0),
             ],
+            account_balance=100000.0,
         )
 
         tps = [t["take_profit"] for t in opened]
@@ -205,6 +207,7 @@ class TestStrategyTradeServiceExpansion:
                 AccountConfig("A1", risk_usd=500.0),
                 AccountConfig("A2", risk_usd=1000.0),
             ],
+            account_balance=100000.0,
         )
 
         # Risk override is consumed by the use case; the opened trade dicts
@@ -222,6 +225,7 @@ class TestStrategyTradeServiceExpansion:
             trade=_signal_trade("S1"),
             is_warmup=False,
             account_configs=[],
+            account_balance=100000.0,
         )
 
         assert len(opened) == 1
@@ -236,6 +240,7 @@ class TestStrategyTradeServiceExpansion:
             trade=_signal_trade("S1"),
             is_warmup=True,
             account_configs=[AccountConfig("A1")],
+            account_balance=100000.0,
         )
 
         assert opened == []
@@ -249,6 +254,7 @@ class TestStrategyTradeServiceExpansion:
             trade=signal,
             is_warmup=False,
             account_configs=[AccountConfig("A1"), AccountConfig("A2")],
+            account_balance=100000.0,
         )
 
         for t in opened:
@@ -263,6 +269,7 @@ class TestStrategyTradeServiceExpansion:
             trade=_signal_trade("S1"),
             is_warmup=False,
             account_configs=[AccountConfig("A1")],
+            account_balance=100000.0,
         )
 
         db = tm.trade_repository.get_trade(opened[0]["trade_id"])

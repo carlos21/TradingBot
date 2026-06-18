@@ -393,6 +393,22 @@ class TestBrokerFill:
         tm.handle_broker_fill("T1", 110.0, "TP")
         assert len(tm.trade_repository.closed) == 1
 
+    def test_uses_broker_reported_pnl(self):
+        """Broker-reported realized PnL/fees override Python calculation."""
+        tm = _make_manager(account_balance=100000.0)
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
+        tm.handle_broker_fill(
+            "T1",
+            110.0,
+            "TP",
+            broker_pnl_usd=25.0,
+            broker_fees=2.5,
+        )
+        closed = tm.trade_repository.closed[0]
+        assert closed["pnl_usd"] == 25.0
+        assert closed["fees"] == 2.5
+        assert tm.account_balance == 100025.0
+
 
 class TestNotifyStrategyClose:
 

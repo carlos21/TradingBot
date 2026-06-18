@@ -907,6 +907,36 @@ class TestFillAccuracy:
         # Profit = (21200 - 20995) * point_value(2.0) - fees
         assert closed.pnl_usd > 0
 
+    def test_exit_fill_uses_broker_reported_pnl(self, e2e_harness: E2EHarness) -> None:
+        """Broker-reported realized PnL and commission override Python calculation."""
+        app = e2e_harness.app
+        nt = e2e_harness.nt
+
+        trade = app.trade_manager.open_trade(
+            pair="MNQ", trade_type="long",
+            entry_price=21000.0, stop_loss=20920.0, take_profit=21200.0,
+            risk=80.0, entry_time=time.time(), rr_ratio=3.3,
+        )
+        trade_id = trade["trade_id"]
+
+        nt.wait_for_command("order_open")
+        nt.simulate_entry_fill(trade_id, entry_price=21000.0)
+        _wait_for_entry_fill(app.trade_manager, trade_id, expected_entry=21000.0)
+
+        # Python would calculate ~$400 - fees; broker reports a different exact value.
+        nt.simulate_exit_fill(
+            trade_id,
+            exit_price=21200.0,
+            result_type="TP",
+            realized_pnl=387.25,
+            commission=2.75,
+        )
+        closed = _wait_for_trade_closed_in_repo(app.trade_manager.trade_repository, trade_id)
+        assert closed.result_type == "TP"
+        assert closed.pnl_usd == pytest.approx(387.25)
+        assert closed.fees == pytest.approx(2.75)
+        assert app.trade_manager.account_balance == pytest.approx(100000.0 + 387.25)
+
 
 # ---------------------------------------------------------------------------
 # Bar stream health

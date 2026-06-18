@@ -230,6 +230,22 @@ class TestExitFillMessage:
         assert env.payload["result_type"] == "TP"
         assert env.payload["exit_price"] == 130.0
 
+    def test_to_envelope_with_broker_pnl(self):
+        msg = ExitFillMessage(
+            trade_id="T1",
+            exit_price=130.0,
+            result_type="TP",
+            account="Sim101",
+            realized_pnl=45.0,
+            commission=2.5,
+        )
+        env = msg.to_envelope(seq_num=7)
+        assert env.msg_type == MessageType.EXIT_FILL
+        assert env.seq_num == 7
+        assert env.payload["account"] == "Sim101"
+        assert env.payload["realized_pnl"] == 45.0
+        assert env.payload["commission"] == 2.5
+
 
 class TestCommandAckMessage:
 

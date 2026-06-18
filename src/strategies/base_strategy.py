@@ -542,10 +542,14 @@ class BaseStrategy:
         }
 
     def _store_and_emit_open(self, trade: dict[str, Any]):
+        account_balance = self.account_balance
+        if self.trade_manager is not None:
+            account_balance = self.trade_manager.account_balance
         opened_trades = self._trade_service.open_trade(
             trade=trade,
             is_warmup=self.is_warmup,
             account_configs=self._get_current_account_configs(),
+            account_balance=account_balance,
         )
         if not opened_trades:
             return

@@ -664,7 +664,14 @@ class TradeManager:
         self._broker_handler.update_balance(self.account_balance)
         self._broker_handler.handle_entry_fill(trade, entry_price, stop_loss, take_profit)
 
-    def handle_broker_fill(self, trade_id: str, exit_price: float, result_type: str = None):
+    def handle_broker_fill(
+        self,
+        trade_id: str,
+        exit_price: float,
+        result_type: str = None,
+        broker_pnl_usd: float | None = None,
+        broker_fees: float | None = None,
+    ):
         trade = next((t for t in self.open_trades if t['trade_id'] == trade_id), None)
         if not trade:
             print(f"[TradeManager] ⚠️ Broker fill for {trade_id} but trade not in memory")
@@ -687,6 +694,8 @@ class TradeManager:
                 log_message=f"{result_type or 'FILL'} @ {exit_price:.2f}",
                 analytics_event="BROKER_FILL",
                 skip_executor=True,
+                broker_pnl_usd=broker_pnl_usd,
+                broker_fees=broker_fees,
             )
         except Exception as e:
             self.logger.error(f"[TradeManager] DB error on broker fill for {trade_id}: {e}")

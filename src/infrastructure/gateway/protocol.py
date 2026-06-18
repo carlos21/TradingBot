@@ -353,6 +353,8 @@ class ExitFillMessage:
     result_type: Literal["SL", "TP", "SP", "CLOSE"]  # SL=Stop Loss, TP=Take Profit, SP=Session End, CLOSE=Manual
     exit_time: float | None = None  # Unix timestamp (float from C# ToUnixSeconds)
     account: str | None = None    # NT account that reported the fill
+    realized_pnl: float | None = None  # Broker-reported realized PnL in USD
+    commission: float | None = None    # Broker-reported commission in USD
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
@@ -364,6 +366,10 @@ class ExitFillMessage:
             payload["exit_time"] = self.exit_time
         if self.account is not None:
             payload["account"] = self.account
+        if self.realized_pnl is not None:
+            payload["realized_pnl"] = self.realized_pnl
+        if self.commission is not None:
+            payload["commission"] = self.commission
 
         return MessageEnvelope.create(
             msg_type=MessageType.EXIT_FILL,

@@ -195,7 +195,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             Send(MessageType.EntryFill, payload);
         }
 
-        public void SendExitFill(string tradeId, double exitPrice, string resultType, string account = null)
+        public void SendExitFill(string tradeId, double exitPrice, string resultType, string account = null, double? realizedPnl = null, double? commission = null)
         {
             var payload = new JObject
             {
@@ -205,6 +205,8 @@ namespace NinjaTrader.NinjaScript.AddOns
                 ["exit_time"] = ToUnixSeconds(DateTime.UtcNow)
             };
             if (account != null) payload["account"] = account;
+            if (realizedPnl.HasValue) payload["realized_pnl"] = realizedPnl.Value;
+            if (commission.HasValue) payload["commission"] = commission.Value;
             Send(MessageType.ExitFill, payload);
         }
 

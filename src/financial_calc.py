@@ -64,6 +64,26 @@ class FinancialCalc:
         return contracts * actual_r * sl_pts * point_value - fees
 
     @staticmethod
+    def r_multiple_from_pnl(
+        pnl_usd: float,
+        fees: float,
+        risk_points: float,
+        contracts: float,
+        point_value: float,
+    ) -> float:
+        """Recover the R-multiple result from a known net PnL.
+
+        Useful when the broker reports the realized net PnL and we still
+        want an R-based result for analytics.
+            gross = pnl_usd + fees
+            r     = gross / (contracts * risk_points * point_value)
+        """
+        denominator = contracts * risk_points * point_value
+        if denominator == 0:
+            return 0.0
+        return (pnl_usd + fees) / denominator
+
+    @staticmethod
     def risk_budget(
         account_balance: float,
         risk_per_trade: float | None,

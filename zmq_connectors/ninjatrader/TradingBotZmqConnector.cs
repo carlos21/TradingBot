@@ -1449,6 +1449,58 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
         }
 
+        /// <summary>
+        /// Calculates the broker-reported realized PnL and commission for a closed trade.
+        /// Uses the tracked entry order and the given exit order's actual average fill prices,
+        /// filled quantity, instrument point value, and order commission (when available).
+        /// Returns nulls if the entry order is not tracked or required prices are unavailable.
+        /// </summary>
+        private (double? realizedPnl, double? commission) CalculateExitPnl(Order exitOrder)
+        {
+            try
+            {
+                if (exitOrder == null)
+                    return (null, null);
+
+                var tradeId = ExtractTradeIdFromOrderName(exitOrder.Name) ?? exitOrder.Name;
+                if (string.IsNullOrEmpty(tradeId) || !_orderTracker.TryGetEntry(tradeId, out var entryOrder) || entryOrder == null)
+                    return (null, null);
+
+                int quantity = exitOrder.Filled > 0 ? exitOrder.Filled : exitOrder.Quantity;
+                if (quantity <= 0)
+                    return (null, null);
+
+                double entryPrice = entryOrder.AverageFillPrice;
+                double exitPrice = exitOrder.AverageFillPrice;
+                if (entryPrice == 0 || exitPrice == 0)
+                    return (null, null);
+
+                double pointValue = exitOrder.Instrument?.MasterInstrument?.PointValue ?? 2.0;
+                bool isLong = entryOrder.OrderAction == OrderAction.Buy;
+                double priceDiff = isLong ? (exitPrice - entryPrice) : (entryPrice - exitPrice);
+                double grossPnl = priceDiff * quantity * pointValue;
+
+                double commission = 0.0;
+                try
+                {
+                    commission = (entryOrder.Commission) + (exitOrder.Commission);
+                }
+                catch
+                {
+                    // Order.Commission may not be available in all NT versions; ignore.
+                    commission = 0.0;
+                }
+
+                double realizedPnl = grossPnl - commission;
+                return (realizedPnl, commission);
+            }
+            catch (Exception ex)
+            {
+                _logger?.Warning($"[CalculateExitPnl] Failed for {exitOrder?.Name}: {ex.Message}");
+                return (null, null);
+            }
+        }
+
         private void HandleStopLossFill(Order order, double fillPrice)
         {
             if (!_orderTracker.TryGetTradeIdForOrder(order, out var tradeId))
@@ -1471,9 +1523,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
 
             string accountName = order.Account?.Name;
-            _logger.Warning($"EXIT FILL (SL): {tradeId} @ {fillPrice} account={accountName}");
-            _network?.SendExitFill(tradeId, fillPrice, "SL", account: accountName);
-            _network?.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice}");
+            var (realizedPnl, commission) = CalculateExitPnl(order);
+            _logger.Warning($"EXIT FILL (SL): {tradeId} @ {fillPrice} account={accountName} pnl={realizedPnl?.ToString("F2") ?? "n/a"}");
+            _network?.SendExitFill(tradeId, fillPrice, "SL", account: accountName, realizedPnl: realizedPnl, commission: commission);
+            _network?.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice} PnL={realizedPnl?.ToString("F2") ?? "n/a"}");
             CancelWorkingBracketOrders(tradeId, order.Account);
             _orderTracker.RemoveTrade(tradeId);
         }
@@ -1500,9 +1553,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
 
             string accountName = order.Account?.Name;
-            _logger.Success($"EXIT FILL (TP): {tradeId} @ {fillPrice} account={accountName}");
-            _network?.SendExitFill(tradeId, fillPrice, "TP", account: accountName);
-            _network?.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice}");
+            var (realizedPnl, commission) = CalculateExitPnl(order);
+            _logger.Success($"EXIT FILL (TP): {tradeId} @ {fillPrice} account={accountName} pnl={realizedPnl?.ToString("F2") ?? "n/a"}");
+            _network?.SendExitFill(tradeId, fillPrice, "TP", account: accountName, realizedPnl: realizedPnl, commission: commission);
+            _network?.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice} PnL={realizedPnl?.ToString("F2") ?? "n/a"}");
             CancelWorkingBracketOrders(tradeId, order.Account);
             _orderTracker.RemoveTrade(tradeId);
         }
@@ -1529,9 +1583,10 @@ namespace NinjaTrader.NinjaScript.AddOns
             }
 
             string accountName = order.Account?.Name;
-            _logger.Success($"POSITION CLOSED: {tradeId} @ {fillPrice} account={accountName}");
-            _network?.SendExitFill(tradeId, fillPrice, "CLOSE", account: accountName);
-            _network?.SendTradeLog(tradeId, "NT:FILL", $"Position closed @ {fillPrice}");
+            var (realizedPnl, commission) = CalculateExitPnl(order);
+            _logger.Success($"POSITION CLOSED: {tradeId} @ {fillPrice} account={accountName} pnl={realizedPnl?.ToString("F2") ?? "n/a"}");
+            _network?.SendExitFill(tradeId, fillPrice, "CLOSE", account: accountName, realizedPnl: realizedPnl, commission: commission);
+            _network?.SendTradeLog(tradeId, "NT:FILL", $"Position closed @ {fillPrice} PnL={realizedPnl?.ToString("F2") ?? "n/a"}");
             CancelWorkingBracketOrders(tradeId, order.Account);
             _orderTracker.RemoveTrade(tradeId);
         }
@@ -1558,9 +1613,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (isOpposing)
                 {
                     string accountName = closeOrder.Account?.Name;
-                    _logger.Success($"MANUAL CLOSE DETECTED: {tradeId} @ {fillPrice} via {closeOrder.Name} account={accountName}");
-                    _network?.SendExitFill(tradeId, fillPrice, "CLOSE", account: accountName);
-                    _network?.SendTradeLog(tradeId, "NT:FILL", $"Manual position closed @ {fillPrice}");
+                    var (realizedPnl, commission) = CalculateExitPnl(closeOrder);
+                    _logger.Success($"MANUAL CLOSE DETECTED: {tradeId} @ {fillPrice} via {closeOrder.Name} account={accountName} pnl={realizedPnl?.ToString("F2") ?? "n/a"}");
+                    _network?.SendExitFill(tradeId, fillPrice, "CLOSE", account: accountName, realizedPnl: realizedPnl, commission: commission);
+                    _network?.SendTradeLog(tradeId, "NT:FILL", $"Manual position closed @ {fillPrice} PnL={realizedPnl?.ToString("F2") ?? "n/a"}");
                     CancelWorkingBracketOrders(tradeId, closeOrder.Account);
                     _orderTracker.RemoveTrade(tradeId);
                     return;

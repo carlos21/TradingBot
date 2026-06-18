@@ -113,6 +113,7 @@ class StrategyTradeService:
         trade: dict[str, Any],
         is_warmup: bool,
         account_configs: list,
+        account_balance: float,
     ) -> list[dict[str, Any]]:
         """Open independent trade(s) and return the opened trade dict(s).
 
@@ -131,6 +132,7 @@ class StrategyTradeService:
 
         opened: list[dict[str, Any]] = []
         use_case = self._get_open_use_case()
+        use_case.update_account_balance(account_balance)
         base_rr = trade.get("rr_ratio", 5.0)
         group_signal_id = str(uuid.uuid4()) if len(account_configs or []) > 1 else None
 

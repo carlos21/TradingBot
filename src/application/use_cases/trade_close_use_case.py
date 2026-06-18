@@ -89,6 +89,8 @@ class TradeCloseUseCase:
         raise_on_db_error: bool = True,
         extreme_excursion: float | None = None,
         skip_executor: bool = False,
+        broker_pnl_usd: float | None = None,
+        broker_fees: float | None = None,
     ) -> CloseResult | None:
         """Execute the full close flow for a single trade.
 
@@ -108,20 +110,33 @@ class TradeCloseUseCase:
         entry = trade.get('entry', trade.get('entry_price'))
         contracts = trade.get('contracts') or 1
 
-        result, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
-            direction=Direction.from_string(trade['type']),
-            entry_price=entry,
-            exit_price=exit_price,
-            stop_loss=sl,
-            take_profit=tp,
-            risk_points=risk,
-            contracts=contracts,
-            point_value=self._point_value,
-            fee_per_rt=self._fee_per_rt,
-        )
+        # Use broker-reported PnL/fees when available (source of truth from fills).
+        if broker_pnl_usd is not None:
+            pnl_usd = broker_pnl_usd
+            fees = broker_fees if broker_fees is not None else 0.0
+            # Recompute R-multiple from the broker PnL so analytics stay consistent.
+            result = FinancialCalc.r_multiple_from_pnl(
+                pnl_usd=pnl_usd,
+                fees=fees,
+                risk_points=risk,
+                contracts=contracts,
+                point_value=self._point_value,
+            )
+        else:
+            result, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
+                direction=Direction.from_string(trade['type']),
+                entry_price=entry,
+                exit_price=exit_price,
+                stop_loss=sl,
+                take_profit=tp,
+                risk_points=risk,
+                contracts=contracts,
+                point_value=self._point_value,
+                fee_per_rt=self._fee_per_rt,
+            )
 
-        # Spread adjustment
-        if self._broker_spread > 0:
+        # Spread adjustment (only when Python is calculating; broker value already includes it)
+        if self._broker_spread > 0 and broker_pnl_usd is None:
             spread_cost = contracts * self._broker_spread * self._point_value
             pnl_usd -= spread_cost
             fees += spread_cost

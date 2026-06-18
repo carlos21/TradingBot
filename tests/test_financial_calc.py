@@ -722,3 +722,30 @@ class TestEdgeCases:
         """Should handle extreme contract counts."""
         fees = FinancialCalc.fees(contracts=1000)
         assert fees == 1500.00  # 1000 * 1.50
+
+
+class TestRMultipleFromPnl:
+    """Tests for recovering R-multiple from broker-reported PnL."""
+
+    def test_r_multiple_from_pnl_win(self):
+        """Recover R from a known net win."""
+        # 1R win on 1 contract, 10pt risk, $2/pt: gross = 20, fees = 1.5, net = 18.5
+        result_r = FinancialCalc.r_multiple_from_pnl(
+            pnl_usd=18.5, fees=1.5, risk_points=10.0, contracts=1, point_value=2.0
+        )
+        assert abs(result_r - 1.0) < 0.001
+
+    def test_r_multiple_from_pnl_loss(self):
+        """Recover R from a known net loss."""
+        # -1R loss: gross = -20, fees = 1.5, net = -21.5
+        result_r = FinancialCalc.r_multiple_from_pnl(
+            pnl_usd=-21.5, fees=1.5, risk_points=10.0, contracts=1, point_value=2.0
+        )
+        assert abs(result_r - (-1.0)) < 0.001
+
+    def test_r_multiple_from_pnl_zero_denominator(self):
+        """Should return 0.0 when denominator is zero."""
+        result_r = FinancialCalc.r_multiple_from_pnl(
+            pnl_usd=100.0, fees=0.0, risk_points=0.0, contracts=1, point_value=2.0
+        )
+        assert result_r == 0.0

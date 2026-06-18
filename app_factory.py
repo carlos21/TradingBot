@@ -522,9 +522,20 @@ def create_app(
             trade_id = payload.get('trade_id')
             exit_price = payload.get('exit_price')
             result_type = payload.get('result_type', 'CLOSE')
+            broker_pnl_usd = payload.get('realized_pnl')
+            broker_fees = payload.get('commission')
             if trade_id and exit_price is not None:
-                trade_manager.handle_broker_fill(trade_id, exit_price, result_type)
-                logger.info(f"[BrokerFill] Exit fill for {trade_id} @ {exit_price} ({result_type})")
+                trade_manager.handle_broker_fill(
+                    trade_id,
+                    exit_price,
+                    result_type,
+                    broker_pnl_usd=broker_pnl_usd,
+                    broker_fees=broker_fees,
+                )
+                logger.info(
+                    f"[BrokerFill] Exit fill for {trade_id} @ {exit_price} ({result_type}) "
+                    f"broker_pnl={broker_pnl_usd}"
+                )
 
         data_source.gateway.on_entry_fill(_handle_entry_fill)
         data_source.gateway.on_exit_fill(_handle_exit_fill)
