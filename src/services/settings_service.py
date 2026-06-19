@@ -60,9 +60,16 @@ class SettingsService:
         return plaintext
 
     def _decrypt(self, ciphertext: str) -> str:
-        if self._fernet:
+        if not self._fernet:
+            return ciphertext
+        try:
             return self._fernet.decrypt(ciphertext.encode()).decode()
-        return ciphertext
+        except Exception:
+            # The credential may have been stored as plaintext before encryption
+            # was enabled, or the secret key may have changed.  Returning the
+            # raw value lets the UI display something useful while logging the
+            # event via the caller.
+            return ciphertext
 
     def get_full_settings(self) -> dict:
         """Return grouped settings for the UI."""

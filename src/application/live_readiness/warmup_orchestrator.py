@@ -120,9 +120,10 @@ class WarmupOrchestrator:
         stale_count = 0
         for sid in list(strategy.warmup_crossed_lines):
             line = strategy.strategy_lines.get(sid)
-            if line is None:
-                continue
-            if line.get('interaction_ts') is None:
+            if line is None or line.get('interaction_ts') is None:
+                # The line is already gone or was never really interacted with;
+                # drop the tracking id so the set does not leak stale entries.
+                strategy.warmup_crossed_lines.discard(sid)
                 continue
             if strategy.options.line_removal_mode != LineRemovalMode.NEVER:
                 strategy.remove_strategy_line(sid)

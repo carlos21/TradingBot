@@ -136,6 +136,32 @@ class TestGatewayLifecycle:
         assert not gw._platform_connected
         assert gw._platform_info is None
 
+    def test_stop_returns_promptly_and_threads_exit(self):
+        import random
+        base_port = random.randint(30000, 40000)
+        config = GatewayConfig(
+            market_data_pub=f"tcp://127.0.0.1:{base_port}",
+            command_pull=f"tcp://127.0.0.1:{base_port + 1}",
+            query_rep=f"tcp://127.0.0.1:{base_port + 2}",
+            heartbeat_pub=f"tcp://127.0.0.1:{base_port + 3}",
+        )
+        logger = FakeLogger()
+        gw = TradingGateway(logger, config=config)
+        gw.start()
+        time.sleep(0.15)
+
+        threads = list(gw._threads)
+        start = time.time()
+        gw.stop()
+        elapsed = time.time() - start
+
+        # stop() should return quickly; sockets are closed first to unblock loops.
+        assert elapsed < 1.0, f"stop() took {elapsed:.2f}s"
+        assert not gw._running
+        assert gw._context is None
+        assert len(gw._threads) == 0
+        assert all(not t.is_alive() for t in threads)
+
     def test_setup_python_connects(self):
         import random
         base_port = random.randint(30000, 40000)
@@ -337,9 +363,9 @@ class TestMessageHandling:
             payload="bad",
             seq_num=1,
         )
-        # Should not raise
+        # Should not raise; non-dict payload is rejected at envelope parse time.
         gw._handle_message(envelope.to_json())
-        assert any("Error handling command ack" in m for m in logger.messages)
+        assert any("Invalid message envelope" in m for m in logger.messages)
 
     def test_handle_message_logs_important_messages(self):
         logger = FakeLogger()
@@ -935,6 +961,14 @@ class TestCommandSenderLoop:
         gw._command_queue.clear()
         self._run_loop_briefly(gw)
 
+    def _stop_after_empty_wait(self, gw):
+        """Return a side effect that stops the loop on its first empty-queue wait."""
+        original_wait = gw._command_ready.wait
+        def _wait_and_stop(timeout=None):
+            gw._running = False
+            return original_wait(timeout)
+        return _wait_and_stop
+
     def test_sender_loop_socket_none_drops_command(self):
         logger = FakeLogger()
         gw = TradingGateway(logger)
@@ -947,11 +981,8 @@ class TestCommandSenderLoop:
         )
         gw._command_queue.append(envelope)
         gw._pending_commands[1] = {"type": "order_open", "sent_time": time.time()}
-        # Run until queue is empty
-        def _sleep_and_stop(_duration):
-            gw._running = False
-
-        with patch('time.sleep', side_effect=_sleep_and_stop):
+        # Run until queue is empty, then stop on the first wait.
+        with patch.object(gw._command_ready, 'wait', side_effect=self._stop_after_empty_wait(gw)):
             gw._command_sender_loop()
         assert 1 not in gw._pending_commands
         assert any("socket not available" in m.lower() for m in logger.messages)
@@ -972,10 +1003,7 @@ class TestCommandSenderLoop:
         gw._pending_commands[1] = {"type": "order_open", "sent_time": time.time()}
         gw._command_retries[1] = 2  # One more retry allowed
 
-        def _sleep_and_stop(_duration):
-            gw._running = False
-
-        with patch('time.sleep', side_effect=_sleep_and_stop):
+        with patch.object(gw._command_ready, 'wait', side_effect=self._stop_after_empty_wait(gw)):
             gw._command_sender_loop()
         assert any("retry" in m.lower() for m in logger.messages)
 
@@ -992,17 +1020,47 @@ class TestCommandSenderLoop:
             seq_num=1,
         )
         gw._command_queue.append(envelope)
-        gw._pending_commands[1] = {"type": "order_open", "sent_time": time.time()}
+        gw._pending_commands[1] = {
+            "type": "order_open",
+            "sent_time": time.time(),
+            "payload": {"trade_id": "T1"},
+        }
         gw._command_retries[1] = 3  # Already at max
 
-        def _sleep_and_stop(_duration):
-            gw._running = False
+        failures = []
+        gw.on_command_failed(lambda *args: failures.append(args))
 
-        with patch('time.sleep', side_effect=_sleep_and_stop):
+        with patch.object(gw._command_ready, 'wait', side_effect=self._stop_after_empty_wait(gw)):
             gw._command_sender_loop()
         assert 1 not in gw._command_retries
         assert 1 not in gw._pending_commands
         assert any("permanently" in m.lower() for m in logger.messages)
+        assert failures == [("order_open", "T1", 1, "send_failed:send failed")]
+
+    def test_sender_loop_socket_none_notifies_failure_listener(self):
+        logger = FakeLogger()
+        gw = TradingGateway(logger)
+        gw._running = True
+        gw._command_push = None
+        envelope = MessageEnvelope.create(
+            msg_type=MessageType.ORDER_CLOSE,
+            payload={"trade_id": "T1"},
+            seq_num=1,
+        )
+        gw._command_queue.append(envelope)
+        gw._pending_commands[1] = {
+            "type": "order_close",
+            "sent_time": time.time(),
+            "payload": {"trade_id": "T1"},
+        }
+
+        failures = []
+        gw.on_command_failed(lambda *args: failures.append(args))
+
+        with patch.object(gw._command_ready, 'wait', side_effect=self._stop_after_empty_wait(gw)):
+            gw._command_sender_loop()
+        assert 1 not in gw._pending_commands
+        assert failures == [("order_close", "T1", 1, "no_socket")]
 
     def test_sender_loop_general_exception(self):
         logger = FakeLogger()

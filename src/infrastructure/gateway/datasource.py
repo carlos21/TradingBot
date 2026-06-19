@@ -126,10 +126,6 @@ class ZMQDataSource(CombinedDataSource):
         # overwrite platform-native partial bars (which are the source of truth).
         self._last_native_partial_time: float = 0.0
 
-        # Bar sequence tracking for immediate gap detection
-        self._last_bar_seq: int = 0
-        self._seq_gap_count: int = 0
-
         # Stats
         self._stats = {
             "ticks_received": 0,
@@ -429,21 +425,6 @@ class ZMQDataSource(CombinedDataSource):
         """Handle completed bar from platform."""
         self._stats["bars_received"] += 1
 
-        # Immediate sequence gap detection
-        seq = payload.get("seq_num")
-        if seq and self._last_bar_seq > 0:
-            expected = self._last_bar_seq + 1
-            if seq != expected:
-                gap = seq - expected
-                self._seq_gap_count += 1
-                self.logger.error(
-                    f"[GAP] Bar sequence gap: expected {expected}, got {seq} "
-                    f"({gap} bar(s) missing from NinjaTrader) "
-                    f"total_gaps={self._seq_gap_count}"
-                )
-        if seq:
-            self._last_bar_seq = seq
-
         # DEBUG: Log every bar for the first 100 streaming bars, then every 50th
         is_streaming = self._state == DataSourceState.STREAMING
         if is_streaming and (
@@ -709,7 +690,6 @@ class ZMQDataSource(CombinedDataSource):
         previous_state = self._state
         self._state = DataSourceState.REFRESHING
         self._current_bar = None
-        self._last_bar_seq = 0
         if previous_state != DataSourceState.CONNECTED:
             with self._bars_lock:
                 self._refresh_buffer.clear()

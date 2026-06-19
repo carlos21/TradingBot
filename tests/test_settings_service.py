@@ -66,6 +66,14 @@ class TestSettingsServiceGetFullSettings:
         settings = svc.get_full_settings()
         assert settings["credentials"]["password"] == "secret123"
 
+    def test_plaintext_credential_fallback_when_encryption_enabled(self):
+        """Credentials saved before encryption was enabled must still be readable."""
+        svc = _make_service(secret_key="my-secret-key-1234567890")
+        svc._creds.save_credential("ninjatrader", "user1", "plainpassword")
+        settings = svc.get_full_settings()
+        assert settings["credentials"]["username"] == "user1"
+        assert settings["credentials"]["password"] == "plainpassword"
+
     def test_with_custom_settings(self):
         svc = _make_service()
         svc._settings.set("pair", "ES")

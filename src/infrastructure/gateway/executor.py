@@ -7,7 +7,6 @@ ZeroMQ gateway to send trade commands to the platform.
 
 from __future__ import annotations
 
-import threading
 import time
 from typing import TYPE_CHECKING
 
@@ -88,6 +87,12 @@ class ZMQTradeExecutor(TradeExecutor):
                 f"Command {command_type} failed for {trade_id} (seq={seq_num}, reason={reason})"
             )
 
+    def _require_positive(self, value: float, name: str) -> float:
+        """Validate that a numeric trade parameter is a positive finite number."""
+        if value is None or not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError(f"{name} must be a positive number, got {value!r}")
+        return float(value)
+
     def on_trade_open(self, trade: dict) -> None:
         """
         Called when a new trade is opened.
@@ -105,22 +110,41 @@ class ZMQTradeExecutor(TradeExecutor):
                 - rr_ratio: float (optional)
         """
         try:
-            # Calculate risk points
-            entry = trade.get("entry", trade.get("entry_price", 0))
-            sl = trade.get("stop_loss", trade.get("sl", 0))
-            tp = trade.get("take_profit", trade.get("tp", 0))
-            risk_points = trade.get("risk", abs(entry - sl))
+            trade_id = trade.get("trade_id")
+            if not trade_id:
+                raise ValueError("trade_id is required")
 
-            # Get RR ratio (default 5.0 for your system)
+            direction = trade.get("type")
+            if direction not in ("long", "short"):
+                raise ValueError(f"Invalid trade direction: {direction!r}. Expected 'long' or 'short'.")
+
+            entry = self._require_positive(
+                trade.get("entry", trade.get("entry_price")),
+                "entry_price",
+            )
+            sl = self._require_positive(
+                trade.get("stop_loss", trade.get("sl")),
+                "stop_loss",
+            )
+            tp = self._require_positive(
+                trade.get("take_profit", trade.get("tp")),
+                "take_profit",
+            )
+
+            # Calculate risk points from explicit risk or entry-to-stop distance.
+            risk_points = trade.get("risk", abs(entry - sl))
+            risk_points = self._require_positive(risk_points, "risk_points")
+
             rr_ratio = trade.get("rr_ratio", 5.0)
+            rr_ratio = self._require_positive(rr_ratio, "rr_ratio")
 
             # Use per-account risk values if present in trade dict, otherwise fall back to global defaults
             risk_usd = trade.get("risk_dollars") if trade.get("risk_dollars") is not None else self._risk_usd
             risk_pct = trade.get("risk_pct") if trade.get("risk_pct") is not None else self._risk_pct
 
             self._gateway.send_open_order(
-                trade_id=trade["trade_id"],
-                direction=trade["type"],
+                trade_id=trade_id,
+                direction=direction,
                 entry_price=entry,
                 stop_loss=sl,
                 take_profit=tp,
@@ -132,13 +156,13 @@ class ZMQTradeExecutor(TradeExecutor):
                 account=trade.get("account"),
                 instrument=trade.get("instrument"),
             )
-            self.logger.info(f"Sent open order for trade {trade['trade_id']}")
+            self.logger.info(f"Sent open order for trade {trade_id}")
 
         except Exception as e:
             self.logger.error(f"Error sending open order: {e}")
             raise
 
-    def on_trade_close(self, trade_id: str, _exit_price: float) -> None:
+    def on_trade_close(self, trade_id: str, _exit_price: float, account: str | None = None) -> None:
         """
         Called when a trade should be closed.
         Sends close order command to the platform.
@@ -146,16 +170,17 @@ class ZMQTradeExecutor(TradeExecutor):
         Args:
             trade_id: The trade ID to close
             exit_price: The exit price (for logging, platform determines actual fill)
+            account: Optional target account name for multi-account routing.
         """
         try:
-            self._gateway.send_close_order(trade_id=trade_id, reason="strategy")
+            self._gateway.send_close_order(trade_id=trade_id, reason="strategy", account=account)
             self.logger.info(f"Sent close order for trade {trade_id}")
 
         except Exception as e:
             self.logger.error(f"Error sending close order: {e}")
             raise
 
-    def on_sl_update(self, trade_id: str, new_sl: float) -> None:
+    def on_sl_update(self, trade_id: str, new_sl: float, account: str | None = None) -> None:
         """
         Called when stop loss should be updated.
         Sends modify order command to the platform.
@@ -163,9 +188,10 @@ class ZMQTradeExecutor(TradeExecutor):
         Args:
             trade_id: The trade ID to modify
             new_sl: The new stop loss price
+            account: Optional target account name for multi-account routing.
         """
         try:
-            self._gateway.send_modify_order(trade_id=trade_id, stop_loss=new_sl)
+            self._gateway.send_modify_order(trade_id=trade_id, stop_loss=new_sl, account=account)
             self.logger.info(f"Sent SL update for trade {trade_id}: new_sl={new_sl}")
 
         except Exception as e:
@@ -228,25 +254,21 @@ class MultiAccountExecutor(TradeExecutor):
         self._last_close_time[trade_id] = now
 
         account = self._account_for_trade(trade_id)
-        self.gateway_executor._gateway.send_close_order(
-            trade_id=trade_id, reason="strategy", account=account
-        )
+        self.gateway_executor.on_trade_close(trade_id, exit_price, account=account)
         self.logger.info(f"MultiAccount: sent close order for {trade_id} account={account}")
 
     def on_sl_update(self, trade_id: str, new_sl: float) -> None:
         account = self._account_for_trade(trade_id)
-        self.gateway_executor._gateway.send_modify_order(
-            trade_id=trade_id, stop_loss=new_sl, account=account
-        )
+        self.gateway_executor.on_sl_update(trade_id, new_sl, account=account)
         self.logger.info(f"MultiAccount: updated SL for {trade_id} account={account}")
 
 
 def create_zmq_executor(
     gateway: TradingGateway,
     *,
+    logger: ILogger,
     risk_usd: float | None = None,
     risk_pct: float | None = None,
-    logger: ILogger | None = None,
 ) -> ZMQTradeExecutor:
     """
     Convenience factory function to create a ZMQTradeExecutor.
@@ -257,7 +279,7 @@ def create_zmq_executor(
         gateway = TradingGateway()
         gateway.start()
 
-        executor = create_zmq_executor(gateway, risk_usd=500)
+        executor = create_zmq_executor(gateway, logger=logger, risk_usd=500)
 
         trade_manager = TradeManager(
             ...,
@@ -266,6 +288,7 @@ def create_zmq_executor(
 
     Args:
         gateway: The TradingGateway instance
+        logger: Logger instance (required)
         risk_usd: Fixed dollar risk per trade
         risk_pct: Percentage of account to risk per trade
 
@@ -274,7 +297,7 @@ def create_zmq_executor(
     """
     return ZMQTradeExecutor(
         gateway=gateway,
+        logger=logger,
         risk_usd=risk_usd,
         risk_pct=risk_pct,
-        logger=logger,
     )

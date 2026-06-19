@@ -109,11 +109,14 @@ class MessageEnvelope:
     def from_json(cls, json_str: str) -> MessageEnvelope:
         """Deserialize from JSON string."""
         data = json.loads(json_str)
+        payload = data["payload"]
+        if not isinstance(payload, dict):
+            raise ValueError(f"payload must be a dict, got {type(payload).__name__}")
         return cls(
             msg_type=MessageType(data["msg_type"]),
             timestamp=data["timestamp"],
             seq_num=data["seq_num"],
-            payload=data["payload"],
+            payload=payload,
         )
 
     @classmethod

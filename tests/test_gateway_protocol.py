@@ -74,6 +74,25 @@ class TestMessageEnvelope:
         with pytest.raises(ValueError):
             MessageEnvelope.from_json(s)
 
+    def test_from_json_missing_key(self):
+        s = json.dumps({
+            "msg_type": "tick",
+            "timestamp": 1700000000.0,
+            "payload": {},
+        })
+        with pytest.raises(KeyError):
+            MessageEnvelope.from_json(s)
+
+    def test_from_json_payload_must_be_dict(self):
+        s = json.dumps({
+            "msg_type": "tick",
+            "timestamp": 1700000000.0,
+            "seq_num": 1,
+            "payload": "bad",
+        })
+        with pytest.raises(ValueError, match="payload must be a dict"):
+            MessageEnvelope.from_json(s)
+
     def test_create(self):
         env = MessageEnvelope.create(
             msg_type=MessageType.TICK,

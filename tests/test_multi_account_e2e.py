@@ -10,7 +10,6 @@ Run with: python -m pytest tests/test_multi_account_e2e.py -v
 from __future__ import annotations
 
 import dataclasses
-import time
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
@@ -617,26 +616,23 @@ class TestZMQTradeExecutorAccountRouting:
         gateway.send_open_order.assert_called_once()
         assert gateway.send_open_order.call_args[1]["account"] == "Sim101"
 
-    def test_close_order_does_not_include_account(self):
-        """ZMQTradeExecutor.on_trade_close does not pass account.
-
-        MultiAccountExecutor bypasses it and calls gateway directly.
-        """
+    def test_close_order_passes_account(self):
+        """ZMQTradeExecutor.on_trade_close forwards the optional account."""
         gateway = MagicMock()
         executor = ZMQTradeExecutor(gateway, FakeLogger())
 
-        executor.on_trade_close("T1", 110.0)
+        executor.on_trade_close("T1", 110.0, account="Sim101")
         gateway.send_close_order.assert_called_once_with(
-            trade_id="T1", reason="strategy"
+            trade_id="T1", reason="strategy", account="Sim101"
         )
 
-    def test_modify_order_does_not_include_account(self):
+    def test_modify_order_passes_account(self):
         gateway = MagicMock()
         executor = ZMQTradeExecutor(gateway, FakeLogger())
 
-        executor.on_sl_update("T1", 95.0)
+        executor.on_sl_update("T1", 95.0, account="Sim101")
         gateway.send_modify_order.assert_called_once_with(
-            trade_id="T1", stop_loss=95.0
+            trade_id="T1", stop_loss=95.0, account="Sim101"
         )
 
 

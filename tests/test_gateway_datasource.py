@@ -1029,6 +1029,24 @@ class TestGapDetection:
         assert data_source._scan_for_gaps([], "TEST") == 0
         assert data_source._scan_for_gaps([make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)], "TEST") == 0
 
+    def test_on_bar_ignores_envelope_seq_num_for_gap_detection(self, data_source):
+        """Envelope seq_num is shared across all messages and must not be used for bar gaps."""
+        logger = RecordingLogger()
+        data_source.logger = logger
+        data_source._state = DataSourceState.STREAMING
+        data_source._market_is_open = True
+        data_source._on_bar({
+            "time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5,
+            "volume": 100, "pair": "MNQ", "seq_num": 5,
+        })
+        data_source._on_bar({
+            "time": 160, "open": 11.0, "high": 12.0, "low": 10.0, "close": 11.5,
+            "volume": 100, "pair": "MNQ", "seq_num": 99,  # big jump, but time is continuous
+        })
+        # No sequence-gap warning should be logged; time-based gap is below threshold.
+        assert not any("sequence gap" in m.lower() for m in logger.messages)
+        assert data_source._gap_count == 0
+
 
 # ---------------------------------------------------------------------------
 # Subscribe / Pause (threading behaviour)

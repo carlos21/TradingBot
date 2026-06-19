@@ -122,6 +122,7 @@ class EnvConfigLoader:
                 parsed = parser(raw)
                 if parsed is not None:
                     setattr(cfg, attr, parsed)
+        cfg.validate()
         return cfg
 
 
@@ -138,66 +139,76 @@ class CliConfigLoader:
         p = argparse.ArgumentParser(
             description="Liquid — Live & Backtest Mode",
         )
-        p.add_argument("--mode", choices=["live", "backtest"], help="Run mode")
-        p.add_argument("--strategy-name", dest="strategy_name", choices=["liquidity_v2", "tsi_cross"], help="Strategy to run")
-        p.add_argument("--pair", help="Trading pair (e.g. MNQ)")
-        p.add_argument("--csv-file", dest="csv_file", help="CSV file for backtest")
-        p.add_argument("--bars-per-second", dest="bars_per_second", type=float, help="Replay speed")
-        p.add_argument("--input-tz", dest="input_tz", help="Timezone for input dates")
-        p.add_argument("--file-tz", dest="file_tz", help="Timezone for CSV timestamps")
-        p.add_argument("--start", dest="start_str", help="Backtest start (YYYY-MM-DD HH:MM:SS)")
-        p.add_argument("--end", dest="end_str", help="Backtest end (YYYY-MM-DD HH:MM:SS)")
-        p.add_argument("--rr", dest="rr_ratio", type=float, help="Risk:Reward ratio")
-        p.add_argument("--risk", dest="risk_per_trade", type=float, help="Fixed $ risk per trade")
-        p.add_argument("--risk-pct", dest="risk_pct_per_trade", type=float, help="Risk %% of account")
-        p.add_argument("--account-balance", dest="account_balance", type=float, help="Account balance")
-        p.add_argument("--point-value", dest="point_value", type=float, help="$ per point")
-        p.add_argument("--min-stop-loss", dest="min_stop_loss", type=float, help="Min SL points")
-        p.add_argument("--max-bounce", dest="max_bounce", type=float, help="Max bounce points")
-        p.add_argument("--extra-sl-space", dest="extra_sl_space", type=float, help="Extra SL space")
-        p.add_argument("--sl-level-tolerance", dest="sl_level_tolerance", type=float, help="SL level tolerance")
-        p.add_argument("--min-cross-depth", dest="min_cross_depth", type=float, help="Min cross depth")
-        p.add_argument("--timeframes", help="Comma-separated timeframes")
-        p.add_argument("--line-removal-mode", dest="line_removal_mode", choices=["ON_EVALUATE", "NEVER"], help="Line removal mode")
-        p.add_argument("--session-start", dest="session_start", help="Session start HH:MM")
-        p.add_argument("--session-end", dest="session_end", help="Session end HH:MM")
-        p.add_argument("--daily-trades-limit", dest="daily_trades_limit", type=int, help="Max trades per day")
-        p.add_argument("--max-open-trades", dest="max_open_trades", type=int, help="Max open trades")
-        p.add_argument("--reentry-after-sl", dest="reentry_after_sl", type=lambda _x: _x.lower() in ("true", "1", "yes"), help="Re-entry after SL")
-        p.add_argument("--reentry-threshold", dest="reentry_threshold", type=float, help="Re-entry threshold")
-        p.add_argument("--reentry-only", dest="reentry_only", action="store_true", help="Only re-entry trades")
-        p.add_argument("--skip-rollover-days", dest="skip_rollover_days", action="store_true", help="Skip rollover days")
-        p.add_argument("--no-breakeven", dest="no_breakeven", action="store_true", help="Disable breakeven")
-        p.add_argument("--no-reentry-breakeven", dest="no_reentry_breakeven", action="store_true", help="Disable reentry BE")
+
+        # Wrapper that prevents argparse from polluting the namespace with default
+        # values.  Only arguments actually supplied on the command line are
+        # emitted, so CompositeConfigLoader can distinguish "not provided" from
+        # "provided but equal to the default".
+        def _add(*args, **kwargs):
+            kwargs.setdefault("default", argparse.SUPPRESS)
+            return p.add_argument(*args, **kwargs)
+
+        _add("--mode", choices=["live", "backtest"], help="Run mode")
+        _add("--strategy-name", dest="strategy_name", choices=["liquidity_v2", "tsi_cross"], help="Strategy to run")
+        _add("--pair", help="Trading pair (e.g. MNQ)")
+        _add("--csv-file", dest="csv_file", help="CSV file for backtest")
+        _add("--bars-per-second", dest="bars_per_second", type=float, help="Replay speed")
+        _add("--input-tz", dest="input_tz", help="Timezone for input dates")
+        _add("--file-tz", dest="file_tz", help="Timezone for CSV timestamps")
+        _add("--start", dest="start_str", help="Backtest start (YYYY-MM-DD HH:MM:SS)")
+        _add("--end", dest="end_str", help="Backtest end (YYYY-MM-DD HH:MM:SS)")
+        _add("--rr", dest="rr_ratio", type=float, help="Risk:Reward ratio")
+        _add("--risk", dest="risk_per_trade", type=float, help="Fixed $ risk per trade")
+        _add("--risk-pct", dest="risk_pct_per_trade", type=float, help="Risk %% of account")
+        _add("--account-balance", dest="account_balance", type=float, help="Account balance")
+        _add("--point-value", dest="point_value", type=float, help="$ per point")
+        _add("--min-stop-loss", dest="min_stop_loss", type=float, help="Min SL points")
+        _add("--max-bounce", dest="max_bounce", type=float, help="Max bounce points")
+        _add("--extra-sl-space", dest="extra_sl_space", type=float, help="Extra SL space")
+        _add("--sl-level-tolerance", dest="sl_level_tolerance", type=float, help="SL level tolerance")
+        _add("--min-cross-depth", dest="min_cross_depth", type=float, help="Min cross depth")
+        _add("--timeframes", help="Comma-separated timeframes")
+        _add("--line-removal-mode", dest="line_removal_mode", choices=["ON_EVALUATE", "NEVER"], help="Line removal mode")
+        _add("--session-start", dest="session_start", help="Session start HH:MM")
+        _add("--session-end", dest="session_end", help="Session end HH:MM")
+        _add("--daily-trades-limit", dest="daily_trades_limit", type=int, help="Max trades per day")
+        _add("--max-open-trades", dest="max_open_trades", type=int, help="Max open trades")
+        _add("--reentry-after-sl", dest="reentry_after_sl", type=lambda _x: _x.lower() in ("true", "1", "yes"), help="Re-entry after SL")
+        _add("--reentry-threshold", dest="reentry_threshold", type=float, help="Re-entry threshold")
+        _add("--reentry-only", dest="reentry_only", action="store_true", help="Only re-entry trades")
+        _add("--skip-rollover-days", dest="skip_rollover_days", action="store_true", help="Skip rollover days")
+        _add("--no-breakeven", dest="no_breakeven", action="store_true", help="Disable breakeven")
+        _add("--no-reentry-breakeven", dest="no_reentry_breakeven", action="store_true", help="Disable reentry BE")
         # NT accounts are managed via the Settings page / DB only
-        p.add_argument("--zmq-host", dest="zmq_host", help="ZMQ host")
-        p.add_argument("--zmq-market-port", dest="zmq_market_port", type=int, help="ZMQ market port")
-        p.add_argument("--zmq-command-port", dest="zmq_command_port", type=int, help="ZMQ command port")
-        p.add_argument("--zmq-query-port", dest="zmq_query_port", type=int, help="ZMQ query port")
-        p.add_argument("--zmq-heartbeat-port", dest="zmq_heartbeat_port", type=int, help="ZMQ heartbeat port")
-        p.add_argument("--db-path", dest="db_path", help="SQLite database path (e.g. sqlite:///./ninja.db)")
-        p.add_argument("--log-dir", dest="log_dir", help="Log directory (e.g. logs/ninja)")
-        p.add_argument("--flask-port", dest="flask_port", type=int, help="Flask server port")
-        p.add_argument("--instance-name", dest="instance_name", help="Instance identifier for logs")
-        p.add_argument("--platform-type", dest="platform_type", choices=["ninjatrader", "metatrader"], help="Trading platform this instance connects to")
-        p.add_argument("--broker-mode", dest="broker_mode", choices=["futures", "cfd"], help="Broker mode")
-        p.add_argument("--broker-spread", dest="broker_spread", type=float, help="Broker spread")
-        p.add_argument("--no-bootstrap-lines", dest="bootstrap_existing_lines", action="store_false", help="Skip bootstrapping lines")
-        p.add_argument("--sentry-dsn", dest="sentry_dsn", help="Sentry DSN")
-        p.add_argument("--telegram-token", dest="telegram_token", help="Telegram bot token")
-        p.add_argument("--telegram-chat-id", dest="telegram_chat_id", help="Telegram chat ID")
+        _add("--zmq-host", dest="zmq_host", help="ZMQ host")
+        _add("--zmq-market-port", dest="zmq_market_port", type=int, help="ZMQ market port")
+        _add("--zmq-command-port", dest="zmq_command_port", type=int, help="ZMQ command port")
+        _add("--zmq-query-port", dest="zmq_query_port", type=int, help="ZMQ query port")
+        _add("--zmq-heartbeat-port", dest="zmq_heartbeat_port", type=int, help="ZMQ heartbeat port")
+        _add("--db-path", dest="db_path", help="SQLite database path (e.g. sqlite:///./ninja.db)")
+        _add("--log-dir", dest="log_dir", help="Log directory (e.g. logs/ninja)")
+        _add("--flask-port", dest="flask_port", type=int, help="Flask server port")
+        _add("--instance-name", dest="instance_name", help="Instance identifier for logs")
+        _add("--platform-type", dest="platform_type", choices=["ninjatrader", "metatrader"], help="Trading platform this instance connects to")
+        _add("--broker-mode", dest="broker_mode", choices=["futures", "cfd"], help="Broker mode")
+        _add("--broker-spread", dest="broker_spread", type=float, help="Broker spread")
+        _add("--no-bootstrap-lines", dest="bootstrap_existing_lines", action="store_false", help="Skip bootstrapping lines")
+        _add("--sentry-dsn", dest="sentry_dsn", help="Sentry DSN")
+        _add("--telegram-token", dest="telegram_token", help="Telegram bot token")
+        _add("--telegram-chat-id", dest="telegram_chat_id", help="Telegram chat ID")
 
         ns = p.parse_args(self._args)
+        provided = set(vars(ns).keys())
 
         cfg = AppConfig()
-        for attr in vars(cfg):
-            val = getattr(ns, attr, None)
-            if val is not None:
-                # argparse lists come as strings when using nargs, but here we use simple types
-                if attr == "timeframes" and isinstance(val, str):
-                    val = [x.strip() for x in val.split(",")]
-
-                setattr(cfg, attr, val)
+        for attr, val in vars(ns).items():
+            if attr == "timeframes" and isinstance(val, str):
+                val = [x.strip() for x in val.split(",")]
+            setattr(cfg, attr, val)
+        # CompositeConfigLoader needs to know which args were actually supplied
+        # so that an explicit "--foo default" can reset an earlier non-default.
+        cfg._cli_provided = provided  # type: ignore[attr-defined]
+        cfg.validate()
         return cfg
 
 
@@ -217,13 +228,23 @@ class CompositeConfigLoader:
         base = self.loaders[0].load()
         for loader in self.loaders[1:]:
             override = loader.load()
-            for attr in vars(base):
+            cli_provided = getattr(override, "_cli_provided", None)
+            if cli_provided is not None:
+                # CLI: only override the arguments the user actually typed,
+                # even if they equal the hard-coded default.
+                attrs = cli_provided
+            else:
+                # Env / DB: skip attributes that still have the default value,
+                # because those were not explicitly configured by the source.
+                attrs = vars(override)
+            for attr in attrs:
                 override_val = getattr(override, attr)
-                default_val = getattr(AppConfig(), attr)
-                # Only override if the value differs from the hardcoded default.
-                # This prevents an *empty* CLI from wiping out env vars.
-                if override_val != default_val:
-                    setattr(base, attr, override_val)
+                if cli_provided is None:
+                    default_val = getattr(AppConfig(), attr)
+                    if override_val == default_val:
+                        continue
+                setattr(base, attr, override_val)
+        base.validate()
         return base
 
 
@@ -276,6 +297,7 @@ class DbConfigLoader:
                 if first.risk_pct is not None:
                     cfg.risk_pct_per_trade = first.risk_pct
 
+            cfg.validate()
             session.close()
         except Exception as e:
             # If DB is unreachable or tables missing, log and fall back to env/CLI

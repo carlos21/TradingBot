@@ -137,3 +137,14 @@ class TestWarmupOrchestrator:
         orchestrator = WarmupOrchestrator(strategy, logger=_FakeLogger())
         orchestrator.run(_make_bars(3), "MNQ")
         assert strategy.removed_lines == []
+
+
+    def test_discards_missing_line_ids(self) -> None:
+        """Line ids that no longer exist must not leak in warmup_crossed_lines."""
+        strategy = _FakeStrategy(line_removal_mode=LineRemovalMode.ON_EVALUATE)
+        strategy.warmup_crossed_lines = {"missing", "present"}
+        strategy.strategy_lines = {"present": {"interaction_ts": 1}}
+        orchestrator = WarmupOrchestrator(strategy, logger=_FakeLogger())
+        orchestrator.run(_make_bars(3), "MNQ")
+        assert strategy.removed_lines == ["present"]
+        assert strategy.warmup_crossed_lines == set()

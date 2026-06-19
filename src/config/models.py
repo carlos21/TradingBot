@@ -251,3 +251,63 @@ class AppConfig:
             self.risk_per_trade = float(self.risk_per_trade)
         if self.risk_pct_per_trade is not None:
             self.risk_pct_per_trade = float(self.risk_pct_per_trade)
+        self.validate()
+
+    def validate(self) -> None:
+        """Validate configuration values that would silently break trading math."""
+        if self.rr_ratio <= 0:
+            raise ValueError("rr_ratio must be positive")
+        if self.risk_per_trade is not None and self.risk_per_trade < 0:
+            raise ValueError("risk_per_trade cannot be negative")
+        if self.risk_pct_per_trade is not None and self.risk_pct_per_trade < 0:
+            raise ValueError("risk_pct_per_trade cannot be negative")
+        if self.account_balance <= 0:
+            raise ValueError("account_balance must be positive")
+        if self.point_value <= 0:
+            raise ValueError("point_value must be positive")
+        if self.min_stop_loss < 0:
+            raise ValueError("min_stop_loss cannot be negative")
+        if self.max_bounce < 0:
+            raise ValueError("max_bounce cannot be negative")
+        if self.extra_sl_space < 0:
+            raise ValueError("extra_sl_space cannot be negative")
+        if self.sl_level_tolerance < 0:
+            raise ValueError("sl_level_tolerance cannot be negative")
+        if self.min_cross_depth < 0:
+            raise ValueError("min_cross_depth cannot be negative")
+        if self.reentry_threshold < 0:
+            raise ValueError("reentry_threshold cannot be negative")
+        if self.daily_trades_limit < 0:
+            raise ValueError("daily_trades_limit cannot be negative")
+        if self.max_open_trades < 0:
+            raise ValueError("max_open_trades cannot be negative")
+        if self.broker_spread < 0:
+            raise ValueError("broker_spread cannot be negative")
+        if self.history_days <= 0:
+            raise ValueError("history_days must be positive")
+        if self.bars_per_second <= 0:
+            raise ValueError("bars_per_second must be positive")
+        if not (0 < self.flask_port <= 65535):
+            raise ValueError("flask_port must be a valid TCP port (1-65535)")
+        if self.mode not in ("live", "backtest"):
+            raise ValueError("mode must be 'live' or 'backtest'")
+        if self.broker_mode not in ("futures", "cfd"):
+            raise ValueError("broker_mode must be 'futures' or 'cfd'")
+        if self.platform_type not in ("ninjatrader", "metatrader"):
+            raise ValueError("platform_type must be 'ninjatrader' or 'metatrader'")
+        if self.line_removal_mode not in ("ON_EVALUATE", "NEVER"):
+            raise ValueError("line_removal_mode must be 'ON_EVALUATE' or 'NEVER'")
+        if not self.timeframes:
+            raise ValueError("timeframes cannot be empty")
+        for tf in self.timeframes:
+            if not isinstance(tf, str) or not tf.strip():
+                raise ValueError("each timeframe must be a non-empty string")
+        for acct in self.nt_accounts:
+            if not acct.name:
+                raise ValueError("account name cannot be empty")
+            if acct.risk_usd is not None and acct.risk_usd < 0:
+                raise ValueError("account risk_usd cannot be negative")
+            if acct.risk_pct is not None and acct.risk_pct < 0:
+                raise ValueError("account risk_pct cannot be negative")
+            if acct.rr_ratio is not None and acct.rr_ratio <= 0:
+                raise ValueError("account rr_ratio must be positive")

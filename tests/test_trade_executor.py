@@ -31,11 +31,11 @@ class FakeGatewayExecutor(TradeExecutor):
     def on_trade_open(self, trade):
         self.opens.append(trade)
 
-    def on_trade_close(self, trade_id, exit_price):
-        pass
+    def on_trade_close(self, trade_id, exit_price, account=None):
+        self._gateway.send_close_order(trade_id, reason="strategy", account=account)
 
-    def on_sl_update(self, trade_id, new_sl):
-        pass
+    def on_sl_update(self, trade_id, new_sl, account=None):
+        self._gateway.send_modify_order(trade_id, stop_loss=new_sl, account=account)
 
 
 def _make_trade_manager():

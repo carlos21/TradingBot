@@ -261,16 +261,22 @@ to be:
             self.logger.info("Stopping TradingGateway...")
             self._running = False
 
-        # Wait for threads to exit on their own (loops check _running and use
-        # short timeouts so they should finish quickly).
+        # Wake the command sender so it notices _running == False immediately
+        # instead of waiting on _command_ready.
+        self._command_ready.set()
+
+        # Wait for background threads to finish. All loops use short timeouts
+        # (poll/rcvtimeo/event wait) except command send, which can block for
+        # SNDTIMEO. Use a timeout longer than that so we do not close sockets
+        # while a thread is still inside a socket call (closing a socket from
+        # another thread during an active call can segfault).
         for t in self._threads:
             try:
-                t.join(timeout=2.0)
+                t.join(timeout=6.0)
             except Exception as e:
                 self.logger.debug(f"Error joining thread: {e}")
 
-        # Close sockets only after threads have exited to avoid libzmq aborts
-        # when a socket is closed from one thread while another is blocked on it.
+        # Close sockets now that threads have exited.
         for socket in [self._market_sub, self._command_push, self._query_rep, self._query_req,
                        self._heartbeat_sub]:
             if socket:
@@ -419,12 +425,26 @@ to be:
                                 self._command_retries.pop(envelope.seq_num, None)
                                 cmd_info = self._pending_commands.pop(envelope.seq_num, None)
                                 self.logger.error(f"Command send failed permanently after 3 retries: {envelope.msg_type} seq={envelope.seq_num}: {send_ex}")
+                                trade_id = cmd_info.get("payload", {}).get("trade_id") if cmd_info else None
+                                self._notify_command_failed(
+                                    envelope.msg_type.value,
+                                    trade_id,
+                                    envelope.seq_num,
+                                    f"send_failed:{send_ex}",
+                                )
                                 if self._on_command_dropped and cmd_info:
                                     with contextlib.suppress(Exception):
                                         self._on_command_dropped(envelope.msg_type.value, cmd_info)
                 else:
-                    self._pending_commands.pop(envelope.seq_num, None)
+                    cmd_info = self._pending_commands.pop(envelope.seq_num, None)
                     self.logger.error(f"Command push socket not available, dropping command: {envelope.msg_type}")
+                    trade_id = cmd_info.get("payload", {}).get("trade_id") if cmd_info else None
+                    self._notify_command_failed(
+                        envelope.msg_type.value,
+                        trade_id,
+                        envelope.seq_num,
+                        "no_socket",
+                    )
 
             except Exception as e:
                 self.logger.error(f"Error sending command: {e}")
@@ -573,7 +593,16 @@ to be:
         try:
             envelope = MessageEnvelope.from_json(json_msg)
             msg_type = envelope.msg_type
+        except json.JSONDecodeError as e:
+            raw_bytes = json_msg.encode('utf-8', errors='replace')
+            self.logger.error(f"Invalid JSON received: {e} | Raw: {json_msg[:200]} | Hex: {raw_bytes[:200].hex()}")
+            return
+        except (KeyError, ValueError) as e:
+            raw_bytes = json_msg.encode('utf-8', errors='replace')
+            self.logger.error(f"Invalid message envelope: {e} | Raw: {json_msg[:200]} | Hex: {raw_bytes[:200].hex()}")
+            return
 
+        try:
             # Update sequence tracking (must hold lock to avoid RMW race with _next_seq)
             with self._lock:
                 self._seq_num = max(self._seq_num, envelope.seq_num)
@@ -622,9 +651,6 @@ to be:
             elif msg_type == MessageType.COMMAND_ACK:
                 self._handle_command_ack(envelope.payload)
 
-        except json.JSONDecodeError as e:
-            raw_bytes = json_msg.encode('utf-8', errors='replace')
-            self.logger.error(f"Invalid JSON received: {e} | Raw: {json_msg[:200]} | Hex: {raw_bytes[:200].hex()}")
         except Exception as e:
             raw_bytes = json_msg.encode('utf-8', errors='replace')
             self.logger.error(f"Error handling message: {e} | Raw: {json_msg[:200]} | Hex: {raw_bytes[:200].hex()}")
@@ -633,6 +659,12 @@ to be:
         """Process heartbeat from platform."""
         try:
             envelope = MessageEnvelope.from_json(json_msg)
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            raw_bytes = json_msg.encode('utf-8', errors='replace') if isinstance(json_msg, str) else json_msg
+            self.logger.debug(f"Invalid heartbeat envelope: {e} | Hex: {raw_bytes[:200].hex() if isinstance(raw_bytes, bytes) else raw_bytes}")
+            return
+
+        try:
             if envelope.msg_type == MessageType.HEARTBEAT:
                 prev_connected = self._platform_connected
                 self._last_heartbeat_time = time.time()
@@ -1185,6 +1217,8 @@ to be:
         instrument: str | None = None,
     ) -> None:
         """Send open order command to platform."""
+        if direction not in ("long", "short"):
+            raise ValueError(f"Invalid order direction: {direction!r}. Expected 'long' or 'short'.")
         resolved_instrument = self._resolve_instrument(instrument)
         cmd = OpenOrderCommand(
             trade_id=trade_id,
@@ -1246,6 +1280,8 @@ to be:
 
     def send_subscribe(self, instrument: str) -> None:
         """Tell the platform which instrument to use for live/historical data."""
+        if not instrument:
+            raise ValueError("instrument is required for subscribe commands")
         cmd = SubscribeMessage(instrument=instrument)
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
@@ -1349,7 +1385,7 @@ to be:
         will cause EFSM errors. This method uses a dedicated lock for safety.
         If a timeout occurs, the REQ socket is recreated to reset its state.
         """
-        if not self._query_req:
+        if not self._running or not self._query_req:
             return None
 
         with self._query_lock:

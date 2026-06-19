@@ -252,6 +252,15 @@ class TestCliConfigLoader:
         cfg = loader.load()
         assert cfg.pair == "YM"
 
+    def test_unset_args_leave_defaults(self):
+        """Args not supplied on the CLI must not appear in the parsed namespace."""
+        loader = CliConfigLoader(args=["--pair", "ES"])
+        cfg = loader.load()
+        assert cfg.pair == "ES"
+        assert cfg.mode == "backtest"
+        assert cfg.flask_port == 5001
+        assert cfg.bootstrap_existing_lines is True
+
 
 # ---------------------------------------------------------------------------
 # CompositeConfigLoader
@@ -311,6 +320,26 @@ class TestCompositeConfigLoader:
         )
         cfg = loader.load()
         assert cfg.pair == "NQ"
+
+    def test_cli_can_reset_env_value_to_default(self, monkeypatch):
+        """A CLI arg that equals the hard-coded default must still override env."""
+        monkeypatch.setenv("RR_RATIO", "3.0")
+        loader = CompositeConfigLoader(
+            EnvConfigLoader(),
+            CliConfigLoader(args=["--rr", "5.0"]),
+        )
+        cfg = loader.load()
+        assert cfg.rr_ratio == 5.0
+
+    def test_cli_store_false_flag_resets_env_true(self, monkeypatch):
+        """--no-bootstrap-lines must be able to flip an env-enabled default off."""
+        monkeypatch.setenv("BOOTSTRAP_EXISTING_LINES", "true")
+        loader = CompositeConfigLoader(
+            EnvConfigLoader(),
+            CliConfigLoader(args=["--no-bootstrap-lines"]),
+        )
+        cfg = loader.load()
+        assert cfg.bootstrap_existing_lines is False
 
 
 # ---------------------------------------------------------------------------

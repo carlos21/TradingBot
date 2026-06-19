@@ -533,9 +533,9 @@ class TestMessageRouting:
         gateway._handle_message("not json at all")
         assert any("Invalid JSON" in m for m in logger.messages)
 
-    def test_general_exception_logs_error(self, gateway, logger):
+    def test_invalid_envelope_logs_error(self, gateway, logger):
         gateway._handle_message("{}")  # Missing required fields
-        assert any("Error handling message" in m for m in logger.messages)
+        assert any("Invalid message envelope" in m for m in logger.messages)
 
     def test_tick_dispatch(self, gateway):
         received = []
@@ -714,7 +714,7 @@ class TestCommandAckHandling:
     def test_parse_error_caught(self, gateway, logger):
         env = MessageEnvelope.create(msg_type=MessageType.COMMAND_ACK, payload="bad", seq_num=1)
         gateway._handle_message(env.to_json())
-        assert any("Error handling command ack" in m for m in logger.messages)
+        assert any("Invalid message envelope" in m for m in logger.messages)
 
 
 # ---------------------------------------------------------------------------
@@ -1082,6 +1082,20 @@ class TestCommandSending:
                 rr_ratio=1.0,
             )
 
+    def test_send_open_order_invalid_direction_raises(self, logger):
+        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ", instrument="MNQ 09-26")
+        gw._running = True
+        with pytest.raises(ValueError, match="Invalid order direction"):
+            gw.send_open_order(
+                trade_id="T1",
+                direction="sideways",
+                entry_price=100.0,
+                stop_loss=90.0,
+                take_profit=110.0,
+                risk_points=10.0,
+                rr_ratio=1.0,
+            )
+
     def test_send_close_order(self, gateway, logger):
         gateway._running = True
         gateway.send_close_order("T1", reason="manual", account="Sim101")
@@ -1127,6 +1141,12 @@ class TestCommandSending:
         assert len(gateway._pending_commands) == 1
         assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("SUBSCRIBE" in m for m in logger.messages)
+
+    def test_send_subscribe_empty_instrument_raises(self, logger):
+        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw._running = True
+        with pytest.raises(ValueError, match="instrument is required"):
+            gw.send_subscribe("")
 
     def test_send_audit_request(self, gateway, logger):
         gateway._running = True
@@ -1402,6 +1422,7 @@ class TestQueryPositions:
         assert gateway.query_positions() is None
 
     def test_successful_query(self, gateway):
+        gateway._running = True
         gateway._query_req = MagicMock()
         resp = PositionResponseMessage(positions=[{"trade_id": "T1"}], count=1)
         gateway._query_req.recv_string.return_value = resp.to_envelope(seq_num=1).to_json()
@@ -1409,21 +1430,29 @@ class TestQueryPositions:
         assert result == [{"trade_id": "T1"}]
 
     def test_timeout_returns_none(self, gateway, logger):
+        gateway._running = True
         gateway._query_req = MagicMock()
         gateway._query_req.recv_string.side_effect = zmq.Again()
         assert gateway.query_positions() is None
         assert any("timeout" in m.lower() for m in logger.messages)
 
     def test_error_returns_none(self, gateway, logger):
+        gateway._running = True
         gateway._query_req = MagicMock()
         gateway._query_req.recv_string.side_effect = Exception("boom")
         assert gateway.query_positions() is None
         assert any("error" in m.lower() for m in logger.messages)
 
     def test_unexpected_response_type_returns_none(self, gateway):
+        gateway._running = True
         gateway._query_req = MagicMock()
         resp = MessageEnvelope.create(msg_type=MessageType.ERROR, payload={}, seq_num=1)
         gateway._query_req.recv_string.return_value = resp.to_json()
+        assert gateway.query_positions() is None
+
+    def test_not_running_returns_none(self, gateway):
+        gateway._running = False
+        gateway._query_req = MagicMock()
         assert gateway.query_positions() is None
 
 

@@ -312,6 +312,7 @@ class TestExecutor:
         mock_gateway.send_close_order.assert_called_once_with(
             trade_id="test_123",
             reason="strategy",
+            account=None,
         )
 
     def test_on_sl_update(self):
@@ -327,6 +328,7 @@ class TestExecutor:
         mock_gateway.send_modify_order.assert_called_once_with(
             trade_id="test_123",
             stop_loss=21000,
+            account=None,
         )
 
 
