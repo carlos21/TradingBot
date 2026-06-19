@@ -135,7 +135,6 @@ export class ChartViewer {
         // server emits it immediately on connect if cached bars already exist,
         // otherwise it fires once NinjaTrader finishes a history load cycle.
       })
-      .then(() => this._initLines())
       .then(() => {
         if (!this.liveMode) {
           this.historyReady = true;
@@ -168,6 +167,13 @@ export class ChartViewer {
       await this._initTrades();
       this.recalculateTSI();
       this.shadeBars(bars);
+      // Strategy lines must be created after the price series has data;
+      // in live mode this method is deferred until history_loaded.
+      try {
+        await this.loadLines();
+      } catch (err) {
+        console.error('[ChartViewer] loadLines failed during initBars:', err);
+      }
     } finally {
       this._seriesBusy = false;
       this._flushPendingBars();
@@ -196,8 +202,16 @@ export class ChartViewer {
     this.recalculateTSI();
   }
 
-  async _initLines() {
+  async loadLines() {
+    // Remove existing pinned lines so repeated calls (e.g. live reconnect)
+    // don't duplicate lines and don't keep lines deleted while disconnected.
+    for (const pinned of this.pinnedLines) {
+      if (pinned.line) this.series.removePriceLine(pinned.line);
+    }
+    this.pinnedLines = [];
+
     const lines = await this.dataService.fetchLines(this.pair);
+    console.log(`[ChartViewer] loadLines: fetched ${lines.length} strategy line(s)`);
     lines.forEach(ld => this._createLineOnChart(ld));
   }
 
