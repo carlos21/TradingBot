@@ -199,8 +199,8 @@ namespace NinjaTrader.NinjaScript.AddOns
 
         internal void Log(string message)
         {
-            var line = DateTime.Now.ToString("HH:mm:ss") + "  " + message + "\n";
-            _log(message);
+            var line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  " + message + "\n";
+            _log(line);
             if (_window == null) return;
             _window.Dispatcher.BeginInvoke(new Action(() =>
             {

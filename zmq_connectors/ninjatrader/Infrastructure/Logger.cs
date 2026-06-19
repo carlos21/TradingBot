@@ -1,16 +1,17 @@
 // ═══════════════════════════════════════════════════════════════════════
 // Infrastructure Layer: Logger
-// Adapter pattern: Adapts UI logging to ILogger interface
+// Adapter pattern: Adapts UI/Output logging to the domain ILogger interface.
 // ═══════════════════════════════════════════════════════════════════════
 
 using System;
-using NinjaTrader.Code;
 
 namespace NinjaTrader.NinjaScript.AddOns
 {
     /// <summary>
-    /// Adapter pattern: Adapts UI logging to ILogger interface.
-    /// Also outputs to NinjaTrader's Print output.
+    /// Adapter pattern: adapts UI/output logging to the ILogger strategy.
+    /// Formats each line with a level tag (e.g. [INFO], [ERROR]) and forwards
+    /// it to the injected UI/output action. The sink itself is responsible
+    /// for adding timestamps and persisting to a file.
     /// </summary>
     internal sealed class NinjatraderLogger : ILogger
     {
@@ -22,7 +23,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         public void Info(string message) => Log("INFO", message);
-        public void Warning(string message) => Log("WARNING", message, isWarning: true);
+        public void Warning(string message) => Log("WARNING", message);
         public void Error(string message, Exception ex = null)
         {
             var fullMessage = ex != null ? $"{message} - {ex.Message}" : message;
@@ -30,29 +31,14 @@ namespace NinjaTrader.NinjaScript.AddOns
             {
                 fullMessage += " | STACK: " + ex.StackTrace?.Replace("\n", " | ");
             }
-            Log("ERROR", fullMessage, isError: true);
+            Log("ERROR", fullMessage);
         }
-        public void Success(string message) => Log("SUCCESS", message, isSuccess: true);
-        public void Debug(string message) { /* No UI noise for debug messages */ }
+        public void Success(string message) => Log("SUCCESS", message);
+        public void Debug(string message) { /* No UI/output noise for debug messages */ }
 
-        private void Log(string level, string message, bool isError = false, bool isWarning = false, bool isSuccess = false)
+        private void Log(string level, string message)
         {
-            string prefix;
-            if (isError) prefix = "*** ERROR *** ";
-            else if (isWarning) prefix = "*** WARNING *** ";
-            else if (isSuccess) prefix = "*** SUCCESS *** ";
-            else prefix = "";
-
-            _uiLog(prefix + message);
-            if (isError || isWarning)
-            {
-                string outputMsg = isError
-                    ? "[TradingBot ZMQ ERROR] " + message
-                    : "[TradingBot ZMQ WARNING] " + message;
-                // Output.Process must run on the UI thread in NinjaTrader
-                NinjaTrader.Core.Globals.RandomDispatcher.BeginInvoke(new Action(() =>
-                    Output.Process(outputMsg, PrintTo.OutputTab1)));
-            }
+            _uiLog($"[{level}] {message}");
         }
     }
 }

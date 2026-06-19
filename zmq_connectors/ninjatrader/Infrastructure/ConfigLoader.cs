@@ -36,7 +36,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 maxTicksPerSecond: 10,
                 platformVersion: "2.0.0-refactored",
                 autoConnectOnStartup: false,
-                autoShowWindow: true
+                autoShowWindow: true,
+                logDirectory: null,
+                enableFileLogging: true
             );
 
             string path = GetConfigPath();
@@ -61,7 +63,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                     maxTicksPerSecond: dto.maxTicksPerSecond ?? defaults.MaxTicksPerSecond,
                     platformVersion: dto.platformVersion ?? defaults.PlatformVersion,
                     autoConnectOnStartup: dto.autoConnectOnStartup ?? defaults.AutoConnectOnStartup,
-                    autoShowWindow: dto.autoShowWindow ?? defaults.AutoShowWindow
+                    autoShowWindow: dto.autoShowWindow ?? defaults.AutoShowWindow,
+                    logDirectory: dto.logDirectory ?? defaults.LogDirectory,
+                    enableFileLogging: dto.enableFileLogging ?? defaults.EnableFileLogging
                 );
             }
             catch (Exception ex)
@@ -98,6 +102,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             public string platformVersion;
             public bool? autoConnectOnStartup;
             public bool? autoShowWindow;
+            public string logDirectory;
+            public bool? enableFileLogging;
         }
     }
 }

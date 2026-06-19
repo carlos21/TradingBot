@@ -61,6 +61,7 @@ namespace NinjaTrader.NinjaScript.AddOns
         private ZmqNetwork _network;
         private ZmqConnectorWindow _ui;
         private ILogger _logger;
+        private FileLogger _fileLogger;
         private CommandDispatcher _dispatcher;
         private IOrderTracker _orderTracker;
         private IStreamingCoordinator _streamingCoordinator;
@@ -173,7 +174,8 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (_ui == null)
             {
                 _ui = new ZmqConnectorWindow(msg => Print("[ZMQ] " + msg));
-                _logger = new NinjatraderLogger(msg => _ui.Log(msg));
+                var uiLogger = new NinjatraderLogger(msg => _ui.Log(msg));
+                _logger = CreateCompositeLogger(uiLogger);
                 _ui.SetButtonHandlers(
                     onConnect: ToggleConnection,
                     onTestConnection: () => _ = TestConnectionAsync(),
@@ -190,7 +192,27 @@ namespace NinjaTrader.NinjaScript.AddOns
         private void InitializeLoggerOnly()
         {
             if (_logger == null)
-                _logger = new NinjatraderLogger(msg => Print("[ZMQ] " + msg));
+            {
+                var outputLogger = new NinjatraderLogger(msg =>
+                    Print("[ZMQ] " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff") + "  " + msg));
+                _logger = CreateCompositeLogger(outputLogger);
+            }
+        }
+
+        /// <summary>
+        /// Builds a composite logger that writes to the given UI/output sink and,
+        /// when enabled, to the configured log file. The file sink is reused so
+        /// opening the window after a headless auto-connect does not create a
+        /// second handle to the same log file.
+        /// </summary>
+        private ILogger CreateCompositeLogger(ILogger primarySink)
+        {
+            if (!_config.EnableFileLogging)
+                return primarySink;
+
+            if (_fileLogger == null)
+                _fileLogger = new FileLogger(_config.LogDirectory);
+            return new CompositeLogger(primarySink, _fileLogger);
         }
 
         private void ToggleConnection()

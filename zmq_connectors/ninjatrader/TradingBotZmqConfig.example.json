@@ -8,5 +8,7 @@
   "batchSize": 500,
   "maxTicksPerSecond": 10,
   "autoConnectOnStartup": true,
-  "autoShowWindow": true
+  "autoShowWindow": true,
+  "logDirectory": "C:/Users/<YOUR_USER>/Documents/NinjaTrader 8/bin/Custom/logs",
+  "enableFileLogging": true
 }

@@ -4,6 +4,7 @@
 // ═══════════════════════════════════════════════════════════════════════
 
 using System;
+using System.IO;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -27,6 +28,8 @@ namespace NinjaTrader.NinjaScript.AddOns
         public string PlatformVersion { get; }
         public bool AutoConnectOnStartup { get; }
         public bool AutoShowWindow { get; }
+        public string LogDirectory { get; }
+        public bool EnableFileLogging { get; }
 
         public string MarketDataAddress => $"tcp://{Host}:{MarketPort}";
         public string CommandAddress => $"tcp://{Host}:{CommandPort}";
@@ -45,7 +48,9 @@ namespace NinjaTrader.NinjaScript.AddOns
             int maxTicksPerSecond = 10,
             string platformVersion = "2.0.0",
             bool autoConnectOnStartup = false,
-            bool autoShowWindow = true)
+            bool autoShowWindow = true,
+            string logDirectory = null,
+            bool enableFileLogging = true)
         {
             Host = host ?? throw new ArgumentNullException(nameof(host));
             MarketPort = marketPort;
@@ -59,11 +64,20 @@ namespace NinjaTrader.NinjaScript.AddOns
             PlatformVersion = platformVersion ?? throw new ArgumentNullException(nameof(platformVersion));
             AutoConnectOnStartup = autoConnectOnStartup;
             AutoShowWindow = autoShowWindow;
+            LogDirectory = logDirectory ?? GetDefaultLogDirectory();
+            EnableFileLogging = enableFileLogging;
         }
 
         public ZmqConfiguration WithInstrument(string instrument) =>
-            new ZmqConfiguration(Host, MarketPort, CommandPort, QueryPort, HeartbeatPort, 
-                instrument, HistoryDays, BatchSize, MaxTicksPerSecond, PlatformVersion, AutoConnectOnStartup, AutoShowWindow);
+            new ZmqConfiguration(Host, MarketPort, CommandPort, QueryPort, HeartbeatPort,
+                instrument, HistoryDays, BatchSize, MaxTicksPerSecond, PlatformVersion,
+                AutoConnectOnStartup, AutoShowWindow, LogDirectory, EnableFileLogging);
+
+        private static string GetDefaultLogDirectory()
+        {
+            string documents = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            return Path.Combine(documents, "NinjaTrader 8", "bin", "Custom", "logs");
+        }
     }
 
     /// <summary>

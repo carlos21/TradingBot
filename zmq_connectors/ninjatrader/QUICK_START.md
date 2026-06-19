@@ -124,3 +124,26 @@ copy "$src\Microsoft.Bcl.AsyncInterfaces.9.0.6\lib\net462\Microsoft.Bcl.AsyncInt
 copy "$src\System.Threading.Tasks.Extensions.4.6.3\lib\net462\System.Threading.Tasks.Extensions.dll" $dst
 copy "$src\NETStandard.Library.2.0.3\build\netstandard2.0\ref\netstandard.dll" $dst
 ```
+
+---
+
+## 📝 Log Files
+
+The connector writes every log line to both the NinjaTrader Output tab and a
+rolling log file. Each line is prefixed with a full datetime so you can compare
+it directly with the Python `logs/app_YYYY-MM-DD.log` files.
+
+**Default log path:**
+```
+C:\Users\<YOU>\Documents\NinjaTrader 8\bin\Custom\logs\TradingBotZMQ_YYYY-MM-DD.log
+```
+
+**Configuration keys in `TradingBotZmqConfig.json`:**
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `logDirectory` | `Documents\NinjaTrader 8\bin\Custom\logs` | Folder for log files |
+| `enableFileLogging` | `true` | Set to `false` to disable file output |
+
+The log file rolls over daily based on the local date.
+
