@@ -151,6 +151,9 @@ class TsiCrossStrategy(BaseStrategy):
         4. If cross → find bounce → build context → run filters → open trade
         5. Check breakeven & phantom exits on existing trades
         """
+        if self.is_warmup:
+            return
+
         self._history.append(bar)
 
         # Need enough bars for TSI calculation
@@ -166,8 +169,19 @@ class TsiCrossStrategy(BaseStrategy):
         self._check_breakeven(bar)
         self._check_phantom_exits(bar)
 
+    def _has_open_trade_in_direction(self, direction: Direction) -> bool:
+        """Return True if a trade in the same direction is already open."""
+        trade_type = "long" if direction == Direction.LONG else "short"
+        return any(t.get("status") == "open" and t.get("type") == trade_type for t in self.open_trades)
+
     def _evaluate_cross(self, bar: dict[str, Any], direction: Direction):
         """Given a TSI cross direction, try to open a trade."""
+        # Prevent same-direction pyramiding unless the existing trade has already closed.
+        if self._has_open_trade_in_direction(direction):
+            if self.logger:
+                self.logger.info(f"[TsiCrossStrategy] Same-direction {direction.name} trade already open; skipping cross")
+            return
+
         if direction == Direction.LONG:
             bounce_price = self._bounce_detector.find_previous_low_bounce(list(self._history))
         else:

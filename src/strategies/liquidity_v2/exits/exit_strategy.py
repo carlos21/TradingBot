@@ -80,14 +80,6 @@ class SLTPExitStrategy(ExitStrategy):
     Used in backtest mode to check if price hits SL or TP levels.
     """
 
-    def __init__(
-        self,
-        broker_mode: str = 'futures',
-        broker_spread: float = 0.0,
-    ):
-        self.broker_mode = broker_mode
-        self.broker_spread = broker_spread
-
     def check_exit(
         self,
         trade: dict,
@@ -160,8 +152,8 @@ class SessionEndExitStrategy(ExitStrategy):
         if bar_dt.time() < self.session_end_time:
             return None
 
-        # Check if trade entry is before this bar (don't close trades entered after session end)
-        if trade.get('entry_time', 0) > bar['time']:
+        # Check if trade entry is before this bar (don't close trades entered on/after session end)
+        if trade.get('entry_time', 0) >= bar['time']:
             return None
 
         return ExitSignal(

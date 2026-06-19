@@ -1,6 +1,7 @@
 """Tests for TsiCrossStrategy."""
 
 
+from src.domain.types import Direction
 from src.strategies.tsi_cross.config import TsiCrossConfig, TsiCrossNumbers
 from src.strategies.tsi_cross.strategy import TsiCrossStrategy
 from tests.fakes import DummySocketIO, FakeLogger
@@ -66,6 +67,43 @@ def _make_strategy():
 
 
 class TestTsiCrossStrategy:
+    def test_warmup_mode_does_not_open_trades(self):
+        strategy = _make_strategy()
+        strategy.is_warmup = True
+        for i in range(100):
+            strategy.on_raw_bar({
+                "time": 1700000000 + i * 300,
+                "open": 100.0,
+                "high": 110.0,
+                "low": 90.0,
+                "close": 100.0 + i * 0.1,
+                "volume": 10,
+                "pair": "MNQ",
+            })
+        assert len(strategy.open_trades) == 0
+        assert len(strategy._history) == 0
+
+    def test_same_direction_pyramiding_is_blocked(self):
+        strategy = _make_strategy()
+        strategy.open_trades = [{
+            "trade_id": "T1",
+            "status": "open",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 120.0,
+        }]
+        strategy._evaluate_cross({
+            "time": 1700000000,
+            "open": 100.0,
+            "high": 101.0,
+            "low": 99.0,
+            "close": 101.0,
+            "volume": 10,
+            "pair": "MNQ",
+        }, direction=Direction.LONG)
+        assert len(strategy.open_trades) == 1
+
     def test_strategy_aggregates_bars(self):
         strategy = _make_strategy()
         for i in range(5):

@@ -392,6 +392,38 @@ class TestResetTriggerState:
         assert "vat_regime" not in line
         assert "vat_velocity" not in line
 
+    def test_resets_all_velocity_adaptive_stages(self):
+        """Regression: 1m/3m/15m double-cross state must reset, not only 5m."""
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm)
+        line = {
+            "direction": "long",
+            "extreme": 95,
+            "vat_1m_2x_stage": 2,
+            "vat_3m_2x_stage": 1,
+            "vat_5m_stage": 3,
+            "vat_15m_2x_reset": True,
+        }
+        strat._reset_trigger_state(line)
+        assert line["vat_1m_2x_stage"] == 0
+        assert line["vat_3m_2x_stage"] == 0
+        assert line["vat_5m_stage"] == 0
+        assert line["vat_15m_2x_reset"] is False
+
+    def test_clears_interaction_and_touch_timestamps(self):
+        """Regression: reset lines must not fire until re-touched."""
+        sio, lr, tr, tm = _deps()
+        strat = make_strategy(sio, lr, tr, tm)
+        line = {
+            "direction": "long",
+            "extreme": 95,
+            "interaction_ts": 1000,
+            "touch_bar_time": 1000,
+        }
+        strat._reset_trigger_state(line)
+        assert "interaction_ts" not in line
+        assert "touch_bar_time" not in line
+
 
 class TestCreationTimestamp:
 

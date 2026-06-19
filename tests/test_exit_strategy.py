@@ -62,10 +62,10 @@ class TestSLTPExitStrategy:
 
         assert signal is None
 
-    def test_cfd_spread_does_not_adjust_sl_detection(self):
-        strategy = SLTPExitStrategy(broker_mode='cfd', broker_spread=2.0)
+    def test_no_spread_adjustment(self):
+        strategy = SLTPExitStrategy()
         trade = {"direction": Direction.LONG, "stop_loss": 100, "take_profit": 110}
-        # Low is 100.5 -> above original SL of 100, so NO hit even with spread
+        # Low is 100.5 -> above original SL of 100, so NO hit
         bar = {"high": 105, "low": 100.5}
 
         signal = strategy.check_exit(trade, bar)
@@ -92,6 +92,17 @@ class TestSessionEndExitStrategy:
         signal = strategy.check_exit(trade, bar)
 
         # Should not exit because trade was entered after this bar
+        assert signal is None
+
+    def test_trade_entry_on_session_end_bar_not_closed(self):
+        """Regression: trades entered on the session-end bar must not be closed on that same bar."""
+        strategy = SessionEndExitStrategy("17:00", "UTC")
+        bar_time = 1700000400  # 17:00 UTC
+        trade = {"entry_time": bar_time}
+        bar = {"time": bar_time, "close": 100}
+
+        signal = strategy.check_exit(trade, bar)
+
         assert signal is None
 
 

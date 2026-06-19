@@ -5,6 +5,7 @@ from flask import abort, jsonify
 from src.bars_loader import BarsLoader
 from src.dbexception import DBNotFoundException
 from src.domain.repositories import LineRepository
+from src.strategies.liquidity_v2.controllers.validators import LineInputValidator
 from src.strategies.protocols import LiquidityStrategy
 from src.utils.app_logger import ILogger
 
@@ -31,16 +32,25 @@ class LinesController:
         if pair != ds.pair:
             abort(400, f"Only pair '{ds.pair}' is supported")
 
+        try:
+            price = LineInputValidator.validate_price(price)
+        except ValueError as e:
+            abort(400, str(e))
+
         # 1. Resolve the Date
         if creation_timestamp is not None:
-            c_date = datetime.fromtimestamp(float(creation_timestamp), tz=timezone.utc)
+            try:
+                creation_timestamp = LineInputValidator.validate_creation_timestamp(creation_timestamp)
+            except ValueError as e:
+                abort(400, str(e))
+            c_date = datetime.fromtimestamp(creation_timestamp, tz=timezone.utc)
             self.logger.info(f"[LinesController] Using Provided Time: {c_date}")
         elif self.bars_loader._last_played_ts > 0:
             c_date = datetime.fromtimestamp(self.bars_loader._last_played_ts, tz=timezone.utc)
             self.logger.info(f"[LinesController] Using Loader Replay Time: {c_date}")
         else:
-            c_date = datetime.fromtimestamp(0, tz=timezone.utc)
-            self.logger.info("[LinesController] Loader not started -> Defaulting to Epoch 0 (1970)")
+            c_date = datetime.now(tz=timezone.utc)
+            self.logger.info(f"[LinesController] Loader not started -> Defaulting to current UTC: {c_date}")
 
         # 2. Persist
         line = self.line_repository.insert_line(
@@ -83,6 +93,11 @@ class LinesController:
     def update_line(self, line_id: str, price: float):
         """Update a line's price."""
         from src.dbexception import DBNotFoundException
+        try:
+            price = LineInputValidator.validate_price(price)
+        except ValueError as e:
+            abort(400, str(e))
+
         try:
             line = self.line_repository.update_line(line_id, price)
             # Update in strategy as well

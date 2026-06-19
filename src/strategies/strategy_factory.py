@@ -19,17 +19,24 @@ class StrategyFactory:
         """Instantiate the strategy identified by *name*.
 
         Supported names:
-          - ``"liquidity_v2"`` (default) → ``LiquidityStrategyV2``
-          - ``"tsi_cross"``               → ``TsiCrossStrategy``
+          - ``"liquidity_v2"`` → ``LiquidityStrategyV2``
+          - ``"tsi_cross"``    → ``TsiCrossStrategy``
 
         All other kwargs are forwarded to the strategy constructor.
         For ``tsi_cross``, V2-specific kwargs (``line_repository``, ``options``,
         etc.) are filtered out or converted automatically.
         """
+        supported = {"liquidity_v2", "tsi_cross"}
+        if name not in supported:
+            raise ValueError(
+                f"Unsupported strategy name: {name!r}. "
+                f"Supported names: {sorted(supported)}"
+            )
+
         if name == "tsi_cross":
             return StrategyFactory._create_tsi_cross(**kwargs)
 
-        # Default: liquidity_v2 — filter out tsi-cross-specific kwargs
+        # liquidity_v2 — filter out tsi-cross-specific kwargs
         tsi_keys = {"close_on_opposite_cross", "config"}
         v2_kwargs = {k: v for k, v in kwargs.items() if k not in tsi_keys}
         return LiquidityStrategyV2(**v2_kwargs)

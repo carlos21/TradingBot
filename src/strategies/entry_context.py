@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -66,7 +66,7 @@ def open_trades_limit_filter(limit: int | None = 1) -> EntryFilter:
     def _f(ctx: EntryContext) -> tuple[bool, str]:
         if limit is None:
             return True, "limit: unlimited"
-        count = sum(1 for t in ctx.strategy.open_trades if t['status'] == 'open')
+        count = sum(1 for t in ctx.strategy.open_trades if t.get('status') == 'open')
         return (count < limit, f"open-trades {count} >= limit {limit}")
     _f.__name__ = "open_trades_limit"
     return _f
@@ -96,12 +96,20 @@ def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: str 
     """
     Blocks entries outside the specific time range (inclusive).
 
+    Supports overnight ranges such as "22:00"-"02:00".
+
     :param start_time_str: "HH:MM" (24-hour format), e.g., "09:30"
-    :param end_time_str: "HH:MM" (24-hour format), e.g., "17:00"
+    :param end_str: "HH:MM" (24-hour format), e.g., "17:00"
     :param timezone_str: Optional. If None, it is automatically resolved from the pair (e.g. MNQ -> NY Time).
     """
     t_start = datetime.strptime(start_time_str, "%H:%M").time()
     t_end = datetime.strptime(end_time_str, "%H:%M").time()
+    overnight = t_start > t_end
+
+    def _in_range(bar_time) -> bool:
+        if overnight:
+            return bar_time >= t_start or bar_time <= t_end
+        return t_start <= bar_time <= t_end
 
     def _f(ctx: EntryContext) -> tuple[bool, str]:
         # 1. Determine Timezone
@@ -117,12 +125,10 @@ def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: str 
         bar_dt = datetime.fromtimestamp(ctx.bar['time'], tz=tz)
         bar_time = bar_dt.time()
 
-        if t_start <= bar_time <= t_end:
+        if _in_range(bar_time):
             return True, "ok"
 
         msg = f"Time {bar_time} ({tz_name}) outside {t_start}-{t_end}"
-        # Uncomment the next line to debug blocked trades in console
-        # print(f"[Filter] ⛔ BLOCKED: {msg} | UTC Epoch: {ctx.bar['time']}")
         return False, msg
     _f.__name__ = "time_range"
     return _f
@@ -179,31 +185,41 @@ def rollover_filter(enabled: bool = False, timezone_str: str | None = None) -> E
     return _f
 
 
-def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str = "America/New_York") -> EntryFilter:
+def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str | None = None) -> EntryFilter:
     """
     Blocks entries if the number of strategy trades taken TODAY (in the given timezone) >= limit.
     Counts both open and closed trades. Manual, test, and broker-sync trades are excluded.
-    """
-    tz = ZoneInfo(timezone_str)
 
+    If ``timezone_str`` is None, the timezone is resolved from ``PAIR_TIMEZONES`` using the bar's pair.
+    """
     def _f(ctx: EntryContext) -> tuple[bool, str]:
-        # 1. Determine the "current day" of the bar being processed
+        # 1. Resolve timezone
+        tz_name = timezone_str
+        if not tz_name:
+            pair = ctx.bar.get('pair', '')
+            tz_name = PAIR_TIMEZONES.get(pair, "UTC")
+        tz = ZoneInfo(tz_name)
+
+        # 2. Determine the "current day" of the bar being processed
         current_bar_dt = datetime.fromtimestamp(ctx.bar['time'], tz=tz)
         current_day_date = current_bar_dt.date()
 
-        # 2. Fetch all trades from repository (includes open and closed)
+        # 3. Fetch all trades from repository (includes open and closed)
         all_trades = ctx.strategy.trade_repository.list_trades(ctx.bar['pair'])
 
-        # 3. Count only strategy-automated trades that occurred on this specific day
+        # 4. Count only strategy-automated trades that occurred on this specific day
         daily_count = 0
         for t in all_trades:
             # Skip manual, test, and broker-sync trades
-            trade_source = (t.source or "strategy").lower()
+            trade_source = str(t.source or "strategy").lower()
             if trade_source in ("manual", "test", "broker_sync"):
                 continue
 
-            # t.entry_time is UTC-aware datetime. Convert to strategy timezone.
-            trade_local_dt = t.entry_time.astimezone(tz)
+            # t.entry_time may be naive or aware. Make it aware in UTC first.
+            entry_time = t.entry_time
+            if entry_time.tzinfo is None:
+                entry_time = entry_time.replace(tzinfo=timezone.utc)
+            trade_local_dt = entry_time.astimezone(tz)
             if trade_local_dt.date() == current_day_date:
                 daily_count += 1
 

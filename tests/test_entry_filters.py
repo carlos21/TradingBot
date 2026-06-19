@@ -143,6 +143,22 @@ class TestTimeRangeFilter:
         ok, _ = f(ctx)
         assert ok is True
 
+    def test_allows_overnight_range(self):
+        f = time_range_filter("22:00", "02:00", "America/New_York")
+        # 23:00 NY
+        bar_time = int(datetime(2025, 6, 15, 3, 0, tzinfo=timezone.utc).timestamp())
+        ctx = _make_ctx(bar_time=bar_time, pair="MNQ")
+        ok, _ = f(ctx)
+        assert ok is True
+
+    def test_blocks_overnight_range(self):
+        f = time_range_filter("22:00", "02:00", "America/New_York")
+        # 14:00 NY - outside 22:00-02:00
+        bar_time = int(datetime(2025, 6, 15, 18, 0, tzinfo=timezone.utc).timestamp())
+        ctx = _make_ctx(bar_time=bar_time, pair="MNQ")
+        ok, _ = f(ctx)
+        assert ok is False
+
 
 class TestDailyTradesLimitFilter:
 
@@ -233,6 +249,48 @@ class TestDailyTradesLimitFilter:
         ok, reason = f(ctx)
         assert ok is True, f"Expected allow but got: {reason}"
         assert "daily_count 0" in reason
+
+    def test_auto_detects_pair_timezone(self):
+        f = daily_trades_limit_filter(1)
+        bar_time = int(datetime(2025, 6, 15, 14, 0, tzinfo=timezone.utc).timestamp())
+        strategy = MagicMock()
+        strategy.open_trades = []
+        strategy.trade_repository = MagicMock()
+        strategy.trade_repository.list_trades.return_value = [
+            TradeData(
+                trade_id="T1", pair="MNQ", trade_type="long",
+                entry_price=100, stop_loss=90, take_profit=130, risk=10,
+                risk_dollars=None, risk_pct=None, contracts=None,
+                entry_time=datetime(2025, 6, 15, 13, 0, tzinfo=timezone.utc),
+                exit_price=None, exit_time=None, result=None, result_type=None,
+                fees=None, pnl_usd=None, params=None,
+            )
+        ]
+        ctx = _make_ctx(strategy=strategy, bar_time=bar_time)
+        ok, reason = f(ctx)
+        assert ok is False
+        assert "Daily limit" in reason
+
+    def test_handles_naive_entry_time(self):
+        f = daily_trades_limit_filter(1, "America/New_York")
+        bar_time = int(datetime(2025, 6, 15, 14, 0, tzinfo=timezone.utc).timestamp())
+        strategy = MagicMock()
+        strategy.open_trades = []
+        strategy.trade_repository = MagicMock()
+        strategy.trade_repository.list_trades.return_value = [
+            TradeData(
+                trade_id="T1", pair="MNQ", trade_type="long",
+                entry_price=100, stop_loss=90, take_profit=130, risk=10,
+                risk_dollars=None, risk_pct=None, contracts=None,
+                entry_time=datetime(2025, 6, 15, 13, 0),  # naive
+                exit_price=None, exit_time=None, result=None, result_type=None,
+                fees=None, pnl_usd=None, params=None,
+            )
+        ]
+        ctx = _make_ctx(strategy=strategy, bar_time=bar_time)
+        ok, reason = f(ctx)
+        assert ok is False
+        assert "Daily limit" in reason
 
 
 class TestRolloverFilter:

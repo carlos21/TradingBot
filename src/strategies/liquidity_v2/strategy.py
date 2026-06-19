@@ -148,17 +148,27 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
     def _reset_trigger_state(self, line_state: dict[str, Any]):
         """Reset trigger-specific state only, preserving direction and extreme."""
+        # Reset fixed trigger stages.
         if "d5_stage" in line_state:
             line_state["d5_stage"] = 0
         if "tsi_stage" in line_state:
             line_state["tsi_stage"] = 0
             line_state["tsi_ref_price"] = 0.0
             line_state.pop("tsi_reset_occurred", None)
-        if "vat_5m_stage" in line_state:
-            line_state["vat_5m_stage"] = 0
-            line_state["vat_5m_reset"] = False
+
+        # Reset any velocity-adaptive trigger state (1m/3m/5m/15m etc.).
+        for key in list(line_state.keys()):
+            if key.startswith("vat_") and (key.endswith("_stage") or key.endswith("_reset")):
+                if key.endswith("_stage"):
+                    line_state[key] = 0
+                else:
+                    line_state[key] = False
         line_state.pop("vat_regime", None)
         line_state.pop("vat_velocity", None)
+
+        # Clear interaction timestamps so a reset line cannot fire until re-touched.
+        line_state.pop("interaction_ts", None)
+        line_state.pop("touch_bar_time", None)
 
     def _reset_line_state(self, line_state: dict[str, Any]):
         super()._reset_line_state(line_state)
@@ -499,7 +509,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                             elif prev_tsi >= prev_sig and curr_tsi < curr_sig:
                                 cross_type = 'bearish'
 
-                        if self.logger and (cross_type or True):
+                        if self.logger and cross_type:
                             self.logger.info(
                                 f"[TSI:{tf}] bar={bar['time']} close={bar['close']:.2f} "
                                 f"tsi={curr_tsi:+.2f} sig={curr_sig:+.2f} cross={cross_type or 'none'}"

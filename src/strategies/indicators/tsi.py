@@ -8,6 +8,8 @@ reuse the same pure math without coupling to trigger machinery.
 def calculate_ema(values: list[float], length: int) -> list[float]:
     if not values:
         return []
+    if length <= 0:
+        raise ValueError(f"EMA length must be positive, got {length}")
     alpha = 2 / (length + 1)
     ema_values = [values[0]]
     for price in values[1:]:
@@ -31,6 +33,11 @@ def calculate_tsi_series(
     :param sig_len: signal line EMA length (default 4)
     :returns: tuple of (tsi line, signal line)
     """
+    if long_len <= 0 or short_len <= 0 or sig_len <= 0:
+        raise ValueError(
+            f"TSI lengths must be positive, got long_len={long_len}, "
+            f"short_len={short_len}, sig_len={sig_len}"
+        )
     if len(closes) < long_len + short_len + sig_len:
         return [], []
 

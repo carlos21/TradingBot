@@ -95,6 +95,21 @@ class TestLinesControllerAddLine:
         with pytest.raises(Exception):  # abort() raises HTTPException
             ctrl.add_line("ES", 5000.0)
 
+    def test_add_line_invalid_price_aborts(self, controller):
+        ctrl, _, _ = controller
+        with pytest.raises(Exception):
+            ctrl.add_line("MNQ", "abc")
+
+    def test_add_line_negative_price_aborts(self, controller):
+        ctrl, _, _ = controller
+        with pytest.raises(Exception):
+            ctrl.add_line("MNQ", -1.0)
+
+    def test_add_line_invalid_timestamp_aborts(self, controller):
+        ctrl, _, _ = controller
+        with pytest.raises(Exception):
+            ctrl.add_line("MNQ", 5000.0, creation_timestamp="bad")
+
 
 class TestLinesControllerGetLine:
 
