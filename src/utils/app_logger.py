@@ -5,10 +5,35 @@ Two implementations:
 - FileAndConsoleLogger: prints to terminal AND writes to file (live mode)
 """
 
+import logging
 import threading
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
+
+
+def log_timestamp() -> str:
+    """Return the current local time as ``YYYY-MM-DD HH:MM:SS.mmm``."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+def configure_logging(level: int = logging.INFO) -> None:
+    """Configure the root Python logger with a datetime-aware formatter.
+
+    This is idempotent: if handlers are already attached it does nothing,
+    so it is safe to call multiple times (e.g. from entry points and tests).
+    """
+    if logging.root.handlers:
+        return
+    handler = logging.StreamHandler()
+    handler.setLevel(level)
+    formatter = logging.Formatter(
+        "%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    handler.setFormatter(formatter)
+    logging.root.addHandler(handler)
+    logging.root.setLevel(level)
 
 
 class ILogger(ABC):
@@ -39,16 +64,16 @@ class ConsoleLogger(ILogger):
     """Logger that only prints to console (for backtest mode)."""
 
     def debug(self, message: str) -> None:
-        print(f"[DEBUG] {message}", flush=True)
+        print(f"{log_timestamp()} [DEBUG] {message}", flush=True)
 
     def info(self, message: str) -> None:
-        print(f"[INFO] {message}", flush=True)
+        print(f"{log_timestamp()} [INFO] {message}", flush=True)
 
     def warning(self, message: str) -> None:
-        print(f"[WARN] {message}", flush=True)
+        print(f"{log_timestamp()} [WARN] {message}", flush=True)
 
     def error(self, message: str) -> None:
-        print(f"[ERROR] {message}", flush=True)
+        print(f"{log_timestamp()} [ERROR] {message}", flush=True)
 
     def close(self) -> None:
         pass  # Nothing to close
@@ -74,12 +99,11 @@ class FileAndConsoleLogger(ILogger):
     def _write(self, level: str, message: str) -> None:
         """Write to both console and file."""
         prefix = f"[{self.instance_name}] " if self.instance_name else ""
-        formatted = f"{prefix}[{level}] {message}"
+        formatted = f"{log_timestamp()} {prefix}[{level}] {message}"
         print(formatted, flush=True)
 
         with self._lock:
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            self._file_handle.write(f"{timestamp} {formatted}\n")
+            self._file_handle.write(f"{formatted}\n")
 
     def debug(self, message: str) -> None:
         self._write("DEBUG", message)

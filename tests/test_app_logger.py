@@ -1,9 +1,13 @@
 """Tests for src/utils/app_logger.py."""
 
+import re
 import tempfile
 from pathlib import Path
 
 from src.utils.app_logger import ConsoleLogger, FileAndConsoleLogger, ILogger
+
+
+_TS_RE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}")
 
 
 class TestILogger:
@@ -14,29 +18,36 @@ class TestILogger:
 
 class TestConsoleLogger:
 
+    def _assert_has_timestamp(self, captured):
+        assert _TS_RE.search(captured.out), f"missing timestamp in: {captured.out!r}"
+
     def test_debug(self, capsys):
         logger = ConsoleLogger()
         logger.debug("test debug")
         captured = capsys.readouterr()
         assert "[DEBUG] test debug" in captured.out
+        self._assert_has_timestamp(captured)
 
     def test_info(self, capsys):
         logger = ConsoleLogger()
         logger.info("test info")
         captured = capsys.readouterr()
         assert "[INFO] test info" in captured.out
+        self._assert_has_timestamp(captured)
 
     def test_warning(self, capsys):
         logger = ConsoleLogger()
         logger.warning("test warning")
         captured = capsys.readouterr()
         assert "[WARN] test warning" in captured.out
+        self._assert_has_timestamp(captured)
 
     def test_error(self, capsys):
         logger = ConsoleLogger()
         logger.error("test error")
         captured = capsys.readouterr()
         assert "[ERROR] test error" in captured.out
+        self._assert_has_timestamp(captured)
 
     def test_close(self):
         logger = ConsoleLogger()
@@ -62,6 +73,7 @@ class TestFileAndConsoleLogger:
             assert len(log_files) == 1
             content = log_files[0].read_text()
             assert "test file write" in content
+            assert _TS_RE.search(content), f"missing timestamp in file: {content!r}"
 
     def test_all_levels_written(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -78,6 +90,7 @@ class TestFileAndConsoleLogger:
             assert "[INFO] info msg" in content
             assert "[WARN] warning msg" in content
             assert "[ERROR] error msg" in content
+            assert _TS_RE.search(content), f"missing timestamp in file: {content!r}"
 
     def test_instance_name_prefix(self, capsys):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -85,6 +98,7 @@ class TestFileAndConsoleLogger:
             logger.info("prefixed")
             captured = capsys.readouterr()
             assert "[TEST] [INFO] prefixed" in captured.out
+            assert _TS_RE.search(captured.out), f"missing timestamp in console: {captured.out!r}"
             logger.close()
 
     def test_file_has_timestamp(self):

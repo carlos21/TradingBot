@@ -10,15 +10,9 @@ from dateutil import parser
 
 from .combined_datasource import CombinedDataSource
 
-# Configure module-level logger
+# Module-level logger; output formatting is provided by ``configure_logging()``
+# called at application startup.
 t_logger = logging.getLogger(__name__)
-t_logger.setLevel(logging.DEBUG)
-if not t_logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.DEBUG)
-    fmt = logging.Formatter('[%(asctime)s] %(levelname)s %(message)s')
-    handler.setFormatter(fmt)
-    t_logger.addHandler(handler)
 
 class CSVDataSource(CombinedDataSource):
     """
@@ -81,7 +75,9 @@ class CSVDataSource(CombinedDataSource):
             if (self.initial_start_time is None or b['time'] >= self.initial_start_time)
             and (self.initial_end_time   is None or b['time'] <= self.initial_end_time)
         ]
-        print(f"[CSV_DS] loaded {len(self._bars)} raw, seeded _played_bars with {len(self._played_bars)}")
+        t_logger.info(
+            f"[CSV_DS] loaded {len(self._bars)} raw, seeded _played_bars with {len(self._played_bars)}"
+        )
 
         # Replay state
         self.current_1m_index     = 0
@@ -164,8 +160,10 @@ class CSVDataSource(CombinedDataSource):
         return bars
 
     def load_historical_bars(self, timeframe='1m', start_time=None):
-        print(f"[CSV_DS] load_historical_bars → tf={timeframe!r}, start_time={start_time!r}, "
-            f"_played_bars_len={len(self._played_bars)}")
+        t_logger.info(
+            f"[CSV_DS] load_historical_bars → tf={timeframe!r}, start_time={start_time!r}, "
+            f"_played_bars_len={len(self._played_bars)}"
+        )
 
         # Filter source bars based on start_time if provided
         source = self._played_bars
@@ -173,7 +171,7 @@ class CSVDataSource(CombinedDataSource):
             source = [b for b in source if b['time'] >= start_time]
 
         if timeframe == '1m':
-            print(f"[CSV_DS] → returning {len(source)} 1m bars")
+            t_logger.info(f"[CSV_DS] → returning {len(source)} 1m bars")
             return list(source)
 
         # ─── Higher TFs: aggregate the filtered buffer ───

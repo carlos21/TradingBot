@@ -74,7 +74,12 @@ from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from src.strategies.liquidity_v2.controllers.lines_controller import LinesController
 from src.strategies.protocols import LiquidityStrategy
 from src.strategies.strategy_factory import StrategyFactory
-from src.utils.app_logger import ConsoleLogger, FileAndConsoleLogger, ILogger
+from src.utils.app_logger import (
+    ConsoleLogger,
+    FileAndConsoleLogger,
+    ILogger,
+    configure_logging,
+)
 from src.utils.history_loaded_deduper import HistoryLoadedDeduper
 
 
@@ -282,6 +287,9 @@ def create_app(
     Build the whole application with injected dependencies.
     No env vars; no global singletons.
     """
+    # Ensure standard library loggers emit datetimes in a consistent format.
+    configure_logging()
+
     app = Flask(__name__)
     CORS(app)
     # Use threading async mode for better performance with local NinjaTrader

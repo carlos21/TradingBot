@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from src.domain.repositories import TradeRepository
 
 
@@ -32,8 +34,16 @@ class TradeLogger:
         lines = [header]
         for entry in logs:
             ts = entry.get("ts", "")
-            # Extract time portion (HH:MM:SS) from ISO timestamp
-            time_part = ts[11:19] if len(ts) >= 19 else ts
+            # Convert ISO timestamp to ``YYYY-MM-DD HH:MM:SS`` so the full
+            # date is visible in the lifecycle output.
+            time_part = ts
+            if ts:
+                try:
+                    time_part = datetime.fromisoformat(ts).strftime(
+                        "%Y-%m-%d %H:%M:%S"
+                    )
+                except ValueError:
+                    pass
             event = entry.get("event", "")
             msg = entry.get("msg", "")
             lines.append(f"{time_part}  {event:<15s}{msg}")

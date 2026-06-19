@@ -21,6 +21,10 @@ from src.config import (
     CliConfigLoader,
 )
 from src.config.builder import AppBuilder
+from src.utils.app_logger import configure_logging, log_timestamp
+
+# Ensure all standard-library loggers emit datetimes in a consistent format.
+configure_logging()
 
 
 def main():
@@ -35,7 +39,10 @@ def main():
     wiring, ds = builder.build()
 
     instance = config.instance_name
-    print(f"[{instance}] Starting Liquid instance — pair={config.pair} mode={config.mode}")
+    app_logger = wiring.logger
+    app_logger.info(
+        f"[{instance}] Starting Liquid instance — pair={config.pair} mode={config.mode}"
+    )
 
     # Register signal handlers for graceful shutdown
     _shutdown_triggered = False
@@ -46,7 +53,10 @@ def main():
             return
         _shutdown_triggered = True
         sig_name = signal.Signals(signum).name
-        print(f"\n[{instance}] Received {sig_name}, shutting down gracefully...")
+        print(
+            f"\n{log_timestamp()} [{instance}] Received {sig_name}, shutting down gracefully...",
+            flush=True,
+        )
         if config.mode == "live" and ds is not None:
             ds.stop()
         sys.exit(0)
@@ -57,13 +67,17 @@ def main():
     if config.mode == "live":
         platform_label = "NinjaTrader" if config.platform_type == "ninjatrader" else "MetaTrader"
         if config.platform_type == "ninjatrader" and not getattr(config, "nt_accounts", None):
-            print(f"[{instance}] WARNING: No NT accounts configured. Live streaming will be unavailable until accounts are added.")
+            app_logger.warning(
+                f"[{instance}] No NT accounts configured. Live streaming will be unavailable until accounts are added."
+            )
         else:
-            print(f"[{instance}] Starting ZeroMQ gateway...")
+            app_logger.info(f"[{instance}] Starting ZeroMQ gateway...")
             ds.start()
-            print(f"[{instance}] ZeroMQ gateway started")
+            app_logger.info(f"[{instance}] ZeroMQ gateway started")
 
-        print(f"[{instance}] Starting LIVE mode server on port {config.flask_port} (threaded, debug=False)")
+        app_logger.info(
+            f"[{instance}] Starting LIVE mode server on port {config.flask_port} (threaded, debug=False)"
+        )
         try:
             wiring.socketio.run(
                 wiring.app,
@@ -75,9 +89,9 @@ def main():
             )
         finally:
             if ds is not None:
-                print(f"[{instance}] Stopping ZeroMQ gateway...")
+                app_logger.info(f"[{instance}] Stopping ZeroMQ gateway...")
                 ds.stop()
-                print(f"[{instance}] ZeroMQ gateway stopped")
+                app_logger.info(f"[{instance}] ZeroMQ gateway stopped")
     else:
         wiring.socketio.run(
             wiring.app,

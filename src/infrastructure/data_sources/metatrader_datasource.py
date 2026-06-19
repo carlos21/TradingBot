@@ -1,3 +1,4 @@
+import logging
 import socket
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -7,6 +8,8 @@ from zoneinfo import ZoneInfo
 import MetaTrader5 as mt5
 
 from .combined_datasource import CombinedDataSource
+
+logger = logging.getLogger(__name__)
 
 # Map of timeframe strings to MT5 constants
 TF_MAP = {
@@ -56,7 +59,7 @@ class MetaTraderDataSource(CombinedDataSource):
 
         # ensure symbol is selected
         if not mt5.symbol_select(self.symbol, True):
-            print(f"⚠️ symbol_select failed for {self.symbol}: {mt5.last_error()}")
+            logger.warning(f"symbol_select failed for {self.symbol}: {mt5.last_error()}")
             return []
 
         utc_to   = datetime.now(timezone.utc)
@@ -64,7 +67,7 @@ class MetaTraderDataSource(CombinedDataSource):
         rates    = mt5.copy_rates_range(self.symbol, tf_const, utc_from, utc_to)
 
         if rates is None or len(rates) == 0:
-            print(f"⚠️ no history for {self.symbol}@{timeframe}, error={mt5.last_error()}")
+            logger.warning(f"no history for {self.symbol}@{timeframe}, error={mt5.last_error()}")
             return []
 
         bars: list[dict] = []
@@ -105,19 +108,19 @@ class MetaTraderDataSource(CombinedDataSource):
                 if bar["time"] > from_time:
                     callback(bar)
         except Exception as e:
-            print(f"[MTDataSrc] error replaying history: {e}")
+            logger.error(f"[MTDataSrc] error replaying history: {e}")
 
         # --- 2) live ticks over TCP ---
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind((self._host, self._port))
         srv.listen(1)
-        print(f"[MTDataSrc] Listening for ticks on {self._host}:{self._port}…")
+        logger.info(f"[MTDataSrc] Listening for ticks on {self._host}:{self._port}…")
 
         conn = None
         try:
             conn, addr = srv.accept()
-            print(f"[MTDataSrc] EA connected from {addr}")
+            logger.info(f"[MTDataSrc] EA connected from {addr}")
             buf = b""
             while True:
                 chunk = conn.recv(1024)
@@ -131,13 +134,13 @@ class MetaTraderDataSource(CombinedDataSource):
                         continue
                     parts = text.split()
                     if len(parts) != 2:
-                        print(f"[MTDataSrc] malformed tick: '{text}'")
+                        logger.warning(f"[MTDataSrc] malformed tick: '{text}'")
                         continue
                     symbol, price_str = parts
                     try:
                         price = float(price_str)
                     except ValueError:
-                        print(f"[MTDataSrc] invalid price in tick: '{text}'")
+                        logger.warning(f"[MTDataSrc] invalid price in tick: '{text}'")
                         continue
 
                     tick = {
@@ -151,4 +154,4 @@ class MetaTraderDataSource(CombinedDataSource):
             if conn is not None:
                 conn.close()
             srv.close()
-            print("[MTDataSrc] Tick stream closed, server shutdown")
+            logger.info("[MTDataSrc] Tick stream closed, server shutdown")

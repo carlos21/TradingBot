@@ -7,6 +7,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from src.application.ports import EventPublisher
+from src.utils.app_logger import log_timestamp
 
 from .readiness_state import ReadinessState
 
@@ -207,9 +208,9 @@ class ReadinessStateMachine:
         if self._logger is not None:
             with contextlib.suppress(Exception):
                 self._logger.info(message)
-        # Also print so the message is visible in console/launcher output even
-        # when a file logger is slow to flush.
-        print(message, flush=True)
+        else:
+            # Fallback for contexts where no logger is injected yet.
+            print(f"{log_timestamp()} {message}", flush=True)
 
     def _notify(self, previous_state: ReadinessState, reason: str) -> None:
         payload = {

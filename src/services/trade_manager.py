@@ -658,7 +658,7 @@ class TradeManager:
                                 stop_loss: float = None, take_profit: float = None):
         trade = next((t for t in self.open_trades if t['trade_id'] == trade_id), None)
         if not trade:
-            print(f"[TradeManager] ⚠️ Entry fill for {trade_id} but trade not in memory")
+            self.logger.warning(f"[TradeManager] Entry fill for {trade_id} but trade not in memory")
             return
 
         self._broker_handler.update_balance(self.account_balance)
@@ -674,7 +674,7 @@ class TradeManager:
     ):
         trade = next((t for t in self.open_trades if t['trade_id'] == trade_id), None)
         if not trade:
-            print(f"[TradeManager] ⚠️ Broker fill for {trade_id} but trade not in memory")
+            self.logger.warning(f"[TradeManager] Broker fill for {trade_id} but trade not in memory")
             return
 
         # Atomic guard: prevent duplicate fills from double-counting PnL

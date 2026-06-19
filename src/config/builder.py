@@ -36,7 +36,7 @@ from src.strategies.liquidity_v2.prod_config import (
     get_prod_strategy_numbers,
     get_prod_strategy_options,
 )
-from src.utils.app_logger import FileAndConsoleLogger
+from src.utils.app_logger import FileAndConsoleLogger, configure_logging, log_timestamp
 
 
 def _parse_input_to_epoch(date_str: str, tz_name: str) -> int | None:
@@ -55,14 +55,14 @@ def _parse_input_to_epoch(date_str: str, tz_name: str) -> int | None:
 
 def _build_analytics(config: AppConfig) -> AnalyticsReporter:
     if config.sentry_dsn:
-        print("[App] Sentry analytics enabled")
+        print(f"{log_timestamp()} [App] Sentry analytics enabled")
         return SentryReporter(config.sentry_dsn)
     return NoOpReporter()
 
 
 def _build_notifier(config: AppConfig) -> Notifier:
     if config.telegram_token and config.telegram_chat_id:
-        print("[App] Telegram notifications enabled")
+        print(f"{log_timestamp()} [App] Telegram notifications enabled")
         return TelegramNotifier(config.telegram_token, config.telegram_chat_id)
     return NoOpNotifier()
 
@@ -74,6 +74,9 @@ class AppBuilder:
         self.config = config
 
     def build(self) -> tuple[AppWiring, CombinedDataSource | None]:
+        # Ensure standard-library loggers emit datetimes before any data source
+        # or gateway code starts logging.
+        configure_logging()
         if self.config.mode == "live":
             return self._build_live()
         return self._build_backtest(), None
@@ -98,11 +101,11 @@ class AppBuilder:
         initial_start = _parse_input_to_epoch(cfg.start_str, cfg.input_tz)
         initial_end = _parse_input_to_epoch(cfg.end_str, cfg.input_tz)
 
-        print(f"[App] Time Config ({cfg.pair}):")
-        print(f"      Input TZ (User): {cfg.input_tz}")
-        print(f"      File  TZ (CSV):  {cfg.file_tz}")
-        print(f"      Input Start:     {cfg.start_str} -> Epoch: {initial_start}")
-        print(f"      Input End:       {cfg.end_str}   -> Epoch: {initial_end}")
+        print(f"{log_timestamp()} [App] Time Config ({cfg.pair}):")
+        print(f"{log_timestamp()}       Input TZ (User): {cfg.input_tz}")
+        print(f"{log_timestamp()}       File  TZ (CSV):  {cfg.file_tz}")
+        print(f"{log_timestamp()}       Input Start:     {cfg.start_str} -> Epoch: {initial_start}")
+        print(f"{log_timestamp()}       Input End:       {cfg.end_str}   -> Epoch: {initial_end}")
 
         ds = CSVDataSource(
             pair=cfg.pair,
@@ -173,13 +176,13 @@ class AppBuilder:
         logger = FileAndConsoleLogger(log_dir=cfg.log_dir, instance_name=cfg.instance_name)
 
         if cfg.risk_per_trade is not None:
-            print(f"[liquid] Risk config: fixed ${cfg.risk_per_trade:.0f} per trade")
+            print(f"{log_timestamp()} [liquid] Risk config: fixed ${cfg.risk_per_trade:.0f} per trade")
         elif cfg.risk_pct_per_trade is not None:
-            print(f"[liquid] Risk config: {cfg.risk_pct_per_trade}% of account balance")
+            print(f"{log_timestamp()} [liquid] Risk config: {cfg.risk_pct_per_trade}% of account balance")
         else:
-            print("[liquid] Risk config: none (NinjaTrader will use 1 contract)")
+            print(f"{log_timestamp()} [liquid] Risk config: none (NinjaTrader will use 1 contract)")
 
-        print("[liquid] Starting ZeroMQ gateway...")
+        print(f"{log_timestamp()} [liquid] Starting ZeroMQ gateway...")
         if cfg.nt_accounts:
             ds, executor = create_multi_account_live_components(
                 cfg.pair,

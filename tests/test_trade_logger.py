@@ -58,6 +58,9 @@ class TestTradeLogger:
         assert "abc12345" in output
         assert "OPEN" in output
         assert "SL_HIT" in output
+        # Should now include the full date, not just HH:MM:SS.
+        assert "2025-01-01 10:00:00" in output
+        assert "2025-01-01 11:00:00" in output
 
     def test_format_logs_no_entries(self):
         td = TradeData(

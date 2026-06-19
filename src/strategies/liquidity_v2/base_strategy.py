@@ -318,7 +318,7 @@ class BaseLiquidityStrategy:
                     line_state["creation_ts"] = creation_ts
                     restored += 1
             if restored:
-                print(f"[Strategy] Restored trigger state for {restored}/{len(self.strategy_lines)} lines")
+                self.logger.info(f"[Strategy] Restored trigger state for {restored}/{len(self.strategy_lines)} lines")
 
     def restore_open_trades(self):
         """Sync open trades from TradeManager into strategy's in-memory list."""
@@ -330,7 +330,7 @@ class BaseLiquidityStrategy:
                     if t.get('status') == 'open':
                         self.open_trades.append(dict(t))
                 if self.open_trades:
-                    print(f"[Strategy] Restored {len(self.open_trades)} open trade(s) from DB")
+                    self.logger.info(f"[Strategy] Restored {len(self.open_trades)} open trade(s) from DB")
 
     def restore_reentry_opportunities(self, pair: str, reference_time: datetime = None):
         """Rebuild pending re-entry opportunities from recently SL'd trades in DB."""

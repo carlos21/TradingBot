@@ -10,11 +10,14 @@ This eliminates direct coupling between:
 - Controllers and internal state
 """
 
+import logging
 from collections import defaultdict
 from collections.abc import Callable
 from typing import Any, Protocol
 
 from src.domain.events import DomainEvent, EventType
+
+logger = logging.getLogger(__name__)
 
 
 class EventSubscriber(Protocol):
@@ -123,7 +126,7 @@ class EventBus:
                 handler(event)
             except Exception as e:
                 # Log error but don't stop other handlers
-                print(f"[EventBus] Handler error for {event_type}: {e}")
+                logger.exception(f"[EventBus] Handler error for {event_type}: {e}")
 
         # Call subscriber objects
         for subscriber in subscribers:
@@ -131,7 +134,7 @@ class EventBus:
                 subscriber.on_event(event)
             except Exception as e:
                 # Log error but don't stop other subscribers
-                print(f"[EventBus] Subscriber error for {event_type}: {e}")
+                logger.exception(f"[EventBus] Subscriber error for {event_type}: {e}")
 
     def publish_typed(
         self,
