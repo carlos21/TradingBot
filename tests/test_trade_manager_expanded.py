@@ -103,26 +103,26 @@ class ExplodingTradeRepository(FakeTradeRepository):
 
 class TestCalcContracts:
 
-    def test_risk_per_contract_zero_returns_one(self):
+    def test_risk_per_contract_zero_returns_zero(self):
         tm = _make_manager()
-        assert tm._calc_contracts(0) == 1.0
+        assert tm._calc_contracts(0) == 0.0
 
-    def test_risk_per_contract_negative_returns_one(self):
+    def test_risk_per_contract_negative_returns_zero(self):
         tm = _make_manager()
-        assert tm._calc_contracts(-5) == 1.0
+        assert tm._calc_contracts(-5) == 0.0
 
-    def test_risk_per_contract_zero_fractional_returns_min_lot(self):
+    def test_risk_per_contract_zero_fractional_returns_zero(self):
         tm = _make_manager(use_fractional_lots=True)
-        assert tm._calc_contracts(0) == 0.01
+        assert tm._calc_contracts(0) == 0.0
 
-    def test_risk_budget_zero_returns_one(self):
+    def test_risk_budget_zero_returns_zero(self):
         tm = _make_manager(account_balance=0, risk_pct_per_trade=1.0)
         # risk_budget = 0 * 1 / 100 = 0
-        assert tm._calc_contracts(10) == 1.0
+        assert tm._calc_contracts(10) == 0.0
 
-    def test_risk_budget_zero_fractional_returns_min_lot(self):
+    def test_risk_budget_zero_fractional_returns_zero(self):
         tm = _make_manager(account_balance=0, risk_pct_per_trade=1.0, use_fractional_lots=True)
-        assert tm._calc_contracts(10) == 0.01
+        assert tm._calc_contracts(10) == 0.0
 
     def test_fractional_lots_normal_path(self):
         tm = _make_manager(account_balance=10000, risk_pct_per_trade=1.0, use_fractional_lots=True)
@@ -189,11 +189,12 @@ class TestOpenTradeExpanded:
         assert trade["risk_pct"] is None
 
     def test_open_trade_calculates_risk_dollars(self):
-        tm = _make_manager()
+        tm = _make_manager(risk_per_trade=1000.0)
         trade = tm.open_trade("MNQ", "long", 100, 90, 130, 10, 1000.0)
-        # contracts = risk_budget(100000, None, None) = 0 -> 1 contract default
-        # risk_per_contract = 10 * 2 = 20, risk_dollars = 20 * 1 = 20
-        assert trade["risk_dollars"] == 20.0
+        # risk_budget = 1000, risk_per_contract = 10 * 2 = 20 -> 50 contracts
+        # risk_dollars = 20 * 50 = 1000
+        assert trade["contracts"] == 50
+        assert trade["risk_dollars"] == 1000.0
 
     def test_open_trade_emits_trade_open_event(self):
         analytics = FakeAnalyticsReporter()
@@ -355,8 +356,9 @@ class TestHandleBrokerEntryFillExpanded:
         _add_open_trade(tm, trade_type="long", entry=100, sl=90, tp=130, risk=10)
         tm.handle_broker_entry_fill("T1", 101.0)
         t = tm.open_trades[0]
-        assert t["contracts"] == 0.01
-        assert t["risk_dollars"] == 11.0 * 2.0 * 0.01  # risk * point_value * contracts
+        # Zero risk budget must not open a position.
+        assert t["contracts"] == 0.0
+        assert t["risk_dollars"] == 0.0
 
     def test_trade_logger_called_on_entry_fill(self):
         from src.services.trade_logger import TradeLogger

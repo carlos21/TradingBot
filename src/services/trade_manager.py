@@ -3,6 +3,7 @@
 import contextlib
 from datetime import datetime, timezone
 from threading import RLock
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from src.analytics import AnalyticsReporter, NoOpReporter
@@ -200,6 +201,49 @@ class TradeManager:
             self.notifier.send(f"[TradeManager] Failed to load open trades on init: {e}")
 
     # ------------------------------------------------------------------
+    # Close-path helpers (prevent duplicate close orders / double-counted PnL)
+    # ------------------------------------------------------------------
+    def _guard_close(self, trade_id: str) -> bool:
+        """Atomically mark a trade as closing. Return False if already in flight."""
+        with self._lock:
+            if trade_id in self._closing_trades:
+                self.logger.warning(
+                    f"[TradeManager] Close already in flight for {trade_id}; skipping"
+                )
+                return False
+            self._closing_trades.add(trade_id)
+            return True
+
+    def _cleanup_after_close_attempt(
+        self,
+        trade_id: str,
+        result: Any,
+        remove_on_failure: bool = False,
+    ) -> None:
+        """
+        Clean up monitored/closing state after a close attempt.
+
+        If the close succeeded, the trade is removed from open_trades.
+        If it failed and ``remove_on_failure`` is True (e.g. broker fill or
+        DB error after executor already sent the close), the trade is still
+        removed so we do not retry indefinitely. If ``remove_on_failure`` is
+        False (executor failure), the trade stays in open_trades for retry.
+        """
+        with self._lock:
+            self._monitored_trades.discard(trade_id)
+            self._closing_trades.discard(trade_id)
+            if result is not None or remove_on_failure:
+                with contextlib.suppress(StopIteration, ValueError):
+                    self.open_trades.remove(next(
+                        t for t in self.open_trades if t["trade_id"] == trade_id
+                    ))
+
+    def _is_executor_failure(self, exc: Exception) -> bool:
+        """Heuristic used to decide whether a close can be retried next bar."""
+        err = str(exc).lower()
+        return "zmq" in err or "executor" in err or "connection" in err
+
+    # ------------------------------------------------------------------
     # Bar handlers
     # ------------------------------------------------------------------
     def handle_new_1m_bar(self, bar: dict):
@@ -252,6 +296,12 @@ class TradeManager:
             if hit_sl:
                 extreme_excursion = bar['low'] if is_long else bar['high']
 
+            trade_id = trade['trade_id']
+            if not self._guard_close(trade_id):
+                continue
+
+            result = None
+            remove_on_failure = False
             try:
                 result = self._close_use_case.execute(
                     trade=trade,
@@ -263,28 +313,28 @@ class TradeManager:
                     extreme_excursion=extreme_excursion,
                 )
             except Exception as e:
-                # Distinguish executor failure (before DB) from DB failure
-                # Executor failure: trade stays open, no analytics
-                # DB failure: trade removed, analytics captured
-                if "ZMQ" in str(e) or "Executor" in str(e) or "connection" in str(e).lower():
-                    continue  # executor failed — retry next bar
-                self.logger.error(f"[TradeManager] DB error on SL/TP close for {trade['trade_id']}: {e}")
-                self.analytics.capture_exception(e, {"op": "close_trade_sl_tp", "trade_id": trade['trade_id']})
-                if self.trade_logger:
-                    self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
-                self.notifier.send(f"[TradeManager] DB error on SL/TP close for {trade['trade_id']}: {e}")
-                result = None
+                if self._is_executor_failure(e):
+                    self.logger.warning(
+                        f"[TradeManager] Executor failure on SL/TP close for {trade_id}: {e}; will retry"
+                    )
+                    remove_on_failure = False
+                else:
+                    self.logger.error(f"[TradeManager] DB error on SL/TP close for {trade_id}: {e}")
+                    self.analytics.capture_exception(e, {"op": "close_trade_sl_tp", "trade_id": trade_id})
+                    if self.trade_logger:
+                        self.trade_logger.log(trade_id, "ERROR", str(e))
+                    self.notifier.send(f"[TradeManager] DB error on SL/TP close for {trade_id}: {e}")
+                    remove_on_failure = True
 
             if result is not None:
                 self.account_balance += result.pnl_usd
                 self._open_use_case.update_account_balance(self.account_balance)
-            self._monitored_trades.discard(trade['trade_id'])
-            self._closing_trades.discard(trade['trade_id'])
-            with contextlib.suppress(ValueError):
-                self.open_trades.remove(trade)
+
+            self._cleanup_after_close_attempt(trade_id, result, remove_on_failure=remove_on_failure)
+
             if result is not None:
                 self.analytics.capture_trade_event(analytics_event, {
-                    "trade_id": trade['trade_id'], "exit_price": exit_price,
+                    "trade_id": trade_id, "exit_price": exit_price,
                     "result": result.result, "result_type": result.result_type,
                 })
 
@@ -304,48 +354,59 @@ class TradeManager:
             if trade.get('source') in self.USER_CONTROLLED_SOURCES:
                 continue
 
+            trade_id = trade['trade_id']
+            if not self._guard_close(trade_id):
+                continue
+
+            result_type_override = FinancialCalc.calculate_session_end_result_type(
+                FinancialCalc.calculate_close_metrics(
+                    direction=Direction.from_string(trade['type']),
+                    entry_price=trade['entry'],
+                    exit_price=bar['close'],
+                    stop_loss=trade['stop_loss'],
+                    take_profit=trade['take_profit'],
+                    risk_points=trade.get('risk', 1.0) or 1.0,
+                    contracts=trade.get('contracts') or 1,
+                    point_value=self.point_value,
+                    fee_per_rt=self.fee_per_rt,
+                )[0]
+            )
+
+            result = None
+            remove_on_failure = False
             try:
                 result = self._close_use_case.execute(
                     trade=trade,
                     exit_price=bar['close'],
                     exit_time=bar['time'],
-                    result_type_override=FinancialCalc.calculate_session_end_result_type(
-                        FinancialCalc.calculate_close_metrics(
-                            direction=Direction.from_string(trade['type']),
-                            entry_price=trade['entry'],
-                            exit_price=bar['close'],
-                            stop_loss=trade['stop_loss'],
-                            take_profit=trade['take_profit'],
-                            risk_points=trade.get('risk', 1.0) or 1.0,
-                            contracts=trade.get('contracts') or 1,
-                            point_value=self.point_value,
-                            fee_per_rt=self.fee_per_rt,
-                        )[0]
-                    ),
+                    result_type_override=result_type_override,
                     log_event="SESSION_END",
                     log_message=f"Close @ {bar['close']:.2f}",
                     analytics_event="SESSION_END",
                 )
             except Exception as e:
-                if "ZMQ" in str(e) or "Executor" in str(e) or "connection" in str(e).lower():
-                    continue
-                self.logger.error(f"[TradeManager] DB error on session end for {trade['trade_id']}: {e}")
-                self.analytics.capture_exception(e, {"op": "session_end_close", "trade_id": trade['trade_id']})
-                if self.trade_logger:
-                    self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
-                self.notifier.send(f"[TradeManager] DB error on session end for {trade['trade_id']}: {e}")
-                result = None
+                if self._is_executor_failure(e):
+                    self.logger.warning(
+                        f"[TradeManager] Executor failure on session end for {trade_id}: {e}; will retry"
+                    )
+                    remove_on_failure = False
+                else:
+                    self.logger.error(f"[TradeManager] DB error on session end for {trade_id}: {e}")
+                    self.analytics.capture_exception(e, {"op": "session_end_close", "trade_id": trade_id})
+                    if self.trade_logger:
+                        self.trade_logger.log(trade_id, "ERROR", str(e))
+                    self.notifier.send(f"[TradeManager] DB error on session end for {trade_id}: {e}")
+                    remove_on_failure = True
 
             if result is not None:
                 self.account_balance += result.pnl_usd
                 self._open_use_case.update_account_balance(self.account_balance)
-            self._monitored_trades.discard(trade['trade_id'])
-            self._closing_trades.discard(trade['trade_id'])
-            with contextlib.suppress(ValueError):
-                self.open_trades.remove(trade)
+
+            self._cleanup_after_close_attempt(trade_id, result, remove_on_failure=remove_on_failure)
+
             if result is not None:
                 self.analytics.capture_trade_event("SESSION_END", {
-                    "trade_id": trade['trade_id'], "exit_price": bar['close'], "result": result.result,
+                    "trade_id": trade_id, "exit_price": bar['close'], "result": result.result,
                 })
 
     # ------------------------------------------------------------------
@@ -407,7 +468,8 @@ class TradeManager:
             'status':     'open',
             'source':     source,
         }
-        self.open_trades.append(trade)
+        with self._lock:
+            self.open_trades.append(trade)
         self._monitored_trades.add(result.trade_id)
 
         self.analytics.capture_trade_event("TRADE_OPEN", {
@@ -423,26 +485,38 @@ class TradeManager:
         Used when the broker has already rejected or timed out the original
         command, so the trade never actually entered the market.
         """
-        with self._lock:
-            trade = next(
-                (t for t in self.open_trades if t['trade_id'] == trade_id), None
-            )
-            if trade:
-                self.open_trades.remove(trade)
+        if not self._guard_close(trade_id):
+            return
 
         trade_data = self.trade_repository.get_trade(trade_id)
         if trade_data is None or trade_data.exit_time is not None:
+            self._cleanup_after_close_attempt(trade_id, result=None, remove_on_failure=True)
             return
 
-        self.trade_repository.close_trade(
-            trade_id=trade_id,
-            exit_price=trade_data.entry_price,
-            exit_time=datetime.now(tz=timezone.utc),
-            result=0.0,
-            result_type=reason,
-            fees=0.0,
-            pnl_usd=0.0,
-        )
+        try:
+            self.trade_repository.close_trade(
+                trade_id=trade_id,
+                exit_price=trade_data.entry_price,
+                exit_time=datetime.now(tz=timezone.utc),
+                result=0.0,
+                result_type=reason,
+                fees=0.0,
+                pnl_usd=0.0,
+            )
+        except Exception as e:
+            if self.logger:
+                self.logger.error(f"[TradeManager] DB error cancelling trade {trade_id}: {e}")
+            self.analytics.capture_exception(e, {"op": "cancel_trade", "trade_id": trade_id})
+            self._cleanup_after_close_attempt(trade_id, result=None, remove_on_failure=True)
+            return
+
+        with self._lock:
+            self._monitored_trades.discard(trade_id)
+            self._closing_trades.discard(trade_id)
+            with contextlib.suppress(ValueError):
+                self.open_trades.remove(next(
+                    t for t in self.open_trades if t["trade_id"] == trade_id
+                ))
         if self.logger:
             self.logger.warning(f"[TradeManager] Cancelled trade {trade_id} ({reason})")
 
@@ -464,22 +538,19 @@ class TradeManager:
         send a new order_open command.
         """
         risk = abs(entry_price - stop_loss)
-        risk_per_contract = risk * self.point_value
-        risk_budget = FinancialCalc.risk_budget(
-            self.account_balance,
-            self.risk_per_trade,
-            self.risk_pct_per_trade,
+        contracts, risk_dollars, risk_pct = FinancialCalc.size_position(
+            risk_points=risk,
+            point_value=self.point_value,
+            account_balance=self.account_balance,
+            risk_per_trade=self.risk_per_trade,
+            risk_pct_per_trade=self.risk_pct_per_trade,
+            use_fractional_lots=self.use_fractional_lots,
         )
-        if self.use_fractional_lots:
-            contracts = FinancialCalc.lots(risk_budget, risk_per_contract) if risk_budget > 0 else 0.01
-        else:
-            contracts = FinancialCalc.contracts(risk_budget, risk_per_contract) if risk_budget > 0 else 1
-        contracts = quantity if quantity > 0 else contracts
-        risk_dollars = risk_per_contract * contracts
-        risk_pct = (
-            (risk_dollars / self.account_balance * 100)
-            if self.account_balance > 0 else None
-        )
+        if quantity is not None and quantity > 0:
+            contracts = quantity
+            risk_dollars, risk_pct = FinancialCalc.risk_fields(
+                risk, contracts, self.point_value, self.account_balance
+            )
         entry_time = datetime.now(tz=timezone.utc)
 
         trade_data = self.trade_repository.insert_trade(
@@ -526,9 +597,10 @@ class TradeManager:
         return trade
 
     def close_trade(self, trade_id: str, exit_price: float, exit_time: float):
-        trade = next(
-            (t for t in self.open_trades if t['trade_id'] == trade_id), None
-        )
+        with self._lock:
+            trade = next(
+                (t for t in self.open_trades if t['trade_id'] == trade_id), None
+            )
 
         if not trade:
             self.logger.warning(f"[TradeManager] Trade {trade_id} not in memory, fetching from DB.")
@@ -562,20 +634,43 @@ class TradeManager:
                 )
                 return {'trade_id': trade_id, 'exit_price': exit_price, 'result': 0.0}
 
-        result = self._close_use_case.execute(
-            trade=trade,
-            exit_price=exit_price,
-            exit_time=exit_time,
-            log_event="CLOSE",
-            log_message=f"Exit={exit_price:.2f}",
-            analytics_event="CLOSE",
-        )
+        if not self._guard_close(trade_id):
+            return None
 
-        self.account_balance += result.pnl_usd
-        self._open_use_case.update_account_balance(self.account_balance)
+        result = None
+        remove_on_failure = False
+        try:
+            result = self._close_use_case.execute(
+                trade=trade,
+                exit_price=exit_price,
+                exit_time=exit_time,
+                log_event="CLOSE",
+                log_message=f"Exit={exit_price:.2f}",
+                analytics_event="CLOSE",
+            )
+        except Exception as e:
+            if self._is_executor_failure(e):
+                self.logger.warning(
+                    f"[TradeManager] Executor failure on close for {trade_id}: {e}; will retry"
+                )
+                self._cleanup_after_close_attempt(trade_id, result, remove_on_failure=False)
+                raise
+            else:
+                self.logger.error(f"[TradeManager] DB error on close for {trade_id}: {e}")
+                self.analytics.capture_exception(e, {"op": "close_trade", "trade_id": trade_id})
+                if self.trade_logger:
+                    self.trade_logger.log(trade_id, "ERROR", str(e))
+                self.notifier.send(f"[TradeManager] DB error on close for {trade_id}: {e}")
+                remove_on_failure = True
 
-        with contextlib.suppress(ValueError):
-            self.open_trades.remove(trade)
+        if result is not None:
+            self.account_balance += result.pnl_usd
+            self._open_use_case.update_account_balance(self.account_balance)
+
+        self._cleanup_after_close_attempt(trade_id, result, remove_on_failure=remove_on_failure)
+
+        if result is None:
+            return None
 
         return {
             'trade_id': trade_id,
@@ -594,6 +689,13 @@ class TradeManager:
         for trade in list(self.open_trades):
             if trade['entry_time'] >= final_time:
                 continue
+            if trade.get('source') in self.USER_CONTROLLED_SOURCES:
+                continue
+
+            trade_id = trade['trade_id']
+            if not self._guard_close(trade_id):
+                continue
+
             result_type = FinancialCalc.calculate_session_end_result_type(
                 FinancialCalc.calculate_close_metrics(
                     direction=Direction.from_string(trade['type']),
@@ -608,6 +710,8 @@ class TradeManager:
                 )[0]
             )
 
+            result = None
+            remove_on_failure = False
             try:
                 result = self._close_use_case.execute(
                     trade=trade,
@@ -619,25 +723,28 @@ class TradeManager:
                     analytics_event="STREAM_END",
                 )
             except Exception as e:
-                if "ZMQ" in str(e) or "Executor" in str(e) or "connection" in str(e).lower():
-                    continue
-                self.logger.error(f"[TradeManager] DB error on stream end for {trade['trade_id']}: {e}")
-                self.analytics.capture_exception(e, {"op": "stream_end_close", "trade_id": trade['trade_id']})
-                if self.trade_logger:
-                    self.trade_logger.log(trade['trade_id'], "ERROR", str(e))
-                self.notifier.send(f"[TradeManager] DB error on stream end for {trade['trade_id']}: {e}")
-                result = None
+                if self._is_executor_failure(e):
+                    self.logger.warning(
+                        f"[TradeManager] Executor failure on stream end for {trade_id}: {e}; will retry"
+                    )
+                    remove_on_failure = False
+                else:
+                    self.logger.error(f"[TradeManager] DB error on stream end for {trade_id}: {e}")
+                    self.analytics.capture_exception(e, {"op": "stream_end_close", "trade_id": trade_id})
+                    if self.trade_logger:
+                        self.trade_logger.log(trade_id, "ERROR", str(e))
+                    self.notifier.send(f"[TradeManager] DB error on stream end for {trade_id}: {e}")
+                    remove_on_failure = True
 
             if result is not None:
                 self.account_balance += result.pnl_usd
                 self._open_use_case.update_account_balance(self.account_balance)
-            self._monitored_trades.discard(trade['trade_id'])
-            self._closing_trades.discard(trade['trade_id'])
-            with contextlib.suppress(ValueError):
-                self.open_trades.remove(trade)
+
+            self._cleanup_after_close_attempt(trade_id, result, remove_on_failure=remove_on_failure)
+
             if result is not None:
                 self.analytics.capture_trade_event("STREAM_END", {
-                    "trade_id": trade['trade_id'], "exit_price": final_close_price, "result": result.result,
+                    "trade_id": trade_id, "exit_price": final_close_price, "result": result.result,
                 })
 
     def update_local_trade_sl(self, trade_id: str, new_sl: float):
@@ -655,14 +762,15 @@ class TradeManager:
     # Broker fills
     # ------------------------------------------------------------------
     def handle_broker_entry_fill(self, trade_id: str, entry_price: float,
-                                stop_loss: float = None, take_profit: float = None):
+                                stop_loss: float = None, take_profit: float = None,
+                                quantity: float | None = None):
         trade = next((t for t in self.open_trades if t['trade_id'] == trade_id), None)
         if not trade:
             self.logger.warning(f"[TradeManager] Entry fill for {trade_id} but trade not in memory")
             return
 
         self._broker_handler.update_balance(self.account_balance)
-        self._broker_handler.handle_entry_fill(trade, entry_price, stop_loss, take_profit)
+        self._broker_handler.handle_entry_fill(trade, entry_price, stop_loss, take_profit, quantity)
 
     def handle_broker_fill(
         self,
@@ -678,12 +786,10 @@ class TradeManager:
             return
 
         # Atomic guard: prevent duplicate fills from double-counting PnL
-        with self._lock:
-            if trade_id in self._closing_trades:
-                self.logger.warning(f"[TradeManager] Duplicate broker fill ignored for {trade_id}")
-                return
-            self._closing_trades.add(trade_id)
+        if not self._guard_close(trade_id):
+            return
 
+        result = None
         try:
             result = self._close_use_case.execute(
                 trade=trade,
@@ -703,19 +809,13 @@ class TradeManager:
             if self.trade_logger:
                 self.trade_logger.log(trade_id, "ERROR", str(e))
             self.notifier.send(f"[TradeManager] DB error on broker fill for {trade_id}: {e}")
-            # Broker is source of truth — trade is closed even if DB persist failed
-            self._monitored_trades.discard(trade_id)
-            self._closing_trades.discard(trade_id)
-            with contextlib.suppress(ValueError):
-                self.open_trades.remove(trade)
-            return
 
-        self.account_balance += result.pnl_usd
-        self._open_use_case.update_account_balance(self.account_balance)
-        self._monitored_trades.discard(trade_id)
-        self._closing_trades.discard(trade_id)
-        with contextlib.suppress(ValueError):
-            self.open_trades.remove(trade)
+        if result is not None:
+            self.account_balance += result.pnl_usd
+            self._open_use_case.update_account_balance(self.account_balance)
+
+        # Broker is source of truth — trade is closed even if DB persist failed
+        self._cleanup_after_close_attempt(trade_id, result, remove_on_failure=True)
 
     def notify_strategy_close(self, trade_id: str, exit_price: float, result: float,
                                pnl_usd: float, fees: float, result_type: str, exit_time: float):
@@ -723,12 +823,39 @@ class TradeManager:
         if not trade:
             return
 
+        if not self._guard_close(trade_id):
+            return
+
+        # Persist the strategy-reported close to the DB so the row is not left open.
+        try:
+            self.trade_repository.close_trade(
+                trade_id=trade_id,
+                exit_price=exit_price,
+                exit_time=datetime.fromtimestamp(exit_time, tz=timezone.utc),
+                result=result,
+                result_type=result_type,
+                fees=fees,
+                pnl_usd=pnl_usd,
+            )
+        except Exception as e:
+            self.logger.error(f"[TradeManager] DB error persisting strategy close for {trade_id}: {e}")
+            self.analytics.capture_exception(e, {"op": "notify_strategy_close", "trade_id": trade_id})
+            if self.trade_logger:
+                self.trade_logger.log(trade_id, "ERROR", str(e))
+            self.notifier.send(f"[TradeManager] DB error persisting strategy close for {trade_id}: {e}")
+            # Strategy is source of truth for this close; remove from memory even on DB failure.
+            self._cleanup_after_close_attempt(trade_id, result=None, remove_on_failure=True)
+            return
+
         self.account_balance += pnl_usd
         self._open_use_case.update_account_balance(self.account_balance)
-        self._monitored_trades.discard(trade_id)
-        self._closing_trades.discard(trade_id)
-        with contextlib.suppress(ValueError):
-            self.open_trades.remove(trade)
+        with self._lock:
+            self._monitored_trades.discard(trade_id)
+            self._closing_trades.discard(trade_id)
+            with contextlib.suppress(ValueError):
+                self.open_trades.remove(next(
+                    t for t in self.open_trades if t["trade_id"] == trade_id
+                ))
 
         event = "SL_HIT" if result_type == "SL" else "TP_HIT" if result_type == "TP" else "SESSION_END"
         self.logger.info(f"[TradeManager] SYNCED {event} for {trade_id} @ {exit_price} (Result: {result:.2f}R)")

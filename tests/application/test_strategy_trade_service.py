@@ -36,6 +36,29 @@ def _sample_trade():
     }
 
 
+class TestStrategyTradeServiceClose:
+    def test_close_trade_persists_computed_result(self):
+        """close_trade must persist the R-multiple returned by calculate_close_metrics."""
+        service = _make_service(account_balance=100000.0)
+        trade = {
+            "trade_id": "T1",
+            "pair": "MNQ",
+            "type": "long",
+            "entry": 30000.0,
+            "stop_loss": 29980.0,
+            "take_profit": 30100.0,
+            "risk": 20.0,
+            "contracts": 25,
+            "exit_price": 30100.0,
+            "exit_time": 2000.0,
+        }
+        service.close_trade(trade)
+        closed = service._repo.closed[0]
+        assert closed["result"] == 5.0
+        assert closed["result_type"] == "TP"
+        assert closed["pnl_usd"] > 0
+
+
 class TestStrategyTradeServiceBalanceSizing:
     def test_open_trade_sizes_from_provided_balance(self):
         service = _make_service(account_balance=100000.0, risk_pct=1.0)

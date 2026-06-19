@@ -409,6 +409,15 @@ class TestBrokerFill:
         assert closed["fees"] == 2.5
         assert tm.account_balance == 100025.0
 
+    def test_duplicate_broker_fill_ignored(self):
+        """A second broker fill for the same trade must not double-count PnL."""
+        tm = _make_manager(account_balance=100000.0)
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
+        tm.handle_broker_fill("T1", 110.0, "TP", broker_pnl_usd=25.0, broker_fees=2.5)
+        tm.handle_broker_fill("T1", 110.0, "TP", broker_pnl_usd=25.0, broker_fees=2.5)
+        assert len(tm.trade_repository.closed) == 1
+        assert tm.account_balance == 100025.0
+
 
 class TestNotifyStrategyClose:
 
@@ -454,6 +463,29 @@ class TestNotifyStrategyClose:
         events = [e for e, _ in analytics.trade_events]
         assert "TP_HIT" in events
 
+    def test_persists_close_to_db(self):
+        """Regression: notify_strategy_close must close the DB row, not just memory."""
+        tm = _make_manager(account_balance=100000.0)
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10)
+
+        tm.notify_strategy_close(
+            trade_id="T1",
+            exit_price=110.0,
+            result=1.0,
+            pnl_usd=18.5,
+            fees=1.5,
+            result_type="TP",
+            exit_time=2000.0,
+        )
+
+        assert len(tm.trade_repository.closed) == 1
+        closed = tm.trade_repository.closed[0]
+        assert closed["result"] == 1.0
+        assert closed["pnl_usd"] == 18.5
+        assert closed["fees"] == 1.5
+        assert closed["result_type"] == "TP"
+        assert closed["exit_price"] == 110.0
+
 
 class TestStreamEndCloseRemaining:
 
@@ -476,6 +508,14 @@ class TestStreamEndCloseRemaining:
         # exit at entry -> result = 0 -> BE
         tm.close_remaining_trades_at_stream_end(100, 3000.0)
         assert tm.trade_repository.closed[0]["result_type"] == "BE"
+
+    def test_stream_end_skips_user_controlled_sources(self):
+        for source in ("manual", "test", "broker_sync"):
+            tm = _make_manager()
+            _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, source=source)
+            tm.close_remaining_trades_at_stream_end(90, 3000.0)
+            assert len(tm.open_trades) == 1
+            assert len(tm.trade_repository.closed) == 0
 
 
 class TestUpdateLocalTradeSL:

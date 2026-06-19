@@ -44,8 +44,17 @@ class BrokerFillHandler:
     def update_balance(self, new_balance: float) -> None:
         self._account_balance = new_balance
 
-    def _get_current_risk(self) -> tuple[float | None, float | None]:
-        """Return (risk_per_trade, risk_pct_per_trade) from DB if available, else fallbacks."""
+    def _get_current_risk(
+        self, account_name: str | None = None
+    ) -> tuple[float | None, float | None]:
+        """Return (risk_per_trade, risk_pct_per_trade) for the given account."""
+        if self._accounts_repo is not None and account_name is not None:
+            try:
+                account = self._accounts_repo.get_account_by_name(account_name)
+                if account is not None:
+                    return account.risk_usd, account.risk_pct
+            except Exception:
+                pass
         if self._accounts_repo is not None:
             try:
                 accounts = self._accounts_repo.list_accounts()
@@ -62,8 +71,18 @@ class BrokerFillHandler:
         entry_price: float,
         stop_loss: float | None = None,
         take_profit: float | None = None,
+        quantity: float | None = None,
     ) -> dict:
         """Update trade state when broker reports an entry fill.
+
+        Args:
+            trade: In-memory trade dict.
+            entry_price: Filled entry price.
+            stop_loss: Optional updated stop loss from broker.
+            take_profit: Optional updated take profit from broker.
+            quantity: Optional broker-reported filled quantity. When provided,
+                it overrides Python's risk-based contract calculation so the
+                two sides stay in sync.
 
         Returns the updated trade dict.
         """
@@ -75,7 +94,7 @@ class BrokerFillHandler:
         if take_profit is not None:
             trade['take_profit'] = take_profit
 
-        # Recalculate risk
+        # Recalculate risk distance from the (possibly updated) stop loss.
         is_long = trade['type'] == 'long'
         sl = trade.get('stop_loss')
         if sl is not None:
@@ -86,21 +105,22 @@ class BrokerFillHandler:
         else:
             trade['risk'] = trade.get('risk') or 0
 
-        # Recalculate contracts
-        risk_per_contract = trade['risk'] * self._point_value
-        risk_usd, risk_pct = self._get_current_risk()
-        risk_budget = FinancialCalc.risk_budget(
-            self._account_balance, risk_usd, risk_pct
-        )
-        if self._use_fractional_lots:
-            contracts = FinancialCalc.lots(risk_budget, risk_per_contract) if risk_budget > 0 else 0.01
+        # Use broker-reported quantity when available; otherwise size from risk.
+        if quantity is not None and quantity > 0:
+            contracts = quantity
         else:
-            contracts = FinancialCalc.contracts(risk_budget, risk_per_contract) if risk_budget > 0 else 1
+            risk_per_contract = trade['risk'] * self._point_value
+            risk_usd, risk_pct = self._get_current_risk(trade.get('account'))
+            risk_budget = FinancialCalc.risk_budget(
+                self._account_balance, risk_usd, risk_pct
+            )
+            if self._use_fractional_lots:
+                contracts = FinancialCalc.lots(risk_budget, risk_per_contract)
+            else:
+                contracts = FinancialCalc.contracts(risk_budget, risk_per_contract)
         trade['contracts'] = contracts
-        trade['risk_dollars'] = risk_per_contract * contracts
-        trade['risk_pct'] = (
-            (trade['risk_dollars'] / self._account_balance * 100)
-            if self._account_balance > 0 else None
+        trade['risk_dollars'], trade['risk_pct'] = FinancialCalc.risk_fields(
+            trade['risk'], contracts, self._point_value, self._account_balance
         )
 
         if self._logger:
@@ -117,7 +137,7 @@ class BrokerFillHandler:
                 f"SL={trade['stop_loss']:.2f} TP={trade['take_profit']:.2f}"
             )
 
-        # Persist to DB
+        # Persist to DB and emit UI update only on success so memory and DB stay consistent.
         try:
             self._repo.update_entry_price(trade['trade_id'], entry_price)
             if stop_loss is not None:
@@ -129,24 +149,23 @@ class BrokerFillHandler:
             )
             if trade.get('contracts') is not None:
                 self._repo.update_contracts(trade['trade_id'], trade['contracts'])
+
+            if self._publisher:
+                self._publisher.emit('trade_entry_update', {
+                    'trade_id': trade['trade_id'],
+                    'signal_id': trade.get('signal_id'),
+                    'entry_price': entry_price,
+                    'stop_loss': trade['stop_loss'],
+                    'take_profit': trade['take_profit'],
+                    'risk': trade['risk'],
+                    'risk_dollars': trade.get('risk_dollars'),
+                    'risk_pct': trade.get('risk_pct'),
+                })
         except Exception as e:
             if self._logger:
                 self._logger.error(f"[BrokerFillHandler] DB error on entry fill for {trade['trade_id']}: {e}")
             if self._analytics:
                 self._analytics.capture_exception(e, {"op": "broker_entry_fill", "trade_id": trade['trade_id']})
             # Don't raise — broker fill is informational, trade stays open
-
-        # Emit to UI
-        if self._publisher:
-            self._publisher.emit('trade_entry_update', {
-                'trade_id': trade['trade_id'],
-                'signal_id': trade.get('signal_id'),
-                'entry_price': entry_price,
-                'stop_loss': trade['stop_loss'],
-                'take_profit': trade['take_profit'],
-                'risk': trade['risk'],
-                'risk_dollars': trade.get('risk_dollars'),
-                'risk_pct': trade.get('risk_pct'),
-            })
 
         return trade

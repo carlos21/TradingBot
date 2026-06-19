@@ -121,8 +121,9 @@ class TestFixedRiskPositionSizer:
             extreme_price=95.0,
             direction=Direction.LONG,
         )
-        # When risk budget is zero, should default to 1 contract
-        assert result.contracts == 1.0
+        # When risk budget is zero, no position should be opened.
+        assert result.contracts == 0.0
+        assert result.risk_dollars == 0.0
 
     def test_fractional_lots(self):
         sizer = FixedRiskPositionSizer(

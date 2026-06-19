@@ -23,11 +23,12 @@ class FinancialCalc:
         Uses round-half-up (not Python's banker's rounding) so that
         e.g. 2.5 → 3 and 4.5 → 5, ensuring exact-half budgets don't
         silently under-size.
+
+        Returns 0 when the risk budget or risk-per-contract is not positive,
+        so invalid configurations do not open a position.
         """
-        if risk_budget <= 0:
+        if risk_budget <= 0 or risk_per_contract <= 0:
             return 0
-        if risk_per_contract <= 0:
-            return 1
         raw = risk_budget / risk_per_contract
         # Round-half-up for positive numbers
         rounded = int(raw + 0.5)
@@ -35,9 +36,13 @@ class FinancialCalc:
 
     @staticmethod
     def lots(risk_budget: float, risk_per_lot: float) -> float:
-        """Fractional lots for CFD mode (no rounding to integer)."""
-        if risk_per_lot <= 0:
-            return 0.01
+        """Fractional lots for CFD mode (no rounding to integer).
+
+        Returns 0 when the risk budget or risk-per-lot is not positive,
+        so invalid configurations do not open a position.
+        """
+        if risk_budget <= 0 or risk_per_lot <= 0:
+            return 0.0
         return max(0.01, risk_budget / risk_per_lot)
 
     @staticmethod
@@ -97,6 +102,58 @@ class FinancialCalc:
                 return 0.0
             return account_balance * risk_pct_per_trade / 100.0
         return 0.0
+
+    @staticmethod
+    def risk_fields(
+        risk_points: float,
+        contracts: float,
+        point_value: float,
+        account_balance: float,
+    ) -> tuple[float, float | None]:
+        """Calculate dollar risk and percentage risk for a position.
+
+        Returns:
+            Tuple of (risk_dollars, risk_pct). ``risk_pct`` is ``None`` when
+            ``account_balance`` is not positive.
+        """
+        risk_per_contract = risk_points * point_value
+        risk_dollars = risk_per_contract * contracts
+        risk_pct = (
+            (risk_dollars / account_balance * 100)
+            if account_balance > 0 else None
+        )
+        return risk_dollars, risk_pct
+
+    @staticmethod
+    def size_position(
+        risk_points: float,
+        point_value: float,
+        account_balance: float,
+        risk_per_trade: float | None,
+        risk_pct_per_trade: float | None,
+        use_fractional_lots: bool = False,
+    ) -> tuple[float, float, float | None]:
+        """Calculate contracts/lots, dollar risk, and percentage risk.
+
+        This is the single source of truth for sizing a position from a
+        risk budget. All higher-level sizers should delegate here.
+
+        Returns:
+            Tuple of (contracts, risk_dollars, risk_pct). ``risk_pct`` is
+            ``None`` when ``account_balance`` is not positive.
+        """
+        risk_per_contract = risk_points * point_value
+        risk_budget = FinancialCalc.risk_budget(
+            account_balance, risk_per_trade, risk_pct_per_trade
+        )
+        if use_fractional_lots:
+            contracts = FinancialCalc.lots(risk_budget, risk_per_contract)
+        else:
+            contracts = FinancialCalc.contracts(risk_budget, risk_per_contract)
+        risk_dollars, risk_pct = FinancialCalc.risk_fields(
+            risk_points, contracts, point_value, account_balance
+        )
+        return contracts, risk_dollars, risk_pct
 
     # =========================================================================
     # Result Type Detection (Single Source of Truth for SL/TP/BE/SP)
@@ -167,17 +224,24 @@ class FinancialCalc:
         Returns:
             One of: "BE" (breakeven), "SL" (stop loss), "TP" (take profit), "SP" (manual/unknown)
         """
-        # Check BE first (SL might be at entry for breakeven trades)
-        if FinancialCalc.is_breakeven(exit_price, entry_price, be_threshold_points):
-            return "BE"
+        near_entry = FinancialCalc.is_breakeven(
+            exit_price, entry_price, be_threshold_points
+        )
 
-        # Check SL proximity (skip if no stop-loss is set)
-        if stop_loss is not None and abs(exit_price - stop_loss) < sl_tp_tolerance:
+        # Check SL/TP proximity, but keep BE precedence when the stop/target is
+        # right at entry (a breakeven stop). For tight stops outside the BE
+        # threshold this prevents misclassifying a true SL/TP as BE.
+        hit_sl = stop_loss is not None and abs(exit_price - stop_loss) < sl_tp_tolerance
+        hit_tp = take_profit is not None and abs(exit_price - take_profit) < sl_tp_tolerance
+
+        if hit_sl and not near_entry:
             return "SL"
-
-        # Check TP proximity (skip if no take-profit is set)
-        if take_profit is not None and abs(exit_price - take_profit) < sl_tp_tolerance:
+        if hit_tp and not near_entry:
             return "TP"
+
+        # Check BE (SL might be at entry for breakeven trades)
+        if near_entry:
+            return "BE"
 
         # Default: manual close or session end
         return "SP"
@@ -202,14 +266,18 @@ class FinancialCalc:
         Returns:
             One of: "BE", "SL", "TP", "SP"
         """
-        # Check BE first (even if SL/TP flags are set)
-        if FinancialCalc.is_breakeven(exit_price, entry_price, be_threshold_points):
-            return "BE"
+        near_entry = FinancialCalc.is_breakeven(
+            exit_price, entry_price, be_threshold_points
+        )
 
-        if hit_sl:
+        if hit_sl and not near_entry:
             return "SL"
-        if hit_tp:
+        if hit_tp and not near_entry:
             return "TP"
+
+        # Check BE only after confirming it was not an SL/TP hit outside entry.
+        if near_entry:
+            return "BE"
 
         return "SP"
 

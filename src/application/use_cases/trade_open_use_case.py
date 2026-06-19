@@ -81,9 +81,6 @@ class TradeOpenUseCase:
                         risk_per_trade_override: float | None = None,
                         risk_pct_per_trade_override: float | None = None) -> float:
         """Calculate number of contracts/lots, matching NinjaTrader's logic."""
-        if risk_per_contract <= 0:
-            return 1.0 if not self._use_fractional_lots else 0.01
-
         if risk_per_trade_override is not None or risk_pct_per_trade_override is not None:
             risk_budget = FinancialCalc.risk_budget(
                 self._account_balance,
@@ -98,8 +95,6 @@ class TradeOpenUseCase:
                 risk_pct,
             )
 
-        if risk_budget <= 0:
-            return 1.0 if not self._use_fractional_lots else 0.01
         if self._use_fractional_lots:
             return FinancialCalc.lots(risk_budget, risk_per_contract)
         return FinancialCalc.contracts(risk_budget, risk_per_contract)
@@ -129,8 +124,9 @@ class TradeOpenUseCase:
             risk_per_trade_override,
             risk_pct_per_trade_override,
         )
-        risk_dollars = risk_per_contract * contracts
-        risk_pct = (risk_dollars / self._account_balance * 100) if self._account_balance > 0 else None
+        risk_dollars, risk_pct = FinancialCalc.risk_fields(
+            risk, contracts, self._point_value, self._account_balance
+        )
 
         # Persist open trade
         td = self._repo.insert_trade(

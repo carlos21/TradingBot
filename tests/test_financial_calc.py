@@ -25,9 +25,9 @@ class TestContracts:
         assert FinancialCalc.contracts(risk_budget=10, risk_per_contract=100) == 1
 
     def test_contracts_zero_risk_per_contract(self):
-        """Should return 1 if risk_per_contract is zero or negative."""
-        assert FinancialCalc.contracts(risk_budget=1000, risk_per_contract=0) == 1
-        assert FinancialCalc.contracts(risk_budget=1000, risk_per_contract=-10) == 1
+        """Should return 0 if risk_per_contract is zero or negative (invalid risk)."""
+        assert FinancialCalc.contracts(risk_budget=1000, risk_per_contract=0) == 0
+        assert FinancialCalc.contracts(risk_budget=1000, risk_per_contract=-10) == 0
 
     def test_contracts_large_numbers(self):
         """Should scale contracts proportionally for large accounts with no cap."""
@@ -36,6 +36,67 @@ class TestContracts:
     def test_contracts_small_budget(self):
         """Should handle very small budgets."""
         assert FinancialCalc.contracts(risk_budget=1, risk_per_contract=100) == 1
+
+
+class TestRiskFields:
+    """Tests for risk field calculations."""
+
+    def test_risk_fields_basic(self):
+        risk_dollars, risk_pct = FinancialCalc.risk_fields(
+            risk_points=10.0, contracts=5, point_value=2.0, account_balance=100000.0
+        )
+        assert risk_dollars == 100.0
+        assert risk_pct == 0.1
+
+    def test_risk_fields_zero_account_balance(self):
+        risk_dollars, risk_pct = FinancialCalc.risk_fields(
+            risk_points=10.0, contracts=5, point_value=2.0, account_balance=0.0
+        )
+        assert risk_dollars == 100.0
+        assert risk_pct is None
+
+
+class TestSizePosition:
+    """Tests for unified position sizing."""
+
+    def test_size_position_contracts(self):
+        contracts, risk_dollars, risk_pct = FinancialCalc.size_position(
+            risk_points=10.0,
+            point_value=2.0,
+            account_balance=100000.0,
+            risk_per_trade=1000.0,
+            risk_pct_per_trade=None,
+            use_fractional_lots=False,
+        )
+        assert contracts == 50
+        assert risk_dollars == 1000.0
+        assert risk_pct == 1.0
+
+    def test_size_position_fractional_lots(self):
+        contracts, risk_dollars, risk_pct = FinancialCalc.size_position(
+            risk_points=10.0,
+            point_value=2.0,
+            account_balance=100000.0,
+            risk_per_trade=1000.0,
+            risk_pct_per_trade=None,
+            use_fractional_lots=True,
+        )
+        assert contracts == 50.0
+        assert risk_dollars == 1000.0
+        assert risk_pct == 1.0
+
+    def test_size_position_zero_risk_budget(self):
+        contracts, risk_dollars, risk_pct = FinancialCalc.size_position(
+            risk_points=10.0,
+            point_value=2.0,
+            account_balance=100000.0,
+            risk_per_trade=0.0,
+            risk_pct_per_trade=None,
+            use_fractional_lots=False,
+        )
+        assert contracts == 0
+        assert risk_dollars == 0.0
+        assert risk_pct == 0.0
 
 
 class TestFees:
@@ -297,6 +358,15 @@ class TestDetermineResultType:
         )
         assert result == "SL"
 
+    def test_determine_result_type_tight_sl_not_be(self):
+        """A true SL hit outside the BE threshold must not be classified as BE."""
+        result = FinancialCalc.determine_result_type(
+            exit_price=97.0, entry_price=100.0,
+            stop_loss=97.0, take_profit=110.0,
+            be_threshold_points=2.0, sl_tp_tolerance=0.5,
+        )
+        assert result == "SL"
+
     def test_determine_result_type_custom_tolerance(self):
         """Should accept custom SL/TP tolerance."""
         result = FinancialCalc.determine_result_type(
@@ -341,6 +411,15 @@ class TestDetermineResultTypeFromHit:
             exit_price=105.0, entry_price=100.0
         )
         assert result == "SP"
+
+    def test_from_hit_tight_sl_not_be(self):
+        """A true SL flag outside the BE threshold must not be classified as BE."""
+        result = FinancialCalc.determine_result_type_from_hit(
+            hit_sl=True, hit_tp=False,
+            exit_price=97.0, entry_price=100.0,
+            be_threshold_points=2.0,
+        )
+        assert result == "SL"
 
 
 class TestCalculateRMultiple:

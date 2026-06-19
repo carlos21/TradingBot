@@ -65,28 +65,20 @@ class PositionSizer(ABC):
 
     def _calc_contracts(self, risk_per_contract: float) -> float:
         """Calculate number of contracts/lots based on risk budget."""
-        if risk_per_contract <= 0:
-            return 1.0 if not self.use_fractional_lots else 0.01
-
         risk_budget = FinancialCalc.risk_budget(
             self.account_balance,
             self.risk_per_trade,
             self.risk_pct_per_trade,
         )
-
-        if risk_budget <= 0:
-            return 1.0 if not self.use_fractional_lots else 0.01
-
         if self.use_fractional_lots:
             return FinancialCalc.lots(risk_budget, risk_per_contract)
         return FinancialCalc.contracts(risk_budget, risk_per_contract)
 
     def _calc_risk_fields(self, risk_points: float, contracts: float) -> tuple[float, float | None]:
         """Calculate dollar risk and percentage risk."""
-        risk_per_contract = risk_points * self.point_value
-        risk_dollars = risk_per_contract * contracts
-        risk_pct = (risk_dollars / self.account_balance * 100) if self.account_balance > 0 else None
-        return risk_dollars, risk_pct
+        return FinancialCalc.risk_fields(
+            risk_points, contracts, self.point_value, self.account_balance
+        )
 
 
 class FixedRiskPositionSizer(PositionSizer):

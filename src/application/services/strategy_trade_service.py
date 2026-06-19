@@ -193,7 +193,7 @@ class StrategyTradeService:
         """Close a trade: calculate metrics, emit event, persist to DB."""
         contracts = trade.get("contracts") or 1
         risk_pts = trade.get("risk", 0) or 1.0
-        _, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
+        result_r, t_fees, t_pnl_usd, _ = FinancialCalc.calculate_close_metrics(
             direction=Direction.from_string(trade["type"]),
             entry_price=trade["entry"],
             exit_price=trade["exit_price"],
@@ -204,6 +204,7 @@ class StrategyTradeService:
             point_value=self._point_value,
             fee_per_rt=self._fee_per_rt,
         )
+        trade["result"] = result_r
         if self._broker_spread > 0:
             spread_cost = contracts * self._broker_spread * self._point_value
             t_pnl_usd -= spread_cost
@@ -231,7 +232,7 @@ class StrategyTradeService:
             trade_id=trade["trade_id"],
             exit_price=trade["exit_price"],
             exit_time=self._ts_to_dt(trade["exit_time"]),
-            result=trade["result"],
+            result=result_r,
             result_type=result_type,
             fees=t_fees,
             pnl_usd=t_pnl_usd,
