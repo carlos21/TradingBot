@@ -58,6 +58,9 @@ class TradesController:
         return jsonify(data), 200
 
     def open_trade(self, pair, stop_loss, trade_type):
+        if self.rr_ratio <= 0:
+            abort(400, 'Invalid risk/reward ratio; must be positive')
+
         entry_price = self._resolve_price()
 
         risk = abs(entry_price - stop_loss)
@@ -118,10 +121,12 @@ class TradesController:
         return jsonify(trade), 201
 
     def close_trade(self, trade_id):
-        if not any(t['trade_id'] == trade_id for t in self.trade_manager.open_trades):
+        trade = next(
+            (t for t in self.trade_manager.open_trades if t['trade_id'] == trade_id),
+            None,
+        )
+        if trade is None:
             abort(404, f"Trade id={trade_id} not found or already closed")
-
-        trade = next(t for t in self.trade_manager.open_trades if t['trade_id'] == trade_id)
 
         exit_price = self._resolve_price()
         exit_time = self._get_virtual_now()

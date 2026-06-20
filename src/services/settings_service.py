@@ -18,7 +18,7 @@ class ISettingsRepository(Protocol):
 
 class INtAccountRepository(Protocol):
     def list_accounts(self) -> list[AccountConfig]: ...
-    def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None) -> None: ...
+    def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None, rr_ratio: float | None = None) -> None: ...
     def delete(self, name: str) -> None: ...
     def clear_all(self) -> None: ...
 
@@ -138,6 +138,34 @@ class SettingsService:
         mt_terminal_path = payload.get("mt_terminal_path", "")
         if mt_terminal_path:
             self._settings.set("mt_terminal_path", mt_terminal_path)
+
+    def save_account(self, payload: dict) -> None:
+        """Persist a single account after validating numeric fields."""
+        name = payload.get("name")
+        if not name:
+            raise ValueError("Account name is required")
+
+        def _as_positive_float(value, field: str) -> float | None:
+            if value is None or value == "":
+                return None
+            try:
+                num = float(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"{field} must be a number") from exc
+            if num < 0:
+                raise ValueError(f"{field} must be non-negative")
+            return num
+
+        self._accounts.upsert(
+            name=name,
+            risk_usd=_as_positive_float(payload.get("risk_usd"), "risk_usd"),
+            risk_pct=_as_positive_float(payload.get("risk_pct"), "risk_pct"),
+            rr_ratio=_as_positive_float(payload.get("rr_ratio"), "rr_ratio"),
+        )
+
+    def delete_account(self, name: str) -> None:
+        """Delete an account by name."""
+        self._accounts.delete(name)
 
     def to_app_config_overrides(self) -> dict:
         """Return a flat dict suitable for DbConfigLoader."""

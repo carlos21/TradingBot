@@ -239,3 +239,85 @@ class TestGlobalEventBus:
         bus2 = get_event_bus()
 
         assert bus1 is not bus2
+
+
+class TestEventBusConcurrency:
+    def test_concurrent_subscribe_and_publish(self):
+        import threading
+        import time
+
+        bus = EventBus()
+        received = []
+        errors = []
+        stop = threading.Event()
+
+        def subscriber():
+            while not stop.is_set():
+                try:
+                    bus.subscribe(EventType.TRADE_OPENED, lambda e: received.append(e))
+                    time.sleep(0.0001)
+                except Exception as exc:
+                    errors.append(exc)
+
+        def publisher():
+            for _ in range(500):
+                bus.publish(DomainEvent(EventType.TRADE_OPENED, payload={}))
+
+        threads = [threading.Thread(target=subscriber) for _ in range(3)]
+        threads.append(threading.Thread(target=publisher))
+        for t in threads:
+            t.start()
+        publisher_thread = threads[-1]
+        publisher_thread.join()
+        stop.set()
+        for t in threads[:-1]:
+            t.join(timeout=1.0)
+
+        assert not errors
+        assert len(received) >= 500
+
+
+class TestSocketIOBridge:
+    def test_emit_exception_is_isolated(self):
+        from src.events.event_bus import SocketIOBridge
+
+        class _BrokenSocketIO:
+            def emit(self, event, payload):
+                if event == "trade_open":
+                    raise RuntimeError("emit failed")
+
+        bus = EventBus()
+        bridge = SocketIOBridge(_BrokenSocketIO(), bus)
+        bridge.start()
+
+        received = []
+        bus.subscribe(EventType.TRADE_OPENED, lambda e: received.append(e))
+
+        # Should not raise; handler after bridge still runs.
+        bus.publish(DomainEvent(EventType.TRADE_OPENED, payload={"trade_id": "T1"}))
+
+        assert len(received) == 1
+
+    def test_event_names_translate_correctly(self):
+        from src.events.event_bus import SocketIOBridge
+
+        class _RecordingSocketIO:
+            def __init__(self):
+                self.emitted = []
+
+            def emit(self, event, payload):
+                self.emitted.append((event, payload))
+
+        bus = EventBus()
+        socketio = _RecordingSocketIO()
+        bridge = SocketIOBridge(socketio, bus)
+        bridge.start()
+
+        bus.publish(DomainEvent(EventType.TRADE_OPENED, payload={"id": "1"}))
+        bus.publish(DomainEvent(EventType.TRADE_CLOSED, payload={"id": "2"}))
+        bus.publish(DomainEvent(EventType.LINE_ADDED, payload={"id": "3"}))
+
+        events = [e[0] for e in socketio.emitted]
+        assert "trade_open" in events
+        assert "trade_close" in events
+        assert "line_added" in events

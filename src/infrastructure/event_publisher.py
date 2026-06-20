@@ -4,11 +4,13 @@ These adapters wrap concrete messaging mechanisms (SocketIO, EventBus)
 to satisfy the application-level EventPublisher port.
 """
 
-import contextlib
+import logging
 from typing import Any
 
 from src.domain.events import DomainEvent, EventType
 from src.events.event_bus import EventBus
+
+logger = logging.getLogger(__name__)
 
 
 class SocketIOEventPublisher:
@@ -40,7 +42,6 @@ class DomainEventBusPublisher:
         "line_added": EventType.LINE_ADDED,
         "line_removed": EventType.LINE_REMOVED,
         "line_updated": EventType.LINE_UPDATED,
-        "stream_status": EventType.STREAM_STARTED,
         "stream_end": EventType.STREAM_ENDED,
         "indicator_update": EventType.INDICATOR_UPDATE,
     }
@@ -49,13 +50,20 @@ class DomainEventBusPublisher:
         self._event_bus = event_bus
 
     def emit(self, event: str, data: dict[str, Any], **kwargs: Any) -> None:
-        event_type = self._EVENT_MAP.get(event)
+        event_type = self._stream_event_type(event, data)
         if event_type is None:
-            # Unknown event — forward as-is via a generic handler or log
+            logger.warning(f"[DomainEventBusPublisher] unknown event '{event}'")
             return
         self._event_bus.publish(
             DomainEvent(event_type=event_type, payload=dict(data))
         )
+
+    @classmethod
+    def _stream_event_type(cls, event: str, data: dict[str, Any]) -> EventType | None:
+        """Resolve the correct EventType, handling stream_status semantics."""
+        if event == "stream_status":
+            return EventType.STREAM_STARTED if data.get("playing") else EventType.STREAM_PAUSED
+        return cls._EVENT_MAP.get(event)
 
 
 class CompositeEventPublisher:
@@ -70,5 +78,7 @@ class CompositeEventPublisher:
 
     def emit(self, event: str, data: dict[str, Any], **kwargs: Any) -> None:
         for pub in self._publishers:
-            with contextlib.suppress(Exception):
+            try:
                 pub.emit(event, data, **kwargs)
+            except Exception as exc:
+                logger.error(f"[CompositeEventPublisher] publisher {type(pub).__name__} failed for {event}: {exc}")

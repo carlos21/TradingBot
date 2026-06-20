@@ -11,6 +11,7 @@ This eliminates direct coupling between:
 """
 
 import logging
+import threading
 from collections import defaultdict
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -52,6 +53,7 @@ class EventBus:
         self._handlers: dict[EventType, list[Callable[[DomainEvent], None]]] = defaultdict(list)
         # Map event types to list of subscriber objects
         self._subscribers: dict[EventType, list[EventSubscriber]] = defaultdict(list)
+        self._lock = threading.RLock()
 
     def subscribe(
         self,
@@ -64,7 +66,8 @@ class EventBus:
             event_type: Type of event to subscribe to
             handler: Function that will be called when event occurs
         """
-        self._handlers[event_type].append(handler)
+        with self._lock:
+            self._handlers[event_type].append(handler)
 
     def unsubscribe(
         self,
@@ -77,8 +80,9 @@ class EventBus:
             event_type: Type of event to unsubscribe from
             handler: Function to remove
         """
-        if handler in self._handlers[event_type]:
-            self._handlers[event_type].remove(handler)
+        with self._lock:
+            if handler in self._handlers[event_type]:
+                self._handlers[event_type].remove(handler)
 
     def add_subscriber(
         self,
@@ -91,7 +95,8 @@ class EventBus:
             event_type: Type of event to subscribe to
             subscriber: Object implementing EventSubscriber protocol
         """
-        self._subscribers[event_type].append(subscriber)
+        with self._lock:
+            self._subscribers[event_type].append(subscriber)
 
     def remove_subscriber(
         self,
@@ -104,8 +109,9 @@ class EventBus:
             event_type: Type of event to unsubscribe from
             subscriber: Subscriber object to remove
         """
-        if subscriber in self._subscribers[event_type]:
-            self._subscribers[event_type].remove(subscriber)
+        with self._lock:
+            if subscriber in self._subscribers[event_type]:
+                self._subscribers[event_type].remove(subscriber)
 
     def publish(self, event: DomainEvent) -> None:
         """Publish an event to all subscribers.
@@ -115,10 +121,11 @@ class EventBus:
         """
         event_type = event.event_type
 
-        # Snapshot lists to avoid "changed during iteration" if subscribe/unsubscribe
-        # is called concurrently on another thread.
-        handlers = list(self._handlers[event_type])
-        subscribers = list(self._subscribers[event_type])
+        # Snapshot lists under the lock to avoid "changed during iteration" if
+        # subscribe/unsubscribe is called concurrently on another thread.
+        with self._lock:
+            handlers = list(self._handlers[event_type])
+            subscribers = list(self._subscribers[event_type])
 
         # Call function handlers
         for handler in handlers:
@@ -173,9 +180,11 @@ class SocketIOBridge:
         self,
         socketio: Any,  # flask_socketio.SocketIO
         event_bus: EventBus,
+        logger: logging.Logger | None = None,
     ):
         self.socketio = socketio
         self.event_bus = event_bus
+        self._logger = logger or logging.getLogger(__name__)
 
     def start(self) -> None:
         """Start forwarding events to SocketIO.
@@ -212,7 +221,10 @@ class SocketIOBridge:
 
     def _forward_trade_event(self, event_name: str, payload: dict[str, Any]) -> None:
         """Forward a trade-related event to SocketIO."""
-        self.socketio.emit(event_name, payload)
+        try:
+            self.socketio.emit(event_name, payload)
+        except Exception as exc:
+            self._logger.error(f"[SocketIOBridge] emit {event_name} failed: {exc}")
 
     def _on_trade_opened(self, event: DomainEvent) -> None:
         """Forward trade open event."""

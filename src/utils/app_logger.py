@@ -5,6 +5,7 @@ Two implementations:
 - FileAndConsoleLogger: prints to terminal AND writes to file (live mode)
 """
 
+import contextlib
 import logging
 import threading
 from abc import ABC, abstractmethod
@@ -20,19 +21,17 @@ def log_timestamp() -> str:
 def configure_logging(level: int = logging.INFO) -> None:
     """Configure the root Python logger with a datetime-aware formatter.
 
-    This is idempotent: if handlers are already attached it does nothing,
-    so it is safe to call multiple times (e.g. from entry points and tests).
+    Safe to call multiple times: the level is always updated, and handlers
+    are only added if none exist yet.
     """
-    if logging.root.handlers:
-        return
-    handler = logging.StreamHandler()
-    handler.setLevel(level)
-    formatter = logging.Formatter(
-        "%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    handler.setFormatter(formatter)
-    logging.root.addHandler(handler)
+    if not logging.root.handlers:
+        handler = logging.StreamHandler()
+        formatter = logging.Formatter(
+            "%(asctime)s.%(msecs)03d [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        )
+        handler.setFormatter(formatter)
+        logging.root.addHandler(handler)
     logging.root.setLevel(level)
 
 
@@ -87,14 +86,25 @@ class FileAndConsoleLogger(ILogger):
         self.instance_name = instance_name
         self._file_handle: object | None = None
         self._lock = threading.Lock()
+        self._current_date: str = ""
         self._setup_file_logging()
 
     def _setup_file_logging(self) -> None:
         """Create daily log file in logs/ directory."""
         self.log_dir.mkdir(exist_ok=True)
         date_str = datetime.now().strftime("%Y-%m-%d")
+        self._current_date = date_str
         log_file = self.log_dir / f"app_{date_str}.log"
         self._file_handle = open(log_file, "a", buffering=1)  # line-buffered  # noqa: SIM115
+
+    def _ensure_date_rotation(self) -> None:
+        """Rotate to a new daily file if midnight has passed."""
+        date_str = datetime.now().strftime("%Y-%m-%d")
+        if date_str != self._current_date:
+            if self._file_handle is not None:
+                with contextlib.suppress(Exception):
+                    self._file_handle.close()
+            self._setup_file_logging()
 
     def _write(self, level: str, message: str) -> None:
         """Write to both console and file."""
@@ -103,7 +113,9 @@ class FileAndConsoleLogger(ILogger):
         print(formatted, flush=True)
 
         with self._lock:
-            self._file_handle.write(f"{formatted}\n")
+            self._ensure_date_rotation()
+            if self._file_handle is not None:
+                self._file_handle.write(f"{formatted}\n")
 
     def debug(self, message: str) -> None:
         self._write("DEBUG", message)
@@ -119,6 +131,8 @@ class FileAndConsoleLogger(ILogger):
 
     def close(self) -> None:
         """Close the log file handle if open."""
-        if self._file_handle:
-            self._file_handle.close()
+        with self._lock:
+            handle = self._file_handle
             self._file_handle = None
+            if handle is not None:
+                handle.close()

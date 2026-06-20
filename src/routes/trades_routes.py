@@ -43,7 +43,7 @@ def register_trades_routes(
             abort(400, '"pair" must be a string and "type" must be "long" or "short"')
         try:
             stop_loss = float(stop_loss)
-        except Exception:
+        except (TypeError, ValueError):
             abort(400, '"stop_loss" must be a number')
         return trades_controller.open_trade(req_pair, stop_loss, trade_type)
 
@@ -72,11 +72,14 @@ def register_trades_routes(
     def get_trade_logs(trade_id):
         fmt = request.args.get('format', 'json')
         if fmt == 'text':
-            all_trades = trades_repo.list_trades(pair)
-            trade = next((t for t in all_trades if t.trade_id == trade_id), None)
-            if not trade:
+            trade = trades_repo.get_trade(trade_id)
+            if trade is None:
                 abort(404, 'Trade not found')
-            return TradeLogger.format_logs(trade), 200, {'Content-Type': 'text/plain'}
+            try:
+                return TradeLogger.format_logs(trade), 200, {'Content-Type': 'text/plain'}
+            except Exception as exc:
+                _logger.error(f"[TradesRoutes] format_logs failed: {exc}")
+                abort(500, "Failed to format trade logs")
         else:
             logs = trades_repo.get_trade_logs(trade_id)
             return jsonify(logs)

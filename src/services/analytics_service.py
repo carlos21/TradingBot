@@ -1,5 +1,6 @@
 """Analytics service for calculating trade statistics and chart data."""
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import Any
 
 from src.analytics import (
@@ -9,6 +10,15 @@ from src.analytics import (
     TradeStatistics,
 )
 from src.domain.repositories import TradeRepository
+
+
+def _to_utc_timestamp(dt: datetime | None) -> float | None:
+    """Return a UTC epoch timestamp from a datetime, treating naive datetimes as UTC."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
 
 
 class AccountStatistics:
@@ -211,16 +221,11 @@ class AnalyticsService:
             result_type = trade.result_type or "OTHER"
             result_counts[result_type] += 1
 
-        # Map to short labels as requested (TP, SL, SP, BE)
-        label_map = {
-            "SL": "SL",
-            "TP": "TP",
-            "BE": "BE",
-            "SP": "SP",
-        }
-
-        labels = [label_map.get(k, k) for k in result_counts]
-        values = list(result_counts.values())
+        # Fixed label order so charts are deterministic across datasets.
+        fixed_order = ["TP", "SL", "BE", "SP"]
+        labels = [label for label in fixed_order if label in result_counts]
+        labels += sorted(label for label in result_counts if label not in fixed_order)
+        values = [result_counts[k] for k in labels]
 
         return DistributionData(labels=labels, values=values)
 
@@ -286,9 +291,9 @@ class AnalyticsService:
             risk_dollars=trade.risk_dollars,
             risk_pct=trade.risk_pct,
             contracts=trade.contracts,
-            entry_time=trade.entry_time.timestamp(),
+            entry_time=_to_utc_timestamp(trade.entry_time),
             exit_price=trade.exit_price,
-            exit_time=trade.exit_time.timestamp() if trade.exit_time else None,
+            exit_time=_to_utc_timestamp(trade.exit_time),
             result=trade.result,
             result_type=trade.result_type,
             fees=trade.fees,
@@ -309,9 +314,9 @@ class AnalyticsService:
         # Sort by exit time for equity curve
         sorted_trades = sorted(closed_trades, key=lambda t: t.exit_time or t.entry_time)
 
+        equity = 0.0
         peak = 0.0
         max_dd = 0.0
-        equity = 0.0
 
         for trade in sorted_trades:
             equity += trade.result or 0
@@ -321,7 +326,14 @@ class AnalyticsService:
             if dd > max_dd:
                 max_dd = dd
 
-        max_dd_pct = (max_dd / peak * 100) if peak > 0 else 0.0
+        # Express drawdown as a percentage of peak equity. If the equity curve
+        # never rose above zero but did go negative, report 100% (capital lost).
+        if peak > 0:
+            max_dd_pct = max_dd / peak * 100
+        elif max_dd > 0:
+            max_dd_pct = 100.0
+        else:
+            max_dd_pct = 0.0
         return max_dd, max_dd_pct
 
     def _calculate_expectancy(self, win_rate: float, avg_win: float, avg_loss: float) -> float:
@@ -351,14 +363,25 @@ class AnalyticsService:
                 current_loss_streak = 0
                 if current_win_streak > max_win_streak:
                     max_win_streak = current_win_streak
-            else:
+            elif result < 0:
                 current_loss_streak += 1
                 current_win_streak = 0
                 if current_loss_streak > max_loss_streak:
                     max_loss_streak = current_loss_streak
+            else:
+                # Breakeven/spread trades break both streaks.
+                current_win_streak = 0
+                current_loss_streak = 0
 
-        current_streak = current_win_streak if current_win_streak > 0 else current_loss_streak
-        streak_type = "win" if current_win_streak > 0 else "loss"
+        if current_win_streak > 0:
+            current_streak = current_win_streak
+            streak_type = "win"
+        elif current_loss_streak > 0:
+            current_streak = current_loss_streak
+            streak_type = "loss"
+        else:
+            current_streak = 0
+            streak_type = ""
 
         return max_win_streak, max_loss_streak, current_streak, streak_type
 
@@ -400,6 +423,10 @@ class AnalyticsService:
         Every trade is an independent DB row with its own account. Optionally
         filter by account name.
         """
+        # Clamp invalid pagination values to safe defaults.
+        limit = max(1, int(limit)) if limit is not None else 50
+        offset = max(0, int(offset)) if offset is not None else 0
+
         visible_trades = self._visible_trades(pair)
 
         if account and account.strip():
@@ -422,9 +449,9 @@ class AnalyticsService:
                 "risk_dollars": t.risk_dollars,
                 "risk_pct": t.risk_pct,
                 "pnl_usd": t.pnl_usd,
-                "entry_time": t.entry_time.timestamp(),
+                "entry_time": _to_utc_timestamp(t.entry_time),
                 "exit_price": t.exit_price,
-                "exit_time": t.exit_time.timestamp() if t.exit_time else None,
+                "exit_time": _to_utc_timestamp(t.exit_time),
                 "result": t.result,
                 "result_type": t.result_type,
                 "status": "closed" if t.exit_time else "open",

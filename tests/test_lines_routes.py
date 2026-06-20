@@ -13,7 +13,7 @@ class FakeLinesController:
 
     def list_lines(self, pair):
         lines = self.repo.list_lines(pair)
-        return {"lines": [l.line_id for l in lines]}
+        return {"lines": [line.line_id for line in lines]}
 
     def add_line(self, pair, price, creation_timestamp=None):
         line = self.repo.insert_line(pair, price)

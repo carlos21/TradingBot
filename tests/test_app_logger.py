@@ -144,3 +144,66 @@ class TestFileAndConsoleLogger:
             log_files = list(Path(tmpdir).glob("app_*.log"))
             content = log_files[0].read_text()
             assert content.count("thread-") == 50
+
+    def test_repeated_configure_updates_level(self):
+        import logging as _logging
+        _logging.root.handlers.clear()
+        from src.utils.app_logger import configure_logging
+        configure_logging(_logging.INFO)
+        assert _logging.root.level == _logging.INFO
+        configure_logging(_logging.DEBUG)
+        assert _logging.root.level == _logging.DEBUG
+
+    def test_midnight_rotation_creates_new_file(self, tmp_path, monkeypatch):
+        from datetime import datetime
+        from src.utils.app_logger import FileAndConsoleLogger
+
+        first_date = datetime(2024, 1, 1, 23, 59, 59)
+        second_date = datetime(2024, 1, 2, 0, 0, 1)
+        state = {"dt": first_date}
+
+        class _FakeDateTime:
+            @classmethod
+            def now(cls, tz=None):
+                return state["dt"]
+
+        monkeypatch.setattr("src.utils.app_logger.datetime", _FakeDateTime)
+        logger = FileAndConsoleLogger(log_dir=str(tmp_path))
+        logger.info("before midnight")
+        state["dt"] = second_date
+        logger.info("after midnight")
+        logger.close()
+
+        files = sorted(tmp_path.glob("app_*.log"))
+        assert len(files) == 2
+        assert "before midnight" in files[0].read_text()
+        assert "after midnight" in files[1].read_text()
+
+    def test_close_is_idempotent_and_race_safe(self, tmp_path):
+        import threading
+        from src.utils.app_logger import FileAndConsoleLogger
+
+        logger = FileAndConsoleLogger(log_dir=str(tmp_path))
+        errors = []
+
+        def writer():
+            try:
+                for i in range(100):
+                    logger.info(f"msg-{i}")
+            except Exception as e:
+                errors.append(e)
+
+        def closer():
+            try:
+                logger.close()
+            except Exception as e:
+                errors.append(e)
+
+        t1 = threading.Thread(target=writer)
+        t2 = threading.Thread(target=closer)
+        t1.start()
+        t2.start()
+        t1.join()
+        t2.join()
+
+        assert not errors

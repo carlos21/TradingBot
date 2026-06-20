@@ -35,7 +35,12 @@ def register_core_routes(
         from flask import request
         tf       = request.args.get('tf', '5m')
         start_ts = request.args.get('start_time', type=int)
-        bars     = data_source.load_historical_bars(tf, start_ts)
+
+        try:
+            bars = data_source.load_historical_bars(tf, start_ts)
+        except Exception as exc:
+            logger.error(f"[API /bars] failed to load bars: {exc}")
+            return jsonify({"error": f"Failed to load bars: {exc}"}), 500
 
         # Trim bars whose open time is still in the future relative to this host.
         # NinjaTrader may include the currently forming bar with a timestamp
@@ -45,9 +50,9 @@ def register_core_routes(
         bars = [b for b in bars if b.get('time') and b['time'] <= now]
 
         # Debug: Check for problematic bars that could cause "Value is null" in charts
-        if bars and len(bars) > 0:
+        if bars:
             sample = bars[0]
-            logger.info(f"[API /bars] tf={tf} count={len(bars)} first_bar={sample}")
+            logger.debug(f"[API /bars] tf={tf} count={len(bars)} first_bar={sample}")
             # Check for None/NaN values
             bad_bars = [b for b in bars if b.get('open') is None or b.get('high') is None
                        or b.get('low') is None or b.get('close') is None or b.get('time') is None]

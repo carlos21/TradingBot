@@ -26,17 +26,17 @@ class SettingsController:
 
     def save_account(self):
         payload = request.get_json(silent=True) or {}
-        name = payload.get("name")
-        if not name:
-            abort(400, "Account name is required")
-        self._svc._accounts.upsert(
-            name=name,
-            risk_usd=payload.get("risk_usd") or None,
-            risk_pct=payload.get("risk_pct") or None,
-            rr_ratio=payload.get("rr_ratio") or None,
-        )
-        return jsonify({"name": name}), 200
+        try:
+            self._svc.save_account(payload)
+        except ValueError as exc:
+            abort(400, str(exc))
+        except Exception as exc:
+            abort(500, f"Failed to save account: {exc}")
+        return jsonify({"name": payload.get("name")}), 200
 
     def delete_account(self, name: str):
-        self._svc._accounts.delete(name)
+        try:
+            self._svc.delete_account(name)
+        except Exception as exc:
+            abort(500, f"Failed to delete account: {exc}")
         return "", 204

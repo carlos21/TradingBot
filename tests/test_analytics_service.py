@@ -22,6 +22,7 @@ def _make_trade(
     pnl_usd=None,
     risk_dollars=None,
     contracts=None,
+    account=None,
 ):
     trade = trade_repo.insert_trade(
         pair=pair,
@@ -33,6 +34,7 @@ def _make_trade(
         entry_time=entry_time or datetime(2024, 1, 1, 10, 0, tzinfo=timezone.utc),
         risk_dollars=risk_dollars,
         contracts=contracts,
+        account=account,
     )
     if exit_price is not None and exit_time is not None:
         trade_repo.close_trade(
@@ -440,3 +442,131 @@ class TestAnalyticsServicePaginatedTrades:
         assert page["total"] == 1
         assert page["trades"][0]["trade_id"] == "single_1"
         assert page["trades"][0]["account"] is None
+
+    def test_negative_limit_is_clamped(self):
+        repo = FakeTradeRepository()
+        _make_trade(repo, entry_price=100.0, stop_loss=90.0, take_profit=130.0)
+        svc = AnalyticsService(repo)
+        page = svc.get_paginated_trades("MNQ", limit=-5, offset=-10)
+        assert page["limit"] == 1
+        assert page["offset"] == 0
+        assert len(page["trades"]) == 1
+
+
+class TestAnalyticsDrawdownAndStreaks:
+    def test_all_losing_curve_reports_non_zero_drawdown_pct(self):
+        repo = FakeTradeRepository()
+        for i in range(3):
+            _make_trade(
+                repo,
+                entry_price=100.0,
+                stop_loss=90.0,
+                take_profit=130.0,
+                risk=10.0,
+                exit_price=90.0,
+                exit_time=datetime(2024, 1, 1, 11 + i, 0, tzinfo=timezone.utc),
+                result=-1.0,
+                result_type="SL",
+            )
+        svc = AnalyticsService(repo)
+        stats = svc.calculate_statistics("MNQ")
+        assert stats.max_drawdown == 3.0
+        assert stats.max_drawdown_pct == 100.0
+
+    def test_breakeven_trade_breaks_streak(self):
+        repo = FakeTradeRepository()
+        # win, BE, win -> max win streak 1, current streak 1 win
+        for i, (result, rt) in enumerate([(1.0, "TP"), (0.0, "BE"), (1.5, "TP")]):
+            _make_trade(
+                repo,
+                entry_price=100.0,
+                stop_loss=90.0,
+                take_profit=130.0,
+                risk=10.0,
+                exit_price=100.0 if result == 0 else 130.0,
+                exit_time=datetime(2024, 1, 1, 11 + i, 0, tzinfo=timezone.utc),
+                result=result,
+                result_type=rt,
+            )
+        svc = AnalyticsService(repo)
+        stats = svc.calculate_statistics("MNQ")
+        assert stats.max_consecutive_wins == 1
+        assert stats.current_streak == 1
+        assert stats.current_streak_type == "win"
+
+
+class TestAnalyticsResultDistribution:
+    def test_result_distribution_labels_are_deterministic(self):
+        repo = FakeTradeRepository()
+        _make_trade(
+            repo,
+            exit_price=130.0,
+            exit_time=datetime(2024, 1, 1, 11, 0, tzinfo=timezone.utc),
+            result=1.0,
+            result_type="TP",
+        )
+        _make_trade(
+            repo,
+            exit_price=90.0,
+            exit_time=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            result=-1.0,
+            result_type="SL",
+        )
+        svc = AnalyticsService(repo)
+        dist = svc.get_result_distribution("MNQ")
+        assert dist.labels == ["TP", "SL"]
+
+
+class TestAnalyticsNaNAndInf:
+    def test_trade_statistics_sanitizes_nan_and_inf(self):
+        from src.analytics import TradeStatistics
+
+        stats = TradeStatistics(
+            total_trades=1,
+            open_trades=0,
+            winning_trades=1,
+            losing_trades=0,
+            win_rate=float("nan"),
+            total_pnl=float("inf"),
+            total_pnl_usd=0.0,
+            avg_pnl=float("-inf"),
+            avg_pnl_usd=0.0,
+            avg_win=0.0,
+            avg_loss=0.0,
+            profit_factor=float("inf"),
+            avg_r_multiple=0.0,
+        )
+        d = stats.to_dict()
+        assert d["win_rate"] is None
+        assert d["total_pnl"] is None
+        assert d["avg_pnl"] is None
+        assert d["profit_factor"] is None
+
+
+class TestAccountAnalytics:
+    def test_account_analytics_returns_stats_per_account(self):
+        repo = FakeTradeRepository()
+        _make_trade(
+            repo,
+            exit_price=130.0,
+            exit_time=datetime(2024, 1, 1, 11, 0, tzinfo=timezone.utc),
+            result=1.0,
+            result_type="TP",
+            pnl_usd=100.0,
+            account="A1",
+        )
+        _make_trade(
+            repo,
+            exit_price=90.0,
+            exit_time=datetime(2024, 1, 1, 12, 0, tzinfo=timezone.utc),
+            result=-1.0,
+            result_type="SL",
+            pnl_usd=-50.0,
+            account="A2",
+        )
+        svc = AnalyticsService(repo)
+        accounts = svc.get_account_analytics("MNQ")
+        assert len(accounts) == 2
+        totals = {a["account"]: a["total_pnl_usd"] for a in accounts}
+        assert totals["A1"] == 100.0
+        assert totals["A2"] == -50.0

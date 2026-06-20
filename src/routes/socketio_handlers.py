@@ -10,6 +10,7 @@ from src.bars_loader import BarsLoader
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.utils.app_logger import ILogger
+from src.utils.bar_aggregator import BarAggregator
 
 
 class _TokenBucket:
@@ -24,6 +25,9 @@ class _TokenBucket:
 
     def allow(self) -> bool:
         with self._lock:
+            # A non-positive rate means "do not rate-limit".
+            if self._rate <= 0:
+                return True
             now = time.monotonic()
             elapsed = now - self._last_update
             self._last_update = now
@@ -32,6 +36,10 @@ class _TokenBucket:
                 self._tokens -= 1.0
                 return True
             return False
+
+
+# Sentinel attribute used to avoid double-wrapping the same logger instance.
+_LOGGER_WRAPPED_ATTR = "_socketio_log_wrapped"
 
 
 def register_socketio_handlers(
@@ -51,24 +59,64 @@ def register_socketio_handlers(
         loader: Bars loader for stream control
         data_source: Data source for bar history
         live_mode: Whether running in live trading mode
+
+    Returns:
+        A cleanup function that stops the background health thread and
+        unwraps the logger. Callers should invoke it on shutdown/reload.
     """
+
+    def _emit_error(message: str) -> None:
+        """Emit an error event to the client and log it locally."""
+        _logger.error(f"[SocketIO] {message}")
+        with contextlib.suppress(Exception):
+            emit("error", {"message": message})
+
+    def _safe_handler(fn):
+        """Wrap a handler so unexpected exceptions emit an error event."""
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:
+                _logger.error(f"[SocketIO] handler {fn.__name__} failed: {exc}")
+                _emit_error(f"Handler {fn.__name__} failed: {exc}")
+        wrapper.__name__ = fn.__name__
+        return wrapper
+
+    def _validate_timeframe(tf) -> str:
+        """Return a normalized timeframe string or raise ValueError."""
+        if not isinstance(tf, str) or not tf.strip():
+            raise ValueError("timeframe must be a non-empty string")
+        tf = tf.strip()
+        # Let BarAggregator validate the numeric/unit format.
+        BarAggregator.parse_timeframe(tf)
+        unit = tf[-1].lower()
+        if unit not in ("m", "h"):
+            raise ValueError(f"Unsupported timeframe '{tf}' for streaming")
+        return tf
+
+    def _as_int(value, name: str) -> int:
+        """Coerce a payload value to int or raise ValueError."""
+        try:
+            return int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{name} must be an integer") from exc
 
     # Track the last history-loaded signature emitted on connect so reconnects
     # do not spam the frontend with duplicate events.
     _last_history_loaded_signature: dict | None = None
 
     def _history_loaded_signature(cached: list[dict]) -> dict:
-        readiness_state = 'UNKNOWN'
-        readiness_reason = 'Cached bars available on connect'
+        readiness_state = "UNKNOWN"
+        readiness_reason = "Cached bars available on connect"
         if readiness_monitor is not None:
             health = readiness_monitor.get_health()
-            readiness_state = health.get('readiness_state', readiness_state)
-            readiness_reason = health.get('readiness_reason', readiness_reason)
+            readiness_state = health.get("readiness_state", readiness_state)
+            readiness_reason = health.get("readiness_reason", readiness_reason)
         return {
-            'readiness_state': readiness_state,
-            'readiness_reason': readiness_reason,
-            'bar_count': len(cached),
-            'last_bar_time': cached[-1]['time'] if cached else None,
+            "readiness_state": readiness_state,
+            "readiness_reason": readiness_reason,
+            "bar_count": len(cached),
+            "last_bar_time": cached[-1]["time"] if cached else None,
         }
 
     def _emit_health():
@@ -78,9 +126,10 @@ def register_socketio_handlers(
                 health = data_source.get_health()
                 if readiness_monitor is not None:
                     health.update(readiness_monitor.get_health())
-                socketio.emit('health_update', health)
+                socketio.emit("health_update", health)
 
-    @socketio.on('connect')
+    @socketio.on("connect")
+    @_safe_handler
     def on_connect(_auth):
         gateway_running = False
         platform_connected = False
@@ -88,18 +137,18 @@ def register_socketio_handlers(
             gateway_running = data_source.gateway.is_running
             platform_connected = data_source.gateway.is_connected
 
-        emit('stream_status', {
-            'playing': loader.streaming,
-            'live_mode': live_mode,
-            'gateway_running': gateway_running,
-            'platform_connected': platform_connected,
+        emit("stream_status", {
+            "playing": loader.streaming,
+            "live_mode": live_mode,
+            "gateway_running": gateway_running,
+            "platform_connected": platform_connected,
         })
         _emit_health()
 
         # If the platform is already connected, immediately clear the reconnect
         # overlay for a reconnecting browser.
         if live_mode and platform_connected:
-            emit('platform_connected')
+            emit("platform_connected")
 
         # If historical bars are already cached (e.g. server has been running),
         # tell the frontend to draw them immediately. This avoids an empty
@@ -118,117 +167,133 @@ def register_socketio_handlers(
                         nonlocal _last_history_loaded_signature
                         if signature != _last_history_loaded_signature:
                             _last_history_loaded_signature = signature
-                            emit('history_loaded', {
-                                'readiness_state': signature['readiness_state'],
-                                'readiness_reason': signature['readiness_reason'],
-                                'bar_count': signature['bar_count'],
+                            emit("history_loaded", {
+                                "readiness_state": signature["readiness_state"],
+                                "readiness_reason": signature["readiness_reason"],
+                                "bar_count": signature["bar_count"],
                             })
-            except Exception:
-                pass  # Don't break connect if cached-bar lookup fails
+            except Exception as exc:
+                # Don't break the connect handshake, but let the client know.
+                _logger.error(f"[SocketIO] failed to load cached bars on connect: {exc}")
+                with contextlib.suppress(Exception):
+                    emit("history_load_failed", {"error": str(exc)})
 
         # Note: we do NOT auto-request a refresh here. Refreshing on every
         # browser connect duplicates the refresh already scheduled when the
         # platform connected and causes unnecessary load on NinjaTrader.
         # Use the explicit 'request_refresh' event to force a refresh.
 
-    @socketio.on('start_stream')
+    @socketio.on("start_stream")
+    @_safe_handler
     def on_start_stream(payload):
-        tf = payload.get('timeframe', '1m')
-        from_time = payload.get('fromTime', 0)
-        stop_at   = payload.get('stopAt')
+        tf = _validate_timeframe(payload.get("timeframe", "1m"))
+        from_time = _as_int(payload.get("fromTime", 0), "fromTime")
+        stop_at = payload.get("stopAt")
+        if stop_at is not None:
+            stop_at = _as_int(stop_at, "stopAt")
 
         # Set base time first so set_timeframe uses the right window
         loader.seek(from_time)
         loader.set_timeframe(tf)
         loader.start(from_time, stop_at)
-        emit('stream_status', {'playing': True})
+        emit("stream_status", {"playing": True})
 
-    @socketio.on('pause_stream')
+    @socketio.on("pause_stream")
+    @_safe_handler
     def on_pause_stream():
         if live_mode:
             return
         loader.pause()
-        emit('stream_status', {'playing': False})
+        emit("stream_status", {"playing": False})
 
-    @socketio.on('step_stream')
+    @socketio.on("step_stream")
+    @_safe_handler
     def on_step_stream(payload):
         if live_mode:
             return
-        tf = payload.get('timeframe', '1m')
-        from_time = payload.get('fromTime', 0)
+        tf = _validate_timeframe(payload.get("timeframe", "1m"))
+        from_time = _as_int(payload.get("fromTime", 0), "fromTime")
         # Advance from_time by one full timeframe window so the step lands on
         # the *next* bar, not the current one (which is already displayed).
-        unit = tf[-1]
-        num = int(tf[:-1])
-        group_size = num if unit == 'm' else num * 60
-        from_time = from_time + group_size * 60
-        loader.seek(from_time)
+        window_secs = BarAggregator.parse_timeframe(tf)
+        loader.seek(from_time + window_secs)
         loader.set_timeframe(tf)
         loader.step()
-        emit('stream_status', {'playing': True})
+        emit("stream_status", {"playing": True})
 
-    @socketio.on('seek')
+    @socketio.on("seek")
+    @_safe_handler
     def on_seek(payload):
         if live_mode:
             return
-        loader.seek(payload.get('fromTime', 0))
+        loader.seek(_as_int(payload.get("fromTime", 0), "fromTime"))
 
-    @socketio.on('set_timeframe')
+    @socketio.on("set_timeframe")
+    @_safe_handler
     def on_set_timeframe(payload):
-        tf = payload.get('timeframe', '1m')
-        from_time = payload.get('fromTime', 0)
+        tf = _validate_timeframe(payload.get("timeframe", "1m"))
+        from_time = _as_int(payload.get("fromTime", 0), "fromTime")
         loader.seek(from_time)
         loader.set_timeframe(tf)
 
-    @socketio.on('jump_day')
+    @socketio.on("jump_day")
+    @_safe_handler
     def on_jump_day(payload):
         if live_mode:
             return
         # payload: {direction: 1|-1, fast: true|false}
-        direction = int(payload.get('direction', 1))
-        fast      = bool(payload.get('fast', True))
+        direction_raw = payload.get("direction", 1)
+        direction = _as_int(direction_raw, "direction")
+        if direction not in (-1, 1):
+            raise ValueError("direction must be 1 or -1")
+        fast = bool(payload.get("fast", True))
         ts = loader.jump_day(direction=direction, fast=fast)
-        emit('jump_result', {'to': ts})
+        emit("jump_result", {"to": ts})
 
-    @socketio.on('request_health')
+    @socketio.on("request_health")
+    @_safe_handler
     def on_request_health():
         _emit_health()
 
-    @socketio.on('request_refresh')
+    @socketio.on("request_refresh")
+    @_safe_handler
     def on_request_refresh(payload=None):
         if not isinstance(data_source, ZMQDataSource):
-            emit('refresh_result', {'ok': False, 'error': 'Not a ZMQ data source'})
+            emit("refresh_result", {"ok": False, "error": "Not a ZMQ data source"})
             return
-        days = (payload or {}).get('days')
+        days = (payload or {}).get("days")
+        if days is not None:
+            days = _as_int(days, "days")
         try:
             data_source.request_refresh(days=days)
-            emit('refresh_result', {'ok': True, 'days': days})
+            emit("refresh_result", {"ok": True, "days": days})
         except Exception as e:
             _logger.error(f"request_refresh failed: {e}")
-            emit('refresh_result', {'ok': False, 'error': str(e)})
+            emit("refresh_result", {"ok": False, "error": str(e)})
 
-    @socketio.on('check_parity')
+    @socketio.on("check_parity")
+    @_safe_handler
     def on_check_parity():
         if parity_service is None:
-            emit('parity_result', {
-                'ok': False,
-                'error': 'Parity service not available',
+            emit("parity_result", {
+                "ok": False,
+                "error": "Parity service not available",
             })
             return
         try:
             result = parity_service.check_parity(hours_back=5)
-            emit('parity_result', result.to_dict())
+            emit("parity_result", result.to_dict())
         except Exception as e:
             _logger.error(f"check_parity failed: {e}")
-            emit('parity_result', {
-                'ok': False,
-                'error': str(e),
+            emit("parity_result", {
+                "ok": False,
+                "error": str(e),
             })
 
     # Wire up platform connection state changes
     if isinstance(data_source, ZMQDataSource) and data_source.gateway:
         def _on_conn_change(connected: bool):
-            event_name = 'platform_connected' if connected else 'platform_disconnected'
+            event_name = "platform_connected" if connected else "platform_disconnected"
             socketio.emit(event_name)
             _emit_health()
         data_source.gateway.on_connection_change(_on_conn_change)
@@ -258,17 +323,25 @@ def register_socketio_handlers(
         """
         if level != "ERROR" and not _system_log_bucket.allow():
             return
-        with contextlib.suppress(Exception):
-            socketio.emit('system_log', {
-                'time': __import__('time').time(),
-                'level': level,
-                'source': 'server',
-                'message': message,
+        try:
+            socketio.emit("system_log", {
+                "time": time.time(),
+                "level": level,
+                "source": "server",
+                "message": message,
             })
+        except Exception as exc:
+            _logger.error(f"[SocketIO] failed to forward log: {exc}")
 
     def _wrap_logger():
-        """Wrap the logger's methods to also emit via Socket.IO."""
-        for level in ('debug', 'info', 'warning', 'error'):
+        """Wrap the logger's methods to also emit via Socket.IO.
+
+        Idempotent: if the logger is already wrapped by a previous
+        registration call, do nothing.
+        """
+        if getattr(_logger, _LOGGER_WRAPPED_ATTR, False):
+            return
+        for level in ("debug", "info", "warning", "error"):
             orig = getattr(_logger, level, None)
             if orig is None:
                 continue
@@ -277,10 +350,28 @@ def register_socketio_handlers(
             def make_wrapper(lvl, original):
                 def wrapper(msg: str):
                     original(msg)
-                    if lvl in ('info', 'warning', 'error'):
+                    if lvl in ("info", "warning", "error"):
                         _forward_log(lvl.upper(), msg)
                 return wrapper
 
             setattr(_logger, level, make_wrapper(level, orig))
+        setattr(_logger, _LOGGER_WRAPPED_ATTR, True)
+
+    def _unwrap_logger():
+        """Restore the original logger methods."""
+        if not getattr(_logger, _LOGGER_WRAPPED_ATTR, False):
+            return
+        for level, orig in _original_logger_methods.items():
+            setattr(_logger, level, orig)
+        _original_logger_methods.clear()
+        delattr(_logger, _LOGGER_WRAPPED_ATTR)
 
     _wrap_logger()
+
+    def cleanup() -> None:
+        """Stop background threads and unwrap the logger."""
+        _health_stop_event.set()
+        _health_thread.join(timeout=2.0)
+        _unwrap_logger()
+
+    return cleanup

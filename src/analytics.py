@@ -1,6 +1,14 @@
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
+
+
+def _sanitize_number(value: float) -> float | None:
+    """Replace NaN/Inf with None so JSON consumers never see invalid floats."""
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    return value
 
 
 class AnalyticsReporter(ABC):
@@ -111,19 +119,19 @@ class TradeStatistics:
             "open_trades": self.open_trades,
             "winning_trades": self.winning_trades,
             "losing_trades": self.losing_trades,
-            "win_rate": round(self.win_rate, 4),
-            "total_pnl": round(self.total_pnl, 2),
-            "total_pnl_usd": round(self.total_pnl_usd, 2),
-            "avg_pnl": round(self.avg_pnl, 2),
-            "avg_pnl_usd": round(self.avg_pnl_usd, 2),
-            "avg_win": round(self.avg_win, 2),
-            "avg_loss": round(self.avg_loss, 2),
-            "profit_factor": round(self.profit_factor, 2) if self.profit_factor != float('inf') else None,
-            "avg_r_multiple": round(self.avg_r_multiple, 2),
-            "avg_profit_monthly": round(self.avg_profit_monthly, 2),
-            "max_drawdown": round(self.max_drawdown, 2),
-            "max_drawdown_pct": round(self.max_drawdown_pct, 2),
-            "expectancy": round(self.expectancy, 2),
+            "win_rate": _sanitize_number(round(self.win_rate, 4)),
+            "total_pnl": _sanitize_number(round(self.total_pnl, 2)),
+            "total_pnl_usd": _sanitize_number(round(self.total_pnl_usd, 2)),
+            "avg_pnl": _sanitize_number(round(self.avg_pnl, 2)),
+            "avg_pnl_usd": _sanitize_number(round(self.avg_pnl_usd, 2)),
+            "avg_win": _sanitize_number(round(self.avg_win, 2)),
+            "avg_loss": _sanitize_number(round(self.avg_loss, 2)),
+            "profit_factor": _sanitize_number(round(self.profit_factor, 2)) if self.profit_factor != float('inf') else None,
+            "avg_r_multiple": _sanitize_number(round(self.avg_r_multiple, 2)),
+            "avg_profit_monthly": _sanitize_number(round(self.avg_profit_monthly, 2)),
+            "max_drawdown": _sanitize_number(round(self.max_drawdown, 2)),
+            "max_drawdown_pct": _sanitize_number(round(self.max_drawdown_pct, 2)),
+            "expectancy": _sanitize_number(round(self.expectancy, 2)),
             "max_consecutive_wins": self.max_consecutive_wins,
             "max_consecutive_losses": self.max_consecutive_losses,
             "current_streak": self.current_streak,

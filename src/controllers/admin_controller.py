@@ -2,6 +2,7 @@
 
 from flask import abort, jsonify
 
+from src.dbexception import DBNotFoundException
 from src.domain.repositories import LineRepository
 from src.infrastructure.repositories.decision_log_repository import (
     DecisionLogRepository,
@@ -68,7 +69,6 @@ class AdminController:
             self._analytics.delete_trade(trade_id)
         except Exception as exc:  # noqa: BLE001
             # Repository already raises domain DB exceptions; surface as 404/500
-            from src.dbexception import DBNotFoundException
             if isinstance(exc, DBNotFoundException):
                 abort(404, str(exc))
             self.logger.error(f"Failed to delete trade {trade_id}: {exc}")

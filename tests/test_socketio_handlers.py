@@ -587,3 +587,116 @@ class TestConnectionChangeCallback:
         # Bucket capacity is 40 and rate is 20/sec; 100 instantaneous calls
         # should be capped near the capacity.
         assert len(system_log_events) <= 50
+
+
+class TestTokenBucket:
+    def test_non_positive_rate_always_allows(self):
+        from src.routes.socketio_handlers import _TokenBucket
+
+        bucket = _TokenBucket(rate=0, capacity=1)
+        assert bucket.allow() is True
+        assert bucket.allow() is True
+
+        bucket_neg = _TokenBucket(rate=-1, capacity=1)
+        assert bucket_neg.allow() is True
+
+
+class TestPayloadValidation:
+    @patch("src.routes.socketio_handlers.emit")
+    def test_start_stream_unsupported_timeframe_emits_error(self, mock_emit, socketio, loader, logger):
+        data_source = FakeDataSource()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=False,
+            _logger=logger,
+        )
+        handler = socketio.handlers["start_stream"]
+        handler({"timeframe": "1d"})
+
+        error_event = next((call for call in mock_emit.call_args_list if call[0][0] == "error"), None)
+        assert error_event is not None
+        assert loader._start_calls == []
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_start_stream_non_numeric_from_time_emits_error(self, mock_emit, socketio, loader, logger):
+        data_source = FakeDataSource()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=False,
+            _logger=logger,
+        )
+        handler = socketio.handlers["start_stream"]
+        handler({"fromTime": "abc"})
+
+        error_event = next((call for call in mock_emit.call_args_list if call[0][0] == "error"), None)
+        assert error_event is not None
+        assert loader._start_calls == []
+
+
+class TestCleanup:
+    def test_cleanup_stops_health_thread_and_unwraps_logger(self, socketio, loader, logger):
+        cleanup = register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+        )
+
+        assert getattr(logger, "_socketio_log_wrapped", False) is True
+        cleanup()
+        assert getattr(logger, "_socketio_log_wrapped", False) is False
+
+    def test_double_registration_does_not_double_wrap(self, socketio, loader, logger):
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+        )
+        original_info = logger.info
+        cleanup = register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+        )
+        # The second registration should not replace the already-wrapped method.
+        assert logger.info is original_info
+        cleanup()
+
+
+class TestConnectEdgeCases:
+    @patch("src.routes.socketio_handlers.emit")
+    def test_connect_logs_and_emits_when_cached_load_fails(self, mock_emit, socketio, loader):
+        class _BrokenZMQDataSource(FakeZMQDataSource):
+            def load_historical_bars(self, timeframe="1m", start_time=None):
+                raise RuntimeError("cache unreachable")
+
+        errors: list[str] = []
+
+        class _RecordingLogger(FakeLogger):
+            def error(self, message: str) -> None:
+                errors.append(message)
+
+        logger = _RecordingLogger()
+        data_source = _BrokenZMQDataSource(gateway=FakeGateway())
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=True,
+            _logger=logger,
+        )
+        handler = socketio.handlers["connect"]
+        handler(None)
+
+        emitted_events = [call[0][0] for call in mock_emit.call_args_list]
+        assert "history_load_failed" in emitted_events
+        assert any("cache unreachable" in e for e in errors)

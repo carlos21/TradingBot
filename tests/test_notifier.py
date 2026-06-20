@@ -1,5 +1,6 @@
 """Tests for src/notifier.py."""
 
+import logging
 from unittest.mock import patch
 
 from src.notifier import NoOpNotifier, Notifier, TelegramNotifier
@@ -29,9 +30,7 @@ class TestTelegramNotifier:
     def test_send_posts_request(self, mock_post):
         notifier = TelegramNotifier("bot_token", "chat_id")
         notifier.send("Hello World")
-        # The send method starts a thread, so we need to wait for it
-        import time
-        time.sleep(0.1)
+        notifier.shutdown()
         mock_post.assert_called_once()
         call_kwargs = mock_post.call_args.kwargs
         assert call_kwargs["json"]["chat_id"] == "chat_id"
@@ -44,6 +43,53 @@ class TestTelegramNotifier:
         notifier = TelegramNotifier("bot_token", "chat_id")
         # Should not raise despite post failing
         notifier.send("Hello World")
-        import time
-        time.sleep(0.1)
+        notifier.shutdown()
         mock_post.assert_called_once()
+
+    @patch("src.notifier.requests.post")
+    def test_send_html_escapes_message(self, mock_post):
+        notifier = TelegramNotifier("bot_token", "chat_id")
+        notifier.send("Profit > 0 & loss < 5")
+        notifier.shutdown()
+        text = mock_post.call_args.kwargs["json"]["text"]
+        assert "&gt;" in text
+        assert "&lt;" in text
+        assert "&amp;" in text
+
+    @patch("src.notifier.requests.post")
+    def test_send_truncates_long_message(self, mock_post):
+        notifier = TelegramNotifier("bot_token", "chat_id")
+        notifier.send("x" * 5000)
+        notifier.shutdown()
+        text = mock_post.call_args.kwargs["json"]["text"]
+        assert len(text) <= TelegramNotifier.MAX_MESSAGE_LENGTH
+        assert text.endswith("...")
+
+    @patch("src.notifier.requests.post")
+    def test_send_logs_http_failure(self, mock_post, caplog):
+        response = mock_post.return_value
+        response.ok = False
+        response.status_code = 400
+        response.text = "Bad Request: chat not found"
+        notifier = TelegramNotifier("bot_token", "chat_id")
+        with caplog.at_level(logging.ERROR):
+            notifier.send("Hello")
+            notifier.shutdown()
+        assert "send failed" in caplog.text
+
+    @patch("src.notifier.requests.post", side_effect=Exception("Network error"))
+    def test_send_logs_network_error(self, mock_post, caplog):
+        notifier = TelegramNotifier("bot_token", "chat_id")
+        with caplog.at_level(logging.ERROR):
+            notifier.send("Hello")
+            notifier.shutdown()
+        assert "send error" in caplog.text
+
+    @patch("src.notifier.requests.post")
+    def test_send_after_shutdown_is_ignored(self, mock_post, caplog):
+        notifier = TelegramNotifier("bot_token", "chat_id")
+        notifier.shutdown()
+        with caplog.at_level(logging.WARNING):
+            notifier.send("Hello")
+        assert "after shutdown" in caplog.text
+        mock_post.assert_not_called()

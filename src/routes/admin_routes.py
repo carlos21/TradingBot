@@ -47,6 +47,10 @@ def register_admin_routes(
             abort(400, "Query param 'pair' is required")
         limit = request.args.get('limit', 50, type=int)
         offset = request.args.get('offset', 0, type=int)
+        if limit is None or limit <= 0:
+            abort(400, "Query param 'limit' must be a positive integer")
+        if offset is None or offset < 0:
+            abort(400, "Query param 'offset' must be a non-negative integer")
         account = request.args.get('account') or None
         return admin_controller.get_trade_history(pair, limit, offset, account)
 
@@ -63,7 +67,11 @@ def register_admin_routes(
 
     @app.route('/api/admin/trades/<string:trade_id>', methods=['DELETE'])
     def admin_delete_trade(trade_id):
-        return admin_controller.delete_trade(trade_id)
+        try:
+            return admin_controller.delete_trade(trade_id)
+        except Exception as exc:
+            _logger.error(f"[AdminRoutes] delete_trade failed: {exc}")
+            abort(500, "Failed to delete trade")
 
     @app.route('/api/admin/analytics', methods=['GET'])
     def admin_analytics():
