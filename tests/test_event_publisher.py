@@ -52,6 +52,17 @@ class TestDomainEventBusPublisher:
 
         assert len(received) == 1
 
+    def test_readiness_changed_maps_correctly(self):
+        bus = EventBus()
+        pub = DomainEventBusPublisher(bus)
+        received = []
+        bus.subscribe(EventType.READINESS_CHANGED, lambda e: received.append(e))
+
+        pub.emit("readiness_changed", {"state": "READY"})
+
+        assert len(received) == 1
+        assert received[0].payload["state"] == "READY"
+
     def test_unknown_event_is_logged(self, caplog):
         bus = EventBus()
         pub = DomainEventBusPublisher(bus)

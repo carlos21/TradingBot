@@ -44,6 +44,7 @@ class DomainEventBusPublisher:
         "line_updated": EventType.LINE_UPDATED,
         "stream_end": EventType.STREAM_ENDED,
         "indicator_update": EventType.INDICATOR_UPDATE,
+        "readiness_changed": EventType.READINESS_CHANGED,
     }
 
     def __init__(self, event_bus: EventBus):
