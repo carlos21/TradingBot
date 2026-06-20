@@ -267,16 +267,17 @@ class TestLiveBarRouting:
         monitor._state_machine.connect()
         monitor.on_history_complete(_make_bars())
 
-        bar = {"time": 9999, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}
-        monitor.on_live_bar(bar)
+        bar1 = {"time": 9999, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}
+        bar2 = {"time": 10000, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}
+        monitor.on_live_bar(bar1)
         assert len(monitor._bar_buffer) == 1
 
         # Now make policy warm and re-trigger completion check via another live bar
         monitor._warmup_policy = _FakeWarmupPolicy(warm=True)
-        monitor.on_live_bar(bar)
+        monitor.on_live_bar(bar2)
         assert monitor._state_machine.state.name == "READY"
         assert len(processed) == 2
-        assert all(b["time"] == 9999 for b in processed)
+        assert [b["time"] for b in processed] == [9999, 10000]
         assert len(monitor._bar_buffer) == 0
 
     def test_refresh_start_clears_buffer(self) -> None:
@@ -343,7 +344,6 @@ class TestWarmupCancellation:
     def test_refresh_during_warmup_cancels_old_thread(self) -> None:
         """on_refresh_start() while warmup is running must cancel the old thread."""
         import threading
-        import time
 
         started = threading.Event()
         blocked = threading.Event()

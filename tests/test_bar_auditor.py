@@ -107,6 +107,18 @@ class TestBarComparer:
         assert result.extra_count == 0
         assert result.mismatch_count == 0
 
+    def test_duplicate_timestamps_reported_as_drift(self):
+        local = [
+            self._bar(100, 10.0, 11.0, 9.0, 10.5, 100),
+            self._bar(100, 10.1, 11.1, 9.1, 10.6, 150),
+        ]
+        remote = [self._bar(100, 10.0, 11.0, 9.0, 10.5, 100)]
+        comparer = BarComparer()
+        result = comparer.compare(local, remote)
+
+        assert result.has_drift
+        assert any(d.time == 100 and "_duplicate" in d.field_differences for d in result.details)
+
 
 class TestNinjaTraderBarAuditorLifecycle:
     def test_start_stop(self):

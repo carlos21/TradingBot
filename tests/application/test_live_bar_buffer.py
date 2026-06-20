@@ -95,3 +95,46 @@ class TestLiveBarBuffer:
         # Every appended bar should have been processed exactly once
         assert len(processed) == 100
         assert len({b["time"] for b in processed}) == 100
+
+    def test_flush_sorts_out_of_order_bars(self) -> None:
+        processed: list[dict] = []
+        buf = LiveBarBuffer(processor=processed.append)
+        buf.append(_make_bar(3))
+        buf.append(_make_bar(1))
+        buf.append(_make_bar(2))
+        buf.flush()
+        assert [b["time"] for b in processed] == [1, 2, 3]
+
+    def test_flush_deduplicates_by_time(self) -> None:
+        processed: list[dict] = []
+        buf = LiveBarBuffer(processor=processed.append)
+        buf.append(_make_bar(1))
+        buf.append(_make_bar(1))
+        buf.append(_make_bar(2))
+        buf.flush()
+        assert [b["time"] for b in processed] == [1, 2]
+
+    def test_watermark_drops_historical_bars(self) -> None:
+        processed: list[dict] = []
+        buf = LiveBarBuffer(processor=processed.append)
+        buf.set_last_historical_time(10)
+        buf.append(_make_bar(5))
+        buf.append(_make_bar(10))
+        buf.append(_make_bar(15))
+        buf.flush()
+        assert [b["time"] for b in processed] == [15]
+
+    def test_processor_exception_does_not_drop_tail(self) -> None:
+        processed: list[dict] = []
+
+        def fail_on_two(bar: dict) -> None:
+            if bar["time"] == 2:
+                raise RuntimeError("boom")
+            processed.append(bar)
+
+        buf = LiveBarBuffer(processor=fail_on_two)
+        buf.append(_make_bar(1))
+        buf.append(_make_bar(2))
+        buf.append(_make_bar(3))
+        buf.flush()
+        assert [b["time"] for b in processed] == [1, 3]

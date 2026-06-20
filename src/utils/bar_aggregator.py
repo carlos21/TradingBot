@@ -29,7 +29,8 @@ class BarAggregator:
         if not tf:
             raise ValueError("Timeframe cannot be empty")
 
-        unit = tf[-1].lower()
+        tf = tf.strip().lower()
+        unit = tf[-1]
         try:
             val = int(tf[:-1])
         except ValueError as e:
@@ -111,6 +112,8 @@ class BarAggregator:
     def bucket_by_timeframe(bars: list[dict], timeframe: str) -> dict[int, list[dict]]:
         """Group bars into buckets by timeframe window.
 
+        Duplicate timestamps within a window are deduplicated (first occurrence wins).
+
         Args:
             bars: List of bar dictionaries
             timeframe: Timeframe string like "5m", "1h"
@@ -122,9 +125,14 @@ class BarAggregator:
 
         window_secs = BarAggregator.parse_timeframe(timeframe)
         buckets: dict[int, list[dict]] = defaultdict(list)
+        seen: set[tuple[int, int]] = set()
 
         for bar in bars:
             win = (bar['time'] // window_secs) * window_secs
+            key = (win, bar['time'])
+            if key in seen:
+                continue
+            seen.add(key)
             buckets[win].append(bar)
 
         return dict(buckets)
@@ -134,6 +142,7 @@ class BarAggregator:
         """Merge a partial tick/bar with buffered completed bars.
 
         Used for live mode to show correct aggregated candle with partial data.
+        If ``partial_bar`` only has a ``price`` key, it is treated as a tick update.
 
         Args:
             partial_bar: The partial/incomplete bar dict
@@ -143,6 +152,17 @@ class BarAggregator:
         Returns:
             Merged bar dict representing current aggregated state
         """
+        # A tick-style partial only provides a price; coerce it into OHLC.
+        price = partial_bar.get('price')
+        if price is not None and 'close' not in partial_bar:
+            partial_bar = {
+                **partial_bar,
+                'open': price,
+                'high': price,
+                'low': price,
+                'close': price,
+            }
+
         if not buffered_bars:
             # No buffered bars, use partial as-is but fix time
             return {

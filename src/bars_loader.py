@@ -2,18 +2,12 @@ import contextlib
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
 
 from flask_socketio import SocketIO
 
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.utils.app_logger import ILogger
 
-
-@dataclass
-class LoaderConfig:
-    initial_start: int
-    initial_end:   int
 
 class BarsLoader:
     def __init__(
@@ -67,9 +61,19 @@ class BarsLoader:
         self._step_mode = False
         self._last_processed_bar_time = 0
 
+    def _stop_background_task(self):
+        """Signal the background subscription to stop and wait for it."""
+        self._stop_event.set()
+        if self._thread is not None and hasattr(self._thread, 'is_alive'):
+            if self._thread.is_alive():
+                self._thread.join(timeout=2.0)
+                if self._thread.is_alive():
+                    self.logger.warning("[BarsLoader] Background task did not stop within timeout")
+        self._thread = None
+
     def set_timeframe(self, tf: str):
         if not self.live_mode:
-            self._stop_event.set()
+            self._stop_background_task()
 
         unit = tf[-1]
         num  = int(tf[:-1])
@@ -94,19 +98,19 @@ class BarsLoader:
             self._stop_event.clear()
         self._reached_stop_at = False
 
-    def start(self, from_time: int = None, stop_at: int = None):
-        self._stop_event.set()
-        time.sleep(0.05)
+    def start(self, from_time: int = None, stop_at: int = None, fast: bool = False):
+        self._stop_background_task()
 
         if from_time is not None:
             self._from_time = from_time
             self._1m_buffer = []
             self._current_group_start = None
+            self._last_processed_bar_time = 0
 
         self._stop_at = stop_at
         self._reached_stop_at = False
 
-        if stop_at is not None:
+        if stop_at is not None or fast:
             self._fast_jump_mode = True
             self._emit_delay = 0.0
         else:
@@ -116,7 +120,7 @@ class BarsLoader:
         self.streaming = True
         self._stop_event.clear()
 
-        self.socketio.start_background_task(self._run_subscription, self._from_time)
+        self._thread = self.socketio.start_background_task(self._run_subscription, self._from_time)
 
     def pause(self):
         if not self.live_mode:
@@ -290,18 +294,9 @@ class BarsLoader:
         self.socketio.emit('tick', tick)
 
     @staticmethod
-    def _aggregate_time_window(bars: list[dict], window_start: int, _window_secs: int) -> dict:
-        open_  = bars[0]['open']
-        close_ = bars[-1]['close']
-        high   = max(b['high'] for b in bars)
-        low    = min(b['low']  for b in bars)
-        volume = sum(b['volume'] for b in bars)
-        pair   = bars[0]['pair']
-        return {
-            'time':   window_start,
-            'open':   open_, 'high': high, 'low': low, 'close': close_,
-            'volume': volume, 'pair': pair
-        }
+    def _aggregate_time_window(bars: list[dict], window_start: int, window_secs: int) -> dict:
+        from src.utils.bar_aggregator import BarAggregator
+        return BarAggregator.aggregate_with_window(bars, window_start, window_secs)
 
     def _run_subscription(self, from_time: int):
         try:
@@ -318,8 +313,8 @@ class BarsLoader:
                             self.socketio.emit('bar', agg)
                             if not self._is_historical_bar(agg):
                                 time.sleep(self._emit_delay)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.logger.error(f"[BarsLoader] EOF flush failed: {e}")
 
             self.streaming = False
             reason = 'paused' if (self._stop_event.is_set() and not self._reached_stop_at) else 'eof'
@@ -377,5 +372,5 @@ class BarsLoader:
             self._emit_delay = self._default_emit_delay
 
         self.seek(target_ts)
-        self.start(target_ts)
+        self.start(target_ts, fast=fast)
         return target_ts

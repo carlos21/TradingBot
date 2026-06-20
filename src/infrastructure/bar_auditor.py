@@ -117,6 +117,9 @@ class BarComparer:
     FIELDS = ("open", "high", "low", "close", "volume")
 
     def compare(self, local: list[dict[str, Any]], remote: list[dict[str, Any]]) -> AuditResult:
+        local_dups = self._find_duplicate_times(local)
+        remote_dups = self._find_duplicate_times(remote)
+
         local_by_time: dict[int, dict[str, Any]] = {b["time"]: b for b in local}
         remote_by_time: dict[int, dict[str, Any]] = {b["time"]: b for b in remote}
         all_times = sorted(set(local_by_time) | set(remote_by_time))
@@ -139,6 +142,11 @@ class BarComparer:
                 if diffs:
                     details.append(BarMismatch(t, l_bar, r_bar, diffs))
 
+        for t in sorted(set(local_dups) | set(remote_dups)):
+            details.append(
+                BarMismatch(t, local_by_time.get(t), remote_by_time.get(t), {"_duplicate": (True, True)})
+            )
+
         missing = [d for d in details if d.remote_bar is None]
         extra = [d for d in details if d.local_bar is None]
         mismatched = [d for d in details if d.field_differences]
@@ -156,6 +164,18 @@ class BarComparer:
             details=details,
             summary=summary,
         )
+
+    @staticmethod
+    def _find_duplicate_times(bars: list[dict[str, Any]]) -> set[int]:
+        """Return timestamps that appear more than once in the list."""
+        seen: set[int] = set()
+        dups: set[int] = set()
+        for b in bars:
+            t = b["time"]
+            if t in seen:
+                dups.add(t)
+            seen.add(t)
+        return dups
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -358,7 +378,9 @@ class NinjaTraderBarAuditor:
             self._remote_bars = parsed
         except Exception as e:
             self._logger.error(f"[BarAuditor] Failed to parse audit response: {e}")
-            self._remote_bars = []
-        finally:
-            if self._pending_event is not None:
-                self._pending_event.set()
+            # Do not set _pending_event so _run_audit times out cleanly instead
+            # of comparing against an empty/invalid remote list.
+            return
+
+        if self._pending_event is not None:
+            self._pending_event.set()

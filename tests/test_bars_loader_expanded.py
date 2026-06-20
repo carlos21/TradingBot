@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.bars_loader import BarsLoader, LoaderConfig
+from src.bars_loader import BarsLoader
 from tests.fakes import DummySocketIO, FakeDataSource, FakeLogger
 
 
@@ -257,7 +257,8 @@ class TestProcessBar:
         emitted = [e for e in socketio.events if e[0] == "bar"]
         assert len(emitted) == 1
         agg = emitted[0][1]
-        assert agg["time"] == 0
+        # BarAggregator uses end-of-window timestamps.
+        assert agg["time"] == 300
         assert agg["open"] == 10
         assert agg["high"] == 12
         assert agg["low"] == 9
@@ -339,7 +340,8 @@ class TestAggregateTimeWindow:
             {"time": 60, "open": 11, "high": 15, "low": 10, "close": 13, "volume": 200, "pair": "MNQ"},
         ]
         result = BarsLoader._aggregate_time_window(bars, 0, 300)
-        assert result["time"] == 0
+        # BarAggregator uses end-of-window timestamps.
+        assert result["time"] == 300
         assert result["open"] == 10
         assert result["high"] == 15
         assert result["low"] == 9
@@ -371,7 +373,7 @@ class TestRunSubscription:
         with patch("src.bars_loader.time.sleep"):
             bars_loader._run_subscription(0)
         assert ("bar", {
-            "time": 0, "open": 10, "high": 12, "low": 9, "close": 11,
+            "time": 300, "open": 10, "high": 12, "low": 9, "close": 11,
             "volume": 100, "pair": "MNQ"
         }) in socketio.events
 
@@ -524,9 +526,8 @@ class TestJumpDay:
             with patch("src.bars_loader.time.sleep"):
                 result = bars_loader.jump_day(1, fast=True)
         assert result == 86400
-        # Note: start() unconditionally resets _fast_jump_mode to False when stop_at is None,
-        # so jump_day(fast=True) ends up with _fast_jump_mode=False after start() returns.
-        assert bars_loader._fast_jump_mode is False
+        assert bars_loader._fast_jump_mode is True
+        assert bars_loader._emit_delay == 0.0
         mock_task.assert_called_once()
 
     def test_jump_forward_slow(self, bars_loader, fake_ds):
@@ -741,15 +742,6 @@ class TestReset:
         bars_loader._from_time = 500
         bars_loader.reset()
         assert bars_loader._from_time == 0
-
-
-class TestLoaderConfig:
-    """Expanded tests for LoaderConfig."""
-
-    def test_loader_config_defaults(self):
-        config = LoaderConfig(initial_start=0, initial_end=100)
-        assert config.initial_start == 0
-        assert config.initial_end == 100
 
 
 class TestEdgeCases:

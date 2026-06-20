@@ -125,50 +125,73 @@ class CSVDataSource(CombinedDataSource):
 
         t_logger.info(f"[CSV_DS] Reset complete. _played_bars re-seeded with {len(self._played_bars)} bars.")
 
+    REQUIRED_COLUMNS = {'Date', 'Time', 'Open', 'High', 'Low', 'Close'}
+
     def _load_historical_bars(self) -> list[dict]:
         bars: list[dict] = []
         local_tz = self.local_tz             # e.g., America/Chicago for MNQ
         with (self._fileobj or open(self.file, newline='')) as f:
             sample  = f.read(2048)
             f.seek(0)
-            dialect = csv.Sniffer().sniff(sample, delimiters=",;")
+            if not sample.strip():
+                return bars
+
+            try:
+                dialect = csv.Sniffer().sniff(sample, delimiters=",;")
+            except csv.Error:
+                dialect = csv.excel
             reader  = csv.DictReader(f, dialect=dialect)
 
-            for row in reader:
-                ts = f"{row['Date']} {row['Time']}"
+            headers = set(reader.fieldnames or [])
+            if not headers:
+                return bars
+            missing = self.REQUIRED_COLUMNS - headers
+            if missing:
+                raise ValueError(f"CSV missing required columns: {sorted(missing)}")
+
+            for row_num, row in enumerate(reader, start=2):
+                if not any(row.values()):
+                    continue
                 try:
-                    dt = datetime.strptime(ts, self.fmt)   # naive
-                except ValueError:
-                    dt = parser.parse(ts)                  # still naive
+                    ts = f"{row['Date']} {row['Time']}"
+                    try:
+                        dt = datetime.strptime(ts, self.fmt)   # naive
+                    except ValueError:
+                        dt = parser.parse(ts)                  # still naive
 
-                # Treat the CSV timestamp as local (pair) time, then convert to UTC
-                if dt.tzinfo is None:
-                    dt_local = dt.replace(tzinfo=local_tz)
-                else:
-                    dt_local = dt.astimezone(local_tz)
-                dt_utc   = dt_local.astimezone(self.utc)
+                    # Treat the CSV timestamp as local (pair) time, then convert to UTC
+                    if dt.tzinfo is None:
+                        dt_local = dt.replace(tzinfo=local_tz)
+                    else:
+                        dt_local = dt.astimezone(local_tz)
+                    dt_utc   = dt_local.astimezone(self.utc)
 
-                bars.append({
-                    'time':   int(dt_utc.timestamp()),
-                    'open':   float(row['Open']),
-                    'high':   float(row['High']),
-                    'low':    float(row['Low']),
-                    'close':  float(row['Close']),
-                    'volume': int(row.get('Volume', 0)),
-                    'pair':   self.pair
-                })
+                    bars.append({
+                        'time':   int(dt_utc.timestamp()),
+                        'open':   float(row['Open']),
+                        'high':   float(row['High']),
+                        'low':    float(row['Low']),
+                        'close':  float(row['Close']),
+                        'volume': int(row.get('Volume') or 0),
+                        'pair':   self.pair
+                    })
+                except (ValueError, KeyError, TypeError) as e:
+                    t_logger.warning(f"[CSV_DS] Skipping malformed row {row_num}: {e}")
+                    continue
         return bars
 
-    def load_historical_bars(self, timeframe='1m', start_time=None):
+    def load_historical_bars(self, timeframe='1m', start_time=None, end_time=None):
         t_logger.info(
             f"[CSV_DS] load_historical_bars → tf={timeframe!r}, start_time={start_time!r}, "
-            f"_played_bars_len={len(self._played_bars)}"
+            f"end_time={end_time!r}, _played_bars_len={len(self._played_bars)}"
         )
 
-        # Filter source bars based on start_time if provided
+        # Filter source bars based on start_time/end_time if provided
         source = self._played_bars
         if start_time is not None:
             source = [b for b in source if b['time'] >= start_time]
+        if end_time is not None:
+            source = [b for b in source if b['time'] <= end_time]
 
         if timeframe == '1m':
             t_logger.info(f"[CSV_DS] → returning {len(source)} 1m bars")
@@ -197,11 +220,14 @@ class CSVDataSource(CombinedDataSource):
             return
 
         # 3. Stream bars
+        end_time = self.initial_end_time
         for idx in range(start_idx, len(self._bars)):
             if self._stop_event.is_set():
                 break
 
             bar = self._bars[idx]
+            if end_time is not None and bar['time'] > end_time:
+                break
 
             # Append to history
             self._played_bars.append(bar)
@@ -256,8 +282,10 @@ class CSVDataSource(CombinedDataSource):
     def pause(self):
         t_logger.debug("pause() called")
         self._stop_event.set()
-        if self._thread:
-            self._thread.join()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+            if self._thread.is_alive():
+                t_logger.warning("[CSV_DS] Replay thread did not stop within timeout")
         self.streaming = False
 
     def seek(self, from_time: int):
@@ -274,16 +302,19 @@ class CSVDataSource(CombinedDataSource):
     def _run_replay(self):
         total = len(self._bars)
         i     = self.current_1m_index
+        end_time = self.initial_end_time
         t_logger.debug(f"_run_replay() enter loop → i={i}, total={total}")
 
         while i < total and not self._stop_event.is_set():
             bar = self._bars[i]
             ts  = bar['time']
+            if end_time is not None and ts > end_time:
+                break
             if ts >= self._from_time:
                 self.current_1m_index = i + 1
                 self._process_bar(bar)
+                time.sleep(self._emit_delay)
             i += 1
-            time.sleep(self._emit_delay)
 
         self.streaming = False
         t_logger.debug("_run_replay() exiting loop, streaming=False")

@@ -120,3 +120,86 @@ class TestCSVDataSourceSubscribe:
         received = []
         ds.subscribe(lambda msg: received.append(msg), from_time=0)
         assert any(m.get("_end") for m in received)
+
+    def test_subscribe_honors_initial_end_time(self):
+        from datetime import timezone
+        fileobj = io.StringIO(CSV_CONTENT)
+        ds = CSVDataSource(
+            pair="MNQ",
+            fileobj=fileobj,
+            time_fmt="%d/%m/%Y %H:%M",
+            tz="UTC",
+            initial_end_time=datetime(2024, 1, 1, 9, 31, tzinfo=timezone.utc),
+        )
+        received = []
+        ds.subscribe(lambda msg: received.append(msg), from_time=0)
+        bars = [m for m in received if not m.get("_end")]
+        assert len(bars) == 2
+        assert bars[-1]["time"] == int(datetime(2024, 1, 1, 9, 31, tzinfo=timezone.utc).timestamp())
+
+
+class TestCSVDataSourceEdgeCases:
+
+    def test_empty_file_loads_no_bars(self):
+        fileobj = io.StringIO("")
+        ds = CSVDataSource(pair="MNQ", fileobj=fileobj, tz="UTC")
+        assert ds._bars == []
+
+    def test_header_only_loads_no_bars(self):
+        fileobj = io.StringIO("Date,Time,Open,High,Low,Close,Volume\n")
+        ds = CSVDataSource(pair="MNQ", fileobj=fileobj, tz="UTC")
+        assert ds._bars == []
+
+    def test_missing_required_columns_raises(self):
+        content = "Date,Time,Open,High,Low\n01/01/2024,09:30,1,2,3\n"
+        fileobj = io.StringIO(content)
+        with pytest.raises(ValueError, match="missing required columns"):
+            CSVDataSource(pair="MNQ", fileobj=fileobj, tz="UTC")
+
+    def test_malformed_row_is_skipped(self):
+        content = """Date,Time,Open,High,Low,Close,Volume
+01/01/2024,09:30,5000.0,5010.0,4990.0,5005.0,1000
+01/01/2024,09:31,bad,5015.0,5000.0,5010.0,1500
+01/01/2024,09:32,5010.0,5020.0,5005.0,5015.0,2000
+"""
+        fileobj = io.StringIO(content)
+        ds = CSVDataSource(
+            pair="MNQ",
+            fileobj=fileobj,
+            time_fmt="%d/%m/%Y %H:%M",
+            tz="UTC",
+        )
+        assert len(ds._bars) == 2
+
+    def test_empty_volume_defaults_to_zero(self):
+        content = """Date,Time,Open,High,Low,Close,Volume
+01/01/2024,09:30,5000.0,5010.0,4990.0,5005.0,
+"""
+        fileobj = io.StringIO(content)
+        ds = CSVDataSource(
+            pair="MNQ",
+            fileobj=fileobj,
+            time_fmt="%d/%m/%Y %H:%M",
+            tz="UTC",
+        )
+        assert ds._bars[0]["volume"] == 0
+
+    def test_start_honors_initial_end_time(self):
+        from datetime import timezone
+        fileobj = io.StringIO(CSV_CONTENT)
+        ds = CSVDataSource(
+            pair="MNQ",
+            fileobj=fileobj,
+            time_fmt="%d/%m/%Y %H:%M",
+            tz="UTC",
+            initial_end_time=datetime(2024, 1, 1, 9, 31, tzinfo=timezone.utc),
+        )
+        emitted = []
+        ds.callback = emitted.append
+        ds.start(from_time=0)
+        # give thread time to emit
+        import time
+        time.sleep(0.2)
+        ds.pause()
+        bars = [m for m in emitted if not m.get("_end")]
+        assert len(bars) <= 2

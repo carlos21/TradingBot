@@ -17,6 +17,15 @@ class TestParseTimeframe:
 
     def test_days(self):
         assert BarAggregator.parse_timeframe("1d") == 86400
+        assert BarAggregator.parse_timeframe("2d") == 172800
+
+    def test_unsupported_unit(self):
+        with pytest.raises(ValueError):
+            BarAggregator.parse_timeframe("1w")
+
+    def test_whitespace_and_case_normalized(self):
+        assert BarAggregator.parse_timeframe(" 5M ") == 300
+        assert BarAggregator.parse_timeframe("1H") == 3600
 
     def test_invalid_format(self):
         with pytest.raises(ValueError):
@@ -117,3 +126,23 @@ class TestMergePartial:
         assert result["time"] == 300
         assert result["open"] == 110
         assert result["high"] == 115
+
+    def test_duplicate_timestamps_deduplicated(self):
+        bars = [
+            {"time": 60, "open": 100, "high": 105, "low": 98, "close": 102, "volume": 10, "pair": "MNQ"},
+            {"time": 60, "open": 101, "high": 106, "low": 99, "close": 103, "volume": 20, "pair": "MNQ"},
+            {"time": 120, "open": 102, "high": 108, "low": 101, "close": 106, "volume": 15, "pair": "MNQ"},
+        ]
+        buckets = BarAggregator.bucket_by_timeframe(bars, "5m")
+        assert len(buckets[0]) == 2
+        assert buckets[0][0]["close"] == 102
+
+    def test_tick_partial_without_ohlc(self):
+        partial = {"time": 360, "price": 112, "volume": 30, "pair": "MNQ"}
+        result = BarAggregator.merge_partial(partial, [], window_start=300)
+
+        assert result["time"] == 300
+        assert result["open"] == 112
+        assert result["high"] == 112
+        assert result["low"] == 112
+        assert result["close"] == 112

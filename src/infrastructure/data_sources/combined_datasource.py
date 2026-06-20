@@ -4,10 +4,17 @@ from collections.abc import Callable
 
 class CombinedDataSource(ABC):
     @abstractmethod
-    def load_historical_bars(self, timeframe: str = '1m') -> list[dict]:
+    def load_historical_bars(
+        self,
+        timeframe: str = '1m',
+        start_time: int | None = None,
+        end_time: int | None = None,
+    ) -> list[dict]:
         """
-        Return a list of 1 m bar‐dicts:
+        Return a list of bar‐dicts:
           { time, open, high, low, close, volume, pair }
+
+        Optional ``start_time`` and ``end_time`` filter the returned bars by epoch.
         """
         ...
 

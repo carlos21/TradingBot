@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.bars_loader import BarsLoader, LoaderConfig
+from src.bars_loader import BarsLoader
 from tests.fakes import FakeDataSource, FakeLogger
 
 
@@ -127,14 +127,6 @@ class TestBarsLoaderStart:
         assert bars_loader._stop_at is None
         assert bars_loader._fast_jump_mode is False
         assert bars_loader._emit_delay == bars_loader._default_emit_delay
-
-
-class TestBarsLoaderConfig:
-
-    def test_loader_config_dataclass(self):
-        config = LoaderConfig(initial_start=0, initial_end=1000)
-        assert config.initial_start == 0
-        assert config.initial_end == 1000
 
 
 class TestBarsLoaderStepMode:
