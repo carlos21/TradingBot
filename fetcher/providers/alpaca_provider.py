@@ -27,6 +27,7 @@ import requests
 
 from ..base import FetchProvider
 from ..types import Bar
+from ..utils import ensure_utc, symbol_to_pair
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +67,7 @@ class AlpacaProvider(FetchProvider):
         Args:
             symbol: Alpaca futures ticker (e.g., "NQ1!").
         """
-        start, end = _ensure_utc(start), _ensure_utc(end)
+        start, end = ensure_utc(start), ensure_utc(end)
 
         url = f"{_BASE_URL}/v1beta1/futures/bars"
         params = {
@@ -82,7 +83,7 @@ class AlpacaProvider(FetchProvider):
             "APCA-API-SECRET-KEY": self.secret_key,
         }
 
-        pair = _symbol_to_pair(symbol)
+        pair = symbol_to_pair(symbol)
         bars: List[Bar] = []
 
         logger.info(
@@ -139,12 +140,4 @@ class AlpacaProvider(FetchProvider):
         resp.raise_for_status()
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _ensure_utc(dt: datetime) -> datetime:
-    return dt if dt.tzinfo else dt.replace(tzinfo=_UTC)
-
-
-def _symbol_to_pair(symbol: str) -> str:
-    """'NQ1!' → 'MNQ',  'ES1!' → 'ES'"""
-    return symbol.rstrip("1!").upper()

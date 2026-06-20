@@ -20,6 +20,7 @@ from typing import List
 
 from ..base import FetchProvider
 from ..types import Bar
+from ..utils import ensure_utc, symbol_to_pair
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +52,7 @@ class YFinanceProvider(FetchProvider):
                 "yfinance is not installed. Run: poetry add yfinance"
             )
 
-        start, end = _ensure_utc(start), _ensure_utc(end)
+        start, end = ensure_utc(start), ensure_utc(end)
 
         # Hard clamp: yfinance won't return 1m data older than ~7 days
         earliest = datetime.now(_UTC) - timedelta(days=_MAX_HISTORY_DAYS - 1)
@@ -87,7 +88,7 @@ class YFinanceProvider(FetchProvider):
         else:
             df.index = df.index.tz_convert("UTC")
 
-        pair = _symbol_to_pair(symbol)
+        pair = symbol_to_pair(symbol)
         bars: List[Bar] = []
 
         for ts, row in df.iterrows():
@@ -106,12 +107,4 @@ class YFinanceProvider(FetchProvider):
         return bars
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
 
-def _ensure_utc(dt: datetime) -> datetime:
-    return dt if dt.tzinfo else dt.replace(tzinfo=_UTC)
-
-
-def _symbol_to_pair(symbol: str) -> str:
-    """'NQ=F' → 'MNQ',  'AAPL' → 'AAPL'"""
-    return symbol.split("=")[0].split(":")[0].upper()

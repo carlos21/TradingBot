@@ -152,21 +152,24 @@ class CSVStore:
     def _parse_ts(self, line: str) -> Optional[int]:
         """Parse a CSV line and return its UTC epoch timestamp, or None on error."""
         try:
-            parts  = line.split(";")
-            ts_str = f"{parts[0]} {parts[1]}"
-            dt     = datetime.strptime(ts_str, _TS_FMT)
+            parts = line.split(";")
+            if len(parts) < 7:
+                return None
+            date_str, time_str = parts[0].strip(), parts[1].strip()
+            if not date_str or not time_str:
+                return None
+            ts_str = f"{date_str} {time_str}"
+            dt = datetime.strptime(ts_str, _TS_FMT)
             dt_loc = dt.replace(tzinfo=self.tz)
             return int(dt_loc.astimezone(_UTC).timestamp())
         except (ValueError, IndexError):
             return None
 
     def _read_last_line(self) -> str:
-        """Return the last non-empty line of the file (O(1) seek from end)."""
+        """Return the last non-empty line of the file."""
         with open(self.filepath, "rb") as f:
-            try:
-                f.seek(-2, 2)
-                while f.read(1) != b"\n":
-                    f.seek(-2, 1)
-            except OSError:
-                f.seek(0)
-            return f.readline().decode("utf-8", errors="replace").strip()
+            data = f.read().rstrip(b"\r\n")
+        if not data:
+            return ""
+        last_newline = data.rfind(b"\n")
+        return data[last_newline + 1 :].decode("utf-8", errors="replace").strip()

@@ -104,9 +104,12 @@ def main():
 
         raw = json.loads(Path(results_json).read_text())
         results = raw.get("results", raw) if isinstance(raw, dict) else raw
+    except json.JSONDecodeError as e:
+        print(f"❌ Failed to parse results JSON: {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"❌ Failed to run or read results: {e}")
-        return
+        sys.exit(1)
     finally:
         Path(discovery_yaml).unlink(missing_ok=True)
         Path(results_json).unlink(missing_ok=True)

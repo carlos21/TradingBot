@@ -8,6 +8,7 @@ by running the scenario and extracting real results.
 import argparse
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -120,7 +121,10 @@ def main():
     os.close(results_fd)
 
     print(f"\nRunning test to discover trade (RR: {args.rr})...")
-    runner.run(results_json, rr_ratio=args.rr)
+    if not runner.run(results_json, rr_ratio=args.rr):
+        print("\n❌ Scenario runner failed.")
+        Path(results_json).unlink(missing_ok=True)
+        sys.exit(1)
 
     # Read results
     try:
@@ -138,6 +142,10 @@ def main():
             print(f"  TF:     {tf}")
         else:
             print("\nNo trade was found — adding with expect: none.")
+    except json.JSONDecodeError as e:
+        print(f"\n❌ Could not parse results JSON ({e}).")
+        Path(results_json).unlink(missing_ok=True)
+        sys.exit(1)
     except Exception as e:
         print(f"\nCould not read results ({e}) — adding with expect: none.")
         expect = {"none": True}

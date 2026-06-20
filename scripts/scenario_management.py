@@ -4,11 +4,9 @@ Scenario management layer for discovery, persistence, and snapshot cleanup.
 Organised by Clean Architecture layers: Domain -> Application -> Infrastructure.
 """
 
-import json
-import os
 import re
+import shutil
 import subprocess
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -24,6 +22,21 @@ SCENARIOS_YAML = PROJECT_ROOT / "src" / "strategies" / "liquidity_v2" / "scenari
 TEST_SCENARIO_YAML = PROJECT_ROOT / "src" / "strategies" / "liquidity_v2" / "test_scenario.yaml"
 SOURCE_CSV = PROJECT_ROOT / "csvs" / "NQ_live.csv"
 SNAP_BASE_DIR = PROJECT_ROOT / "scenarios_out" / "MNQ"
+
+
+# ---------------------------------------------------------------------------
+# I/O helpers
+# ---------------------------------------------------------------------------
+
+
+def _atomic_write_text(path: Path, content: str, backup: bool = True) -> None:
+    """Write content atomically and keep a `.bak` backup of the previous file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if backup and path.exists():
+        shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(path)
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +179,8 @@ class ScenarioYamlFormatter:
     @staticmethod
     def format_lines_block(lines: list) -> str:
         return "".join(
-            f'      - {{ price: {l["price"]:.2f}, at: "{l["at"]}" }}\n'
-            for l in lines
+            f'      - {{ price: {line["price"]:.2f}, at: "{line["at"]}" }}\n'
+            for line in lines
         )
 
     @staticmethod
@@ -190,10 +203,15 @@ class ScenarioYamlFormatter:
             )
         return block
 
+    @staticmethod
+    def _yaml_str(value: str) -> str:
+        """Escape a string for double-quoted YAML."""
+        return value.replace("\\", "\\\\").replace('"', '\\"')
+
     @classmethod
     def format_scenario_block(cls, sc: dict) -> str:
         return (
-            f'  - name: "{sc["name"]}"\n'
+            f'  - name: "{cls._yaml_str(sc["name"])}"\n'
             f'    pair: "MNQ"\n'
             f'    tf: "{sc["tf"]}"\n'
             f'    start: "{sc["start"]}"\n'
@@ -208,7 +226,7 @@ class ScenarioYamlFormatter:
         expect_block = cls.format_expect_block(sc["expect"]) if include_expect else ""
         return (
             f'scenarios:\n'
-            f'  - name: "{sc["name"]}"\n'
+            f'  - name: "{cls._yaml_str(sc["name"])}"\n'
             f'    pair: "MNQ"\n'
             f'    tf: "{sc["tf"]}"\n'
             f'    start: "{sc["start"]}"\n'
@@ -240,7 +258,7 @@ class FileScenarioRepository:
         new_block = ScenarioYamlFormatter.format_scenario_block(scenario)
 
         if insert_idx >= len(scenarios):
-            self._path.write_text(content.rstrip() + "\n\n" + new_block)
+            _atomic_write_text(self._path, content.rstrip() + "\n\n" + new_block)
             return
 
         target_name = scenarios[insert_idx]["name"]
@@ -250,9 +268,11 @@ class FileScenarioRepository:
         match = pattern.search(content)
         if match:
             pos = match.start()
-            self._path.write_text(content[:pos] + new_block + "\n" + content[pos:])
+            _atomic_write_text(
+                self._path, content[:pos] + new_block + "\n" + content[pos:]
+            )
         else:
-            self._path.write_text(content.rstrip() + "\n\n" + new_block)
+            _atomic_write_text(self._path, content.rstrip() + "\n\n" + new_block)
 
     def replace(self, name: str, new_sc: dict) -> bool:
         content = self._path.read_text()
@@ -266,10 +286,11 @@ class FileScenarioRepository:
         m2 = end_pat.search(content, m.end())
         block_end = m2.start() + 1 if m2 else len(content)
 
-        self._path.write_text(
+        _atomic_write_text(
+            self._path,
             content[:block_start]
             + ScenarioYamlFormatter.format_scenario_block(new_sc)
-            + content[block_end:]
+            + content[block_end:],
         )
         return True
 
@@ -281,10 +302,11 @@ class FileTestScenarioWriter:
         self._path = path
 
     def write(self, scenario: dict, *, include_expect: bool = True) -> None:
-        self._path.write_text(
+        _atomic_write_text(
+            self._path,
             ScenarioYamlFormatter.format_test_scenario(
                 scenario, include_expect=include_expect
-            )
+            ),
         )
 
 

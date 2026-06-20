@@ -27,6 +27,7 @@ import requests
 
 from ..base import FetchProvider
 from ..types import Bar
+from ..utils import ensure_utc, symbol_to_pair
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ class PolygonProvider(FetchProvider):
         Args:
             symbol: Polygon futures ticker (e.g., "NQ:XCME").
         """
-        start, end = _ensure_utc(start), _ensure_utc(end)
+        start, end = ensure_utc(start), ensure_utc(end)
 
         # Polygon uses millisecond epoch timestamps
         from_ms = int(start.timestamp() * 1000)
@@ -88,7 +89,7 @@ class PolygonProvider(FetchProvider):
             "apiKey":   self.api_key,
         }
 
-        pair = _symbol_to_pair(symbol)
+        pair = symbol_to_pair(symbol)
         bars: List[Bar] = []
 
         logger.info(
@@ -141,12 +142,4 @@ class PolygonProvider(FetchProvider):
         resp.raise_for_status()  # re-raise after exhausting retries
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _ensure_utc(dt: datetime) -> datetime:
-    return dt if dt.tzinfo else dt.replace(tzinfo=_UTC)
-
-
-def _symbol_to_pair(symbol: str) -> str:
-    """'NQ:XCME' → 'MNQ',  'NQH25:XCME' → 'NQH25'"""
-    return symbol.split(":")[0].upper()

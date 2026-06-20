@@ -46,9 +46,9 @@ try:
 except ImportError:
     pass  # python-dotenv not installed — fall back to plain env vars
 
-from fetcher.base import FetchProvider
-from fetcher.csv_store import CSVStore
-from fetcher.sync import DataSyncer, DEFAULT_LOOKBACK_DAYS
+from fetcher.base import FetchProvider  # noqa: E402
+from fetcher.csv_store import CSVStore  # noqa: E402
+from fetcher.sync import DataSyncer, DEFAULT_LOOKBACK_DAYS  # noqa: E402
 
 
 def _build_provider(args: argparse.Namespace) -> FetchProvider:
@@ -174,6 +174,13 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    if args.lookback < 0:
+        print("Error: --lookback must be non-negative.", file=sys.stderr)
+        sys.exit(2)
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="[%(asctime)s] %(levelname)s %(name)s: %(message)s",
@@ -192,9 +199,14 @@ def main() -> None:
         env_key = f"FETCH_SYMBOL_{args.provider.upper()}"
         args.symbol = os.environ.get(env_key) or _provider_defaults.get(args.provider, "NQ=F")
 
-    provider = _build_provider(args)
-    store    = CSVStore(filepath=args.output, pair=args.pair, tz=args.tz)
-    syncer   = DataSyncer(provider=provider, store=store)
+    try:
+        provider = _build_provider(args)
+    except Exception as exc:
+        print(f"Error: failed to build provider: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    store = CSVStore(filepath=args.output, pair=args.pair, tz=args.tz)
+    syncer = DataSyncer(provider=provider, store=store)
 
     print(f"Provider : {provider.name}")
     print(f"Symbol   : {args.symbol}")
@@ -203,7 +215,11 @@ def main() -> None:
     print(f"Lookback : {args.lookback} days (when CSV is empty)")
     print()
 
-    written = syncer.sync(symbol=args.symbol, lookback_days=args.lookback)
+    try:
+        written = syncer.sync(symbol=args.symbol, lookback_days=args.lookback)
+    except Exception as exc:
+        print(f"Error: sync failed: {exc}", file=sys.stderr)
+        sys.exit(1)
 
     print()
     if written:

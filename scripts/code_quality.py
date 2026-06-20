@@ -178,7 +178,7 @@ def main() -> int:
 
     if style_issues > 0:
         print(f"  {YELLOW}⚠ {style_issues} style/low-severity issue(s) found{RST}")
-        print(f"    Run with --fix to auto-fix ruff issues")
+        print("    Run with --fix to auto-fix ruff issues")
 
     print()
     if critical_failures == 0:

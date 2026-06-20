@@ -8,6 +8,7 @@ import json
 import argparse
 import asyncio
 import csv
+import logging
 import sys
 import time
 import os
@@ -54,6 +55,8 @@ from scripts.mode_pnl import per_trade_sim, per_trade_futures, per_trade_cfd
 
 APP_HOST = "127.0.0.1"
 
+logger = logging.getLogger(__name__)
+
 # --- TIMEZONE CONFIGURATION ---
 PAIR_TZS = {
     'EURUSD': 'Europe/London',
@@ -93,7 +96,7 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
                     if start_ts <= row_ts <= end_ts:
                         count += 1
                 except Exception as e:
-                    self.logger.warning(f"[ScenarioLoader] Skipping scenario due to error: {e}")
+                    logger.warning(f"[ScenarioLoader] Skipping scenario due to error: {e}")
                     continue
                 
         print(f"   ✅ Found {count} bars in requested range.")

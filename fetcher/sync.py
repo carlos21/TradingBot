@@ -51,14 +51,21 @@ class DataSyncer:
         Returns:
             Number of new bars written to the CSV.
         """
-        now      = end or datetime.now(_UTC)
-        last_ts  = self.store.get_last_timestamp()
+        if lookback_days < 0:
+            raise ValueError(f"lookback_days must be non-negative, got {lookback_days}")
+
+        now = end or datetime.now(_UTC)
+        last_ts = self.store.get_last_timestamp()
 
         start = self._compute_start(last_ts, now, lookback_days)
         if start is None:
             return 0
 
-        bars = self.provider.fetch_bars(symbol, start, now)
+        try:
+            bars = self.provider.fetch_bars(symbol, start, now)
+        except Exception as exc:
+            logger.error(f"Provider '{self.provider.name}' fetch failed: {exc}")
+            raise
 
         if not bars:
             logger.info("Provider returned 0 bars for the requested range.")

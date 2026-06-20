@@ -27,6 +27,7 @@ from typing import List, Optional
 
 from ..base import FetchProvider
 from ..types import Bar
+from ..utils import ensure_utc, symbol_to_pair
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ class DatabentoProvider(FetchProvider):
                 "databento is not installed. Run: poetry add databento"
             )
 
-        start, end = _ensure_utc(start), _ensure_utc(end)
+        start, end = ensure_utc(start), ensure_utc(end)
 
         # Determine stype based on symbol format
         if symbol.endswith(".c.0") or symbol.endswith(".c.1"):
@@ -128,7 +129,7 @@ class DatabentoProvider(FetchProvider):
         else:
             df.index = df.index.tz_convert("UTC")
 
-        pair = _symbol_to_pair(symbol)
+        pair = symbol_to_pair(symbol)
         bars: List[Bar] = [
             {
                 "time":   int(ts.timestamp()),
@@ -149,10 +150,6 @@ class DatabentoProvider(FetchProvider):
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _ensure_utc(dt: datetime) -> datetime:
-    return dt if dt.tzinfo else dt.replace(tzinfo=_UTC)
-
-
 def _parse_databento_ts(ts: str) -> datetime:
     """Parse Databento ISO timestamp (may have nanosecond precision) to UTC datetime."""
     # Trim to microsecond precision that Python can handle: '2026-03-07T22:27:01.102310000Z'
@@ -161,8 +158,3 @@ def _parse_databento_ts(ts: str) -> datetime:
         base, frac = ts.split(".", 1)
         ts = f"{base}.{frac[:6]}"  # truncate to microseconds
     return datetime.fromisoformat(ts).replace(tzinfo=_UTC)
-
-
-def _symbol_to_pair(symbol: str) -> str:
-    """'NQ.FUT' → 'MNQ',  'NQH5' → 'MNQ'"""
-    return symbol.split(".")[0].rstrip("FGHMNQUVXZ0123456789").upper() or symbol.split(".")[0].upper()

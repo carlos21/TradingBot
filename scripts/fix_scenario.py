@@ -93,7 +93,10 @@ def main():
     os.close(fd)
 
     print("\nRunning scenario...")
-    runner.run(results_json)
+    if not runner.run(results_json):
+        print("\n  ❌ Scenario runner failed.")
+        Path(results_json).unlink(missing_ok=True)
+        sys.exit(1)
 
     # Read results
     new_tf = old_tf
@@ -127,9 +130,12 @@ def main():
             else:
                 print("  No changes made.")
                 return
+    except json.JSONDecodeError as e:
+        print(f"\n  ❌ Could not parse results JSON: {e}")
+        sys.exit(1)
     except Exception as e:
-        print(f"\n  Could not read results: {e}")
-        return
+        print(f"\n  ❌ Could not read results: {e}")
+        sys.exit(1)
     finally:
         Path(results_json).unlink(missing_ok=True)
 

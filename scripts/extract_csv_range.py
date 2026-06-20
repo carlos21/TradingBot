@@ -68,6 +68,9 @@ def main():
                           help="Treat ambiguous dates as month-first (07/31/2024).")
     ap.set_defaults(dayfirst=True)  # your sample is day-first
 
+    ap.add_argument("--strict", action="store_true",
+                    help="Fail on malformed rows instead of skipping them.")
+
     args = ap.parse_args()
 
     # Parse inclusive bounds
@@ -92,11 +95,15 @@ def main():
         writer.writeheader()
 
         kept = 0
+        skipped = 0
         for row in reader:
             try:
                 row_dt = parse_row_dt(row["Date"], row["Time"], file_dtformat, args.dayfirst)
             except Exception as e:
-                raise SystemExit(f"Failed parsing row datetime for {row!r}: {e}") from e
+                if args.strict:
+                    raise SystemExit(f"Failed parsing row datetime for {row!r}: {e}") from e
+                skipped += 1
+                continue
 
             if start_dt <= row_dt <= end_dt:
                 writer.writerow({
@@ -110,6 +117,8 @@ def main():
                 })
                 kept += 1
 
+    if skipped:
+        print(f"Skipped {skipped} malformed row(s).")
     print(f"Done. Wrote {kept} rows to {args.output}")
 
 

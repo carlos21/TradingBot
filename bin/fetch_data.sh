@@ -14,4 +14,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
+# Ensure the default CSV output directory exists even on first run.
+mkdir -p csvs
+
 poetry run python -m fetcher.run "$@"
