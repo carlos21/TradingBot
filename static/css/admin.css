@@ -7,16 +7,16 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--surface-800);
+  background: rgb(var(--surface-800));
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--surface-600);
+  background: rgb(var(--surface-600));
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--slate-500);
+  background: rgb(var(--slate-500));
 }
 
 /* Scrollbar for month pills container */
@@ -29,13 +29,13 @@
 }
 
 #cal-month-pills::-webkit-scrollbar-thumb {
-  background: var(--surface-600);
+  background: rgb(var(--surface-600));
   border-radius: 2px;
 }
 
 /* Active nav link */
 .nav-link.active {
-  background-color: var(--accent-600);
+  background-color: rgb(var(--accent-600));
   color: #ffffff;
 }
 
@@ -46,12 +46,12 @@
   justify-content: center;
   padding: 0.25rem;
   border-radius: 0.25rem;
-  color: var(--slate-400);
+  color: rgb(var(--slate-400));
   transition: color 0.15s ease, background-color 0.15s ease;
 }
 
 .action-btn:hover {
-  background-color: color-mix(in srgb, var(--slate-400) 5%, transparent);
+  background-color: color-mix(in srgb, rgb(var(--slate-400)) 5%, transparent);
 }
 
 /* Smooth tab transition */

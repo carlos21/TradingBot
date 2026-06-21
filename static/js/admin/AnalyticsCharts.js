@@ -6,7 +6,7 @@ export class AnalyticsCharts {
   constructor() {
     this.charts = {};
     this.colors = {
-      primary: this._cssVar('--accent-500', '#06b6d4'),
+      primary: this._rgbVar('--accent-500', '06b6d4'),
       success: '#34d399',
       danger: '#f43f5e',
       warning: '#fbbf24',
@@ -15,16 +15,16 @@ export class AnalyticsCharts {
     };
   }
 
-  _cssVar(name, fallback) {
-    if (typeof document === 'undefined') return fallback;
+  _rgbVar(name, fallbackHex) {
+    if (typeof document === 'undefined') return `#${fallbackHex}`;
     const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-    return value || fallback;
+    return value ? `rgb(${value})` : `#${fallbackHex}`;
   }
 
   _chartColors() {
     return {
-      tick: this._cssVar('--slate-400', '#94a3b8'),
-      grid: this._cssVar('--slate-700', '#334155'),
+      tick: this._rgbVar('--slate-400', '94a3b8'),
+      grid: this._rgbVar('--slate-700', '334155'),
     };
   }
 

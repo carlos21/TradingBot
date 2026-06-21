@@ -1,12 +1,12 @@
 /* /static/css/styles.css */
 
 [data-timeframe].active {
-    background-color: var(--accent-500);
+    background-color: rgb(var(--accent-500));
     color: white;
 }
 
 [data-timeframe].active:hover {
-    background-color: var(--accent-500);
+    background-color: rgb(var(--accent-500));
 }
 
 /* ── Floating Stream Health Monitor ── */
