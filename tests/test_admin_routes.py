@@ -32,6 +32,9 @@ class FakeAdminController:
     def get_decision_events(self):
         return {"events": []}
 
+    def get_recent_logs(self, pair, limit=200, offset=0):
+        return {"logs": [], "sources": [], "has_more": False}
+
 
 @pytest.fixture
 def app():
@@ -110,3 +113,17 @@ class TestAdminRoutes:
         with app.test_client() as client:
             resp = client.get("/api/admin/decisions/events")
             assert resp.status_code == 200
+
+    def test_admin_recent_logs(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/logs/recent?pair=MNQ")
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert "logs" in data
+            assert "sources" in data
+            assert "has_more" in data
+
+    def test_admin_recent_logs_requires_pair(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/logs/recent")
+            assert resp.status_code == 400

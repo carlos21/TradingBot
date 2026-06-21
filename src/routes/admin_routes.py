@@ -93,3 +93,16 @@ def register_admin_routes(
     @app.route('/api/admin/decisions/events', methods=['GET'])
     def admin_decision_events():
         return admin_controller.get_decision_events()
+
+    @app.route('/api/admin/logs/recent', methods=['GET'])
+    def admin_recent_logs():
+        pair = request.args.get('pair')
+        if not pair:
+            abort(400, "Query param 'pair' is required")
+        limit = request.args.get('limit', 200, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        if limit is None or limit <= 0:
+            abort(400, "Query param 'limit' must be a positive integer")
+        if offset is None or offset < 0:
+            abort(400, "Query param 'offset' must be a non-negative integer")
+        return admin_controller.get_recent_logs(pair, limit, offset)

@@ -1,6 +1,7 @@
 """Socket.IO event handlers."""
 
 import contextlib
+import re
 import threading
 import time
 
@@ -40,6 +41,17 @@ class _TokenBucket:
 
 # Sentinel attribute used to avoid double-wrapping the same logger instance.
 _LOGGER_WRAPPED_ATTR = "_socketio_log_wrapped"
+
+# Heuristic source tag at the start of a log message, e.g. "[LiveMode] ...".
+_LOG_SOURCE_RE = re.compile(r"^\[([^\]]+)\]\s*")
+
+
+def _extract_log_source(message: str) -> str:
+    """Infer a source tag from a log message prefix."""
+    match = _LOG_SOURCE_RE.match(message)
+    if match:
+        return match.group(1)
+    return "server"
 
 
 def register_socketio_handlers(
@@ -327,7 +339,7 @@ def register_socketio_handlers(
             socketio.emit("system_log", {
                 "time": time.time(),
                 "level": level,
-                "source": "server",
+                "source": _extract_log_source(message),
                 "message": message,
             })
         except Exception as exc:

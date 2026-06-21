@@ -1,5 +1,9 @@
 """Admin controller for dashboard API endpoints."""
 
+import re
+from datetime import datetime
+from pathlib import Path
+
 from flask import abort, jsonify
 
 from src.dbexception import DBNotFoundException
@@ -9,6 +13,16 @@ from src.infrastructure.repositories.decision_log_repository import (
 )
 from src.services.analytics_service import AnalyticsService
 from src.utils.app_logger import ILogger
+
+
+# Regex for the timestamp prefix of a log line.
+_LOG_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) ")
+
+# Regex to locate the log-level bracket in the remainder of the line.
+_LOG_LEVEL_RE = re.compile(r"\[(DEBUG|INFO|WARN|ERROR)\] ")
+
+# Heuristic source tag at the start of a message, e.g. "[LiveMode] ...".
+_LOG_SOURCE_RE = re.compile(r"^\[([^\]]+)\]\s*")
 
 
 class AdminController:
@@ -29,11 +43,13 @@ class AdminController:
         line_repository: LineRepository,
         logger: ILogger,
         decision_log_repository: DecisionLogRepository | None = None,
+        log_dir: str = "logs",
     ):
         self._analytics = analytics_service
         self._lines_repo = line_repository
         self.logger = logger
         self._decision_logs = decision_log_repository
+        self._log_dir = log_dir
 
     def get_dashboard_stats(self, pair: str):
         """Get overall dashboard statistics."""
@@ -126,3 +142,98 @@ class AdminController:
     def get_decision_events(self) -> list[str]:
         """Get list of known decision event types."""
         return jsonify({"events": self.DECISION_EVENTS}), 200
+
+    def get_recent_logs(
+        self,
+        pair: str,  # noqa: ARG002
+        limit: int = 200,
+        offset: int = 0,
+    ):
+        """Get recent application log entries from today's log file.
+
+        Args:
+            pair: Trading pair (kept for API consistency; logs are global).
+            limit: Maximum number of log entries to return.
+            offset: Number of most-recent entries to skip (pagination).
+
+        Returns:
+            JSON with ``logs`` (oldest-first within the page), ``sources``
+            (distinct source values discovered) and ``has_more``.
+        """
+        log_file = Path(self._log_dir) / f"app_{datetime.now().strftime('%Y-%m-%d')}.log"
+        if not log_file.exists():
+            return jsonify({"logs": [], "sources": [], "has_more": False}), 200
+
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                lines = [line.rstrip("\n") for line in f if line.strip()]
+        except Exception as exc:  # noqa: BLE001
+            self.logger.error(f"[AdminController] failed to read log file: {exc}")
+            return jsonify({"logs": [], "sources": [], "has_more": False}), 200
+
+        # Newest entries are at the end of the file; reverse for pagination.
+        lines.reverse()
+        total = len(lines)
+        end = offset + limit
+        page_lines = lines[offset:end]
+
+        logs = []
+        sources = set()
+        for line in page_lines:
+            entry = self._parse_log_line(line)
+            if entry is None:
+                continue
+            sources.add(entry["source"])
+            logs.append(entry)
+
+        # Return each page newest-first; older pages are appended below.
+        return jsonify({
+            "logs": logs,
+            "sources": sorted(sources),
+            "has_more": total > end,
+        }), 200
+
+    @staticmethod
+    def _parse_log_line(line: str) -> dict | None:
+        """Parse a single log file line into a log entry dict."""
+        ts_match = _LOG_TS_RE.match(line)
+        if not ts_match:
+            return None
+
+        ts_str = ts_match.group(1)
+        rest = line[ts_match.end():]
+
+        level_match = _LOG_LEVEL_RE.search(rest)
+        if not level_match:
+            return None
+
+        level = level_match.group(1)
+        prefix_part = rest[:level_match.start()].strip()
+        message = rest[level_match.end():]
+
+        instance_prefix = None
+        if prefix_part.startswith("[") and prefix_part.endswith("]"):
+            instance_prefix = prefix_part[1:-1]
+
+        try:
+            ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S.%f").timestamp()
+        except ValueError:
+            return None
+
+        source = AdminController._extract_source(instance_prefix, message)
+        return {
+            "time": ts,
+            "level": level,
+            "source": source,
+            "message": message,
+        }
+
+    @staticmethod
+    def _extract_source(instance_prefix: str | None, message: str) -> str:
+        """Infer a source tag from the message or instance prefix."""
+        msg_match = _LOG_SOURCE_RE.match(message)
+        if msg_match:
+            return msg_match.group(1)
+        if instance_prefix:
+            return instance_prefix
+        return "server"

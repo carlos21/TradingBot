@@ -321,10 +321,17 @@ def create_app(
 
     _setup_logging(app)
 
+    # Determine the log directory from the supplied logger or app_config.
+    _log_dir = getattr(logger, "log_dir", None)
+    if _log_dir is None and app_config is not None:
+        _log_dir = getattr(app_config, "log_dir", None)
+    if not _log_dir:
+        _log_dir = "logs"
+
     # Create the appropriate logger based on mode
     if logger is None:
         if live_mode:
-            logger = FileAndConsoleLogger(log_dir="logs")
+            logger = FileAndConsoleLogger(log_dir=_log_dir)
         else:
             logger = ConsoleLogger()
 
@@ -621,7 +628,13 @@ def create_app(
 
     # Initialize analytics service and admin controller
     analytics_service = AnalyticsService(repos.trades)
-    admin_controller = AdminController(analytics_service, repos.lines, logger=logger, decision_log_repository=repos.decision_logs)
+    admin_controller = AdminController(
+        analytics_service,
+        repos.lines,
+        logger=logger,
+        decision_log_repository=repos.decision_logs,
+        log_dir=_log_dir,
+    )
 
     # Initialize settings/manager/NT services from DB
     from src.controllers.settings_controller import SettingsController

@@ -90,9 +90,9 @@ class AdminApp {
         this.socket = io();
       }
 
-      // Initialize log panel (needs socket)
+      // Initialize log panel (needs socket and api)
       if (document.getElementById('logs-tab') && this.socket) {
-        this.logPanel = new LogPanel(this.socket);
+        this.logPanel = new LogPanel(this.socket, this.api);
       }
 
       // Determine initial tab from server-rendered attribute or URL

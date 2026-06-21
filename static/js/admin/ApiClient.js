@@ -155,6 +155,10 @@ export class ApiClient {
     return this.get('/api/admin/decisions/events');
   }
 
+  async getRecentLogs(limit = 200, offset = 0) {
+    return this.get(`/api/admin/logs/recent?pair=${this.pair}&limit=${limit}&offset=${offset}`);
+  }
+
   async addLine(price) {
     return this.post('/api/lines', { pair: this.pair, price });
   }

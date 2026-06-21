@@ -588,6 +588,23 @@ class TestConnectionChangeCallback:
         # should be capped near the capacity.
         assert len(system_log_events) <= 50
 
+    def test_log_forwarding_extracts_source_from_prefix(self, socketio, loader, logger):
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=True,
+            _logger=logger,
+        )
+
+        logger.info("[LiveMode] connection established")
+        logger.info("plain message without prefix")
+
+        system_log_events = [e for e in socketio.emitted if e[0] == "system_log"]
+        sources = [e[1][0]["source"] for e in system_log_events]
+        assert "LiveMode" in sources
+        assert "server" in sources
+
 
 class TestTokenBucket:
     def test_non_positive_rate_always_allows(self):
