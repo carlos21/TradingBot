@@ -9,8 +9,12 @@ from datetime import datetime
 from typing import Literal, Protocol
 
 from src.domain.repositories import TradeRepository
-from src.domain.result_type_classifier import ClassificationContext, DefaultResultTypeClassifier, ResultTypeClassifier
-from src.domain.types import CloseReason, Direction, ResultType
+from src.domain.result_type_classifier import (
+    ClassificationContext,
+    DefaultResultTypeClassifier,
+    ResultTypeClassifier,
+)
+from src.domain.types import CloseReason, Direction
 from src.financial_calc import FinancialCalc
 
 # Re-export for backward compatibility with existing callers/tests.

@@ -2,9 +2,9 @@
 
 import pytest
 
-from src.strategies.strategy_factory import StrategyFactory
-from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
+from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
+from src.strategies.strategy_factory import StrategyFactory
 from src.strategies.tsi_cross.strategy import TsiCrossStrategy
 
 

@@ -13,7 +13,11 @@ from typing import Literal
 
 from src.application.ports import EventPublisher
 from src.domain.repositories import TradeRepository
-from src.domain.result_type_classifier import ClassificationContext, DefaultResultTypeClassifier, ResultTypeClassifier
+from src.domain.result_type_classifier import (
+    ClassificationContext,
+    DefaultResultTypeClassifier,
+    ResultTypeClassifier,
+)
 from src.domain.types import Direction
 from src.financial_calc import FinancialCalc
 from src.services.trade_executor import TradeExecutor

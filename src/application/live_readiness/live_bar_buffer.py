@@ -27,7 +27,7 @@ class LiveBarBuffer:
         self._lock = threading.Lock()
         self._last_historical_time: float | int | None = None
 
-    def set_last_historical_time(self, t: float | int | None) -> None:
+    def set_last_historical_time(self, t: float | None) -> None:
         """Drop buffered bars at or before this time on flush (replay→live guard)."""
         with self._lock:
             self._last_historical_time = t

@@ -10,12 +10,9 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import pytest
-
 from src.domain.readiness.readiness_state import ReadinessState
 from src.infrastructure.gateway.datasource import DataSourceState
 from tests.e2e.conftest import E2EHarness
-
 
 # -----------------------------------------------------------------------------
 # Helpers

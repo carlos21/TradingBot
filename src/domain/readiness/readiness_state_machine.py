@@ -181,13 +181,12 @@ class ReadinessStateMachine:
                 return False
             # Validate transition
             valid = self._VALID_TRANSITIONS.get(self._state, set())
-            if new_state not in valid:
-                if self._logger is not None:
-                    with contextlib.suppress(Exception):
-                        self._logger.warning(
-                            f"[ReadinessStateMachine] Unexpected transition "
-                            f"{self._state.name} -> {new_state.name} | reason={reason}"
-                        )
+            if new_state not in valid and self._logger is not None:
+                with contextlib.suppress(Exception):
+                    self._logger.warning(
+                        f"[ReadinessStateMachine] Unexpected transition "
+                        f"{self._state.name} -> {new_state.name} | reason={reason}"
+                    )
             previous_state = self._state
             self._state = new_state
             self._reason = reason

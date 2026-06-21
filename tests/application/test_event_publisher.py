@@ -1,6 +1,5 @@
 """Tests for event publisher adapters and SocketIO bridge."""
 
-import pytest
 
 from src.domain.events import EventType
 from src.events import DomainEvent, EventBus

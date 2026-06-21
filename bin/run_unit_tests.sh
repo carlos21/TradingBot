@@ -8,10 +8,20 @@ GREEN='\033[92m'
 RED='\033[91m'
 RST='\033[0m'
 
-echo -e "${BOLD}${CYAN}▶ Running unit tests…${RST}\n"
+echo -e "${BOLD}${CYAN}▶ Running unit tests with coverage…${RST}\n"
 
 if command -v poetry &>/dev/null; then
-    poetry run pytest tests/ "$@"
+    if [ $# -eq 0 ]; then
+        poetry run coverage run -m pytest tests/
+    else
+        poetry run coverage run -m pytest "$@"
+    fi
+    echo -e "\n${BOLD}${CYAN}▶ Coverage report…${RST}\n"
+    if [ $# -eq 0 ]; then
+        poetry run coverage report
+    else
+        poetry run coverage report --fail-under=0
+    fi
 else
     echo -e "${RED}Poetry not found. Please install Poetry or activate the virtual environment.${RST}"
     exit 1

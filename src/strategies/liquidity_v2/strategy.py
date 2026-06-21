@@ -158,7 +158,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
         # Reset any velocity-adaptive trigger state (1m/3m/5m/15m etc.).
         for key in list(line_state.keys()):
-            if key.startswith("vat_") and (key.endswith("_stage") or key.endswith("_reset")):
+            if key.startswith("vat_") and key.endswith(("_stage", "_reset")):
                 if key.endswith("_stage"):
                     line_state[key] = 0
                 else:

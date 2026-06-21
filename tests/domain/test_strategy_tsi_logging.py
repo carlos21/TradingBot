@@ -1,12 +1,7 @@
 """Tests for TSI logging/event behaviour during warm-up."""
 
-import pytest
 
-from src.application.live_readiness.trading_context import AlwaysEnabledTradingContext
-from src.domain.readiness.protocols import IExecutionContext
-from src.strategies.liquidity_v2.config import CandleConfig
-from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
-from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
+from src.services.trade_manager import TradeManager
 from tests.conftest import make_bar, make_strategy
 from tests.fakes import (
     DummySocketIO,
@@ -17,7 +12,6 @@ from tests.fakes import (
     FakeTradeRepository,
     MutableTradingContext,
 )
-from src.services.trade_manager import TradeManager
 
 
 class RecordingLogger(FakeLogger):

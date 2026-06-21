@@ -2,7 +2,10 @@
 
 import pytest
 
-from src.domain.result_type_classifier import ClassificationContext, DefaultResultTypeClassifier
+from src.domain.result_type_classifier import (
+    ClassificationContext,
+    DefaultResultTypeClassifier,
+)
 from src.domain.types import CloseReason, Direction, ResultType
 
 

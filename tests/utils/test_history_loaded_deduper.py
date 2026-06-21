@@ -1,7 +1,7 @@
 """Tests for HistoryLoadedDeduper."""
 
-from tests.fakes import DummySocketIO
 from src.utils.history_loaded_deduper import HistoryLoadedDeduper
+from tests.fakes import DummySocketIO
 
 
 class TestHistoryLoadedDeduper:

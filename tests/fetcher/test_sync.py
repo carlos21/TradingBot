@@ -2,7 +2,6 @@
 
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List
 
 import pytest
 
@@ -13,7 +12,7 @@ from fetcher.types import Bar
 
 
 class _FakeProvider(FetchProvider):
-    def __init__(self, bars: List[Bar] | None = None, max_days: int = -1):
+    def __init__(self, bars: list[Bar] | None = None, max_days: int = -1):
         self._bars = bars or []
         self._max_days = max_days
         self.calls = []
@@ -26,7 +25,7 @@ class _FakeProvider(FetchProvider):
     def max_history_days(self) -> int:
         return self._max_days
 
-    def fetch_bars(self, symbol: str, start: datetime, end: datetime) -> List[Bar]:
+    def fetch_bars(self, symbol: str, start: datetime, end: datetime) -> list[Bar]:
         self.calls.append((symbol, start, end))
         return self._bars
 

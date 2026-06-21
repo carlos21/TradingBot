@@ -5,14 +5,18 @@ strategy classes, decoupling strategy logic from repository/executor/SocketIO
 calls.
 """
 
+import uuid
 from datetime import datetime, timezone
 from typing import Any
-import uuid
 
 from src.application.ports import EventPublisher
 from src.application.use_cases.trade_open_use_case import TradeOpenUseCase
 from src.domain.repositories import TradeRepository
-from src.domain.result_type_classifier import ClassificationContext, DefaultResultTypeClassifier, ResultTypeClassifier
+from src.domain.result_type_classifier import (
+    ClassificationContext,
+    DefaultResultTypeClassifier,
+    ResultTypeClassifier,
+)
 from src.domain.types import Direction
 from src.financial_calc import FinancialCalc
 from src.services.trade_executor import TradeExecutor

@@ -597,5 +597,5 @@ class TestBrokerEntryFill:
         trade_ids = {e[1]["trade_id"] for e in updates}
         assert "T1" in trade_ids
         assert "T2" not in trade_ids
-        for event, payload in updates:
+        for _event, payload in updates:
             assert payload["entry_price"] == 101.0

@@ -8,7 +8,12 @@ from src.config.models import AccountConfig
 from src.infrastructure.gateway.executor import MultiAccountExecutor
 from src.services.trade_executor import TradeExecutor
 from src.services.trade_manager import TradeManager
-from tests.fakes import DummySocketIO, FakeAnalyticsReporter, FakeLogger, FakeTradeRepository
+from tests.fakes import (
+    DummySocketIO,
+    FakeAnalyticsReporter,
+    FakeLogger,
+    FakeTradeRepository,
+)
 
 
 class RecordingGatewayExecutor(TradeExecutor):

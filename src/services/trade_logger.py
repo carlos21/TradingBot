@@ -1,3 +1,4 @@
+import contextlib
 from datetime import datetime
 
 from src.domain.repositories import TradeRepository
@@ -38,12 +39,10 @@ class TradeLogger:
             # date is visible in the lifecycle output.
             time_part = ts
             if ts:
-                try:
+                with contextlib.suppress(ValueError):
                     time_part = datetime.fromisoformat(ts).strftime(
                         "%Y-%m-%d %H:%M:%S"
                     )
-                except ValueError:
-                    pass
             event = entry.get("event", "")
             msg = entry.get("msg", "")
             lines.append(f"{time_part}  {event:<15s}{msg}")

@@ -6,7 +6,6 @@ from pathlib import Path
 
 from src.utils.app_logger import ConsoleLogger, FileAndConsoleLogger, ILogger
 
-
 _TS_RE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}")
 
 
@@ -156,6 +155,7 @@ class TestFileAndConsoleLogger:
 
     def test_midnight_rotation_creates_new_file(self, tmp_path, monkeypatch):
         from datetime import datetime
+
         from src.utils.app_logger import FileAndConsoleLogger
 
         first_date = datetime(2024, 1, 1, 23, 59, 59)
@@ -181,6 +181,7 @@ class TestFileAndConsoleLogger:
 
     def test_close_is_idempotent_and_race_safe(self, tmp_path):
         import threading
+
         from src.utils.app_logger import FileAndConsoleLogger
 
         logger = FileAndConsoleLogger(log_dir=str(tmp_path))

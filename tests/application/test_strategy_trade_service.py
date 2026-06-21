@@ -5,7 +5,12 @@ changes in account balance (the root cause of the post-readiness PnL collapse).
 """
 
 from src.application.services.strategy_trade_service import StrategyTradeService
-from tests.fakes import DummySocketIO, FakeLogger, FakeTradeExecutor, FakeTradeRepository
+from tests.fakes import (
+    DummySocketIO,
+    FakeLogger,
+    FakeTradeExecutor,
+    FakeTradeRepository,
+)
 
 
 def _make_service(account_balance: float = 100000.0, risk_pct: float = 1.0):

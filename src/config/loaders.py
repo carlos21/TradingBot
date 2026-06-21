@@ -229,14 +229,11 @@ class CompositeConfigLoader:
         for loader in self.loaders[1:]:
             override = loader.load()
             cli_provided = getattr(override, "_cli_provided", None)
-            if cli_provided is not None:
-                # CLI: only override the arguments the user actually typed,
-                # even if they equal the hard-coded default.
-                attrs = cli_provided
-            else:
-                # Env / DB: skip attributes that still have the default value,
-                # because those were not explicitly configured by the source.
-                attrs = vars(override)
+            # CLI: only override the arguments the user actually typed,
+            # even if they equal the hard-coded default. Env / DB sources skip
+            # attributes that still have the default value because those were
+            # not explicitly configured by the source.
+            attrs = cli_provided if cli_provided is not None else vars(override)
             for attr in attrs:
                 override_val = getattr(override, attr)
                 if cli_provided is None:
