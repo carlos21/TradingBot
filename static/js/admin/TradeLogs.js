@@ -37,53 +37,53 @@ export class TradeLogs {
     const resultLabel = trade.result_type || (trade.status === 'open' ? 'Open' : 'Close');
     const resultBadgeClass = this.getResultBadgeBackgroundClass(resultLabel);
     this.titleEl.innerHTML = `
-      Trade ${trade.trade_id} 
+      Trade ${trade.trade_id}
       <span class="px-2 py-1 rounded text-xs font-medium ${resultBadgeClass}">${resultLabel}</span>
     `;
 
     // Details Grid
-    const pnlClass = trade.result > 0 ? 'pnl-positive' : trade.result < 0 ? 'pnl-negative' : '';
+    const pnlClass = trade.result > 0 ? 'text-emerald-400' : trade.result < 0 ? 'text-rose-500' : '';
     this.detailsEl.innerHTML = `
-      <div class="bg-gray-700 rounded-lg p-3">
-        <div class="text-xs text-gray-400 mb-1">Type</div>
-        <div class="font-semibold ${trade.type === 'long' ? 'text-green-400' : 'text-red-400'}">
+      <div class="bg-surface-700 rounded-lg p-3">
+        <div class="text-xs text-slate-400 mb-1">Type</div>
+        <div class="font-semibold ${trade.type === 'long' ? 'text-emerald-400' : 'text-rose-500'}">
           ${trade.type.toUpperCase()}
         </div>
       </div>
-      <div class="bg-gray-700 rounded-lg p-3">
-        <div class="text-xs text-gray-400 mb-1">Entry Price</div>
+      <div class="bg-surface-700 rounded-lg p-3">
+        <div class="text-xs text-slate-400 mb-1">Entry Price</div>
         <div class="font-semibold">${trade.entry.toFixed(2)}</div>
       </div>
-      <div class="bg-gray-700 rounded-lg p-3">
-        <div class="text-xs text-gray-400 mb-1">Stop Loss</div>
-        <div class="font-semibold text-red-400">${trade.stop_loss.toFixed(2)}</div>
+      <div class="bg-surface-700 rounded-lg p-3">
+        <div class="text-xs text-slate-400 mb-1">Stop Loss</div>
+        <div class="font-semibold text-rose-500">${trade.stop_loss.toFixed(2)}</div>
       </div>
-      <div class="bg-gray-700 rounded-lg p-3">
-        <div class="text-xs text-gray-400 mb-1">Take Profit</div>
-        <div class="font-semibold text-green-400">${trade.take_profit.toFixed(2)}</div>
+      <div class="bg-surface-700 rounded-lg p-3">
+        <div class="text-xs text-slate-400 mb-1">Take Profit</div>
+        <div class="font-semibold text-emerald-400">${trade.take_profit.toFixed(2)}</div>
       </div>
-      <div class="bg-gray-700 rounded-lg p-3">
-        <div class="text-xs text-gray-400 mb-1">Risk $</div>
+      <div class="bg-surface-700 rounded-lg p-3">
+        <div class="text-xs text-slate-400 mb-1">Risk $</div>
         <div class="font-semibold">${trade.risk_dollars ? '$' + trade.risk_dollars.toFixed(2) : '-'}</div>
       </div>
-      <div class="bg-gray-700 rounded-lg p-3">
-        <div class="text-xs text-gray-400 mb-1">P&L</div>
+      <div class="bg-surface-700 rounded-lg p-3">
+        <div class="text-xs text-slate-400 mb-1">P&L</div>
         <div class="font-semibold ${pnlClass}">
-          ${trade.pnl_usd !== null && trade.pnl_usd !== undefined 
-            ? `$${trade.pnl_usd.toFixed(2)}` 
+          ${trade.pnl_usd !== null && trade.pnl_usd !== undefined
+            ? `$${trade.pnl_usd.toFixed(2)}`
             : (trade.result !== null ? `${trade.result.toFixed(2)}R` : '-')}
         </div>
       </div>
-      <div class="bg-gray-700 rounded-lg p-3">
-        <div class="text-xs text-gray-400 mb-1">Entry Time</div>
+      <div class="bg-surface-700 rounded-lg p-3">
+        <div class="text-xs text-slate-400 mb-1">Entry Time</div>
         <div class="font-semibold text-sm">${this.formatDateTime(trade.entry_time)}</div>
       </div>
-      <div class="bg-gray-700 rounded-lg p-3">
-        <div class="text-xs text-gray-400 mb-1">Exit Time</div>
+      <div class="bg-surface-700 rounded-lg p-3">
+        <div class="text-xs text-slate-400 mb-1">Exit Time</div>
         <div class="font-semibold text-sm">${trade.exit_time ? this.formatDateTime(trade.exit_time) : '-'}</div>
       </div>
-      <div class="bg-gray-700 rounded-lg p-3">
-        <div class="text-xs text-gray-400 mb-1">Contracts</div>
+      <div class="bg-surface-700 rounded-lg p-3">
+        <div class="text-xs text-slate-400 mb-1">Contracts</div>
         <div class="font-semibold">${trade.contracts || '-'}</div>
       </div>
     `;
@@ -91,51 +91,51 @@ export class TradeLogs {
     // Logs
     if (trade.logs && trade.logs.length > 0) {
       this.logsEl.innerHTML = trade.logs.map(log => {
-        const eventClass = this.getEventClass(log.event);
+        const borderClass = this.getEventBorderClass(log.event);
         const time = log.ts ? new Date(log.ts).toLocaleTimeString('en-US', { hour12: false }) : '';
         return `
-          <div class="log-entry ${eventClass}">
+          <div class="p-3 bg-surface-700 rounded-lg border-l-4 ${borderClass}">
             <div class="flex justify-between items-start mb-1">
-              <span class="font-semibold text-sm">${log.event}</span>
-              <span class="text-xs text-gray-500">${time}</span>
+              <span class="font-semibold text-sm text-slate-100">${log.event}</span>
+              <span class="text-xs text-slate-500">${time}</span>
             </div>
-            <div class="text-sm text-gray-300">${log.msg}</div>
+            <div class="text-sm text-slate-300">${log.msg}</div>
           </div>
         `;
       }).join('');
     } else {
-      this.logsEl.innerHTML = '<div class="text-gray-500 text-center py-4">No logs available</div>';
+      this.logsEl.innerHTML = '<div class="text-slate-500 text-center py-4">No logs available</div>';
     }
   }
 
-  getEventClass(event) {
-    if (!event) return '';
+  getEventBorderClass(event) {
+    if (!event) return 'border-surface-600';
     const eventUpper = event.toUpperCase();
-    if (eventUpper.includes('ERROR') || eventUpper.includes('FAIL')) return 'error';
-    if (eventUpper.includes('FILL') || eventUpper.includes('COMPLETE') || eventUpper.includes('TP')) return 'success';
-    if (eventUpper.includes('WARNING') || eventUpper.includes('SL')) return 'warning';
-    return '';
+    if (eventUpper.includes('ERROR') || eventUpper.includes('FAIL')) return 'border-rose-500';
+    if (eventUpper.includes('FILL') || eventUpper.includes('COMPLETE') || eventUpper.includes('TP')) return 'border-emerald-400';
+    if (eventUpper.includes('WARNING') || eventUpper.includes('SL')) return 'border-amber-400';
+    return 'border-surface-600';
   }
 
   getResultBadgeClass(resultType) {
     switch (resultType) {
-      case 'TP': return 'text-green-400';
-      case 'SL': return 'text-red-400';
-      case 'BE': return 'text-yellow-400';
-      case 'SP': return 'text-blue-400';
-      case 'CLOSE': return 'text-orange-400';
-      default: return 'text-gray-400';
+      case 'TP': return 'text-emerald-400';
+      case 'SL': return 'text-rose-500';
+      case 'BE': return 'text-amber-400';
+      case 'SP': return 'text-accent-400';
+      case 'CLOSE': return 'text-slate-400';
+      default: return 'text-slate-400';
     }
   }
 
   getResultBadgeBackgroundClass(resultType) {
     switch (resultType) {
-      case 'TP': return 'bg-green-600 text-white';
-      case 'SL': return 'bg-red-600 text-white';
-      case 'BE': return 'bg-yellow-500 text-black';
-      case 'SP': return 'bg-blue-500 text-white';
-      case 'CLOSE': return 'bg-orange-500 text-white';
-      default: return 'bg-gray-600 text-gray-300';
+      case 'TP': return 'bg-emerald-500/20 text-emerald-400';
+      case 'SL': return 'bg-rose-500/20 text-rose-500';
+      case 'BE': return 'bg-amber-400/20 text-amber-400';
+      case 'SP': return 'bg-accent-500/20 text-accent-400';
+      case 'CLOSE': return 'bg-slate-500/20 text-slate-400';
+      default: return 'bg-slate-500/20 text-slate-400';
     }
   }
 

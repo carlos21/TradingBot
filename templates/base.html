@@ -8,33 +8,133 @@
 
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            surface: {
+              950: 'var(--surface-950)',
+              900: 'var(--surface-900)',
+              850: 'var(--surface-850)',
+              800: 'var(--surface-800)',
+              700: 'var(--surface-700)',
+              600: 'var(--surface-600)',
+            },
+            slate: {
+              50: 'var(--slate-50)',
+              100: 'var(--slate-100)',
+              200: 'var(--slate-200)',
+              300: 'var(--slate-300)',
+              400: 'var(--slate-400)',
+              500: 'var(--slate-500)',
+              600: 'var(--slate-600)',
+              700: 'var(--slate-700)',
+              800: 'var(--slate-800)',
+              900: 'var(--slate-900)',
+            },
+            accent: {
+              DEFAULT: 'var(--accent-500)',
+              50: 'var(--accent-50)',
+              100: 'var(--accent-100)',
+              200: 'var(--accent-200)',
+              300: 'var(--accent-300)',
+              400: 'var(--accent-400)',
+              500: 'var(--accent-500)',
+              600: 'var(--accent-600)',
+            },
+          },
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <!-- Theme-aware color variables -->
+  <style>
+    :root {
+      /* Surfaces */
+      --surface-950: #0b1220;
+      --surface-900: #0f172a;
+      --surface-850: #151f35;
+      --surface-800: #1e293b;
+      --surface-700: #334155;
+      --surface-600: #475569;
+      /* Text / slate scale */
+      --slate-50: #f8fafc;
+      --slate-100: #f1f5f9;
+      --slate-200: #e2e8f0;
+      --slate-300: #cbd5e1;
+      --slate-400: #94a3b8;
+      --slate-500: #64748b;
+      --slate-600: #475569;
+      --slate-700: #334155;
+      --slate-800: #1e293b;
+      --slate-900: #0f172a;
+      /* Accent - amber */
+      --accent-50: #fffbeb;
+      --accent-100: #fef3c7;
+      --accent-200: #fde68a;
+      --accent-300: #fcd34d;
+      --accent-400: #fbbf24;
+      --accent-500: #f59e0b;
+      --accent-600: #d97706;
+    }
+  </style>
+
+  <!-- Apply saved theme as early as possible to avoid flash -->
+  <script>
+    (function () {
+      const THEMES = {
+        dark: {
+          surface: ['#0b1220','#0f172a','#151f35','#1e293b','#334155','#475569'],
+          slate:   ['#f8fafc','#f1f5f9','#e2e8f0','#cbd5e1','#94a3b8','#64748b','#475569','#334155','#1e293b','#0f172a'],
+        },
+        light: {
+          surface: ['#ffffff','#f8fafc','#f1f5f9','#f1f5f9','#e2e8f0','#cbd5e1'],
+          slate:   ['#0f172a','#1e293b','#334155','#475569','#94a3b8','#cbd5e1','#e2e8f0','#f1f5f9','#f8fafc','#ffffff'],
+        },
+      };
+      let key = 'dark';
+      try { key = localStorage.getItem('liquid-theme') || 'dark'; } catch (e) {}
+      const theme = THEMES[key] || THEMES.dark;
+      const root = document.documentElement;
+      [950,900,850,800,700,600].forEach((shade, i) => root.style.setProperty('--surface-' + shade, theme.surface[i]));
+      [50,100,200,300,400,500,600,700,800,900].forEach((shade, i) => root.style.setProperty('--slate-' + shade, theme.slate[i]));
+    })();
+  </script>
+
+  <!-- Theme switcher UI handler -->
+  <script src="/static/js/ThemeManager.js"></script>
 
   {% block head %}{% endblock %}
 
   <!-- Shared Admin CSS -->
   <link rel="stylesheet" href="/static/css/admin.css" />
 </head>
-<body class="bg-gray-900 text-gray-100 {% if active_page == 'chart' %}h-screen overflow-hidden{% else %}min-h-screen{% endif %}">
+<body class="bg-surface-950 text-slate-100 {% if active_page == 'chart' %}h-screen overflow-hidden{% else %}min-h-screen{% endif %}">
 
   <!-- Sidebar -->
-  <aside class="fixed left-0 top-0 h-full w-64 bg-gray-800 border-r border-gray-700 z-50 flex flex-col">
+  <aside class="fixed left-0 top-0 h-full w-64 bg-surface-800 border-r border-surface-700 z-50 flex flex-col">
     <!-- Header -->
-    <div class="p-6 border-b border-gray-700">
-      <h1 class="text-xl font-bold text-blue-400">Liquid</h1>
+    <div class="p-6 border-b border-surface-700">
+      <h1 class="text-xl font-bold text-accent-400 tracking-tight">Liquid</h1>
       <div id="pairSelectorContainer"
            class="mt-2 flex items-center space-x-2 {% if active_page in ['chart','settings','ninjatrader'] %}hidden{% endif %}">
-        <label class="text-sm text-gray-400">Pair:</label>
-        <select id="pairSelector" class="bg-gray-700 text-white text-sm rounded px-2 py-1 border border-gray-600">
+        <label class="text-sm text-slate-400">Pair:</label>
+        <select id="pairSelector" class="bg-surface-700 text-slate-100 text-sm rounded px-2 py-1 border border-surface-600 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none">
           <option value="MNQ">MNQ</option>
           <option value="ES">ES</option>
         </select>
-        <span id="pairDisplay" class="text-sm text-gray-400 hidden">Loading...</span>
+        <span id="pairDisplay" class="text-sm text-slate-400 hidden">Loading...</span>
       </div>
       <!-- Chart page: show read-only pair label -->
       {% if active_page == 'chart' %}
       <div class="mt-2 flex items-center space-x-2">
-        <label class="text-sm text-gray-400">Pair:</label>
-        <span id="chartPairDisplay" class="text-sm text-white font-medium">--</span>
+        <label class="text-sm text-slate-400">Pair:</label>
+        <span id="chartPairDisplay" class="text-sm text-slate-100 font-medium">--</span>
       </div>
       {% endif %}
     </div>
@@ -43,58 +143,67 @@
     <nav class="p-4 space-y-1 flex-1 overflow-y-auto">
       <!-- Trading Section -->
       <div class="mb-2">
-        <div class="px-4 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Trading</div>
+        <div class="px-4 py-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Trading</div>
         <a href="/"
-           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'chart' %}active{% endif %}">
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors {% if active_page == 'chart' %}active{% endif %}">
           📊 Chart
         </a>
         <a href="/admin/overview"
-           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'overview' %}active{% endif %}">
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors {% if active_page == 'overview' %}active{% endif %}">
           📈 Overview
         </a>
         <a href="/admin/trades"
-           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'trades' %}active{% endif %}">
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors {% if active_page == 'trades' %}active{% endif %}">
           💼 Trades
         </a>
         <a href="/admin/lines"
-           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'lines' %}active{% endif %}">
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors {% if active_page == 'lines' %}active{% endif %}">
           📉 Lines
         </a>
         <a href="/admin/analytics"
-           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'analytics' %}active{% endif %}">
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors {% if active_page == 'analytics' %}active{% endif %}">
           📊 Analytics
         </a>
         <a href="/admin/decisions"
-           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'decisions' %}active{% endif %}">
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors {% if active_page == 'decisions' %}active{% endif %}">
           📋 Decisions
         </a>
         <a href="/admin/logs"
-           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'logs' %}active{% endif %}">
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors {% if active_page == 'logs' %}active{% endif %}">
           📝 Logs
         </a>
       </div>
 
       <!-- Global Section -->
-      <div class="pt-2 border-t border-gray-700">
-        <div class="px-4 py-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">Global</div>
+      <div class="pt-2 border-t border-surface-700">
+        <div class="px-4 py-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Global</div>
         <a href="/admin/settings"
-           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'settings' %}active{% endif %}">
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors {% if active_page == 'settings' %}active{% endif %}">
           ⚙️ Settings
         </a>
         {% if is_ninjatrader %}
         <a href="/admin/ninjatrader"
-           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'ninjatrader' %}active{% endif %}">
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors {% if active_page == 'ninjatrader' %}active{% endif %}">
           📡 NinjaTrader
         </a>
         {% endif %}
         {% if is_metatrader %}
         <a href="/admin/metatrader"
-           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-gray-300 hover:bg-gray-700 transition-colors {% if active_page == 'metatrader' %}active{% endif %}">
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors {% if active_page == 'metatrader' %}active{% endif %}">
           📡 MetaTrader
         </a>
         {% endif %}
       </div>
     </nav>
+
+    <!-- Theme Switcher -->
+    <div class="p-4 border-t border-surface-700">
+      <label for="theme-selector" class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Theme</label>
+      <select id="theme-selector" class="w-full bg-surface-700 text-slate-100 text-sm rounded-lg px-3 py-2 border border-surface-600 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none cursor-pointer">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select>
+    </div>
   </aside>
 
   <!-- Main Content -->

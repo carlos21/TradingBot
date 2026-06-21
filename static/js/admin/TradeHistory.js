@@ -72,17 +72,17 @@ export class TradeHistory {
 
     if (!this.trades || this.trades.length === 0) {
       console.log('[TradeHistory] No trades to display');
-      tbody.innerHTML = '<tr><td colspan="9" class="px-4 py-8 text-center text-gray-500">No trades found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="px-4 py-8 text-center text-slate-500">No trades found</td></tr>';
       return;
     }
     console.log(`[TradeHistory] Rendering ${this.trades.length} trades`);
 
     tbody.innerHTML = this.trades.map(trade => {
       const result = trade.result;
-      const pnlClass = result > 0 ? 'pnl-positive' : result < 0 ? 'pnl-negative' : '';
+      const pnlClass = result > 0 ? 'text-emerald-400' : result < 0 ? 'text-rose-500' : '';
       // Show actual dollar P&L (pnl_usd from backend)
-      const pnlText = trade.pnl_usd !== null && trade.pnl_usd !== undefined 
-        ? `$${trade.pnl_usd.toFixed(2)}` 
+      const pnlText = trade.pnl_usd !== null && trade.pnl_usd !== undefined
+        ? `$${trade.pnl_usd.toFixed(2)}`
         : (result !== null && result !== undefined ? `${result.toFixed(2)}R` : '-');
       // Calculate % return on account: result (R) × risk_pct (% of account risked)
       let pctText = '-';
@@ -90,15 +90,15 @@ export class TradeHistory {
         const pct = result * trade.risk_pct;
         pctText = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
       }
-      
+
       return `
-        <tr class="cursor-pointer transition-colors" data-trade-id="${trade.trade_id}">
+        <tr class="cursor-pointer transition-colors hover:bg-accent-500/10" data-trade-id="${trade.trade_id}">
           <td class="px-4 py-3">
-            <span class="px-2 py-1 rounded text-xs font-medium ${trade.type === 'long' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}">
+            <span class="px-2 py-1 rounded text-xs font-medium ${trade.type === 'long' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-500'}">
               ${trade.type.toUpperCase()}
             </span>
           </td>
-          <td class="px-4 py-3 text-sm text-gray-400">${trade.account || '-'}</td>
+          <td class="px-4 py-3 text-sm text-slate-400">${trade.account || '-'}</td>
           <td class="px-4 py-3">${trade.entry.toFixed(2)}</td>
           <td class="px-4 py-3">${trade.exit_price ? trade.exit_price.toFixed(2) : '-'}</td>
           <td class="px-4 py-3 ${pnlClass}">${pnlText}</td>
@@ -108,13 +108,13 @@ export class TradeHistory {
               ${this.getResultLabel(trade)}
             </span>
           </td>
-          <td class="px-4 py-3 text-sm text-gray-400">${this.formatTime(trade.entry_time)}</td>
+          <td class="px-4 py-3 text-sm text-slate-400">${this.formatTime(trade.entry_time)}</td>
           <td class="px-4 py-3">
-            <div class="trade-actions flex items-center gap-2">
-              <button class="action-btn view-logs-btn text-gray-400 hover:text-blue-400 p-1 rounded transition-colors" data-trade-id="${trade.trade_id}" title="View logs">
+            <div class="flex items-center gap-2">
+              <button class="view-logs-btn action-btn hover:text-accent-400" data-trade-id="${trade.trade_id}" title="View logs">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
               </button>
-              <button class="action-btn delete-trade-btn text-gray-400 hover:text-red-400 p-1 rounded transition-colors" data-trade-id="${trade.trade_id}" title="Delete trade">
+              <button class="delete-trade-btn action-btn hover:text-rose-500" data-trade-id="${trade.trade_id}" title="Delete trade">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
               </button>
             </div>
@@ -126,7 +126,7 @@ export class TradeHistory {
     // Add click handlers
     tbody.querySelectorAll('tr').forEach(row => {
       row.addEventListener('click', (e) => {
-        if (e.target.closest('.action-btn')) {
+        if (e.target.closest('.view-logs-btn') || e.target.closest('.delete-trade-btn')) {
           return;
         }
         const tradeId = row.dataset.tradeId;
@@ -195,13 +195,13 @@ export class TradeHistory {
 
   getResultBadgeClass(resultType) {
     switch (resultType) {
-      case 'TP': return 'bg-green-600 text-white';
-      case 'SL': return 'bg-red-600 text-white';
-      case 'BE': return 'bg-yellow-500 text-black';
-      case 'SP': return 'bg-blue-500 text-white';
-      case 'CLOSE': return 'bg-orange-500 text-white';
-      case 'Open': return 'bg-gray-600 text-gray-300';
-      default: return 'bg-gray-600 text-gray-300';
+      case 'TP': return 'bg-emerald-500/20 text-emerald-400';
+      case 'SL': return 'bg-rose-500/20 text-rose-500';
+      case 'BE': return 'bg-amber-400/20 text-amber-400';
+      case 'SP': return 'bg-accent-500/20 text-accent-400';
+      case 'CLOSE': return 'bg-slate-500/20 text-slate-400';
+      case 'Open': return 'bg-slate-500/20 text-slate-400';
+      default: return 'bg-slate-500/20 text-slate-400';
     }
   }
 
@@ -220,7 +220,10 @@ export class TradeHistory {
     const tableView = document.getElementById('trades-table-view');
     const tableBtn = document.getElementById('view-table-btn');
     if (tableView) tableView.classList.add('hidden');
-    if (tableBtn) tableBtn.classList.remove('active');
+    if (tableBtn) {
+      tableBtn.classList.remove('bg-accent-600', 'text-slate-100');
+      tableBtn.classList.add('text-slate-400', 'hover:text-slate-100');
+    }
   }
 
   show() {
@@ -228,8 +231,14 @@ export class TradeHistory {
     const tableBtn = document.getElementById('view-table-btn');
     const calendarBtn = document.getElementById('view-calendar-btn');
     if (tableView) tableView.classList.remove('hidden');
-    if (tableBtn) tableBtn.classList.add('active');
-    if (calendarBtn) calendarBtn.classList.remove('active');
+    if (tableBtn) {
+      tableBtn.classList.remove('text-slate-400', 'hover:text-slate-100');
+      tableBtn.classList.add('bg-accent-600', 'text-slate-100');
+    }
+    if (calendarBtn) {
+      calendarBtn.classList.remove('bg-accent-600', 'text-slate-100');
+      calendarBtn.classList.add('text-slate-400', 'hover:text-slate-100');
+    }
     this.load();
   }
 }

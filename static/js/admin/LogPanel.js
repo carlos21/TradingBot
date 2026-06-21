@@ -29,8 +29,8 @@ export class LogPanel {
     });
 
     this.socket.on('system_log', (data) => this.onLogEntry(data));
-    this.socket.on('connect', () => this._setStatus('Connected', 'text-green-400'));
-    this.socket.on('disconnect', () => this._setStatus('Disconnected', 'text-red-400'));
+    this.socket.on('connect', () => this._setStatus('Connected', 'text-emerald-400'));
+    this.socket.on('disconnect', () => this._setStatus('Disconnected', 'text-rose-500'));
   }
 
   _setStatus(text, colorClass) {
@@ -87,7 +87,7 @@ export class LogPanel {
     this.paused = !this.paused;
     if (this.pauseBtn) {
       this.pauseBtn.textContent = this.paused ? 'Resume' : 'Pause';
-      this.pauseBtn.classList.toggle('bg-yellow-700', this.paused);
+      this.pauseBtn.classList.toggle('bg-amber-600', this.paused);
     }
   }
 
@@ -104,18 +104,18 @@ export class LogPanel {
 
   _levelColor(level) {
     switch (level) {
-      case 'ERROR': return 'text-red-400 border-l-red-500';
-      case 'WARN': return 'text-yellow-400 border-l-yellow-500';
-      case 'INFO': return 'text-blue-400 border-l-blue-500';
-      default: return 'text-gray-400 border-l-gray-500';
+      case 'ERROR': return 'text-rose-500 border-l-rose-500';
+      case 'WARN': return 'text-amber-400 border-l-amber-400';
+      case 'INFO': return 'text-accent-400 border-l-accent-400';
+      default: return 'text-slate-400 border-l-slate-500';
     }
   }
 
   _levelBg(level) {
     switch (level) {
-      case 'ERROR': return 'bg-red-500/5';
-      case 'WARN': return 'bg-yellow-500/5';
-      case 'INFO': return 'bg-blue-500/5';
+      case 'ERROR': return 'bg-rose-500/5';
+      case 'WARN': return 'bg-amber-400/5';
+      case 'INFO': return 'bg-accent-500/5';
       default: return '';
     }
   }
@@ -126,7 +126,7 @@ export class LogPanel {
     const filtered = this.entries.filter(e => this._matchesFilters(e));
 
     if (filtered.length === 0) {
-      this.container.innerHTML = '<div class="text-gray-500 text-center py-8 text-sm">No logs match filters</div>';
+      this.container.innerHTML = '<div class="text-slate-500 text-center py-8 text-sm">No logs match filters</div>';
       return;
     }
 
@@ -139,10 +139,10 @@ export class LogPanel {
 
       return `
         <div class="log-entry text-xs font-mono border-l-2 ${colorClass} ${bgClass} rounded px-2 py-1.5">
-          <span class="text-gray-500">${timeStr}</span>
+          <span class="text-slate-500">${timeStr}</span>
           <span class="font-bold ml-2">${entry.level}</span>
-          <span class="text-gray-400 ml-2">[${entry.source}]</span>
-          <span class="ml-2 text-gray-300">${this._escapeHtml(entry.message)}</span>
+          <span class="text-slate-400 ml-2">[${entry.source}]</span>
+          <span class="ml-2 text-slate-200">${this._escapeHtml(entry.message)}</span>
         </div>
       `;
     }).join('');
@@ -161,10 +161,10 @@ export class LogPanel {
     const div = document.createElement('div');
     div.className = `log-entry text-xs font-mono border-l-2 ${colorClass} ${bgClass} rounded px-2 py-1.5`;
     div.innerHTML =
-      `<span class="text-gray-500">${timeStr}</span>` +
+      `<span class="text-slate-500">${timeStr}</span>` +
       `<span class="font-bold ml-2">${entry.level}</span>` +
-      `<span class="text-gray-400 ml-2">[${entry.source}]</span>` +
-      `<span class="ml-2 text-gray-300">${this._escapeHtml(entry.message)}</span>`;
+      `<span class="text-slate-400 ml-2">[${entry.source}]</span>` +
+      `<span class="ml-2 text-slate-200">${this._escapeHtml(entry.message)}</span>`;
     this.container.appendChild(div);
   }
 

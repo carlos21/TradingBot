@@ -2,6 +2,15 @@
  * Decision Logs Component
  * Manages the decision logs table and filters
  */
+const TABLE_ROW = 'hover:bg-accent-500/10 transition-colors';
+const BADGE_ENTRY = 'inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-emerald-500/10 text-emerald-400';
+const BADGE_BLOCK = 'inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-rose-500/10 text-rose-500';
+const BADGE_PENDING = 'inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-amber-400/10 text-amber-400';
+const BADGE_REMOVE = 'inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-surface-700 text-slate-300';
+const BADGE_INFO = 'inline-flex items-center px-2 py-1 rounded text-xs font-medium bg-accent-500/10 text-accent-400';
+const BADGE_LONG = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/10 text-emerald-400';
+const BADGE_SHORT = 'inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-rose-500/10 text-rose-500';
+
 export class DecisionLogs {
   constructor(apiClient) {
     this.api = apiClient;
@@ -45,24 +54,24 @@ export class DecisionLogs {
         ? new Date(log.bar_time * 1000).toLocaleString()
         : (log.created_at || '-');
       return `
-        <tr class="hover:bg-gray-700/50 transition-colors">
-          <td class="px-4 py-3 text-sm text-gray-400 whitespace-nowrap">${timeStr}</td>
+        <tr class="${TABLE_ROW}">
+          <td class="px-4 py-3 text-sm text-slate-400 whitespace-nowrap">${timeStr}</td>
           <td class="px-4 py-3">
-            <span class="px-2 py-1 rounded text-xs font-medium ${badgeClass}">
+            <span class="${badgeClass}">
               ${log.event || '-'}
             </span>
           </td>
-          <td class="px-4 py-3 text-sm font-mono text-gray-300">${log.line_id || '-'}</td>
+          <td class="px-4 py-3 text-sm font-mono text-slate-300">${log.line_id || '-'}</td>
           <td class="px-4 py-3 text-sm">
             ${log.direction
-              ? `<span class="px-2 py-0.5 rounded text-xs ${log.direction === 'long' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}">${log.direction.toUpperCase()}</span>`
+              ? `<span class="${log.direction === 'long' ? BADGE_LONG : BADGE_SHORT}">${log.direction.toUpperCase()}</span>`
               : '-'
             }
           </td>
-          <td class="px-4 py-3 text-sm text-gray-300">${log.trigger_name || '-'}</td>
-          <td class="px-4 py-3 text-sm text-gray-300">${log.filter_name || '-'}</td>
-          <td class="px-4 py-3 text-sm text-gray-400 max-w-xs truncate" title="${this.escapeHtml(log.reason || '')}">${log.reason || '-'}</td>
-          <td class="px-4 py-3 text-sm text-gray-400 max-w-xs truncate" title="${this.escapeHtml(log.details || '')}">${log.details || '-'}</td>
+          <td class="px-4 py-3 text-sm text-slate-300">${log.trigger_name || '-'}</td>
+          <td class="px-4 py-3 text-sm text-slate-300">${log.filter_name || '-'}</td>
+          <td class="px-4 py-3 text-sm text-slate-400 max-w-xs truncate" title="${this.escapeHtml(log.reason || '')}">${log.reason || '-'}</td>
+          <td class="px-4 py-3 text-sm text-slate-400 max-w-xs truncate" title="${this.escapeHtml(log.details || '')}">${log.details || '-'}</td>
         </tr>
       `;
     }).join('');
@@ -99,24 +108,24 @@ export class DecisionLogs {
       case 'LATCH':
       case 'VAT_CROSS_2':
       case 'TSI_CROSS':
-        return 'bg-green-900 text-green-300';
+        return BADGE_ENTRY;
       case 'FILTER_BLOCK':
       case 'TSI_INVALID':
       case 'VAT_CROSS1_TOO_FAR':
-        return 'bg-red-900 text-red-300';
+        return BADGE_BLOCK;
       case 'TRIGGER_SKIP':
       case 'LATCH_PENDING':
       case 'TSI_FAST':
-        return 'bg-yellow-900 text-yellow-300';
+        return BADGE_PENDING;
       case 'REMOVE':
-        return 'bg-gray-700 text-gray-300';
+        return BADGE_REMOVE;
       case 'VAT_REGIME':
       case 'TSI_RESET':
       case 'VAT_RESET':
       case 'TSI_SWEEP':
-        return 'bg-blue-900 text-blue-300';
+        return BADGE_INFO;
       default:
-        return 'bg-gray-700 text-gray-300';
+        return BADGE_REMOVE;
     }
   }
 

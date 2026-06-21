@@ -105,20 +105,20 @@ export class SettingsManager {
 
     for (const acct of this.accounts) {
       const tr = document.createElement('tr');
-      tr.className = 'hover:bg-gray-700/30 transition-colors';
+      tr.className = 'hover:bg-accent-500/10 transition-colors';
       const riskUsd = acct.risk_usd ? `$${acct.risk_usd}` : '-';
       const riskPct = acct.risk_pct ? `${acct.risk_pct}%` : '-';
       const rr = acct.rr_ratio ? `${acct.rr_ratio}` : '-';
       tr.innerHTML = `
-        <td class="px-4 py-3 font-medium text-white">${this.escapeHtml(acct.name)}</td>
-        <td class="px-4 py-3 text-gray-300">${riskUsd}</td>
-        <td class="px-4 py-3 text-gray-300">${riskPct}</td>
-        <td class="px-4 py-3 text-gray-300">${rr}</td>
+        <td class="px-4 py-3 font-medium text-slate-100">${this.escapeHtml(acct.name)}</td>
+        <td class="px-4 py-3 text-slate-300">${riskUsd}</td>
+        <td class="px-4 py-3 text-slate-300">${riskPct}</td>
+        <td class="px-4 py-3 text-slate-300">${rr}</td>
         <td class="px-4 py-3 text-right">
-          <button class="text-amber-400 hover:text-amber-300 transition-colors p-1 mr-1" title="Edit account">
+          <button class="action-btn hover:text-accent-400 mr-1" title="Edit account">
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
           </button>
-          <button class="text-red-400 hover:text-red-300 transition-colors p-1" title="Remove account">
+          <button class="action-btn hover:text-rose-500" title="Remove account">
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
           </button>
         </td>
@@ -165,7 +165,7 @@ export class SettingsManager {
       <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
       Add Account
     `;
-    this.el.addAccountBtn.className = 'px-4 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg font-medium text-white transition-colors h-fit flex items-center justify-center gap-2';
+    this.el.addAccountBtn.className = 'px-4 py-2 bg-accent-600 hover:bg-accent-500 rounded-lg font-medium text-slate-100 transition-colors h-fit flex items-center justify-center gap-2';
     const cancelBtn = this.el.addAccountBtnWrapper.querySelector('#settings-account-cancel');
     if (cancelBtn) cancelBtn.remove();
   }
@@ -175,12 +175,12 @@ export class SettingsManager {
       <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
       Update Account
     `;
-    this.el.addAccountBtn.className = 'px-4 py-2 bg-amber-600 hover:bg-amber-700 rounded-lg font-medium text-white transition-colors h-fit flex items-center justify-center gap-2';
+    this.el.addAccountBtn.className = 'px-4 py-2 bg-amber-600 hover:bg-amber-500 rounded-lg font-medium text-slate-100 transition-colors h-fit flex items-center justify-center gap-2';
     if (!this.el.addAccountBtnWrapper.querySelector('#settings-account-cancel')) {
       const cancelBtn = document.createElement('button');
       cancelBtn.id = 'settings-account-cancel';
       cancelBtn.type = 'button';
-      cancelBtn.className = 'mt-2 w-full px-3 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-600 rounded transition-colors';
+      cancelBtn.className = 'mt-2 w-full px-3 py-1.5 text-xs text-slate-400 hover:text-slate-100 hover:bg-surface-600 rounded transition-colors';
       cancelBtn.textContent = 'Cancel';
       cancelBtn.addEventListener('click', () => this.cancelEditAccount());
       this.el.addAccountBtnWrapper.appendChild(cancelBtn);
@@ -251,11 +251,11 @@ export class SettingsManager {
   showStatus(message, type) {
     this.el.saveStatus.textContent = message;
     const colors = {
-      success: 'text-green-400',
-      error: 'text-red-400',
-      info: 'text-blue-400',
+      success: 'text-emerald-400',
+      error: 'text-rose-500',
+      info: 'text-accent-400',
     };
-    this.el.saveStatus.className = `text-sm ${colors[type] || 'text-gray-400'}`;
+    this.el.saveStatus.className = `text-sm ${colors[type] || 'text-slate-400'}`;
     if (type === 'success' || type === 'error') {
       setTimeout(() => { this.el.saveStatus.textContent = ''; }, 3000);
     }

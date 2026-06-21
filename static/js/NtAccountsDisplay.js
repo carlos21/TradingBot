@@ -3,6 +3,18 @@
  * Renders the first few accounts as inline pills, with a +N overflow
  * indicator that expands to show all accounts on click.
  */
+const TEXT_MUTED = 'text-slate-400';
+const TEXT_SUBTLE = 'text-slate-500';
+const TEXT_HEADING = 'text-slate-100';
+const TEXT_BODY = 'text-slate-300';
+const BG_SURFACE_700 = 'bg-surface-700';
+const BG_SURFACE_800 = 'bg-surface-800';
+const HOVER_SURFACE_600 = 'hover:bg-surface-600';
+const HOVER_SURFACE_700 = 'hover:bg-surface-700';
+const BG_SUCCESS = 'bg-emerald-600';
+const BORDER_SURFACE_600 = 'border-surface-600';
+const BORDER_SURFACE_700 = 'border-surface-700';
+
 export class NtAccountsDisplay {
   constructor(socket) {
     this.socket = socket;
@@ -42,7 +54,7 @@ export class NtAccountsDisplay {
       if (this.accounts.length > 0) {
         // Label
         const label = document.createElement('span');
-        label.className = 'text-gray-400 mr-0.5 text-[10px] uppercase tracking-wider flex-shrink-0';
+        label.className = `${TEXT_MUTED} mr-0.5 text-[10px] uppercase tracking-wider flex-shrink-0`;
         label.textContent = 'NT';
         this.el.display.appendChild(label);
 
@@ -54,7 +66,7 @@ export class NtAccountsDisplay {
         for (const acct of visible) {
           const badge = document.createElement('span');
           badge.className =
-            'px-1.5 py-0.5 bg-green-700 text-white rounded text-[11px] font-medium whitespace-nowrap flex-shrink-0';
+            `px-1.5 py-0.5 ${BG_SUCCESS} ${TEXT_HEADING} rounded text-[11px] font-medium whitespace-nowrap flex-shrink-0`;
           badge.textContent = acct.name || acct;
           badge.title = this._formatTooltip(acct);
           this.el.display.appendChild(badge);
@@ -64,7 +76,7 @@ export class NtAccountsDisplay {
         if (hidden.length > 0) {
           const overflowBtn = document.createElement('button');
           overflowBtn.className =
-            'px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 text-white rounded text-[11px] font-medium transition-colors flex-shrink-0';
+            `px-1.5 py-0.5 ${BG_SURFACE_700} ${HOVER_SURFACE_600} ${TEXT_HEADING} rounded text-[11px] font-medium transition-colors flex-shrink-0`;
           overflowBtn.textContent = `+${hidden.length}`;
           overflowBtn.title = `${hidden.length} more account${hidden.length !== 1 ? 's' : ''}`;
 
@@ -77,7 +89,7 @@ export class NtAccountsDisplay {
         }
       } else {
         const none = document.createElement('span');
-        none.className = 'text-gray-500 italic text-xs';
+        none.className = `${TEXT_SUBTLE} italic text-xs`;
         none.textContent = 'No accounts';
         this.el.display.appendChild(none);
       }
@@ -107,7 +119,7 @@ export class NtAccountsDisplay {
 
     const popover = document.createElement('div');
     popover.className =
-      'absolute mt-1 w-56 bg-gray-800 border border-gray-600 rounded shadow-lg z-50 overflow-hidden';
+      `absolute mt-1 w-56 ${BG_SURFACE_800} ${BORDER_SURFACE_600} border rounded shadow-lg z-50 overflow-hidden`;
     // Position it near the anchor
     const rect = anchorBtn.getBoundingClientRect();
     popover.style.position = 'fixed';
@@ -116,7 +128,7 @@ export class NtAccountsDisplay {
 
     const header = document.createElement('div');
     header.className =
-      'px-3 py-1.5 bg-gray-700 text-gray-300 text-[10px] uppercase tracking-wider font-semibold border-b border-gray-600';
+      `px-3 py-1.5 ${BG_SURFACE_700} ${TEXT_BODY} text-[10px] uppercase tracking-wider font-semibold border-b ${BORDER_SURFACE_600}`;
     header.textContent = `All Accounts (${this.accounts.length})`;
     popover.appendChild(header);
 
@@ -126,14 +138,14 @@ export class NtAccountsDisplay {
     for (const acct of this.accounts) {
       const li = document.createElement('li');
       li.className =
-        'px-3 py-2 hover:bg-gray-700 border-b border-gray-700 last:border-0';
+        `px-3 py-2 ${HOVER_SURFACE_700} border-b ${BORDER_SURFACE_700} last:border-0`;
 
       const nameRow = document.createElement('div');
-      nameRow.className = 'text-xs font-semibold text-white';
+      nameRow.className = `text-xs font-semibold ${TEXT_HEADING}`;
       nameRow.textContent = acct.name || acct;
 
       const metaRow = document.createElement('div');
-      metaRow.className = 'text-[10px] text-gray-400 mt-0.5';
+      metaRow.className = `text-[10px] ${TEXT_MUTED} mt-0.5`;
       metaRow.textContent = this._formatTooltip(acct);
 
       li.appendChild(nameRow);

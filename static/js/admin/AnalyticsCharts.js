@@ -6,12 +6,25 @@ export class AnalyticsCharts {
   constructor() {
     this.charts = {};
     this.colors = {
-      primary: '#3b82f6',
-      success: '#10b981',
-      danger: '#ef4444',
-      warning: '#f59e0b',
+      primary: this._cssVar('--accent-500', '#06b6d4'),
+      success: '#34d399',
+      danger: '#f43f5e',
+      warning: '#fbbf24',
       purple: '#8b5cf6',
-      gray: '#6b7280',
+      gray: '#64748b',
+    };
+  }
+
+  _cssVar(name, fallback) {
+    if (typeof document === 'undefined') return fallback;
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return value || fallback;
+  }
+
+  _chartColors() {
+    return {
+      tick: this._cssVar('--slate-400', '#94a3b8'),
+      grid: this._cssVar('--slate-700', '#334155'),
     };
   }
 
@@ -23,7 +36,7 @@ export class AnalyticsCharts {
   // Overview: Equity Curve
   renderEquityCurve(canvasId, data) {
     const ctx = document.getElementById(canvasId).getContext('2d');
-    
+
     if (this.charts[canvasId]) {
       this.charts[canvasId].destroy();
     }
@@ -77,8 +90,8 @@ export class AnalyticsCharts {
         },
         scales: {
           x: {
-            ticks: { 
-              color: '#9ca3af', 
+            ticks: {
+              color: this._chartColors().tick,
               maxTicksLimit: 8,
               callback: function(val, index) {
                 // Only show month labels (non-empty ones)
@@ -86,11 +99,11 @@ export class AnalyticsCharts {
                 return label && label.trim() !== '' ? label : '';
               }
             },
-            grid: { color: '#374151' },
+            grid: { color: this._chartColors().grid },
           },
           y: {
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' },
+            ticks: { color: this._chartColors().tick },
+            grid: { color: this._chartColors().grid },
           },
         },
       },
@@ -100,18 +113,18 @@ export class AnalyticsCharts {
   // Overview: Result Distribution (Pie)
   renderResultDistribution(canvasId, data) {
     const ctx = document.getElementById(canvasId).getContext('2d');
-    
+
     if (this.charts[canvasId]) {
       this.charts[canvasId].destroy();
     }
 
     // Define consistent colors for each result type
-    // TP = green (success), SL = red (danger), BE = yellow (warning), SP = blue
+    // TP = emerald, SL = rose, BE = amber, SP = accent
     const resultColors = {
-      'TP': this.colors.success,   // TP - Green
-      'SL': this.colors.danger,    // SL - Red
-      'BE': '#f59e0b',             // BE - Amber/Yellow
-      'SP': '#3b82f6',             // SP - Blue
+      'TP': this.colors.success,
+      'SL': this.colors.danger,
+      'BE': this.colors.warning,
+      'SP': this.colors.primary,
     };
 
     // Map labels to consistent colors
@@ -133,7 +146,7 @@ export class AnalyticsCharts {
         plugins: {
           legend: {
             position: 'right',
-            labels: { color: '#9ca3af' },
+            labels: { color: this._chartColors().tick },
           },
           tooltip: {
             callbacks: {
@@ -154,7 +167,7 @@ export class AnalyticsCharts {
   // Analytics: Trades by Hour (Bar)
   renderTradesByHour(canvasId, data) {
     const ctx = document.getElementById(canvasId).getContext('2d');
-    
+
     if (this.charts[canvasId]) {
       this.charts[canvasId].destroy();
     }
@@ -178,12 +191,12 @@ export class AnalyticsCharts {
         },
         scales: {
           x: {
-            ticks: { color: '#9ca3af' },
+            ticks: { color: this._chartColors().tick },
             grid: { display: false },
           },
           y: {
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' },
+            ticks: { color: this._chartColors().tick },
+            grid: { color: this._chartColors().grid },
           },
         },
       },
@@ -193,7 +206,7 @@ export class AnalyticsCharts {
   // Analytics: Trades by Day (Bar)
   renderTradesByDay(canvasId, data) {
     const ctx = document.getElementById(canvasId).getContext('2d');
-    
+
     if (this.charts[canvasId]) {
       this.charts[canvasId].destroy();
     }
@@ -217,12 +230,12 @@ export class AnalyticsCharts {
         },
         scales: {
           x: {
-            ticks: { color: '#9ca3af' },
+            ticks: { color: this._chartColors().tick },
             grid: { display: false },
           },
           y: {
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' },
+            ticks: { color: this._chartColors().tick },
+            grid: { color: this._chartColors().grid },
           },
         },
       },
@@ -232,7 +245,7 @@ export class AnalyticsCharts {
   // Analytics: Monthly P&L (Bar)
   renderMonthlyPnl(canvasId, data) {
     const ctx = document.getElementById(canvasId).getContext('2d');
-    
+
     if (this.charts[canvasId]) {
       this.charts[canvasId].destroy();
     }
@@ -258,12 +271,12 @@ export class AnalyticsCharts {
         },
         scales: {
           x: {
-            ticks: { color: '#9ca3af', maxTicksLimit: 12 },
+            ticks: { color: this._chartColors().tick, maxTicksLimit: 12 },
             grid: { display: false },
           },
           y: {
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' },
+            ticks: { color: this._chartColors().tick },
+            grid: { color: this._chartColors().grid },
           },
         },
       },
@@ -273,7 +286,7 @@ export class AnalyticsCharts {
   // Analytics: P&L Distribution (Bar/Histogram)
   renderPnlDistribution(canvasId, data) {
     const ctx = document.getElementById(canvasId).getContext('2d');
-    
+
     if (this.charts[canvasId]) {
       this.charts[canvasId].destroy();
     }
@@ -297,17 +310,17 @@ export class AnalyticsCharts {
         },
         scales: {
           x: {
-            ticks: { color: '#9ca3af' },
+            ticks: { color: this._chartColors().tick },
             grid: { display: false },
             title: {
               display: true,
               text: 'P&L Range',
-              color: '#9ca3af',
+              color: this._chartColors().tick,
             },
           },
           y: {
-            ticks: { color: '#9ca3af' },
-            grid: { color: '#374151' },
+            ticks: { color: this._chartColors().tick },
+            grid: { color: this._chartColors().grid },
           },
         },
       },

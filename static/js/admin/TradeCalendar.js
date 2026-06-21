@@ -35,12 +35,12 @@ export class TradeCalendar {
   processMonths() {
     // Group trades by month
     const monthMap = new Map();
-    
+
     this.trades.forEach(trade => {
       const date = new Date(trade.entry_time * 1000);
       const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       const monthLabel = date.toLocaleString('en-US', { month: 'long', year: 'numeric' });
-      
+
       if (!monthMap.has(monthKey)) {
         monthMap.set(monthKey, {
           key: monthKey,
@@ -51,10 +51,10 @@ export class TradeCalendar {
           stats: { wins: 0, losses: 0, be: 0, sp: 0, totalPnl: 0 }
         });
       }
-      
+
       const month = monthMap.get(monthKey);
       month.trades.push(trade);
-      
+
       // Update stats
       const result = trade.result;
       const beThreshold = 0.5; // Consider trades between -0.5R and +0.5R as breakeven
@@ -69,18 +69,18 @@ export class TradeCalendar {
           month.stats.losses++;
         }
       }
-      
+
       if (trade.pnl_usd !== null && trade.pnl_usd !== undefined) {
         month.stats.totalPnl += trade.pnl_usd;
       }
     });
-    
+
     // Sort months chronologically
     this.months = Array.from(monthMap.values()).sort((a, b) => {
       if (a.year !== b.year) return a.year - b.year;
       return a.month - b.month;
     });
-    
+
     // Set current month to the most recent
     this.currentMonthIndex = Math.max(0, this.months.length - 1);
   }
@@ -94,20 +94,24 @@ export class TradeCalendar {
   renderMonthPills() {
     const container = document.getElementById('cal-month-pills');
     if (!container) return;
-    
+
     if (this.months.length === 0) {
-      container.innerHTML = '<span class="text-gray-500 text-sm">No trades</span>';
+      container.innerHTML = '<span class="text-slate-500 text-sm">No trades</span>';
       return;
     }
-    
+
     container.innerHTML = this.months.map((m, idx) => {
       const shortLabel = new Date(m.year, m.month).toLocaleString('en-US', { month: 'short', year: 'numeric' });
-      const active = idx === this.currentMonthIndex ? 'active' : '';
-      return `<button class="month-pill ${active}" data-index="${idx}">${shortLabel}</button>`;
+      const isActive = idx === this.currentMonthIndex;
+      const baseClass = 'px-3.5 py-1.5 rounded-full border text-sm whitespace-nowrap transition-colors';
+      const activeClass = isActive
+        ? 'bg-accent-600 border-accent-600 text-slate-100 font-semibold'
+        : 'bg-transparent border-surface-700 text-slate-400 hover:border-accent-500 hover:text-slate-100';
+      return `<button class="${baseClass} ${activeClass}" data-index="${idx}">${shortLabel}</button>`;
     }).join('');
-    
+
     // Add click handlers
-    container.querySelectorAll('.month-pill').forEach(pill => {
+    container.querySelectorAll('button[data-index]').forEach(pill => {
       pill.addEventListener('click', () => {
         this.currentMonthIndex = parseInt(pill.dataset.index);
         this.render();
@@ -118,16 +122,16 @@ export class TradeCalendar {
   renderCalendar() {
     const container = document.getElementById('calendar-container');
     if (!container) return;
-    
+
     if (this.months.length === 0) {
-      container.innerHTML = '<div class="p-8 text-center text-gray-500">No trades found</div>';
+      container.innerHTML = '<div class="p-8 text-center text-slate-500">No trades found</div>';
       return;
     }
-    
+
     const month = this.months[this.currentMonthIndex];
     const calendarHtml = this.buildCalendarHtml(month);
     container.innerHTML = calendarHtml;
-    
+
     // Add click handlers for trade cells
     container.querySelectorAll('.cal-trade').forEach(cell => {
       cell.addEventListener('click', () => {
@@ -143,15 +147,15 @@ export class TradeCalendar {
     // Build stats display
     const stats = month.stats;
     const wlParts = [];
-    if (stats.wins) wlParts.push(`<span class="cal-positive">${stats.wins}W</span>`);
-    if (stats.losses) wlParts.push(`<span class="cal-negative">${stats.losses}L</span>`);
-    if (stats.be) wlParts.push(`<span class="text-yellow-500">${stats.be}BE</span>`);
-    if (stats.sp) wlParts.push(`<span class="text-blue-400">${stats.sp}SP</span>`);
-    const wlStr = wlParts.join(' / ') || '<span class="cal-neutral">--</span>';
-    
-    const pnlClass = stats.totalPnl > 0 ? 'cal-positive' : stats.totalPnl < 0 ? 'cal-negative' : 'cal-neutral';
+    if (stats.wins) wlParts.push(`<span class="text-emerald-400">${stats.wins}W</span>`);
+    if (stats.losses) wlParts.push(`<span class="text-rose-500">${stats.losses}L</span>`);
+    if (stats.be) wlParts.push(`<span class="text-amber-400">${stats.be}BE</span>`);
+    if (stats.sp) wlParts.push(`<span class="text-accent-400">${stats.sp}SP</span>`);
+    const wlStr = wlParts.join(' / ') || '<span class="text-slate-500">--</span>';
+
+    const pnlClass = stats.totalPnl > 0 ? 'text-emerald-400' : stats.totalPnl < 0 ? 'text-rose-500' : 'text-slate-500';
     const pnlStr = `$${stats.totalPnl.toFixed(0)}`;
-    
+
     // Group trades by day
     const dayMap = new Map();
     month.trades.forEach(trade => {
@@ -162,107 +166,107 @@ export class TradeCalendar {
       }
       dayMap.get(day).push(trade);
     });
-    
+
     // Build calendar grid
     const firstDay = new Date(month.year, month.month, 1);
     const lastDay = new Date(month.year, month.month + 1, 0);
     const startDayOfWeek = firstDay.getDay(); // 0 = Sunday
     const daysInMonth = lastDay.getDate();
-    
+
     // Day headers
     const dayHeaders = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']
-      .map(d => `<th>${d}</th>`).join('');
-    
+      .map(d => `<th class="py-2.5 text-xs uppercase tracking-wider text-slate-400 text-center border-b border-surface-700 bg-slate-900/10">${d}</th>`).join('');
+
     // Build weeks
     let weeksHtml = '';
     let currentWeek = [];
-    
+
     // Adjust start day: Monday = 0, Sunday = 6 -> convert to 0-4 (Mon-Fri)
     // JavaScript getDay(): Sun=0, Mon=1, Tue=2, Wed=3, Thu=4, Fri=5, Sat=6
     const mondayBasedStart = (startDayOfWeek + 6) % 7; // Mon=0, Tue=1, ..., Sun=6
-    
+
     // Empty cells before start of month (only for Mon-Fri)
     for (let i = 0; i < mondayBasedStart; i++) {
-      currentWeek.push('<td class="cal-cell cal-empty"></td>');
+      currentWeek.push('<td class="align-top p-2 h-[70px] md:h-[100px] border border-surface-700 bg-slate-900/10"></td>');
     }
-    
+
     // Days of month
     for (let day = 1; day <= daysInMonth; day++) {
       // Calculate day of week (Monday=0, Friday=4, Saturday=5, Sunday=6)
       const dayOfWeek = (mondayBasedStart + day - 1) % 7;
-      
+
       // Skip Saturday (5) and Sunday (6)
       if (dayOfWeek === 5 || dayOfWeek === 6) {
         continue;
       }
-      
+
       const dayTrades = dayMap.get(day) || [];
       let cellContent = '';
-      
+
       if (dayTrades.length > 0) {
         const tradeBadges = dayTrades.map(t => {
           const result = t.result;
           const beThreshold = 0.5;
-          let badgeClass = 'badge-open';
+          let badgeClass = 'bg-slate-500/15 text-slate-400';
           let badgeLabel = '?';
-          
+
           if (t.result_type === 'SP') {
-            badgeClass = 'badge-sp';
+            badgeClass = 'bg-accent-500/15 text-accent-400';
             badgeLabel = 'SP';
           } else if (result !== null && result !== undefined) {
             if (Math.abs(result) < beThreshold) {
-              badgeClass = 'badge-be';
+              badgeClass = 'bg-amber-400/15 text-amber-400';
               badgeLabel = 'BE';
             } else if (result > 0) {
-              badgeClass = 'badge-win';
+              badgeClass = 'bg-emerald-400/15 text-emerald-400';
               badgeLabel = 'W';
             } else {
-              badgeClass = 'badge-loss';
+              badgeClass = 'bg-rose-500/15 text-rose-500';
               badgeLabel = 'L';
             }
           }
-          return `<span class="badge ${badgeClass}">${badgeLabel}</span>`;
+          return `<span class="inline-flex px-2 py-0.5 rounded text-xs font-bold tracking-wide ${badgeClass}">${badgeLabel}</span>`;
         }).join('');
-        
+
         const dayPnl = dayTrades.reduce((sum, t) => sum + (t.pnl_usd || 0), 0);
-        const pnlClass = dayPnl > 0 ? 'cal-positive' : dayPnl < 0 ? 'cal-negative' : 'cal-neutral';
+        const dayPnlClass = dayPnl > 0 ? 'text-emerald-400' : dayPnl < 0 ? 'text-rose-500' : 'text-slate-500';
         const mainTrade = dayTrades[0];
-        
+
         cellContent = `
-          <div class="cal-day-num">${day}</div>
-          <div class="cal-trade" data-trade-id="${mainTrade.trade_id}">
+          <div class="text-xs font-medium text-slate-100 mb-1">${day}</div>
+          <div class="cal-trade mt-1 p-1 bg-slate-900/20 rounded cursor-pointer hover:bg-accent-500/20 transition-colors" data-trade-id="${mainTrade.trade_id}">
             ${tradeBadges}
-            <div class="cal-pnl ${pnlClass}">$${dayPnl.toFixed(0)}</div>
+            <div class="text-xs font-bold tabular-nums mt-1 ${dayPnlClass}">$${dayPnl.toFixed(0)}</div>
           </div>
         `;
-        currentWeek.push(`<td class="cal-cell cal-has-trade">${cellContent}</td>`);
+        currentWeek.push(`<td class="align-top p-2 h-[70px] md:h-[100px] border border-surface-700 bg-accent-500/5">${cellContent}</td>`);
       } else {
-        cellContent = `<div class="cal-day-num">${day}</div>`;
-        currentWeek.push(`<td class="cal-cell">${cellContent}</td>`);
+        cellContent = `<div class="text-xs font-medium text-slate-500 mb-1">${day}</div>`;
+        currentWeek.push(`<td class="align-top p-2 h-[70px] md:h-[100px] border border-surface-700">${cellContent}</td>`);
       }
-      
+
       // End of week (Friday = 4 in Monday-based system)
       if (dayOfWeek === 4 || day === daysInMonth) {
         // Fill remaining cells (only 5 columns for Mon-Fri)
         while (currentWeek.length < 5) {
-          currentWeek.push('<td class="cal-cell cal-empty"></td>');
+          currentWeek.push('<td class="align-top p-2 h-[70px] md:h-[100px] border border-surface-700 bg-slate-900/10"></td>');
         }
-        weeksHtml += `<tr>${currentWeek.join('')}</tr>`;
+        weeksHtml += `<tr class="divide-x divide-surface-700">${currentWeek.join('')}</tr>`;
         currentWeek = [];
       }
     }
-    
+
     return `
-      <div class="cal-header">
-        <h3>${month.label}</h3>
-        <div class="cal-stats">
-          <div class="stat-pill">${wlStr}</div>
-          <div class="stat-pill ${pnlClass}">Net: ${pnlStr}</div>
+      <div class="px-5 py-4 border-b border-surface-700 flex justify-between items-center flex-wrap gap-3">
+        <h3 class="text-lg font-bold text-slate-100">${month.label}</h3>
+        <div class="flex gap-3 flex-wrap">
+          <div class="text-sm px-3 py-1 rounded-md bg-slate-400/5 whitespace-nowrap">${wlStr}</div>
+          <div class="text-sm px-3 py-1 rounded-md bg-slate-400/5 whitespace-nowrap ${pnlClass}">Net: ${pnlStr}</div>
         </div>
       </div>
-      <table class="cal-grid">
+      <table class="w-full border-collapse table-fixed">
         <thead><tr>${dayHeaders}</tr></thead>
-        <tbody>${weeksHtml}</tbody>
+        <tbody class="divide-y divide-surface-700">${weeksHtml}</tbody>
       </table>
     `;
   }
@@ -270,7 +274,7 @@ export class TradeCalendar {
   updateNavigation() {
     const prevBtn = document.getElementById('cal-prev-btn');
     const nextBtn = document.getElementById('cal-next-btn');
-    
+
     if (prevBtn) {
       prevBtn.disabled = this.currentMonthIndex <= 0;
       prevBtn.onclick = () => {
@@ -280,7 +284,7 @@ export class TradeCalendar {
         }
       };
     }
-    
+
     if (nextBtn) {
       nextBtn.disabled = this.currentMonthIndex >= this.months.length - 1;
       nextBtn.onclick = () => {
@@ -297,12 +301,21 @@ export class TradeCalendar {
     const calendarView = document.getElementById('trades-calendar-view');
     const tableBtn = document.getElementById('view-table-btn');
     const calendarBtn = document.getElementById('view-calendar-btn');
-    
+
+    const activeBtnClass = 'bg-accent-600 text-slate-100';
+    const inactiveBtnClass = 'text-slate-400 hover:text-slate-100';
+
     if (tableView) tableView.classList.add('hidden');
     if (calendarView) calendarView.classList.remove('hidden');
-    if (tableBtn) tableBtn.classList.remove('active');
-    if (calendarBtn) calendarBtn.classList.add('active');
-    
+    if (tableBtn) {
+      tableBtn.classList.remove(...activeBtnClass.split(' '));
+      tableBtn.classList.add(...inactiveBtnClass.split(' '));
+    }
+    if (calendarBtn) {
+      calendarBtn.classList.remove(...inactiveBtnClass.split(' '));
+      calendarBtn.classList.add(...activeBtnClass.split(' '));
+    }
+
     // Reload data if needed
     if (this.trades.length === 0) {
       this.load();
@@ -314,10 +327,19 @@ export class TradeCalendar {
     const calendarView = document.getElementById('trades-calendar-view');
     const tableBtn = document.getElementById('view-table-btn');
     const calendarBtn = document.getElementById('view-calendar-btn');
-    
+
+    const activeBtnClass = 'bg-accent-600 text-slate-100';
+    const inactiveBtnClass = 'text-slate-400 hover:text-slate-100';
+
     if (tableView) tableView.classList.remove('hidden');
     if (calendarView) calendarView.classList.add('hidden');
-    if (tableBtn) tableBtn.classList.add('active');
-    if (calendarBtn) calendarBtn.classList.remove('active');
+    if (tableBtn) {
+      tableBtn.classList.remove(...inactiveBtnClass.split(' '));
+      tableBtn.classList.add(...activeBtnClass.split(' '));
+    }
+    if (calendarBtn) {
+      calendarBtn.classList.remove(...activeBtnClass.split(' '));
+      calendarBtn.classList.add(...inactiveBtnClass.split(' '));
+    }
   }
 }

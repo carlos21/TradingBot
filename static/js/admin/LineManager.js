@@ -52,16 +52,15 @@ export class LineManager {
     if (!tbody) return;
 
     tbody.innerHTML = this.lines.map(line => `
-      <tr data-line-id="${line.id}">
-        <td class="px-4 py-3 font-mono text-sm">${line.id.substring(0, 8)}...</td>
-        <td class="px-4 py-3 font-semibold text-blue-400">${line.price.toFixed(2)}</td>
-        <td class="px-4 py-3 text-sm text-gray-400">${this.formatDate(line.creation_date)}</td>
+      <tr data-line-id="${line.id}" class="hover:bg-accent-500/10 transition-colors">
+        <td class="px-4 py-3 font-semibold text-accent-400">${line.price.toFixed(2)}</td>
+        <td class="px-4 py-3 text-sm text-slate-400">${this.formatDate(line.creation_date)}</td>
         <td class="px-4 py-3">
-          <button class="edit-line-btn text-blue-400 hover:text-blue-300 text-sm mr-3" data-line-id="${line.id}" data-price="${line.price}">
-            Edit
+          <button class="edit-line-btn action-btn hover:text-accent-400 mr-1" data-line-id="${line.id}" data-price="${line.price}" title="Edit line">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
           </button>
-          <button class="delete-line-btn text-red-400 hover:text-red-300 text-sm" data-line-id="${line.id}">
-            Delete
+          <button class="delete-line-btn action-btn hover:text-rose-500" data-line-id="${line.id}" title="Delete line">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
           </button>
         </td>
       </tr>

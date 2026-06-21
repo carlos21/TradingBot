@@ -12,6 +12,37 @@ from dateutil import parser as dtparser
 from scripts.report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pct, pnl_class, h as _h
 
 
+TAILWIND_CONFIG = """tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        surface: {
+          950: '#0b1220', 900: '#0f172a', 850: '#151f35',
+          800: '#1e293b', 700: '#334155', 600: '#475569',
+        },
+        accent: {
+          DEFAULT: '#06b6d4', 50: '#ecfeff', 100: '#cffafe',
+          200: '#a5f3fc', 300: '#67e8f9', 400: '#22d3ee',
+          500: '#06b6d4', 600: '#0891b2',
+        },
+      },
+      fontFamily: {
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+      },
+    },
+  },
+};"""
+
+
+def _pnl_class_tw(val):
+    """Map numeric value to a Tailwind theme color class."""
+    if val > 0.005:
+        return "text-emerald-400"
+    if val < -0.005:
+        return "text-rose-500"
+    return "text-slate-400"
+
+
 def generate_html_report(summary_results, account, risk, mode, output_path,
                          nq_pv=2.0, fee_per_rt=1.50, be_threshold=0.5, risk_pct=None,
                          cfd_spread=None, cfd_commission=None):
@@ -158,9 +189,15 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
 
     # ── 6. Build HTML ─────────────────────────────────────────────────────
     def outcome_badge(outcome):
-        cls_map = {"win": "badge-win", "loss": "badge-loss", "be": "badge-be", "sp": "badge-sp", "open": "badge-open"}
+        cls_map = {
+            "win": "bg-emerald-400/15 text-emerald-400",
+            "loss": "bg-rose-500/15 text-rose-500",
+            "be": "bg-amber-400/15 text-amber-400",
+            "sp": "bg-accent-400/15 text-accent-400",
+            "open": "bg-slate-400/15 text-slate-400",
+        }
         label_map = {"win": "W", "loss": "L", "be": "B/E", "sp": "SP", "open": "OPEN"}
-        return f'<span class="badge {cls_map.get(outcome, "")}">{label_map.get(outcome, "?")}</span>'
+        return f'<span class="inline-block px-2 py-0.5 rounded text-xs font-bold tracking-wide {cls_map.get(outcome, "")}">{label_map.get(outcome, "?")}</span>'
 
     # Build month cards HTML
     month_cards_html = []
@@ -176,9 +213,9 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             date_str = sc["date"].strftime("%m/%d")
             badges = " ".join(outcome_badge(t["outcome"]) for t in sc["trades"])
             if not sc["trades"]:
-                badges = '<span class="text-muted">--</span>'
+                badges = '<span class="text-slate-400">--</span>'
 
-            status_cls = "status-pass" if sc["status"] == "PASS" else "status-fail"
+            status_cls = "text-emerald-400 font-semibold" if sc["status"] == "PASS" else "text-rose-500 font-semibold"
             status_label = sc["status"]
 
             sc_usd = sc["net_usd"]
@@ -187,57 +224,57 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             comm_str = f"${sc_comm:,.2f}" if sc_comm > 0 else "--"
 
             rows_html.append(f"""
-                <tr>
-                    <td class="date-col">{_h(date_str)}</td>
-                    <td class="name-col">{_h(sc['name'])}</td>
-                    <td class="status-col"><span class="{status_cls}">{status_label}</span></td>
-                    <td class="result-col">{badges}</td>
-                    <td class="pnl-col {pnl_class(sc_pct)}">{fmt_pct(sc_pct)}</td>
-                    <td class="pnl-col {pnl_class(sc_usd)}">{fmt_usd(sc_usd)}</td>
-                    <td class="pnl-col">{comm_str}</td>
+                <tr class="hover:bg-white/[0.03]">
+                    <td class="px-4 py-2.5 border-b border-white/5 w-[60px] text-slate-400 whitespace-nowrap">{_h(date_str)}</td>
+                    <td class="px-4 py-2.5 border-b border-white/5 font-medium text-slate-100">{_h(sc['name'])}</td>
+                    <td class="px-4 py-2.5 border-b border-white/5 w-[60px] text-center"><span class="{status_cls}">{status_label}</span></td>
+                    <td class="px-4 py-2.5 border-b border-white/5 w-20">{badges}</td>
+                    <td class="px-4 py-2.5 border-b border-white/5 w-[90px] text-right tabular-nums font-semibold {_pnl_class_tw(sc_pct)}">{fmt_pct(sc_pct)}</td>
+                    <td class="px-4 py-2.5 border-b border-white/5 w-[90px] text-right tabular-nums font-semibold {_pnl_class_tw(sc_usd)}">{fmt_usd(sc_usd)}</td>
+                    <td class="px-4 py-2.5 border-b border-white/5 w-[90px] text-right tabular-nums font-semibold">{comm_str}</td>
                 </tr>""")
 
         wl_parts = []
         if agg["wins"]:
-            wl_parts.append(f'<span class="positive">{agg["wins"]}W</span>')
+            wl_parts.append(f'<span class="text-emerald-400">{agg["wins"]}W</span>')
         if agg["losses"]:
-            wl_parts.append(f'<span class="negative">{agg["losses"]}L</span>')
+            wl_parts.append(f'<span class="text-rose-500">{agg["losses"]}L</span>')
         if agg["be"]:
-            wl_parts.append(f'<span class="text-yellow">{agg["be"]}B/E</span>')
+            wl_parts.append(f'<span class="text-amber-400">{agg["be"]}B/E</span>')
         if agg["sp"]:
-            wl_parts.append(f'<span class="text-blue">{agg["sp"]}SP</span>')
-        wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-muted">--</span>'
+            wl_parts.append(f'<span class="text-accent-400">{agg["sp"]}SP</span>')
+        wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-slate-400">--</span>'
 
         re_pill = ""
         re_w, re_l, re_b = agg["reentry_win"], agg["reentry_loss"], agg["reentry_be"]
         if re_w + re_l + re_b > 0:
             re_parts = []
-            if re_w: re_parts.append(f'<span class="positive">{re_w}W</span>')
-            if re_l: re_parts.append(f'<span class="negative">{re_l}L</span>')
-            if re_b: re_parts.append(f'<span class="text-yellow">{re_b}B</span>')
-            re_pill = f'<div class="stat-pill">RE: {" / ".join(re_parts)}</div>'
+            if re_w: re_parts.append(f'<span class="text-emerald-400">{re_w}W</span>')
+            if re_l: re_parts.append(f'<span class="text-rose-500">{re_l}L</span>')
+            if re_b: re_parts.append(f'<span class="text-amber-400">{re_b}B</span>')
+            re_pill = f'<div class="text-sm px-3 py-1 rounded-md bg-white/5 whitespace-nowrap">RE: {" / ".join(re_parts)}</div>'
 
         card = f"""
-        <div class="month-card" data-month="{mk}" id="month-{idx}">
-            <div class="month-header">
-                <h2>{month_label}</h2>
-                <div class="month-stats">
-                    <div class="stat-pill">{wl_str}</div>
-                    <div class="stat-pill {pnl_class(agg['usd'])}">Net: {fmt_usd(agg['usd'])}</div>
-                    <div class="stat-pill">Balance: ${agg['balance']:,.0f}</div>
+        <div class="month-card snap-start min-w-full flex-shrink-0 bg-surface-800 border border-surface-700 rounded-xl overflow-hidden" data-month="{mk}" id="month-{idx}">
+            <div class="month-header px-5 py-4 border-b border-surface-700 flex justify-between items-center flex-wrap gap-3">
+                <h2 class="text-xl font-bold text-slate-100">{month_label}</h2>
+                <div class="month-stats flex flex-wrap gap-3">
+                    <div class="stat-pill text-sm px-3 py-1 rounded-md bg-white/5 whitespace-nowrap">{wl_str}</div>
+                    <div class="stat-pill text-sm px-3 py-1 rounded-md bg-white/5 whitespace-nowrap {_pnl_class_tw(agg['usd'])}">Net: {fmt_usd(agg['usd'])}</div>
+                    <div class="stat-pill text-sm px-3 py-1 rounded-md bg-white/5 whitespace-nowrap">Balance: ${agg['balance']:,.0f}</div>
                     {re_pill}
                 </div>
             </div>
-            <table class="trades-table">
+            <table class="trades-table w-full border-collapse text-sm">
                 <thead>
                     <tr>
-                        <th>Date</th>
-                        <th>Scenario</th>
-                        <th>Status</th>
-                        <th>Result</th>
-                        <th>%</th>
-                        <th>$ PnL</th>
-                        <th>Commission</th>
+                        <th class="text-left px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Date</th>
+                        <th class="text-left px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Scenario</th>
+                        <th class="text-left px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Status</th>
+                        <th class="text-left px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Result</th>
+                        <th class="text-right px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">%</th>
+                        <th class="text-right px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">$ PnL</th>
+                        <th class="text-right px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Commission</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -269,64 +306,70 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             cells = []
             for day in week:
                 if day == 0:
-                    cells.append('<td class="cal-cell cal-empty"></td>')
+                    cells.append('<td class="align-top p-2 h-[100px] border border-surface-700 overflow-hidden bg-black/10 border-white/5"></td>')
                     continue
 
                 day_scenarios = day_map.get(day, [])
                 if day_scenarios:
-                    inner_parts = [f'<div class="cal-day-num">{day}</div>']
+                    inner_parts = [f'<div class="text-xs text-slate-500 mb-1 font-medium">{day}</div>']
                     for sc in day_scenarios:
                         badges = " ".join(outcome_badge(t["outcome"]) for t in sc["trades"])
                         if not badges:
-                            badges = '<span class="text-muted">--</span>'
-                        pnl_cls = pnl_class(sc["net_usd"])
+                            badges = '<span class="text-slate-400">--</span>'
+                        pnl_cls = _pnl_class_tw(sc["net_usd"])
                         inner_parts.append(
-                            f'<div class="cal-trade">'
+                            f'<div class="mt-1">'
                             f'{badges}'
-                            f'<div class="cal-pnl {pnl_cls}">{fmt_usd(sc["net_usd"])}</div>'
+                            f'<div class="text-xs font-bold tabular-nums mt-1 {pnl_cls}">{fmt_usd(sc["net_usd"])}</div>'
                             f'</div>'
                         )
-                    cells.append(f'<td class="cal-cell cal-has-trade">{"".join(inner_parts)}</td>')
+                    cells.append(f'<td class="align-top p-2 h-[100px] border border-surface-700 overflow-hidden bg-accent-500/10">{"".join(inner_parts)}</td>')
                 else:
-                    cells.append(f'<td class="cal-cell"><div class="cal-day-num">{day}</div></td>')
+                    cells.append(f'<td class="align-top p-2 h-[100px] border border-surface-700 overflow-hidden"><div class="text-xs text-slate-500 mb-1 font-medium">{day}</div></td>')
             weeks_html.append(f'<tr>{"".join(cells)}</tr>')
 
         wl_parts = []
         if agg["wins"]:
-            wl_parts.append(f'<span class="positive">{agg["wins"]}W</span>')
+            wl_parts.append(f'<span class="text-emerald-400">{agg["wins"]}W</span>')
         if agg["losses"]:
-            wl_parts.append(f'<span class="negative">{agg["losses"]}L</span>')
+            wl_parts.append(f'<span class="text-rose-500">{agg["losses"]}L</span>')
         if agg["be"]:
-            wl_parts.append(f'<span class="text-yellow">{agg["be"]}B/E</span>')
+            wl_parts.append(f'<span class="text-amber-400">{agg["be"]}B/E</span>')
         if agg["sp"]:
-            wl_parts.append(f'<span class="text-blue">{agg["sp"]}SP</span>')
-        wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-muted">--</span>'
+            wl_parts.append(f'<span class="text-accent-400">{agg["sp"]}SP</span>')
+        wl_str = " / ".join(wl_parts) if wl_parts else '<span class="text-slate-400">--</span>'
 
         cal_re_pill = ""
         cal_re_w, cal_re_l, cal_re_b = agg["reentry_win"], agg["reentry_loss"], agg["reentry_be"]
         if cal_re_w + cal_re_l + cal_re_b > 0:
             cal_re_parts = []
-            if cal_re_w: cal_re_parts.append(f'<span class="positive">{cal_re_w}W</span>')
-            if cal_re_l: cal_re_parts.append(f'<span class="negative">{cal_re_l}L</span>')
-            if cal_re_b: cal_re_parts.append(f'<span class="text-yellow">{cal_re_b}B</span>')
-            cal_re_pill = f'<div class="stat-pill">RE: {" / ".join(cal_re_parts)}</div>'
+            if cal_re_w: cal_re_parts.append(f'<span class="text-emerald-400">{cal_re_w}W</span>')
+            if cal_re_l: cal_re_parts.append(f'<span class="text-rose-500">{cal_re_l}L</span>')
+            if cal_re_b: cal_re_parts.append(f'<span class="text-amber-400">{cal_re_b}B</span>')
+            cal_re_pill = f'<div class="text-sm px-3 py-1 rounded-md bg-white/5 whitespace-nowrap">RE: {" / ".join(cal_re_parts)}</div>'
 
-        visible = "block" if idx == 0 else "none"
+        visible = "block" if idx == 0 else "hidden"
         cal_card = f"""
-        <div class="calendar-card" data-month="{mk}" data-cal-idx="{idx}" style="display:{visible}">
-            <div class="month-header">
-                <h2>{month_label}</h2>
-                <div class="month-stats">
-                    <div class="stat-pill">{wl_str}</div>
-                    <div class="stat-pill {pnl_class(agg['usd'])}">Net: {fmt_usd(agg['usd'])}</div>
-                    <div class="stat-pill">Balance: ${agg['balance']:,.0f}</div>
+        <div class="calendar-card {visible} bg-surface-800 border border-surface-700 rounded-xl overflow-hidden" data-month="{mk}" data-cal-idx="{idx}">
+            <div class="month-header px-5 py-4 border-b border-surface-700 flex justify-between items-center flex-wrap gap-3">
+                <h2 class="text-xl font-bold text-slate-100">{month_label}</h2>
+                <div class="month-stats flex flex-wrap gap-3">
+                    <div class="stat-pill text-sm px-3 py-1 rounded-md bg-white/5 whitespace-nowrap">{wl_str}</div>
+                    <div class="stat-pill text-sm px-3 py-1 rounded-md bg-white/5 whitespace-nowrap {_pnl_class_tw(agg['usd'])}">Net: {fmt_usd(agg['usd'])}</div>
+                    <div class="stat-pill text-sm px-3 py-1 rounded-md bg-white/5 whitespace-nowrap">Balance: ${agg['balance']:,.0f}</div>
                     {cal_re_pill}
                 </div>
             </div>
-            <table class="cal-grid">
+            <table class="cal-grid w-full border-collapse table-fixed">
                 <thead>
                     <tr>
-                        <th>Sun</th><th>Mon</th><th>Tue</th><th>Wed</th><th>Thu</th><th>Fri</th><th>Sat</th>
+                        <th class="px-1 py-2.5 text-xs uppercase tracking-wider text-slate-400 text-center border-b border-surface-700 bg-black/15">Sun</th>
+                        <th class="px-1 py-2.5 text-xs uppercase tracking-wider text-slate-400 text-center border-b border-surface-700 bg-black/15">Mon</th>
+                        <th class="px-1 py-2.5 text-xs uppercase tracking-wider text-slate-400 text-center border-b border-surface-700 bg-black/15">Tue</th>
+                        <th class="px-1 py-2.5 text-xs uppercase tracking-wider text-slate-400 text-center border-b border-surface-700 bg-black/15">Wed</th>
+                        <th class="px-1 py-2.5 text-xs uppercase tracking-wider text-slate-400 text-center border-b border-surface-700 bg-black/15">Thu</th>
+                        <th class="px-1 py-2.5 text-xs uppercase tracking-wider text-slate-400 text-center border-b border-surface-700 bg-black/15">Fri</th>
+                        <th class="px-1 py-2.5 text-xs uppercase tracking-wider text-slate-400 text-center border-b border-surface-700 bg-black/15">Sat</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -341,9 +384,9 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
     for idx, mk in enumerate(month_keys):
         dt = datetime.strptime(mk, "%Y-%m")
         label = dt.strftime("%b %Y")
-        active = " active" if idx == 0 else ""
+        active_cls = "bg-accent-600 border-accent-600 text-white font-semibold" if idx == 0 else "bg-transparent border-surface-700 text-slate-400 hover:border-accent hover:text-slate-100"
         month_pills_html.append(
-            f'<button class="month-pill{active}" data-index="{idx}" onclick="scrollToMonth({idx})">{label}</button>'
+            f'<button class="month-pill px-3.5 py-1.5 rounded-full border text-sm cursor-pointer transition-all {active_cls}" data-index="{idx}" onclick="scrollToMonth({idx})">{label}</button>'
         )
 
     # Equity curve SVG
@@ -373,14 +416,14 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         for i in range(5):
             gy = padding + (i / 4) * plot_h
             gval = max_b - (i / 4) * b_range
-            grid_lines += f'<line x1="{padding}" y1="{gy:.1f}" x2="{svg_w - padding}" y2="{gy:.1f}" stroke="var(--border)" stroke-dasharray="4,4" />'
-            grid_lines += f'<text x="{padding - 5}" y="{gy:.1f}" text-anchor="end" fill="var(--text-muted)" font-size="11" dominant-baseline="middle">${gval:,.0f}</text>'
+            grid_lines += f'<line x1="{padding}" y1="{gy:.1f}" x2="{svg_w - padding}" y2="{gy:.1f}" stroke="#334155" stroke-dasharray="4,4" />'
+            grid_lines += f'<text x="{padding - 5}" y="{gy:.1f}" text-anchor="end" fill="#94a3b8" font-size="11" dominant-baseline="middle">${gval:,.0f}</text>'
 
         # Color the line based on final balance vs start
-        line_color = "var(--green)" if running >= account else "var(--red)"
+        line_color = "#34d399" if running >= account else "#f43f5e"
 
         eq_svg = f"""
-        <svg viewBox="0 0 {svg_w} {svg_h}" class="equity-chart">
+        <svg viewBox="0 0 {svg_w} {svg_h}" class="w-full h-auto max-h-[200px]">
             {grid_lines}
             <polygon points="{' '.join(area_points)}" fill="{line_color}" opacity="0.1" />
             <polyline points="{' '.join(points)}" fill="none" stroke="{line_color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" />
@@ -392,504 +435,97 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trading Strategy Report</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+{TAILWIND_CONFIG}
+</script>
 <style>
-:root {{
-    --bg: #0f172a;
-    --bg-card: #1e293b;
-    --bg-header: #0c1222;
-    --border: #334155;
-    --text: #e2e8f0;
-    --text-muted: #94a3b8;
-    --text-dim: #64748b;
-    --green: #22c55e;
-    --red: #ef4444;
-    --yellow: #eab308;
-    --blue: #3b82f6;
-    --blue-dim: #1e40af;
-}}
-
-* {{ margin: 0; padding: 0; box-sizing: border-box; }}
-
-body {{
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.5;
-    min-height: 100vh;
-}}
-
-.container {{
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 24px;
-}}
-
-/* ── Header ── */
-header {{
-    background: var(--bg-header);
-    border-bottom: 1px solid var(--border);
-    padding: 24px 0;
-    margin-bottom: 24px;
-}}
-
-header .container {{
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-}}
-
-h1 {{
-    font-size: 1.5rem;
-    font-weight: 700;
-    color: var(--text);
-}}
-
-h1 span {{
-    color: var(--text-muted);
-    font-weight: 400;
-    font-size: 0.9rem;
-    margin-left: 12px;
-}}
-
-.overall-stats {{
-    display: flex;
-    gap: 24px;
-    flex-wrap: wrap;
-}}
-
-.stat-box {{
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 12px 20px;
-    min-width: 140px;
-}}
-
-.stat-box .label {{
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    margin-bottom: 2px;
-}}
-
-.stat-box .value {{
-    font-size: 1.25rem;
-    font-weight: 700;
-}}
-
-/* ── Equity curve ── */
-.equity-section {{
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px 20px;
-    margin-bottom: 24px;
-}}
-
-.equity-section h3 {{
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 8px;
-}}
-
-.equity-chart {{
-    width: 100%;
-    height: auto;
-    max-height: 200px;
-}}
-
-/* ── Month navigation ── */
-.month-nav {{
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 20px;
-    flex-wrap: wrap;
-}}
-
-.month-pill {{
-    padding: 6px 14px;
-    border-radius: 20px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    font-family: inherit;
-}}
-
-.month-pill:hover {{
-    border-color: var(--blue);
-    color: var(--text);
-}}
-
-.month-pill.active {{
-    background: var(--blue);
-    border-color: var(--blue);
-    color: #fff;
-    font-weight: 600;
-}}
-
-.nav-arrow {{
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    border: 1px solid var(--border);
-    background: var(--bg-card);
-    color: var(--text);
-    font-size: 1.1rem;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: all 0.2s;
-    font-family: inherit;
-    flex-shrink: 0;
-}}
-
-.nav-arrow:hover {{
-    border-color: var(--blue);
-    background: var(--blue-dim);
-}}
-
-.nav-arrow:disabled {{
-    opacity: 0.3;
-    cursor: default;
-}}
-
-/* ── Month scroller ── */
-.month-scroller {{
-    display: flex;
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
-    gap: 20px;
-    padding-bottom: 12px;
-    scroll-behavior: smooth;
-    -webkit-overflow-scrolling: touch;
-}}
-
-.month-scroller::-webkit-scrollbar {{
-    height: 6px;
-}}
-
-.month-scroller::-webkit-scrollbar-track {{
-    background: var(--bg);
-    border-radius: 3px;
-}}
-
-.month-scroller::-webkit-scrollbar-thumb {{
-    background: var(--border);
-    border-radius: 3px;
-}}
-
-.month-card {{
-    scroll-snap-align: start;
-    min-width: 100%;
-    flex-shrink: 0;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    overflow: hidden;
-}}
-
-.month-header {{
-    padding: 16px 20px;
-    border-bottom: 1px solid var(--border);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 12px;
-}}
-
-.month-header h2 {{
-    font-size: 1.2rem;
-    font-weight: 700;
-}}
-
-.month-stats {{
-    display: flex;
-    gap: 12px;
-    flex-wrap: wrap;
-}}
-
-.stat-pill {{
-    font-size: 0.85rem;
-    padding: 4px 12px;
-    border-radius: 6px;
-    background: rgba(255,255,255,0.05);
-    white-space: nowrap;
-}}
-
-/* ── Trades table ── */
-.trades-table {{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9rem;
-}}
-
-.trades-table th {{
-    text-align: left;
-    padding: 10px 16px;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border);
-    background: rgba(0,0,0,0.15);
-}}
-
-.trades-table td {{
-    padding: 10px 16px;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-}}
-
-.trades-table tr:last-child td {{
-    border-bottom: none;
-}}
-
-.trades-table tr:hover td {{
-    background: rgba(255,255,255,0.03);
-}}
-
-.date-col {{ width: 60px; color: var(--text-muted); white-space: nowrap; }}
-.name-col {{ font-weight: 500; }}
-.status-col {{ width: 60px; text-align: center; }}
-.result-col {{ width: 80px; }}
-.pnl-col {{ width: 90px; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }}
-
-/* ── Badges & colors ── */
-.badge {{
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-}}
-
-.badge-win  {{ background: rgba(34,197,94,0.15); color: var(--green); }}
-.badge-loss {{ background: rgba(239,68,68,0.15); color: var(--red); }}
-.badge-be   {{ background: rgba(234,179,8,0.15); color: var(--yellow); }}
-.badge-sp   {{ background: rgba(59,130,246,0.15); color: var(--blue); }}
-.badge-open {{ background: rgba(148,163,184,0.15); color: var(--text-muted); }}
-
-.positive {{ color: var(--green); }}
-.negative {{ color: var(--red); }}
-.neutral  {{ color: var(--text-muted); }}
-.text-yellow {{ color: var(--yellow); }}
-.text-blue   {{ color: var(--blue); }}
-.text-muted  {{ color: var(--text-muted); }}
-
-.status-pass {{ color: var(--green); font-weight: 600; }}
-.status-fail {{ color: var(--red); font-weight: 600; }}
-
-/* ── View toggle ── */
-.view-toggle {{
-    display: flex;
-    gap: 4px;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 3px;
-    margin-right: 12px;
-}}
-
-.view-btn {{
-    padding: 6px 14px;
-    border-radius: 6px;
-    border: none;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 0.85rem;
-    cursor: pointer;
-    font-family: inherit;
-    transition: all 0.2s;
-}}
-
-.view-btn:hover {{
-    color: var(--text);
-}}
-
-.view-btn.active {{
-    background: var(--blue);
-    color: #fff;
-    font-weight: 600;
-}}
-
-/* ── Calendar view ── */
-.calendar-card {{
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    overflow: hidden;
-}}
-
-.cal-grid {{
-    width: 100%;
-    border-collapse: collapse;
-    table-layout: fixed;
-}}
-
-.cal-grid th {{
-    padding: 10px 4px;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    text-align: center;
-    border-bottom: 1px solid var(--border);
-    background: rgba(0,0,0,0.15);
-}}
-
-.cal-cell {{
-    vertical-align: top;
-    padding: 8px;
-    height: 100px;
-    border: 1px solid var(--border);
-    overflow: hidden;
-}}
-
-.cal-empty {{
-    background: rgba(0,0,0,0.1);
-    border-color: rgba(255,255,255,0.04);
-}}
-
-.cal-has-trade {{
-    background: rgba(59,130,246,0.08);
-}}
-
-.cal-day-num {{
-    font-size: 0.8rem;
-    color: var(--text-dim);
-    margin-bottom: 4px;
-    font-weight: 500;
-}}
-
-.cal-has-trade .cal-day-num {{
-    color: var(--text);
-    font-weight: 700;
-}}
-
-.cal-trade {{
-    margin-top: 4px;
-}}
-
-.cal-trade .badge {{
-    font-size: 0.7rem;
-    padding: 2px 6px;
-}}
-
-.cal-pnl {{
-    font-size: 0.8rem;
-    font-weight: 700;
-    font-variant-numeric: tabular-nums;
-    margin-top: 3px;
-}}
-
-/* ── Footer ── */
-footer {{
-    margin-top: 32px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-    color: var(--text-dim);
-    font-size: 0.8rem;
-    text-align: center;
-}}
-
-@media (max-width: 768px) {{
-    .overall-stats {{ gap: 12px; }}
-    .stat-box {{ min-width: 100px; padding: 8px 12px; }}
-    .stat-box .value {{ font-size: 1rem; }}
-    .month-header {{ flex-direction: column; align-items: flex-start; }}
-}}
+.month-scroller::-webkit-scrollbar {{ height: 6px; }}
+.month-scroller::-webkit-scrollbar-track {{ background: #0f172a; border-radius: 3px; }}
+.month-scroller::-webkit-scrollbar-thumb {{ background: #334155; border-radius: 3px; }}
 </style>
 </head>
-<body>
+<body class="bg-surface-950 text-slate-300 font-sans leading-relaxed min-h-screen">
 
-<header>
-    <div class="container">
-        <h1>Trading Strategy Report <span>{_h(mode_label)} &mdash; ${account:,.0f} account, {f"{risk_pct}% of balance" if risk_pct else f"${risk:,.0f} fixed"} risk/trade</span></h1>
-        <div class="overall-stats">
-            <div class="stat-box">
-                <div class="label">Trades</div>
-                <div class="value">{total_t}</div>
+<header class="bg-surface-900 border-b border-surface-700 py-6 mb-6">
+    <div class="max-w-7xl mx-auto px-6">
+        <h1 class="text-2xl font-bold text-slate-100">Trading Strategy Report <span class="text-slate-400 font-normal text-sm ml-3">{_h(mode_label)} &mdash; ${account:,.0f} account, {f"{risk_pct}% of balance" if risk_pct else f"${risk:,.0f} fixed"} risk/trade</span></h1>
+        <div class="flex flex-wrap gap-6 mt-4">
+            <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-3 min-w-[140px]">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Trades</div>
+                <div class="text-xl font-bold text-slate-100">{total_t}</div>
             </div>
-            <div class="stat-box">
-                <div class="label">Record</div>
-                <div class="value"><span class="positive">{total_w}W</span> / <span class="negative">{total_l}L</span> / <span class="text-yellow">{total_be}B</span>{f'/ <span class="text-blue">{total_sp}SP</span>' if total_sp else ''}</div>
+            <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-3 min-w-[140px]">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Record</div>
+                <div class="text-xl font-bold text-slate-100"><span class="text-emerald-400">{total_w}W</span> / <span class="text-rose-500">{total_l}L</span> / <span class="text-amber-400">{total_be}B</span>{f'/ <span class="text-accent-400">{total_sp}SP</span>' if total_sp else ''}</div>
             </div>
-            <div class="stat-box">
-                <div class="label">Win Rate</div>
-                <div class="value {pnl_class(winrate - 50)}">{winrate:.1f}%</div>
+            <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-3 min-w-[140px]">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Win Rate</div>
+                <div class="text-xl font-bold {_pnl_class_tw(winrate - 50)}">{winrate:.1f}%</div>
             </div>
-            <div class="stat-box">
-                <div class="label">Net P&amp;L</div>
-                <div class="value {pnl_class(net_usd)}">{fmt_usd(net_usd)}</div>
+            <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-3 min-w-[140px]">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Net P&amp;L</div>
+                <div class="text-xl font-bold {_pnl_class_tw(net_usd)}">{fmt_usd(net_usd)}</div>
             </div>
-            <div class="stat-box">
-                <div class="label">Return</div>
-                <div class="value {pnl_class(net_pct)}">{fmt_pct(net_pct)}</div>
+            <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-3 min-w-[140px]">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Return</div>
+                <div class="text-xl font-bold {_pnl_class_tw(net_pct)}">{fmt_pct(net_pct)}</div>
             </div>
-            <div class="stat-box">
-                <div class="label">Max Consec W / L</div>
-                <div class="value"><span class="positive">{max_cw}</span> / <span class="negative">{max_cl}</span></div>
+            <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-3 min-w-[140px]">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Max Consec W / L</div>
+                <div class="text-xl font-bold text-slate-100"><span class="text-emerald-400">{max_cw}</span> / <span class="text-rose-500">{max_cl}</span></div>
             </div>
-            <div class="stat-box">
-                <div class="label">Max Drawdown (from peak)</div>
-                <div class="value negative">${max_dd_usd:,.0f} ({max_dd_pct:.2f}%)</div>
+            <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-3 min-w-[140px]">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Max Drawdown (from peak)</div>
+                <div class="text-xl font-bold text-rose-500">${max_dd_usd:,.0f} ({max_dd_pct:.2f}%)</div>
             </div>
-            <div class="stat-box">
-                <div class="label">Max Drawdown (from start)</div>
-                <div class="value negative">${max_dd_start_usd:,.0f} ({max_dd_start_pct:.2f}%)</div>
+            <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-3 min-w-[140px]">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Max Drawdown (from start)</div>
+                <div class="text-xl font-bold text-rose-500">${max_dd_start_usd:,.0f} ({max_dd_start_pct:.2f}%)</div>
             </div>
-            <div class="stat-box">
-                <div class="label">Monthly Avg</div>
-                <div class="value {pnl_class(avg_monthly_usd)}">{fmt_usd(avg_monthly_usd)}</div>
+            <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-3 min-w-[140px]">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Monthly Avg</div>
+                <div class="text-xl font-bold {_pnl_class_tw(avg_monthly_usd)}">{fmt_usd(avg_monthly_usd)}</div>
             </div>
-            <div class="stat-box">
-                <div class="label">Total Commission</div>
-                <div class="value negative">${total_commission:,.2f}</div>
+            <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-3 min-w-[140px]">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Total Commission</div>
+                <div class="text-xl font-bold text-rose-500">${total_commission:,.2f}</div>
             </div>
-            {"" if total_rw + total_rl + total_rb == 0 else f'''<div class="stat-box">
-                <div class="label">Re-entries</div>
-                <div class="value"><span class="positive">{total_rw}W</span> / <span class="negative">{total_rl}L</span>{f' / <span class="text-yellow">{total_rb}B</span>' if total_rb else ''}</div>
+            {"" if total_rw + total_rl + total_rb == 0 else f'''<div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-3 min-w-[140px]">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-0.5">Re-entries</div>
+                <div class="text-xl font-bold text-slate-100"><span class="text-emerald-400">{total_rw}W</span> / <span class="text-rose-500">{total_rl}L</span>{f' / <span class="text-amber-400">{total_rb}B</span>' if total_rb else ''}</div>
             </div>'''}
         </div>
     </div>
 </header>
 
-<div class="container">
+<div class="max-w-7xl mx-auto px-6">
     {"" if not eq_svg else f'''
-    <div class="equity-section">
-        <h3>Equity Curve</h3>
+    <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-4 mb-6">
+        <h3 class="text-sm text-slate-400 uppercase tracking-wider mb-2">Equity Curve</h3>
         {eq_svg}
     </div>
     '''}
 
-    <div class="month-nav">
-        <div class="view-toggle">
-            <button class="view-btn active" onclick="switchView('list')">List</button>
-            <button class="view-btn" onclick="switchView('calendar')">Calendar</button>
+    <div class="month-nav flex flex-wrap items-center gap-2 mb-5">
+        <div class="view-toggle flex gap-1 bg-surface-800 border border-surface-700 rounded-lg p-1 mr-3">
+            <button class="view-btn active px-3.5 py-1.5 rounded-md border-none bg-accent-600 text-white text-sm font-semibold cursor-pointer transition-all" onclick="switchView('list')">List</button>
+            <button class="view-btn px-3.5 py-1.5 rounded-md border-none bg-transparent text-slate-400 text-sm cursor-pointer transition-all hover:text-slate-100" onclick="switchView('calendar')">Calendar</button>
         </div>
-        <button class="nav-arrow" id="prevBtn" onclick="navigate(-1)">&larr;</button>
+        <button class="nav-arrow w-9 h-9 rounded-full border border-surface-700 bg-surface-800 text-slate-100 text-lg cursor-pointer flex items-center justify-center transition-all flex-shrink-0 hover:border-accent" id="prevBtn" onclick="navigate(-1)">&larr;</button>
         {" ".join(month_pills_html)}
-        <button class="nav-arrow" id="nextBtn" onclick="navigate(1)">&rarr;</button>
+        <button class="nav-arrow w-9 h-9 rounded-full border border-surface-700 bg-surface-800 text-slate-100 text-lg cursor-pointer flex items-center justify-center transition-all flex-shrink-0 hover:border-accent" id="nextBtn" onclick="navigate(1)">&rarr;</button>
     </div>
 
-    <div class="month-scroller" id="scroller">
+    <div class="month-scroller flex overflow-x-auto snap-x snap-mandatory gap-5 pb-3 scroll-smooth" id="scroller">
         {"".join(month_cards_html)}
     </div>
 
-    <div id="calendarContainer" style="display:none">
+    <div id="calendarContainer" class="hidden">
         {"".join(calendar_cards_html)}
     </div>
 
-    <footer>
+    <footer class="mt-8 pt-4 border-t border-surface-700 text-slate-500 text-sm text-center">
         Generated {datetime.now().strftime("%Y-%m-%d %H:%M")} &mdash; {len(enriched)} scenarios across {len(month_keys)} month(s)
     </footer>
 </div>
@@ -907,12 +543,23 @@ let currentView = 'list';
 function showMonth(idx) {{
     if (idx < 0 || idx >= listCards.length) return;
     currentIndex = idx;
-    pills.forEach((p, i) => p.classList.toggle('active', i === idx));
+    pills.forEach((p, i) => {{
+        const isActive = i === idx;
+        p.classList.toggle('bg-accent-600', isActive);
+        p.classList.toggle('border-accent-600', isActive);
+        p.classList.toggle('text-white', isActive);
+        p.classList.toggle('font-semibold', isActive);
+        p.classList.toggle('bg-transparent', !isActive);
+        p.classList.toggle('border-surface-700', !isActive);
+        p.classList.toggle('text-slate-400', !isActive);
+        p.classList.toggle('hover:border-accent', !isActive);
+        p.classList.toggle('hover:text-slate-100', !isActive);
+    }});
 
     if (currentView === 'list') {{
         listCards[idx].scrollIntoView({{ behavior: 'smooth', inline: 'start', block: 'nearest' }});
     }} else {{
-        calCards.forEach((c, i) => c.style.display = i === idx ? 'block' : 'none');
+        calCards.forEach((c, i) => c.classList.toggle('hidden', i !== idx));
     }}
 }}
 
@@ -922,14 +569,25 @@ function navigate(dir) {{
 
 function switchView(view) {{
     currentView = view;
-    viewBtns.forEach(b => b.classList.toggle('active', b.textContent.toLowerCase() === view));
+    viewBtns.forEach(b => {{
+        const isActive = b.textContent.toLowerCase() === view;
+        b.classList.toggle('active', isActive);
+        b.classList.toggle('bg-accent-600', isActive);
+        b.classList.toggle('text-white', isActive);
+        b.classList.toggle('font-semibold', isActive);
+        b.classList.toggle('bg-transparent', !isActive);
+        b.classList.toggle('text-slate-400', !isActive);
+        b.classList.toggle('hover:text-slate-100', !isActive);
+    }});
     if (view === 'list') {{
-        listScroller.style.display = 'flex';
-        calContainer.style.display = 'none';
+        listScroller.classList.remove('hidden');
+        listScroller.classList.add('flex');
+        calContainer.classList.add('hidden');
     }} else {{
-        listScroller.style.display = 'none';
-        calContainer.style.display = 'block';
-        calCards.forEach((c, i) => c.style.display = i === currentIndex ? 'block' : 'none');
+        listScroller.classList.remove('flex');
+        listScroller.classList.add('hidden');
+        calContainer.classList.remove('hidden');
+        calCards.forEach((c, i) => c.classList.toggle('hidden', i !== currentIndex));
     }}
 }}
 
@@ -945,7 +603,18 @@ listScroller.addEventListener('scroll', () => {{
         const idx = Math.round(scrollLeft / (cardWidth + 20));
         if (idx !== currentIndex && idx >= 0 && idx < listCards.length) {{
             currentIndex = idx;
-            pills.forEach((p, i) => p.classList.toggle('active', i === idx));
+            pills.forEach((p, i) => {{
+                const isActive = i === idx;
+                p.classList.toggle('bg-accent-600', isActive);
+                p.classList.toggle('border-accent-600', isActive);
+                p.classList.toggle('text-white', isActive);
+                p.classList.toggle('font-semibold', isActive);
+                p.classList.toggle('bg-transparent', !isActive);
+                p.classList.toggle('border-surface-700', !isActive);
+                p.classList.toggle('text-slate-400', !isActive);
+                p.classList.toggle('hover:border-accent', !isActive);
+                p.classList.toggle('hover:text-slate-100', !isActive);
+            }});
         }}
     }}, 50);
 }});

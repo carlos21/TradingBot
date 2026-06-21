@@ -116,7 +116,7 @@ export class NtManager {
   async deploy() {
     if (this.el.deployResult) {
       this.el.deployResult.textContent = 'Deploying...';
-      this.el.deployResult.className = 'mt-2 text-sm text-gray-300';
+      this.el.deployResult.className = 'mt-2 text-sm text-slate-300';
     }
     try {
       const data = await this.api.deployNt();
@@ -132,12 +132,12 @@ export class NtManager {
           msg += '\nErrors: ' + data.errors.join('; ');
         }
         this.el.deployResult.textContent = msg;
-        this.el.deployResult.className = data.success ? 'mt-2 text-sm text-green-400 whitespace-pre-line' : 'mt-2 text-sm text-red-400 whitespace-pre-line';
+        this.el.deployResult.className = data.success ? 'mt-2 text-sm text-emerald-400 whitespace-pre-line' : 'mt-2 text-sm text-rose-500 whitespace-pre-line';
       }
     } catch (e) {
       if (this.el.deployResult) {
         this.el.deployResult.textContent = 'Error: ' + e.message;
-        this.el.deployResult.className = 'mt-2 text-sm text-red-400';
+        this.el.deployResult.className = 'mt-2 text-sm text-rose-500';
       }
     }
   }
@@ -145,11 +145,11 @@ export class NtManager {
   showCredsStatus(message, type) {
     this.el.credsStatus.textContent = message;
     const colors = {
-      success: 'text-green-400',
-      error: 'text-red-400',
-      info: 'text-blue-400',
+      success: 'text-emerald-400',
+      error: 'text-rose-500',
+      info: 'text-accent-400',
     };
-    this.el.credsStatus.className = `text-sm ${colors[type] || 'text-gray-400'}`;
+    this.el.credsStatus.className = `text-sm ${colors[type] || 'text-slate-400'}`;
     if (type === 'success' || type === 'error') {
       setTimeout(() => { this.el.credsStatus.textContent = ''; }, 3000);
     }
@@ -158,11 +158,11 @@ export class NtManager {
   showOpenResult(message, success) {
     this.el.openResult.textContent = message;
     if (success === true) {
-      this.el.openResult.className = 'mt-3 text-sm text-green-400';
+      this.el.openResult.className = 'mt-3 text-sm text-emerald-400';
     } else if (success === false) {
-      this.el.openResult.className = 'mt-3 text-sm text-red-400';
+      this.el.openResult.className = 'mt-3 text-sm text-rose-500';
     } else {
-      this.el.openResult.className = 'mt-3 text-sm text-gray-300';
+      this.el.openResult.className = 'mt-3 text-sm text-slate-300';
     }
   }
 }

@@ -14,6 +14,12 @@ import { NtManager } from './NtManager.js';
 import { MtManager } from './MtManager.js';
 import { LogPanel } from './LogPanel.js';
 
+const CARD = 'bg-surface-800 border border-surface-700 rounded-xl p-5 shadow-lg';
+const TEXT_MUTED = 'text-slate-400';
+const TEXT_WIN = 'text-emerald-400';
+const TEXT_LOSS = 'text-rose-500';
+const TEXT_WARN = 'text-amber-400';
+
 class AdminApp {
   constructor() {
     this.api = new ApiClient();
@@ -317,25 +323,25 @@ class AdminApp {
     if (!container) return;
 
     if (!accountStats || accountStats.length === 0) {
-      container.innerHTML = '<div class="col-span-full text-gray-500 text-center py-4">No account data available</div>';
+      container.innerHTML = `<div class="col-span-full ${TEXT_MUTED} text-center py-4">No account data available</div>`;
       return;
     }
 
     container.innerHTML = accountStats.map(acct => {
-      const pnlClass = acct.total_pnl_usd >= 0 ? 'text-green-400' : 'text-red-400';
+      const pnlClass = acct.total_pnl_usd >= 0 ? TEXT_WIN : TEXT_LOSS;
       const pnlSign = acct.total_pnl_usd >= 0 ? '+' : '-';
       const pnlAbs = Math.abs(acct.total_pnl_usd).toFixed(2);
       const winRatePct = (acct.win_rate * 100).toFixed(1);
 
       return `
-        <div class="bg-gray-800 rounded-xl p-5 border border-gray-700">
+        <div class="${CARD}">
           <div class="flex items-center justify-between mb-3">
-            <span class="text-sm font-semibold text-gray-300">${acct.account}</span>
-            <span class="text-xs text-gray-500">${acct.total_trades} trades</span>
+            <span class="text-sm font-semibold text-slate-300">${acct.account}</span>
+            <span class="text-xs text-slate-500">${acct.total_trades} trades</span>
           </div>
           <div class="text-2xl font-bold ${pnlClass}">${pnlSign}$${pnlAbs}</div>
-          <div class="flex items-center gap-3 mt-2 text-xs text-gray-400">
-            <span class="${winRatePct >= 50 ? 'text-green-400' : 'text-red-400'}">${winRatePct}% WR</span>
+          <div class="flex items-center gap-3 mt-2 text-xs ${TEXT_MUTED}">
+            <span class="${winRatePct >= 50 ? TEXT_WIN : TEXT_LOSS}">${winRatePct}% WR</span>
             <span>|</span>
             <span>${acct.winning_trades}W / ${acct.losing_trades}L</span>
             <span>|</span>
@@ -386,7 +392,7 @@ class AdminApp {
     const avgPnlUsdEl = document.getElementById('stat-avg-pnl-usd');
     if (totalPnlUsdEl) {
       totalPnlUsdEl.textContent = formatCurrency(stats.total_pnl_usd);
-      totalPnlUsdEl.className = `text-3xl font-bold ${stats.total_pnl_usd >= 0 ? 'text-green-400' : 'text-red-400'}`;
+      totalPnlUsdEl.className = `text-3xl font-bold ${stats.total_pnl_usd >= 0 ? TEXT_WIN : TEXT_LOSS}`;
     }
     if (totalPnlREl) totalPnlREl.textContent = `R: ${stats.total_pnl?.toFixed(1) || '-'}`;
     if (avgPnlUsdEl) avgPnlUsdEl.textContent = `avg: ${formatCurrency(stats.avg_pnl_usd)}`;
@@ -398,7 +404,7 @@ class AdminApp {
       const avgMonthly = stats.avg_profit_monthly;
       avgProfitMonthlyEl.textContent = avgMonthly !== undefined && avgMonthly !== null ? 
         `${avgMonthly >= 0 ? '+' : '-'}$${Math.abs(avgMonthly).toFixed(2)}` : '-';
-      avgProfitMonthlyEl.className = `text-3xl font-bold ${avgMonthly >= 0 ? 'text-green-400' : 'text-red-400'}`;
+      avgProfitMonthlyEl.className = `text-3xl font-bold ${avgMonthly >= 0 ? TEXT_WIN : TEXT_LOSS}`;
     }
     if (avgREl) avgREl.textContent = `avg R: ${stats.avg_r_multiple?.toFixed(2) || '-'}`;
 
@@ -421,7 +427,7 @@ class AdminApp {
     if (pfEl) {
       const pf = stats.profit_factor;
       pfEl.textContent = pf !== undefined && pf !== null ? pf.toFixed(2) : '-';
-      pfEl.className = `text-3xl font-bold ${pf >= 1.5 ? 'text-green-400' : pf >= 1.0 ? 'text-yellow-400' : 'text-red-400'}`;
+      pfEl.className = `text-3xl font-bold ${pf >= 1.5 ? TEXT_WIN : pf >= 1.0 ? TEXT_WARN : TEXT_LOSS}`;
     }
     if (avgWinLossEl) {
       const aw = stats.avg_win;
@@ -434,7 +440,7 @@ class AdminApp {
     if (expEl) {
       const exp = stats.expectancy;
       expEl.textContent = exp !== undefined && exp !== null ? `${exp >= 0 ? '+' : ''}${exp.toFixed(2)}R` : '-';
-      expEl.className = `text-3xl font-bold ${exp >= 0 ? 'text-green-400' : 'text-red-400'}`;
+      expEl.className = `text-3xl font-bold ${exp >= 0 ? TEXT_WIN : TEXT_LOSS}`;
     }
 
     // Streak
@@ -451,7 +457,7 @@ class AdminApp {
       const cur = stats.current_streak;
       const curType = stats.current_streak_type;
       if (cur !== undefined && curType) {
-        const color = curType === 'win' ? 'text-green-400' : 'text-red-400';
+        const color = curType === 'win' ? TEXT_WIN : TEXT_LOSS;
         streakDetailEl.innerHTML = `Current: <span class="${color}">${cur} ${curType}${cur > 1 ? 's' : ''}</span>`;
       } else {
         streakDetailEl.textContent = '-';

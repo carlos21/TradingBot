@@ -1,3 +1,21 @@
+const TEXT_DANGER = 'text-rose-500';
+const TEXT_WARNING = 'text-amber-400';
+const TEXT_SUCCESS = 'text-emerald-400';
+const BG_DANGER = 'bg-rose-500';
+const BG_WARNING = 'bg-amber-400';
+const BG_SUCCESS = 'bg-emerald-400';
+const BADGE_SUCCESS = 'bg-emerald-500 text-slate-100';
+const BADGE_DANGER = 'bg-rose-500 text-slate-100';
+const CELL = 'px-3 py-2 font-mono text-xs';
+const CELL_WRAP = 'px-3 py-2 text-xs max-w-[200px] break-words';
+const BADGE_BASE = 'px-1.5 py-0.5 rounded text-[10px] font-bold uppercase';
+const BADGE_DANGER_SUBTLE = 'bg-rose-900/50 text-rose-500';
+const BADGE_WARNING_SUBTLE = 'bg-amber-900/50 text-amber-400';
+const MARKET_CLOSED = `${BADGE_BASE} bg-surface-700 text-slate-400`;
+const MARKET_OPEN = `${BADGE_BASE} bg-emerald-900/50 text-emerald-400`;
+const ROW_CLOSED = 'text-slate-500';
+const ROW_OPEN = 'text-slate-300';
+
 export class StreamHealthPanel {
   constructor(socket) {
     this.socket = socket;
@@ -201,15 +219,15 @@ export class StreamHealthPanel {
 
     // Dot color
     this.dot.className = 'w-2.5 h-2.5 rounded-full flex-shrink-0';
-    if (newLevel === 'error') this.dot.classList.add('bg-red-500');
-    else if (newLevel === 'warn') this.dot.classList.add('bg-yellow-400');
-    else this.dot.classList.add('bg-green-500');
+    if (newLevel === 'error') this.dot.classList.add(BG_DANGER);
+    else if (newLevel === 'warn') this.dot.classList.add(BG_WARNING);
+    else this.dot.classList.add(BG_SUCCESS);
 
     // State text color
     this.stateEl.className = 'font-semibold';
-    if (newLevel === 'error') this.stateEl.classList.add('text-red-400');
-    else if (newLevel === 'warn') this.stateEl.classList.add('text-yellow-400');
-    else this.stateEl.classList.add('text-green-400');
+    if (newLevel === 'error') this.stateEl.classList.add(TEXT_DANGER);
+    else if (newLevel === 'warn') this.stateEl.classList.add(TEXT_WARNING);
+    else this.stateEl.classList.add(TEXT_SUCCESS);
 
     // Detailed panel
     if (this.detailState) this.detailState.textContent = readinessState;
@@ -224,13 +242,13 @@ export class StreamHealthPanel {
 
     // Ready badge: green only when the readiness state machine is READY/LIVE.
     if (this.readyBadge) {
-      this.readyBadge.classList.remove('hidden', 'bg-green-600', 'text-white', 'bg-red-600');
+      this.readyBadge.classList.remove('hidden', 'bg-emerald-600', 'text-slate-100', 'bg-rose-500', 'bg-emerald-500');
       if (isReady) {
         this.readyBadge.textContent = 'READY';
-        this.readyBadge.classList.add('bg-green-600', 'text-white');
+        this.readyBadge.classList.add(...BADGE_SUCCESS.split(' '));
       } else {
         this.readyBadge.textContent = 'NOT READY';
-        this.readyBadge.classList.add('bg-red-600', 'text-white');
+        this.readyBadge.classList.add(...BADGE_DANGER.split(' '));
       }
     }
 
@@ -238,11 +256,11 @@ export class StreamHealthPanel {
     if (this.detailHistory) {
       if (isReady) {
         this.detailHistory.textContent = 'Complete ✅';
-        this.detailHistory.className = 'font-mono text-green-400';
+        this.detailHistory.className = `font-mono ${TEXT_SUCCESS}`;
       } else {
         const reason = readinessReason || 'Checking...';
         this.detailHistory.textContent = `Incomplete — ${reason}`;
-        this.detailHistory.className = 'font-mono text-red-400';
+        this.detailHistory.className = `font-mono ${TEXT_DANGER}`;
       }
     }
 
@@ -297,10 +315,10 @@ export class StreamHealthPanel {
     this.refreshStatus.classList.remove('hidden');
     if (data.ok) {
       this.refreshStatus.textContent = 'Refresh requested. Waiting for data...';
-      this.refreshStatus.className = 'text-green-400';
+      this.refreshStatus.className = TEXT_SUCCESS;
     } else {
       this.refreshStatus.textContent = `Refresh failed: ${data.error || 'unknown'}`;
-      this.refreshStatus.className = 'text-red-400';
+      this.refreshStatus.className = TEXT_DANGER;
     }
     setTimeout(() => {
       if (this.refreshStatus) this.refreshStatus.classList.add('hidden');
@@ -381,11 +399,11 @@ export class StreamHealthPanel {
 
     for (const g of gaps) {
       const row = document.createElement('tr');
-      row.className = g.is_market_closed ? 'text-gray-500' : 'text-gray-300';
+      row.className = g.is_market_closed ? ROW_CLOSED : ROW_OPEN;
 
       // Time (CDT)
       const timeCell = document.createElement('td');
-      timeCell.className = 'px-3 py-2 font-mono text-xs';
+      timeCell.className = CELL;
       const dt = new Date(g.start_time * 1000);
       timeCell.textContent = dt.toLocaleString('en-US', {
         hour12: false,
@@ -399,7 +417,7 @@ export class StreamHealthPanel {
 
       // Duration
       const durCell = document.createElement('td');
-      durCell.className = 'px-3 py-2 font-mono text-xs';
+      durCell.className = CELL;
       durCell.textContent = g.duration_seconds ? `${g.duration_seconds}s` : '—';
       row.appendChild(durCell);
 
@@ -407,15 +425,15 @@ export class StreamHealthPanel {
       const typeCell = document.createElement('td');
       typeCell.className = 'px-3 py-2';
       const typeBadge = document.createElement('span');
-      typeBadge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold uppercase';
+      typeBadge.className = BADGE_BASE;
       if (g.gap_type === 'missing') {
-        typeBadge.classList.add('bg-red-900/50', 'text-red-400');
+        typeBadge.classList.add(...BADGE_DANGER_SUBTLE.split(' '));
         typeBadge.textContent = 'Missing';
       } else if (g.gap_type === 'extra') {
-        typeBadge.classList.add('bg-yellow-900/50', 'text-yellow-400');
+        typeBadge.classList.add(...BADGE_WARNING_SUBTLE.split(' '));
         typeBadge.textContent = 'Extra';
       } else {
-        typeBadge.classList.add('bg-orange-900/50', 'text-orange-400');
+        typeBadge.classList.add(...BADGE_WARNING_SUBTLE.split(' '));
         typeBadge.textContent = 'Mismatch';
       }
       typeCell.appendChild(typeBadge);
@@ -423,7 +441,7 @@ export class StreamHealthPanel {
 
       // Details
       const detailCell = document.createElement('td');
-      detailCell.className = 'px-3 py-2 text-xs max-w-[200px] break-words';
+      detailCell.className = CELL_WRAP;
       detailCell.textContent = g.details || '—';
       row.appendChild(detailCell);
 
@@ -432,12 +450,12 @@ export class StreamHealthPanel {
       marketCell.className = 'px-3 py-2';
       if (g.is_market_closed) {
         const badge = document.createElement('span');
-        badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-gray-700 text-gray-400';
+        badge.className = MARKET_CLOSED;
         badge.textContent = '🌙 Closed';
         marketCell.appendChild(badge);
       } else {
         const badge = document.createElement('span');
-        badge.className = 'px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-900/50 text-green-400';
+        badge.className = MARKET_OPEN;
         badge.textContent = 'Open';
         marketCell.appendChild(badge);
       }

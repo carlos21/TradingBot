@@ -7,6 +7,28 @@ from datetime import datetime
 from pathlib import Path
 
 
+TAILWIND_CONFIG = """tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        surface: {
+          950: '#0b1220', 900: '#0f172a', 850: '#151f35',
+          800: '#1e293b', 700: '#334155', 600: '#475569',
+        },
+        accent: {
+          DEFAULT: '#06b6d4', 50: '#ecfeff', 100: '#cffafe',
+          200: '#a5f3fc', 300: '#67e8f9', 400: '#22d3ee',
+          500: '#06b6d4', 600: '#0891b2',
+        },
+      },
+      fontFamily: {
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+      },
+    },
+  },
+};"""
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -25,19 +47,19 @@ def _fmt_pct(val):
 
 def _pnl_class(val):
     if val > 0.005:
-        return "positive"
+        return "text-emerald-400"
     if val < -0.005:
-        return "negative"
-    return "neutral"
+        return "text-rose-500"
+    return "text-slate-400"
 
 
 def _diff_class(val, higher_is_better=True):
     """Color a diff cell. For PnL, higher is better for futures (green = futures won)."""
     if abs(val) < 0.01:
-        return "neutral"
+        return "text-slate-400"
     if (val > 0 and higher_is_better) or (val < 0 and not higher_is_better):
-        return "positive"
-    return "negative"
+        return "text-emerald-400"
+    return "text-rose-500"
 
 
 def _wl_str(bucket):
@@ -76,7 +98,7 @@ def _calc_equity(buckets, account):
     return points
 
 
-def _equity_svg(eq1, eq2, label1="Futures", label2="CFD", color1="#3b82f6", color2="#ef4444"):
+def _equity_svg(eq1, eq2, label1="Futures", label2="CFD", color1="#22d3ee", color2="#f43f5e"):
     """Generate overlaid equity curve SVG."""
     all_balances = [p["balance"] for p in eq1 + eq2]
     if not all_balances or len(all_balances) < 2:
@@ -93,8 +115,8 @@ def _equity_svg(eq1, eq2, label1="Futures", label2="CFD", color1="#3b82f6", colo
     for i in range(5):
         gy = padding + (i / 4) * plot_h
         gval = max_b - (i / 4) * b_range
-        grid_lines += f'<line x1="{padding}" y1="{gy:.1f}" x2="{svg_w - padding}" y2="{gy:.1f}" stroke="var(--border)" stroke-dasharray="4,4" />'
-        grid_lines += f'<text x="{padding - 5}" y="{gy:.1f}" text-anchor="end" fill="var(--text-muted)" font-size="11" dominant-baseline="middle">${gval:,.0f}</text>'
+        grid_lines += f'<line x1="{padding}" y1="{gy:.1f}" x2="{svg_w - padding}" y2="{gy:.1f}" stroke="#334155" stroke-dasharray="4,4" />'
+        grid_lines += f'<text x="{padding - 5}" y="{gy:.1f}" text-anchor="end" fill="#94a3b8" font-size="11" dominant-baseline="middle">${gval:,.0f}</text>'
 
     lines_svg = ""
     legend_items = ""
@@ -111,10 +133,10 @@ def _equity_svg(eq1, eq2, label1="Futures", label2="CFD", color1="#3b82f6", colo
         legend_items += f'<span style="color:{col}; margin-right:16px; font-weight:600;">&#9644; {_h(lbl)}</span>'
 
     return f"""
-    <div class="equity-section">
-        <h3>Equity Curves</h3>
-        <div class="legend">{legend_items}</div>
-        <svg viewBox="0 0 {svg_w} {svg_h}" class="equity-chart">
+    <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-4 mb-6">
+        <h3 class="text-sm text-slate-400 uppercase tracking-wider mb-2">Equity Curves</h3>
+        <div class="mb-3 text-sm">{legend_items}</div>
+        <svg viewBox="0 0 {svg_w} {svg_h}" class="w-full h-auto max-h-[250px]">
             {grid_lines}
             {lines_svg}
         </svg>
@@ -139,18 +161,18 @@ def _build_period_table(period_keys, fut_buckets, cfd_buckets, account, label):
         comm_diff = fb["commission"] - cb["commission"]
 
         rows.append(f"""
-        <tr>
-            <td class="row-label">{_h(key)}</td>
-            <td>{_wl_str(fb)}</td>
-            <td class="{_pnl_class(fb['usd'])}">{_fmt_usd(fb['usd'])}</td>
-            <td>${fb['commission']:,.2f}</td>
-            <td>${fut_bal:,.0f}</td>
-            <td>{_wl_str(cb)}</td>
-            <td class="{_pnl_class(cb['usd'])}">{_fmt_usd(cb['usd'])}</td>
-            <td>${cb['commission']:,.2f}</td>
-            <td>${cfd_bal:,.0f}</td>
-            <td class="{_diff_class(pnl_diff, higher_is_better=True)}">{_fmt_usd(pnl_diff)}</td>
-            <td class="{_diff_class(comm_diff, higher_is_better=False)}">{_fmt_usd(comm_diff)}</td>
+        <tr class="hover:bg-white/[0.03]">
+            <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap text-left text-slate-400 font-medium">{_h(key)}</td>
+            <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">{_wl_str(fb)}</td>
+            <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums {_pnl_class(fb['usd'])}">{_fmt_usd(fb['usd'])}</td>
+            <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">${fb['commission']:,.2f}</td>
+            <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">${fut_bal:,.0f}</td>
+            <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">{_wl_str(cb)}</td>
+            <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums {_pnl_class(cb['usd'])}">{_fmt_usd(cb['usd'])}</td>
+            <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">${cb['commission']:,.2f}</td>
+            <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">${cfd_bal:,.0f}</td>
+            <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums {_diff_class(pnl_diff, higher_is_better=True)}">{_fmt_usd(pnl_diff)}</td>
+            <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums {_diff_class(comm_diff, higher_is_better=False)}">{_fmt_usd(comm_diff)}</td>
         </tr>
         """)
 
@@ -171,38 +193,45 @@ def _build_period_table(period_keys, fut_buckets, cfd_buckets, account, label):
     total_cfd_sp = sum(b.get("sp", 0) for b in cfd_buckets.values())
 
     rows.append(f"""
-    <tr class="total-row">
-        <td class="row-label">TOTAL</td>
-        <td>{_wl_str({'wins': total_fut_w, 'losses': total_fut_l, 'be': total_fut_be, 'sp': total_fut_sp})}</td>
-        <td class="{_pnl_class(total_fut_usd)}">{_fmt_usd(total_fut_usd)}</td>
-        <td>${total_fut_comm:,.2f}</td>
-        <td>${account + total_fut_usd:,.0f}</td>
-        <td>{_wl_str({'wins': total_cfd_w, 'losses': total_cfd_l, 'be': total_cfd_be, 'sp': total_cfd_sp})}</td>
-        <td class="{_pnl_class(total_cfd_usd)}">{_fmt_usd(total_cfd_usd)}</td>
-        <td>${total_cfd_comm:,.2f}</td>
-        <td>${account + total_cfd_usd:,.0f}</td>
-        <td class="{_diff_class(total_pnl_diff, higher_is_better=True)}">{_fmt_usd(total_pnl_diff)}</td>
-        <td class="{_diff_class(total_comm_diff, higher_is_better=False)}">{_fmt_usd(total_comm_diff)}</td>
+    <tr class="hover:bg-white/[0.03]">
+        <td class="px-3.5 py-2 text-center border-t-2 border-surface-700 whitespace-nowrap text-left text-slate-400 font-bold">TOTAL</td>
+        <td class="px-3.5 py-2 text-center border-t-2 border-surface-700 whitespace-nowrap tabular-nums font-bold">{_wl_str({'wins': total_fut_w, 'losses': total_fut_l, 'be': total_fut_be, 'sp': total_fut_sp})}</td>
+        <td class="px-3.5 py-2 text-center border-t-2 border-surface-700 whitespace-nowrap tabular-nums font-bold {_pnl_class(total_fut_usd)}">{_fmt_usd(total_fut_usd)}</td>
+        <td class="px-3.5 py-2 text-center border-t-2 border-surface-700 whitespace-nowrap tabular-nums font-bold">${total_fut_comm:,.2f}</td>
+        <td class="px-3.5 py-2 text-center border-t-2 border-surface-700 whitespace-nowrap tabular-nums font-bold">${account + total_fut_usd:,.0f}</td>
+        <td class="px-3.5 py-2 text-center border-t-2 border-surface-700 whitespace-nowrap tabular-nums font-bold">{_wl_str({'wins': total_cfd_w, 'losses': total_cfd_l, 'be': total_cfd_be, 'sp': total_cfd_sp})}</td>
+        <td class="px-3.5 py-2 text-center border-t-2 border-surface-700 whitespace-nowrap tabular-nums font-bold {_pnl_class(total_cfd_usd)}">{_fmt_usd(total_cfd_usd)}</td>
+        <td class="px-3.5 py-2 text-center border-t-2 border-surface-700 whitespace-nowrap tabular-nums font-bold">${total_cfd_comm:,.2f}</td>
+        <td class="px-3.5 py-2 text-center border-t-2 border-surface-700 whitespace-nowrap tabular-nums font-bold">${account + total_cfd_usd:,.0f}</td>
+        <td class="px-3.5 py-2 text-center border-t-2 border-surface-700 whitespace-nowrap tabular-nums font-bold {_diff_class(total_pnl_diff, higher_is_better=True)}">{_fmt_usd(total_pnl_diff)}</td>
+        <td class="px-3.5 py-2 text-center border-t-2 border-surface-700 whitespace-nowrap tabular-nums font-bold {_diff_class(total_comm_diff, higher_is_better=False)}">{_fmt_usd(total_comm_diff)}</td>
     </tr>
     """)
 
     return f"""
-    <div class="section">
-        <h3>{_h(label)} Breakdown</h3>
-        <div class="table-wrap">
-            <table class="stats-table">
+    <div class="bg-surface-800 border border-surface-700 rounded-lg p-5 mb-6">
+        <h3 class="text-sm text-slate-400 uppercase tracking-wider mb-2">{_h(label)} Breakdown</h3>
+        <div class="overflow-x-auto">
+            <table class="stats-table w-full border-collapse text-sm">
                 <thead>
                     <tr>
-                        <th>Period</th>
-                        <th colspan="4" class="config-group" style="border-left:1px solid var(--border);">Futures</th>
-                        <th colspan="4" class="config-group" style="border-left:1px solid var(--border);">CFD</th>
-                        <th colspan="2" class="config-group" style="border-left:1px solid var(--border);">Diff (F - C)</th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap text-left">Period</th>
+                        <th colspan="4" class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap" style="border-left:1px solid #334155;">Futures</th>
+                        <th colspan="4" class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap" style="border-left:1px solid #334155;">CFD</th>
+                        <th colspan="2" class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap" style="border-left:1px solid #334155;">Diff (F - C)</th>
                     </tr>
                     <tr>
-                        <th></th>
-                        <th>W/L</th><th>PnL</th><th>Comm</th><th>Balance</th>
-                        <th>W/L</th><th>PnL</th><th>Comm</th><th>Balance</th>
-                        <th>PnL</th><th>Comm</th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap text-left"></th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">W/L</th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">PnL</th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Comm</th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Balance</th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">W/L</th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">PnL</th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Comm</th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Balance</th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">PnL</th>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Comm</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -237,40 +266,40 @@ def _build_per_trade_table(results, per_trade_fut, per_trade_cfd, account, risk_
             diff = (f_usd or 0.0) - (c_usd or 0.0)
 
             rows.append(f"""
-            <tr>
-                <td class="row-label">{_h(r['name'])}</td>
-                <td>{_h(scenario_date)}</td>
-                <td>{entry}</td>
-                <td>{orig_sl}</td>
-                <td>{actual_r:.2f}</td>
-                <td class="{_pnl_class(f_usd or 0)}">{_fmt_usd(f_usd or 0)}</td>
-                <td>${f_comm:,.2f}</td>
-                <td class="{_pnl_class(c_usd or 0)}">{_fmt_usd(c_usd or 0)}</td>
-                <td>${c_comm:,.2f}</td>
-                <td class="{_diff_class(diff, higher_is_better=True)}">{_fmt_usd(diff)}</td>
+            <tr class="hover:bg-white/[0.03]">
+                <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap text-left text-slate-400 font-medium">{_h(r['name'])}</td>
+                <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">{_h(scenario_date)}</td>
+                <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">{entry}</td>
+                <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">{orig_sl}</td>
+                <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">{actual_r:.2f}</td>
+                <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums {_pnl_class(f_usd or 0)}">{_fmt_usd(f_usd or 0)}</td>
+                <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">${f_comm:,.2f}</td>
+                <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums {_pnl_class(c_usd or 0)}">{_fmt_usd(c_usd or 0)}</td>
+                <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums">${c_comm:,.2f}</td>
+                <td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums {_diff_class(diff, higher_is_better=True)}">{_fmt_usd(diff)}</td>
             </tr>
             """)
 
     return f"""
-    <div class="section">
-        <h3 style="cursor:pointer;" onclick="document.getElementById('per-trade-body').classList.toggle('collapsed')">
+    <div class="bg-surface-800 border border-surface-700 rounded-lg p-5 mb-6">
+        <h3 class="text-sm text-slate-400 uppercase tracking-wider mb-2 cursor-pointer" onclick="document.getElementById('per-trade-body').classList.toggle('collapsed')">
             Per-Trade Detail (click to toggle)
         </h3>
         <div id="per-trade-body" class="collapsed">
-            <div class="table-wrap">
-                <table class="stats-table">
+            <div class="overflow-x-auto">
+                <table class="stats-table w-full border-collapse text-sm">
                     <thead>
                         <tr>
-                            <th>Scenario</th>
-                            <th>Date</th>
-                            <th>Entry</th>
-                            <th>SL</th>
-                            <th>Result R</th>
-                            <th>Fut PnL</th>
-                            <th>Fut Comm</th>
-                            <th>CFD PnL</th>
-                            <th>CFD Comm</th>
-                            <th>Diff</th>
+                            <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap text-left">Scenario</th>
+                            <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Date</th>
+                            <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Entry</th>
+                            <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">SL</th>
+                            <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Result R</th>
+                            <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Fut PnL</th>
+                            <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Fut Comm</th>
+                            <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">CFD PnL</th>
+                            <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">CFD Comm</th>
+                            <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Diff</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -345,7 +374,6 @@ def generate_mode_comparison_report(
                 elif label == "Monthly Avg": nums.append(s["avg_monthly_usd"])
             elif rule in ("min", "min_float"):
                 if label == "Losses": nums.append(s["losses"])
-                elif label == "Total Commission": nums.append(s["total_commission"])
                 elif label in ("Max DD (from peak)", "Max DD (from start)"): nums.append(s["max_dd_usd"] if "peak" in label else s.get("max_dd_from_start_usd", 0))
                 elif label in ("Max DD % (from peak)", "Max DD % (from start)"): nums.append(s["max_dd_pct"] if "peak" in label else s.get("max_dd_from_start_pct", 0))
                 elif label == "Max Consec L": nums.append(s["max_cl"])
@@ -353,15 +381,15 @@ def generate_mode_comparison_report(
             return -1
         return _best_idx(nums, rule="max" if "max" in rule else "min")
 
-    stats_header = "<th>Futures</th><th>CFD</th>"
+    stats_header = "<th class=\"px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap\">Futures</th><th class=\"px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap\">CFD</th>"
     stats_body = ""
     for label, vals, rule in stat_rows:
         best = _best_for_row(label, rule)
         cells = ""
         for i, v in enumerate(vals):
-            cls = ' class="best-val"' if i == best else ""
-            cells += f"<td{cls}>{v}</td>"
-        stats_body += f"<tr><td class='row-label'>{label}</td>{cells}</tr>\n"
+            cls = 'text-emerald-400 font-bold' if i == best else ''
+            cells += f'<td class="px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap tabular-nums {cls}">{v}</td>'
+        stats_body += f"<tr class='hover:bg-white/[0.03]'><td class='px-3.5 py-2 text-center border-b border-white/5 whitespace-nowrap text-left text-slate-400 font-medium'>{label}</td>{cells}</tr>\n"
 
     # --- Equity curves ---
     fut_eq = _calc_equity(futures_data["daily"], account)
@@ -390,192 +418,39 @@ def generate_mode_comparison_report(
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>CFD vs Futures Comparison</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+{TAILWIND_CONFIG}
+</script>
 <style>
-:root {{
-    --bg: #0f172a;
-    --bg-card: #1e293b;
-    --bg-header: #0c1222;
-    --border: #334155;
-    --text: #e2e8f0;
-    --text-muted: #94a3b8;
-    --text-dim: #64748b;
-    --green: #22c55e;
-    --red: #ef4444;
-    --yellow: #eab308;
-    --blue: #3b82f6;
-}}
-
-* {{ margin: 0; padding: 0; box-sizing: border-box; }}
-
-body {{
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.5;
-    min-height: 100vh;
-}}
-
-.container {{
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 24px;
-}}
-
-header {{
-    background: var(--bg-header);
-    border-bottom: 1px solid var(--border);
-    padding: 24px 0;
-    margin-bottom: 24px;
-}}
-
-header .container {{
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}}
-
-h1 {{
-    font-size: 1.5rem;
-    font-weight: 700;
-}}
-
-h1 span {{
-    color: var(--text-muted);
-    font-weight: 400;
-    font-size: 0.9rem;
-    margin-left: 12px;
-}}
-
-h3 {{
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 8px;
-}}
-
-.section {{
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 24px;
-}}
-
-.table-wrap {{
-    overflow-x: auto;
-}}
-
-.stats-table {{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.85rem;
-}}
-
-.stats-table th {{
-    padding: 10px 14px;
-    text-align: center;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    border-bottom: 2px solid var(--border);
-    background: rgba(0,0,0,0.15);
-    white-space: nowrap;
-}}
-
-.stats-table th:first-child {{
-    text-align: left;
-}}
-
-.stats-table td {{
-    padding: 8px 14px;
-    text-align: center;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-}}
-
-.stats-table .row-label {{
-    text-align: left;
-    color: var(--text-muted);
-    font-weight: 500;
-}}
-
-.stats-table .best-val {{
-    color: var(--green);
-    font-weight: 700;
-}}
-
-.stats-table tr:hover td {{
-    background: rgba(255,255,255,0.03);
-}}
-
-.stats-table .total-row td {{
-    border-top: 2px solid var(--border);
-    font-weight: 700;
-}}
-
-.equity-section {{
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px 20px;
-    margin-bottom: 24px;
-}}
-
-.equity-chart {{
-    width: 100%;
-    height: auto;
-    max-height: 250px;
-}}
-
-.legend {{
-    margin-bottom: 12px;
-    font-size: 0.85rem;
-}}
-
-.positive {{ color: var(--green); }}
-.negative {{ color: var(--red); }}
-.neutral  {{ color: var(--text-muted); }}
-
-#per-trade-body.collapsed {{
-    display: none;
-}}
-
-footer {{
-    margin-top: 32px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-    color: var(--text-dim);
-    font-size: 0.8rem;
-    text-align: center;
-}}
+#per-trade-body.collapsed {{ display: none; }}
 </style>
 </head>
-<body>
+<body class="bg-surface-950 text-slate-300 font-sans leading-relaxed min-h-screen">
 
-<header>
-    <div class="container">
-        <h1>CFD vs Futures Comparison <span>${account:,.0f} account, {risk_desc} risk/trade, CFD spread {_h(cfd_spread)}pt + ${_h(cfd_commission)}/lot</span></h1>
+<header class="bg-surface-900 border-b border-surface-700 py-6 mb-6">
+    <div class="max-w-[1400px] mx-auto px-6">
+        <h1 class="text-2xl font-bold text-slate-100">CFD vs Futures Comparison <span class="text-slate-400 font-normal text-sm ml-3">${account:,.0f} account, {risk_desc} risk/trade, CFD spread {_h(cfd_spread)}pt + ${_h(cfd_commission)}/lot</span></h1>
     </div>
 </header>
 
-<div class="container">
+<div class="max-w-[1400px] mx-auto px-6">
 
-    <div class="section">
-        <h3>Overall Stats</h3>
-        <table class="stats-table">
-            <thead>
-                <tr>
-                    <th>Metric</th>
-                    {stats_header}
-                </tr>
-            </thead>
-            <tbody>
-                {stats_body}
-            </tbody>
-        </table>
+    <div class="bg-surface-800 border border-surface-700 rounded-lg p-5 mb-6">
+        <h3 class="text-sm text-slate-400 uppercase tracking-wider mb-2">Overall Stats</h3>
+        <div class="overflow-x-auto">
+            <table class="stats-table w-full border-collapse text-sm">
+                <thead>
+                    <tr>
+                        <th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap text-left">Metric</th>
+                        {stats_header}
+                    </tr>
+                </thead>
+                <tbody>
+                    {stats_body}
+                </tbody>
+            </table>
+        </div>
     </div>
 
     {eq_svg}
@@ -588,7 +463,7 @@ footer {{
 
     {per_trade_html}
 
-    <footer>
+    <footer class="mt-8 pt-4 border-t border-surface-700 text-slate-500 text-sm text-center">
         Generated {datetime.now().strftime("%Y-%m-%d %H:%M")} &mdash; comparing CFD vs Real Futures
     </footer>
 </div>

@@ -11,17 +11,48 @@ from dateutil import parser as dtparser
 from scripts.report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pct, pnl_class, h
 
 
-# Colors for each config line in equity curve
+TAILWIND_CONFIG = """tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        surface: {
+          950: '#0b1220', 900: '#0f172a', 850: '#151f35',
+          800: '#1e293b', 700: '#334155', 600: '#475569',
+        },
+        accent: {
+          DEFAULT: '#06b6d4', 50: '#ecfeff', 100: '#cffafe',
+          200: '#a5f3fc', 300: '#67e8f9', 400: '#22d3ee',
+          500: '#06b6d4', 600: '#0891b2',
+        },
+      },
+      fontFamily: {
+        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+      },
+    },
+  },
+};"""
+
+
+# Colors for each config line in equity curve (theme-aligned)
 CONFIG_COLORS = [
-    "#3b82f6",  # blue
-    "#22c55e",  # green
-    "#ef4444",  # red
-    "#eab308",  # yellow
-    "#a855f7",  # purple
-    "#f97316",  # orange
-    "#06b6d4",  # cyan
-    "#ec4899",  # pink
+    "#22d3ee",  # accent-400
+    "#34d399",  # emerald-400
+    "#f43f5e",  # rose-500
+    "#fbbf24",  # amber-400
+    "#8b5cf6",  # violet-500
+    "#f97316",  # orange-500
+    "#06b6d4",  # accent-500
+    "#ec4899",  # pink-500
 ]
+
+
+def _pnl_class_tw(val):
+    """Map numeric value to a Tailwind theme color class."""
+    if val > 0.005:
+        return "text-emerald-400"
+    if val < -0.005:
+        return "text-rose-500"
+    return "text-slate-400"
 
 
 def _enrich_results(data, be_threshold=0.5):
@@ -226,15 +257,15 @@ def generate_comparison_report(all_data, output_path, be_threshold=0.5):
             return nums.index(max(nums))
         return nums.index(min(nums))
 
-    stats_header = "".join(f'<th>{h(l)}</th>' for l in labels)
+    stats_header = "".join(f'<th class="px-3.5 py-2.5 text-center text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">{h(l)}</th>' for l in labels)
     stats_body = ""
     for label, vals, rule in stat_rows:
         best = _best_idx(label, vals, rule)
         cells = ""
         for i, v in enumerate(vals):
-            cls = ' class="best-val"' if i == best else ""
-            cells += f"<td{cls}>{v}</td>"
-        stats_body += f"<tr><td class='row-label'>{label}</td>{cells}</tr>\n"
+            cls = 'text-emerald-400 font-bold' if i == best else ''
+            cells += f'<td class="px-3.5 py-2 text-center border-b border-white/5 tabular-nums {cls}">{v}</td>'
+        stats_body += f"<tr class='hover:bg-white/[0.03]'><td class='px-3.5 py-2 text-left border-b border-white/5 tabular-nums text-slate-400 font-medium'>{label}</td>{cells}</tr>\n"
 
     # ── Equity curve SVG (overlaid) ──
     eq_svg = ""
@@ -257,8 +288,8 @@ def generate_comparison_report(all_data, output_path, be_threshold=0.5):
         for i in range(5):
             gy = padding + (i / 4) * plot_h
             gval = max_b - (i / 4) * b_range
-            grid_lines += f'<line x1="{padding}" y1="{gy:.1f}" x2="{svg_w - padding}" y2="{gy:.1f}" stroke="var(--border)" stroke-dasharray="4,4" />'
-            grid_lines += f'<text x="{padding - 5}" y="{gy:.1f}" text-anchor="end" fill="var(--text-muted)" font-size="11" dominant-baseline="middle">${gval:,.0f}</text>'
+            grid_lines += f'<line x1="{padding}" y1="{gy:.1f}" x2="{svg_w - padding}" y2="{gy:.1f}" stroke="#334155" stroke-dasharray="4,4" />'
+            grid_lines += f'<text x="{padding - 5}" y="{gy:.1f}" text-anchor="end" fill="#94a3b8" font-size="11" dominant-baseline="middle">${gval:,.0f}</text>'
 
         lines_svg = ""
         legend_items = ""
@@ -277,10 +308,10 @@ def generate_comparison_report(all_data, output_path, be_threshold=0.5):
             legend_items += f'<span style="color:{color}; margin-right:16px; font-weight:600;">&#9644; {h(labels[ci])}</span>'
 
         eq_svg = f"""
-        <div class="equity-section">
-            <h3>Equity Curves</h3>
-            <div class="legend">{legend_items}</div>
-            <svg viewBox="0 0 {svg_w} {svg_h}" class="equity-chart">
+        <div class="bg-surface-800 border border-surface-700 rounded-lg px-5 py-4 mb-6">
+            <h3 class="text-sm text-slate-400 uppercase tracking-wider mb-2">Equity Curves</h3>
+            <div class="mb-3 text-sm">{legend_items}</div>
+            <svg viewBox="0 0 {svg_w} {svg_h}" class="w-full h-auto max-h-[250px]">
                 {grid_lines}
                 {lines_svg}
             </svg>
@@ -294,11 +325,11 @@ def generate_comparison_report(all_data, output_path, be_threshold=0.5):
 
     monthly_header = ""
     for l in labels:
-        monthly_header += f'<th colspan="3" class="config-group">{h(l)}</th>'
+        monthly_header += f'<th colspan="3" class="px-3 py-2 text-center text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15 border-l border-surface-700">{h(l)}</th>'
 
     monthly_sub = ""
     for _ in labels:
-        monthly_sub += '<th>W/L/B</th><th>Net PnL</th><th>Balance</th>'
+        monthly_sub += '<th class="px-3 py-2 text-center text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">W/L/B</th><th class="px-3 py-2 text-center text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Net PnL</th><th class="px-3 py-2 text-center text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Balance</th>'
 
     monthly_body = ""
     balances = [account] * n_configs
@@ -310,8 +341,8 @@ def generate_comparison_report(all_data, output_path, be_threshold=0.5):
             m = s["monthly"].get(mk, {"wins": 0, "losses": 0, "be": 0, "sp": 0, "usd": 0.0})
             wlb = f'{m["wins"]}W/{m["losses"]}L/{m["be"]}B'
             balances[ci] += m["usd"]
-            cells += f'<td>{wlb}</td><td class="{pnl_class(m["usd"])}">{fmt_usd(m["usd"])}</td><td>${balances[ci]:,.0f}</td>'
-        monthly_body += f"<tr><td class='row-label'>{month_label}</td>{cells}</tr>\n"
+            cells += f'<td class="px-3 py-2 text-center border-b border-white/5 tabular-nums">{wlb}</td><td class="px-3 py-2 text-center border-b border-white/5 tabular-nums {_pnl_class_tw(m["usd"])}">{fmt_usd(m["usd"])}</td><td class="px-3 py-2 text-center border-b border-white/5 tabular-nums">${balances[ci]:,.0f}</td>'
+        monthly_body += f"<tr class='hover:bg-white/[0.03]'><td class='px-3 py-2 text-left border-b border-white/5 tabular-nums text-slate-400 font-medium'>{month_label}</td>{cells}</tr>\n"
 
     # ── Build HTML ──
     html = f"""<!DOCTYPE html>
@@ -320,246 +351,61 @@ def generate_comparison_report(all_data, output_path, be_threshold=0.5):
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Strategy Comparison Report</title>
-<style>
-:root {{
-    --bg: #0f172a;
-    --bg-card: #1e293b;
-    --bg-header: #0c1222;
-    --border: #334155;
-    --text: #e2e8f0;
-    --text-muted: #94a3b8;
-    --text-dim: #64748b;
-    --green: #22c55e;
-    --red: #ef4444;
-    --yellow: #eab308;
-    --blue: #3b82f6;
-}}
-
-* {{ margin: 0; padding: 0; box-sizing: border-box; }}
-
-body {{
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.5;
-    min-height: 100vh;
-}}
-
-.container {{
-    max-width: 1400px;
-    margin: 0 auto;
-    padding: 24px;
-}}
-
-header {{
-    background: var(--bg-header);
-    border-bottom: 1px solid var(--border);
-    padding: 24px 0;
-    margin-bottom: 24px;
-}}
-
-header .container {{
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}}
-
-h1 {{
-    font-size: 1.5rem;
-    font-weight: 700;
-}}
-
-h1 span {{
-    color: var(--text-muted);
-    font-weight: 400;
-    font-size: 0.9rem;
-    margin-left: 12px;
-}}
-
-h3 {{
-    font-size: 0.85rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    margin-bottom: 8px;
-}}
-
-.section {{
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 24px;
-}}
-
-/* Stats table */
-.stats-table {{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9rem;
-}}
-
-.stats-table th {{
-    padding: 10px 16px;
-    text-align: center;
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    border-bottom: 2px solid var(--border);
-    background: rgba(0,0,0,0.15);
-}}
-
-.stats-table th:first-child {{
-    text-align: left;
-}}
-
-.stats-table td {{
-    padding: 10px 16px;
-    text-align: center;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-    font-variant-numeric: tabular-nums;
-}}
-
-.stats-table .row-label {{
-    text-align: left;
-    color: var(--text-muted);
-    font-weight: 500;
-}}
-
-.stats-table .best-val {{
-    color: var(--green);
-    font-weight: 700;
-}}
-
-.stats-table tr:hover td {{
-    background: rgba(255,255,255,0.03);
-}}
-
-/* Equity */
-.equity-section {{
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px 20px;
-    margin-bottom: 24px;
-}}
-
-.equity-chart {{
-    width: 100%;
-    height: auto;
-    max-height: 250px;
-}}
-
-.legend {{
-    margin-bottom: 12px;
-    font-size: 0.85rem;
-}}
-
-/* Monthly table */
-.monthly-table {{
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.85rem;
-}}
-
-.monthly-table th {{
-    padding: 8px 12px;
-    text-align: center;
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-muted);
-    border-bottom: 1px solid var(--border);
-    background: rgba(0,0,0,0.15);
-}}
-
-.monthly-table th:first-child {{
-    text-align: left;
-}}
-
-.monthly-table .config-group {{
-    border-bottom: 2px solid var(--border);
-    border-left: 1px solid var(--border);
-}}
-
-.monthly-table td {{
-    padding: 8px 12px;
-    text-align: center;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-    font-variant-numeric: tabular-nums;
-}}
-
-.monthly-table .row-label {{
-    text-align: left;
-    color: var(--text-muted);
-    font-weight: 500;
-}}
-
-.monthly-table tr:hover td {{
-    background: rgba(255,255,255,0.03);
-}}
-
-.positive {{ color: var(--green); }}
-.negative {{ color: var(--red); }}
-.neutral  {{ color: var(--text-muted); }}
-
-footer {{
-    margin-top: 32px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-    color: var(--text-dim);
-    font-size: 0.8rem;
-    text-align: center;
-}}
-</style>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+{TAILWIND_CONFIG}
+</script>
 </head>
-<body>
+<body class="bg-surface-950 text-slate-300 font-sans leading-relaxed min-h-screen">
 
-<header>
-    <div class="container">
-        <h1>Strategy Comparison <span>{n_configs} configs &mdash; ${account:,.0f} account, ${configs[0]['risk']:,.0f} risk/trade</span></h1>
+<header class="bg-surface-900 border-b border-surface-700 py-6 mb-6">
+    <div class="max-w-[1400px] mx-auto px-6">
+        <h1 class="text-2xl font-bold text-slate-100">Strategy Comparison <span class="text-slate-400 font-normal text-sm ml-3">{n_configs} configs &mdash; ${account:,.0f} account, ${configs[0]['risk']:,.0f} risk/trade</span></h1>
     </div>
 </header>
 
-<div class="container">
+<div class="max-w-[1400px] mx-auto px-6">
 
-    <div class="section">
-        <h3>Overall Stats</h3>
-        <table class="stats-table">
-            <thead>
-                <tr>
-                    <th>Metric</th>
-                    {stats_header}
-                </tr>
-            </thead>
-            <tbody>
-                {stats_body}
-            </tbody>
-        </table>
+    <div class="bg-surface-800 border border-surface-700 rounded-lg p-5 mb-6">
+        <h3 class="text-sm text-slate-400 uppercase tracking-wider mb-2">Overall Stats</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse text-sm">
+                <thead>
+                    <tr>
+                        <th class="px-3.5 py-2.5 text-left text-xs uppercase tracking-wider text-slate-400 border-b-2 border-surface-700 bg-black/15 whitespace-nowrap">Metric</th>
+                        {stats_header}
+                    </tr>
+                </thead>
+                <tbody>
+                    {stats_body}
+                </tbody>
+            </table>
+        </div>
     </div>
 
     {eq_svg}
 
-    <div class="section">
-        <h3>Monthly Breakdown</h3>
-        <table class="monthly-table">
-            <thead>
-                <tr>
-                    <th rowspan="2">Month</th>
-                    {monthly_header}
-                </tr>
-                <tr>
-                    {monthly_sub}
-                </tr>
-            </thead>
-            <tbody>
-                {monthly_body}
-            </tbody>
-        </table>
+    <div class="bg-surface-800 border border-surface-700 rounded-lg p-5 mb-6">
+        <h3 class="text-sm text-slate-400 uppercase tracking-wider mb-2">Monthly Breakdown</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full border-collapse text-sm">
+                <thead>
+                    <tr>
+                        <th rowspan="2" class="px-3 py-2 text-left text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Month</th>
+                        {monthly_header}
+                    </tr>
+                    <tr>
+                        {monthly_sub}
+                    </tr>
+                </thead>
+                <tbody>
+                    {monthly_body}
+                </tbody>
+            </table>
+        </div>
     </div>
 
-    <footer>
+    <footer class="mt-8 pt-4 border-t border-surface-700 text-slate-500 text-sm text-center">
         Generated {datetime.now().strftime("%Y-%m-%d %H:%M")} &mdash; comparing {n_configs} configurations
     </footer>
 </div>
