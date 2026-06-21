@@ -61,11 +61,6 @@ class AdminApp {
         this.tradeLogs.show(tradeId);
       };
 
-      // Set up export button
-      document.getElementById('export-trades-btn')?.addEventListener('click', () => {
-        this.tradeHistory.exportToCSV();
-      });
-
       // Set up view toggle buttons
       this.setupViewToggle();
 
@@ -74,19 +69,6 @@ class AdminApp {
 
       // Set up decision logs filters
       this.decisionLogs.bindFilters();
-
-      // Set up test button
-      document.getElementById('test-load-btn')?.addEventListener('click', async () => {
-        console.log('[Test] Manual trade load triggered');
-        try {
-          const result = await this.api.getTrades(5, 0);
-          console.log('[Test] Direct API result:', result);
-          alert(`Loaded ${result.total} trades total. First 5: ${JSON.stringify(result.trades.slice(0, 2), null, 2)}`);
-        } catch (e) {
-          console.error('[Test] Error:', e);
-          alert('Error: ' + e.message);
-        }
-      });
 
       // Initialize new manager panels
       await this.settingsManager.init();

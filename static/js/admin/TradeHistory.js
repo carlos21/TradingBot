@@ -216,32 +216,6 @@ export class TradeHistory {
     });
   }
 
-  exportToCSV() {
-    const headers = ['Trade ID', 'Type', 'Account', 'Entry Price', 'Stop Loss', 'Take Profit', 'Exit Price', 'P&L', 'Result', 'Entry Time', 'Exit Time'];
-    const rows = this.trades.map(t => [
-      t.trade_id,
-      t.type,
-      t.account || '',
-      t.entry,
-      t.stop_loss,
-      t.take_profit,
-      t.exit_price || '',
-      t.result !== null ? t.result : '',
-      t.result_type || (t.status === 'open' ? 'Open' : '-'),
-      new Date(t.entry_time * 1000).toISOString(),
-      t.exit_time ? new Date(t.exit_time * 1000).toISOString() : '',
-    ]);
-
-    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `trades_${this.api.pair}_${new Date().toISOString().split('T')[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-
   hide() {
     const tableView = document.getElementById('trades-table-view');
     const tableBtn = document.getElementById('view-table-btn');
