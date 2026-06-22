@@ -46,11 +46,15 @@ class TestSettingsRepository:
 class TestNtAccountRepository:
     def test_upsert_and_list(self, db_session):
         repo = NtAccountRepository()
-        repo.upsert("Acct1", risk_usd=100.0)
+        repo.upsert("Acct1", risk_usd=100.0, live_enabled=False)
+        repo.upsert("Acct2", risk_usd=200.0)
         accounts = repo.list_accounts()
-        assert len(accounts) == 1
+        assert len(accounts) == 2
         assert accounts[0].name == "Acct1"
         assert accounts[0].risk_usd == 100.0
+        assert accounts[0].live_enabled is False
+        assert accounts[1].name == "Acct2"
+        assert accounts[1].live_enabled is True
 
     def test_delete(self, db_session):
         repo = NtAccountRepository()

@@ -18,7 +18,8 @@ class ISettingsRepository(Protocol):
 
 class INtAccountRepository(Protocol):
     def list_accounts(self) -> list[AccountConfig]: ...
-    def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None, rr_ratio: float | None = None) -> None: ...
+    def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None,
+               rr_ratio: float | None = None, live_enabled: bool = True) -> None: ...
     def delete(self, name: str) -> None: ...
     def clear_all(self) -> None: ...
 
@@ -94,7 +95,13 @@ class SettingsService:
                 "zmq_heartbeat_port": all_settings.get("zmq_heartbeat_port", "5558"),
             },
             "accounts": [
-                {"name": a.name, "risk_usd": a.risk_usd, "risk_pct": a.risk_pct, "rr_ratio": a.rr_ratio}
+                {
+                    "name": a.name,
+                    "risk_usd": a.risk_usd,
+                    "risk_pct": a.risk_pct,
+                    "rr_ratio": a.rr_ratio,
+                    "live_enabled": a.live_enabled if a.live_enabled is not None else True,
+                }
                 for a in accounts
             ],
             "credentials": {
@@ -124,6 +131,7 @@ class SettingsService:
                 risk_usd=acct.get("risk_usd") or None,
                 risk_pct=acct.get("risk_pct") or None,
                 rr_ratio=acct.get("rr_ratio") or None,
+                live_enabled=bool(acct.get("live_enabled", True)),
             )
 
         username = credentials.get("username", "")
@@ -156,11 +164,16 @@ class SettingsService:
                 raise ValueError(f"{field} must be non-negative")
             return num
 
+        live_enabled = payload.get("live_enabled")
+        if live_enabled is None:
+            live_enabled = True
+
         self._accounts.upsert(
             name=name,
             risk_usd=_as_positive_float(payload.get("risk_usd"), "risk_usd"),
             risk_pct=_as_positive_float(payload.get("risk_pct"), "risk_pct"),
             rr_ratio=_as_positive_float(payload.get("rr_ratio"), "rr_ratio"),
+            live_enabled=bool(live_enabled),
         )
 
     def delete_account(self, name: str) -> None:

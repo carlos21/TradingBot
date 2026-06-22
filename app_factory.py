@@ -368,6 +368,7 @@ def create_app(
         risk_pct_per_trade=numbers.risk_pct_per_trade,
         logger=logger,
         accounts_repo=accounts_repo,
+        live_mode=live_mode,
     )
 
     # Inject trade_manager into executors that are created before trade_manager existed
@@ -427,6 +428,7 @@ def create_app(
         account_configs = getattr(numbers, 'account_configs', []),
         accounts_repo=accounts_repo,
         execution_context=execution_context,
+        live_mode=live_mode,
     )
 
     # Wire strategy to TRADE_CLOSED events so it updates state reactively

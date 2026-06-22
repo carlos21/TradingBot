@@ -58,6 +58,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         account_configs=None,
         accounts_repo=None,
         execution_context=None,
+        live_mode: bool = False,
     ):
         self.timeframes = list(timeframes) if timeframes else ["5m"]
 
@@ -102,6 +103,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
             account_configs=account_configs,
             accounts_repo=accounts_repo,
             execution_context=execution_context,
+            live_mode=live_mode,
         )
 
         self.candle_config = candle_config

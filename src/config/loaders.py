@@ -282,7 +282,11 @@ class DbConfigLoader:
             accounts = session.query(NtAccount).all()
             if accounts:
                 cfg.nt_accounts = [
-                    AccountConfig(name=a.name, risk_usd=a.risk_usd, risk_pct=a.risk_pct, rr_ratio=a.rr_ratio)
+                    AccountConfig(
+                        name=a.name, risk_usd=a.risk_usd, risk_pct=a.risk_pct,
+                        rr_ratio=a.rr_ratio,
+                        live_enabled=bool(a.live_enabled) if a.live_enabled is not None else True,
+                    )
                     for a in accounts
                 ]
                 # Derive global defaults from first account for backtest/strategy compatibility

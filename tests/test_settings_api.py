@@ -49,7 +49,7 @@ class TestSettingsApi:
         payload = {
             "trading": {"pair": "ES", "instrument": "ES 06-26", "risk_per_trade": "200", "risk_pct_per_trade": "", "rr_ratio": "4.0"},
             "network": {"flask_port": "5002", "zmq_host": "0.0.0.0", "zmq_market_port": "5555", "zmq_command_port": "5556", "zmq_query_port": "5557", "zmq_heartbeat_port": "5558"},
-            "accounts": [{"name": "A1", "risk_usd": 150.0, "risk_pct": None}],
+            "accounts": [{"name": "A1", "risk_usd": 150.0, "risk_pct": None, "live_enabled": False}],
             "credentials": {"username": "ntuser", "password": "ntpass"},
         }
         resp = client.post("/api/settings", json=payload)
@@ -61,6 +61,7 @@ class TestSettingsApi:
         data = resp.get_json()
         assert data["trading"]["pair"] == "ES"
         assert data["accounts"][0]["name"] == "A1"
+        assert data["accounts"][0]["live_enabled"] is False
 
     def test_accounts_crud(self, client):
         resp = client.post("/api/accounts", json={"name": "A1", "risk_usd": 100.0})

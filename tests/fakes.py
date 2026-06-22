@@ -440,12 +440,19 @@ class FakeNtAccountRepository(AccountRepository):
                 return acct
         return None
 
-    def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None, rr_ratio: float | None = None) -> None:
+    def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None,
+               rr_ratio: float | None = None, live_enabled: bool = True) -> None:
         for i, acct in enumerate(self._accounts):
             if acct.name == name:
-                self._accounts[i] = AccountConfig(name=name, risk_usd=risk_usd, risk_pct=risk_pct, rr_ratio=rr_ratio)
+                self._accounts[i] = AccountConfig(
+                    name=name, risk_usd=risk_usd, risk_pct=risk_pct,
+                    rr_ratio=rr_ratio, live_enabled=live_enabled,
+                )
                 return
-        self._accounts.append(AccountConfig(name=name, risk_usd=risk_usd, risk_pct=risk_pct, rr_ratio=rr_ratio))
+        self._accounts.append(AccountConfig(
+            name=name, risk_usd=risk_usd, risk_pct=risk_pct,
+            rr_ratio=rr_ratio, live_enabled=live_enabled,
+        ))
 
     def delete(self, name: str) -> None:
         self._accounts = [a for a in self._accounts if a.name != name]

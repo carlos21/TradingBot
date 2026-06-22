@@ -183,11 +183,13 @@ class AccountConfig:
     """Value object for account configuration."""
 
     def __init__(self, name: str, risk_usd: float | None = None,
-                 risk_pct: float | None = None, rr_ratio: float | None = None):
+                 risk_pct: float | None = None, rr_ratio: float | None = None,
+                 live_enabled: bool = True):
         self.name = name
         self.risk_usd = risk_usd
         self.risk_pct = risk_pct
         self.rr_ratio = rr_ratio
+        self.live_enabled = live_enabled
 
 
 class AccountReader(ABC):
@@ -207,7 +209,8 @@ class AccountWriter(ABC):
 
     @abstractmethod
     def upsert(self, name: str, risk_usd: float | None = None,
-               risk_pct: float | None = None, rr_ratio: float | None = None) -> None:
+               risk_pct: float | None = None, rr_ratio: float | None = None,
+               live_enabled: bool = True) -> None:
         """Save or update an account configuration."""
 
     @abstractmethod

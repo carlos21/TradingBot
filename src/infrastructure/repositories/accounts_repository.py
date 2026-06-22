@@ -20,7 +20,8 @@ class NtAccountRepository(SQLRepositoryBase, AccountRepository):
             if row:
                 return AccountConfig(
                     name=row.name, risk_usd=row.risk_usd,
-                    risk_pct=row.risk_pct, rr_ratio=row.rr_ratio
+                    risk_pct=row.risk_pct, rr_ratio=row.rr_ratio,
+                    live_enabled=bool(row.live_enabled) if row.live_enabled is not None else True,
                 )
             return None
 
@@ -28,12 +29,17 @@ class NtAccountRepository(SQLRepositoryBase, AccountRepository):
         with self._session() as session:
             rows = session.query(NtAccount).all()
             return [
-                AccountConfig(name=r.name, risk_usd=r.risk_usd, risk_pct=r.risk_pct, rr_ratio=r.rr_ratio)
+                AccountConfig(
+                    name=r.name, risk_usd=r.risk_usd, risk_pct=r.risk_pct,
+                    rr_ratio=r.rr_ratio,
+                    live_enabled=bool(r.live_enabled) if r.live_enabled is not None else True,
+                )
                 for r in rows
             ]
 
     def upsert(self, name: str, risk_usd: float | None = None,
-               risk_pct: float | None = None, rr_ratio: float | None = None) -> None:
+               risk_pct: float | None = None, rr_ratio: float | None = None,
+               live_enabled: bool = True) -> None:
         with self._session() as session:
             try:
                 row = session.query(NtAccount).filter_by(name=name).first()
@@ -41,8 +47,12 @@ class NtAccountRepository(SQLRepositoryBase, AccountRepository):
                     row.risk_usd = risk_usd
                     row.risk_pct = risk_pct
                     row.rr_ratio = rr_ratio
+                    row.live_enabled = 1 if live_enabled else 0
                 else:
-                    row = NtAccount(name=name, risk_usd=risk_usd, risk_pct=risk_pct, rr_ratio=rr_ratio)
+                    row = NtAccount(
+                        name=name, risk_usd=risk_usd, risk_pct=risk_pct,
+                        rr_ratio=rr_ratio, live_enabled=1 if live_enabled else 0,
+                    )
                     session.add(row)
                 session.commit()
             except Exception:

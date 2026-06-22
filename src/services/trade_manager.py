@@ -47,7 +47,8 @@ class TradeManager:
                  notifier: Notifier = None,
                  analytics: AnalyticsReporter = None,
                  accounts_repo=None,
-                 instrument: str | None = None):
+                 instrument: str | None = None,
+                 live_mode: bool = False):
         self.open_trades = []
         self.trade_repository = trade_repository
         self.socketio         = socketio
@@ -66,6 +67,7 @@ class TradeManager:
         self.risk_pct_per_trade = risk_pct_per_trade
         self.fee_per_rt       = fee_per_rt
         self._accounts_repo   = accounts_repo
+        self._live_mode       = live_mode
         self._lock = RLock()
 
         # Session end close config
@@ -141,6 +143,18 @@ class TradeManager:
             return set()
         try:
             return {a.name for a in self._accounts_repo.list_accounts() if a.name}
+        except Exception:
+            return set()
+
+    def _live_account_names(self) -> set[str]:
+        """Return only accounts eligible for live trading."""
+        if self._accounts_repo is None:
+            return set()
+        try:
+            return {
+                a.name for a in self._accounts_repo.list_accounts()
+                if a.name and getattr(a, "live_enabled", True)
+            }
         except Exception:
             return set()
 
@@ -426,18 +440,22 @@ class TradeManager:
         self._broker_handler.update_balance(self.account_balance)
 
         # In live multi-account mode, callers like the manual/test controller may
-        # not specify an account. Fall back to the first configured account so the
+        # not specify an account. Fall back to the first live-enabled account so the
         # executor can route the order correctly.
         if account is None:
-            current_accounts = self._current_account_names()
-            if current_accounts:
-                account = next(iter(current_accounts))
+            candidate_accounts = self._live_account_names() if self._live_mode else self._current_account_names()
+            if candidate_accounts:
+                account = next(iter(candidate_accounts))
             else:
                 # Some executors (e.g. MultiAccountExecutor) carry their own
                 # account list when no accounts repo is wired yet.
                 executor_configs = getattr(self.trade_executor, "account_configs", None)
                 if executor_configs:
-                    account = next((getattr(c, "name", None) for c in executor_configs if getattr(c, "name", None)), None)
+                    account = next(
+                        (getattr(c, "name", None) for c in executor_configs
+                         if getattr(c, "name", None) and (not self._live_mode or getattr(c, "live_enabled", True))),
+                        None,
+                    )
 
         result = self._open_use_case.execute(
             pair=pair, trade_type=trade_type, entry_price=entry_price,

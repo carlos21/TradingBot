@@ -33,6 +33,7 @@ def create_liquidity_strategy_v2(
     fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
     broker_spread: float = 0.0,
     accounts_repo: Any = None,
+    live_mode: bool = False,
 ) -> LiquidityStrategy:
     """Create and configure the default liquidity strategy (V2).
 
@@ -71,4 +72,5 @@ def create_liquidity_strategy_v2(
         decision_log_repository=repos.decision_logs,
         account_configs=numbers.account_configs,
         accounts_repo=accounts_repo,
+        live_mode=live_mode,
     )

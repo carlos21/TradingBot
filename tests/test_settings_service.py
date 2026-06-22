@@ -45,13 +45,14 @@ class TestSettingsServiceGetFullSettings:
 
     def test_with_accounts(self):
         svc = _make_service()
-        svc._accounts.upsert("TestAccount", risk_usd=100.0, risk_pct=1.0, rr_ratio=3.0)
+        svc._accounts.upsert("TestAccount", risk_usd=100.0, risk_pct=1.0, rr_ratio=3.0, live_enabled=False)
         settings = svc.get_full_settings()
         assert len(settings["accounts"]) == 1
         assert settings["accounts"][0]["name"] == "TestAccount"
         assert settings["accounts"][0]["risk_usd"] == 100.0
         assert settings["accounts"][0]["risk_pct"] == 1.0
         assert settings["accounts"][0]["rr_ratio"] == 3.0
+        assert settings["accounts"][0]["live_enabled"] is False
 
     def test_with_credentials(self):
         svc = _make_service()
@@ -113,7 +114,7 @@ class TestSettingsServiceSaveFullSettings:
             "trading": {},
             "network": {},
             "accounts": [
-                {"name": "Acct1", "risk_usd": 100.0, "risk_pct": 1.0, "rr_ratio": 3.0},
+                {"name": "Acct1", "risk_usd": 100.0, "risk_pct": 1.0, "rr_ratio": 3.0, "live_enabled": False},
                 {"name": "Acct2", "risk_usd": 200.0},
             ],
             "credentials": {},
@@ -122,8 +123,10 @@ class TestSettingsServiceSaveFullSettings:
         assert len(accounts) == 2
         assert accounts[0].name == "Acct1"
         assert accounts[0].risk_usd == 100.0
+        assert accounts[0].live_enabled is False
         assert accounts[1].name == "Acct2"
         assert accounts[1].risk_usd == 200.0
+        assert accounts[1].live_enabled is True
 
     def test_save_accounts_clears_existing(self):
         svc = _make_service()

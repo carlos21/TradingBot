@@ -35,6 +35,7 @@ export class SettingsManager {
       accountRisk: document.getElementById('settings-account-risk'),
       accountRiskPct: document.getElementById('settings-account-riskpct'),
       accountRr: document.getElementById('settings-account-rr'),
+      accountLive: document.getElementById('settings-account-live'),
       ntUser: document.getElementById('settings-nt-user'),
       ntUserList: document.getElementById('settings-nt-user-list'),
       ntPass: document.getElementById('settings-nt-pass'),
@@ -109,11 +110,15 @@ export class SettingsManager {
       const riskUsd = acct.risk_usd ? `$${acct.risk_usd}` : '-';
       const riskPct = acct.risk_pct ? `${acct.risk_pct}%` : '-';
       const rr = acct.rr_ratio ? `${acct.rr_ratio}` : '-';
+      const liveBadge = acct.live_enabled
+        ? '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-500/20 text-emerald-400">Live</span>'
+        : '<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-slate-600/30 text-slate-400">Off</span>';
       tr.innerHTML = `
         <td class="px-4 py-3 font-medium text-slate-100">${this.escapeHtml(acct.name)}</td>
         <td class="px-4 py-3 text-slate-300">${riskUsd}</td>
         <td class="px-4 py-3 text-slate-300">${riskPct}</td>
         <td class="px-4 py-3 text-slate-300">${rr}</td>
+        <td class="px-4 py-3">${liveBadge}</td>
         <td class="px-4 py-3 text-right">
           <button class="action-btn hover:text-accent-400 mr-1" title="Edit account">
             <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
@@ -135,16 +140,17 @@ export class SettingsManager {
     const risk = parseFloat(this.el.accountRisk.value) || null;
     const riskPct = parseFloat(this.el.accountRiskPct.value) || null;
     const rr = parseFloat(this.el.accountRr.value) || null;
+    const liveEnabled = this.el.accountLive.checked;
     if (!name) {
       this.showStatus('Account name is required', 'error');
       return;
     }
     const existing = this.accounts.findIndex(a => a.name === name);
     if (existing >= 0) {
-      this.accounts[existing] = { name, risk_usd: risk, risk_pct: riskPct, rr_ratio: rr };
+      this.accounts[existing] = { name, risk_usd: risk, risk_pct: riskPct, rr_ratio: rr, live_enabled: liveEnabled };
       this.showStatus('Account updated', 'success');
     } else {
-      this.accounts.push({ name, risk_usd: risk, risk_pct: riskPct, rr_ratio: rr });
+      this.accounts.push({ name, risk_usd: risk, risk_pct: riskPct, rr_ratio: rr, live_enabled: liveEnabled });
       this.showStatus('Account added', 'success');
     }
     this.renderAccounts();
@@ -156,6 +162,7 @@ export class SettingsManager {
     this.el.accountRisk.value = '';
     this.el.accountRiskPct.value = '';
     this.el.accountRr.value = '';
+    this.el.accountLive.checked = false;
     this.editingAccountName = null;
     this.resetAddAccountBtn();
   }
@@ -195,6 +202,7 @@ export class SettingsManager {
     this.el.accountRisk.value = acct.risk_usd ?? '';
     this.el.accountRiskPct.value = acct.risk_pct ?? '';
     this.el.accountRr.value = acct.rr_ratio ?? '';
+    this.el.accountLive.checked = acct.live_enabled === true;
     this.setEditAccountBtn();
   }
 

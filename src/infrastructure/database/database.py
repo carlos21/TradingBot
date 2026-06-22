@@ -86,12 +86,13 @@ class AppSetting(Base):
 class NtAccount(Base):
     __tablename__ = "nt_accounts"
 
-    id         = Column(Integer, primary_key=True, autoincrement=True)
-    name       = Column(String(100), nullable=False, unique=True)
-    risk_usd   = Column(Float, nullable=True)
-    risk_pct   = Column(Float, nullable=True)
-    rr_ratio   = Column(Float, nullable=True)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    id           = Column(Integer, primary_key=True, autoincrement=True)
+    name         = Column(String(100), nullable=False, unique=True)
+    risk_usd     = Column(Float, nullable=True)
+    risk_pct     = Column(Float, nullable=True)
+    rr_ratio     = Column(Float, nullable=True)
+    live_enabled = Column(Integer, default=1)  # 0/1 boolean; None treated as enabled
+    updated_at   = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class AppCredential(Base):
@@ -173,6 +174,11 @@ def setup_database(db_url: str = "sqlite:///./database.db"):
         if 'rr_ratio' not in nt_columns:
             with db.get_engine().connect() as conn:
                 conn.execute(text("ALTER TABLE nt_accounts ADD COLUMN rr_ratio FLOAT"))
+                conn.commit()
+        if 'live_enabled' not in nt_columns:
+            with db.get_engine().connect() as conn:
+                conn.execute(text("ALTER TABLE nt_accounts ADD COLUMN live_enabled INTEGER DEFAULT 1"))
+                conn.execute(text("UPDATE nt_accounts SET live_enabled = 1"))
                 conn.commit()
     if 'app_credentials' not in tables:
         AppCredential.__table__.create(db.get_engine(), checkfirst=True)

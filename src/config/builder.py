@@ -184,10 +184,11 @@ class AppBuilder:
 
         print(f"{log_timestamp()} [liquid] Starting ZeroMQ gateway...")
         if cfg.nt_accounts:
+            live_account_configs = [a for a in cfg.nt_accounts if getattr(a, "live_enabled", True)]
             ds, executor = create_multi_account_live_components(
                 cfg.pair,
                 logger,
-                account_configs=cfg.nt_accounts,
+                account_configs=live_account_configs,
                 risk_usd=cfg.risk_per_trade,
                 risk_pct=cfg.risk_pct_per_trade,
                 host=cfg.zmq_host,

@@ -47,6 +47,7 @@ class TsiCrossStrategy(BaseStrategy):
         logger: ILogger | None = None,
         account_configs=None,
         accounts_repo=None,
+        live_mode: bool = False,
     ):
         self._tsi_config = config or TsiCrossConfig()
         self._tsi_numbers = numbers
@@ -74,6 +75,7 @@ class TsiCrossStrategy(BaseStrategy):
             logger=logger,
             account_configs=account_configs,
             accounts_repo=accounts_repo,
+            live_mode=live_mode,
         )
 
         self._analyzer = TsiAnalyzer(

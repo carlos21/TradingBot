@@ -19,6 +19,7 @@ class AccountConfig:
     risk_usd: float | None = None
     risk_pct: float | None = None
     rr_ratio: float | None = None
+    live_enabled: bool = True
 
 
 @dataclass

@@ -81,10 +81,12 @@ class BaseStrategy:
         logger: ILogger | None = None,
         account_configs: list | None = None,
         accounts_repo=None,
+        live_mode: bool = False,
     ):
         self.min_stop_loss = float(min_stop_loss)
         self.logger = logger
         self.rr_ratio = float(rr_ratio)
+        self._live_mode = live_mode
         self.use_fractional_lots = use_fractional_lots
         self.fee_per_rt = fee_per_rt
         self.broker_spread = broker_spread
@@ -155,15 +157,27 @@ class BaseStrategy:
     # ------------------------------------------------------------------
 
     def _get_current_account_configs(self) -> list:
-        """Return fresh account configs from DB if available, else cached fallback."""
+        """Return fresh account configs from DB if available, else cached fallback.
+
+        In live mode only accounts explicitly marked ``live_enabled`` are used
+        for new trades so the admin can control which accounts actually trade.
+        """
         if self._accounts_repo is not None:
             try:
                 accounts = self._accounts_repo.list_accounts()
                 if accounts:
-                    return accounts
+                    return self._filter_live_accounts(accounts)
             except Exception:
                 pass
-        return self._account_configs
+        return self._filter_live_accounts(self._account_configs)
+
+    def _filter_live_accounts(self, accounts: list | None) -> list:
+        """Keep all accounts in non-live mode; only live-enabled ones in live mode."""
+        if not accounts:
+            return []
+        if not self._live_mode:
+            return list(accounts)
+        return [a for a in accounts if getattr(a, "live_enabled", True)]
 
     def _get_current_risk(self) -> tuple[float | None, float | None]:
         """Return (risk_per_trade, risk_pct_per_trade) from DB if available, else fallbacks."""

@@ -101,3 +101,11 @@ class TestAccountConfigValidation:
     def test_zero_account_rr_ratio_raises(self):
         with pytest.raises(ValueError, match="account rr_ratio must be positive"):
             AppConfig(nt_accounts=[AccountConfig(name="A1", rr_ratio=0.0)])
+
+    def test_account_live_enabled_defaults_to_true(self):
+        cfg = AppConfig(nt_accounts=[AccountConfig(name="A1")])
+        assert cfg.nt_accounts[0].live_enabled is True
+
+    def test_account_live_enabled_can_be_false(self):
+        cfg = AppConfig(nt_accounts=[AccountConfig(name="A1", live_enabled=False)])
+        assert cfg.nt_accounts[0].live_enabled is False
