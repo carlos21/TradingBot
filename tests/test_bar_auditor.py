@@ -65,7 +65,18 @@ class TestBarComparer:
         assert result.details[0].local_bar is None
         assert result.details[0].remote_bar is not None
 
-    def test_mismatched_ohlcv(self):
+    def test_volume_only_difference_does_not_count_as_drift(self):
+        local = [self._bar(100, 10.0, 11.0, 9.0, 10.5, 100)]
+        remote = [self._bar(100, 10.0, 11.0, 9.0, 10.5, 105)]
+        comparer = BarComparer()
+        result = comparer.compare(local, remote)
+
+        assert not result.has_drift
+        assert result.missing_count == 0
+        assert result.extra_count == 0
+        assert result.mismatch_count == 0
+
+    def test_mismatched_ohlc(self):
         local = [self._bar(100, 10.0, 11.0, 9.0, 10.5, 100)]
         remote = [self._bar(100, 10.0, 11.5, 9.0, 10.5, 100)]
         comparer = BarComparer()
@@ -326,7 +337,7 @@ class TestNinjaTraderBarAuditorLifecycle:
 
     def test_mismatch_only_drift_downgraded_to_warning(self, monkeypatch):
         """
-        OHLCV-only mismatches (no missing/extra bars) are expected NT behavior
+        OHLC-only mismatches (no missing/extra bars) are expected NT behavior
         (live stream values vs historical cache values). They should produce a
         warning, not a critical error, and must not fire on_drift.
         """
@@ -363,8 +374,8 @@ class TestNinjaTraderBarAuditorLifecycle:
         drift_errors = [call for call in logger.error.call_args_list if "DRIFT DETECTED" in str(call)]
         assert len(drift_errors) == 0, f"Expected no drift errors, got: {drift_errors}"
 
-        # Should log a warning about OHLCV mismatch
-        warning_calls = [call for call in logger.warning.call_args_list if "OHLCV mismatch" in str(call)]
+        # Should log a warning about OHLC mismatch
+        warning_calls = [call for call in logger.warning.call_args_list if "OHLC mismatch" in str(call)]
         assert len(warning_calls) == 1, f"Expected one OHLCV warning, got: {warning_calls}"
 
         # on_drift must NOT fire for mismatch-only drift

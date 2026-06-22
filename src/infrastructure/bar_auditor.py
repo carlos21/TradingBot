@@ -114,7 +114,7 @@ class BarComparer:
         - in both but OHLCV differ → mismatch (logs every differing field)
     """
 
-    FIELDS = ("open", "high", "low", "close", "volume")
+    FIELDS = ("open", "high", "low", "close")
 
     def compare(self, local: list[dict[str, Any]], remote: list[dict[str, Any]]) -> AuditResult:
         local_dups = self._find_duplicate_times(local)
@@ -330,7 +330,7 @@ class NinjaTraderBarAuditor:
                     )
                     if mismatch_only:
                         self._logger.warning(
-                            f"[BarAuditor] OHLCV mismatch (expected — NT live stream vs historical cache): {result.summary}"
+                            f"[BarAuditor] OHLC mismatch (expected — NT live stream vs historical cache): {result.summary}"
                         )
                         for d in result.details:
                             self._logger.warning(f"[BarAuditor]   {d}")

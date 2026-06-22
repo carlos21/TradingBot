@@ -65,7 +65,7 @@ class TestNinjaTraderParityChecker:
         assert gap.gap_type == "extra"
 
     def test_mismatch_detected(self):
-        """Same timestamp but different OHLCV → mismatch gap with field details."""
+        """Same timestamp but different OHLC → mismatch gap with field details."""
         local = [self._bar(100, 10.0, 11.0, 9.0, 10.5, 100)]
         remote = [self._bar(100, 10.0, 11.5, 9.0, 10.5, 105)]
         checker = NinjaTraderParityChecker(market_filter=MarketClosureFilter())
@@ -76,7 +76,7 @@ class TestNinjaTraderParityChecker:
         gap = result.gaps[0]
         assert gap.gap_type == "mismatch"
         assert "high" in gap.details
-        assert "volume" in gap.details
+        assert "volume" not in gap.details
 
     def test_market_closed_gap_excluded_from_alert(self):
         """A gap during CME maintenance should be in gaps list but all_good stays True."""
