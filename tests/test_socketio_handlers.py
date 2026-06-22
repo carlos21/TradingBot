@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.config.models import DEFAULT_HISTORY_DAYS
+from src.config.models import DEFAULT_HISTORY_HOURS
 from src.infrastructure.gateway.datasource import DataSourceState, ZMQDataSource
 from src.routes.socketio_handlers import register_socketio_handlers
 from tests.fakes import FakeDataSource, FakeLogger
@@ -92,7 +92,7 @@ class FakeZMQDataSource(ZMQDataSource):
         self._state = state
         self._refresh_calls = []
         self.pair = "MNQ"
-        self.history_days = DEFAULT_HISTORY_DAYS
+        self.history_hours = DEFAULT_HISTORY_HOURS
         self._cached_bars = cached_bars or []
 
     @property
@@ -105,7 +105,7 @@ class FakeZMQDataSource(ZMQDataSource):
     def request_refresh(self, days=None):
         if self._state == DataSourceState.REFRESHING:
             return
-        self._refresh_calls.append(days or self.history_days)
+        self._refresh_calls.append(days or self.history_hours)
 
 
 @pytest.fixture

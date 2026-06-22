@@ -1,12 +1,18 @@
+from __future__ import annotations
+
 import contextlib
 from datetime import datetime, timezone
 from threading import RLock
+from typing import TYPE_CHECKING
 
 from src.application.ports import EventPublisher
 from src.dbexception import DBNotFoundException
 from src.domain.repositories import LineRepository, TradeRepository
 from src.financial_calc import FinancialCalc
 from src.utils.app_logger import ILogger
+
+if TYPE_CHECKING:
+    from src.domain.readiness.protocols import IExecutionContext
 
 
 class LiquidityDualM1Strategy:
@@ -27,7 +33,17 @@ class LiquidityDualM1Strategy:
         logger: ILogger,
         point_value: float = 5.0,
         fee_per_rt: float = 2.88,
+        execution_context: IExecutionContext | None = None,
     ):
+        if execution_context is None:
+            # Local import avoids a circular dependency with the live_readiness package.
+            from src.application.live_readiness.trading_context import (
+                AlwaysEnabledTradingContext,
+            )
+
+            execution_context = AlwaysEnabledTradingContext()
+        self._execution_context = execution_context
+
         self.min_stop_loss = min_stop_loss
         self.max_bounce = max_bounce
         self.event_publisher = event_publisher
@@ -42,6 +58,16 @@ class LiquidityDualM1Strategy:
         self.strategy_lines = {}
         self.open_trades = []
         self.lock = RLock()
+
+    @property
+    def is_warmup(self) -> bool:
+        """Warm-up mode is derived from the injected execution context."""
+        return self._execution_context.is_warmup()
+
+    @property
+    def execution_context(self) -> IExecutionContext:
+        """Execution context that controls trading/warmup behavior."""
+        return self._execution_context
 
     def add_strategy_line(self, id: str, level: float, direction: str):
         """

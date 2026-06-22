@@ -287,6 +287,16 @@ class ReadinessMonitor:
             return
 
         try:
+            # Replay is done. Any live bars that arrived while replaying (or since)
+            # must be fed to the strategy so indicators can continue warming up.
+            # is_warmup is still True in this state, so entry triggers are disabled.
+            if len(self._bar_buffer) > 0:
+                if self._logger:
+                    self._logger.info(
+                        f"[Readiness] Flushing {len(self._bar_buffer)} buffered live bar(s) into strategy"
+                    )
+                self._bar_buffer.flush()
+
             if self._data_source is not None:
                 complete, reason = self._data_source.check_history_completeness()
                 if not complete:
@@ -300,6 +310,7 @@ class ReadinessMonitor:
                 return
             transitioned = self._state_machine.warmup_complete()
             if transitioned:
+                # Defensive: drain anything that arrived during the transition itself.
                 self._bar_buffer.flush()
                 if self._logger:
                     self._logger.info(

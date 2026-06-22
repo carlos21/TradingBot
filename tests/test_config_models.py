@@ -46,9 +46,9 @@ class TestAppConfigValidation:
         with pytest.raises(ValueError, match="broker_spread cannot be negative"):
             AppConfig(broker_spread=-0.5)
 
-    def test_zero_history_days_raises(self):
-        with pytest.raises(ValueError, match="history_days must be positive"):
-            AppConfig(history_days=0)
+    def test_zero_history_hours_raises(self):
+        with pytest.raises(ValueError, match="history_hours must be positive"):
+            AppConfig(history_hours=0)
 
     def test_zero_bars_per_second_raises(self):
         with pytest.raises(ValueError, match="bars_per_second must be positive"):

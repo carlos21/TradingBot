@@ -20,7 +20,7 @@ Usage:
 """
 
 
-from src.config.models import DEFAULT_HISTORY_DAYS
+from src.config.models import DEFAULT_HISTORY_HOURS
 from src.notifier import Notifier
 from src.utils.app_logger import ILogger
 
@@ -41,7 +41,7 @@ def create_live_components(
     command_port: int = 5556,
     query_port: int = 5557,
     heartbeat_port: int = 5558,
-    history_days: int = DEFAULT_HISTORY_DAYS,
+    history_hours: int = DEFAULT_HISTORY_HOURS,
     notifier: Notifier | None = None,
     instrument: str | None = None,
 ) -> tuple[ZMQDataSource, ZMQTradeExecutor]:
@@ -82,7 +82,7 @@ def create_live_components(
     gateway.set_account_names(account_names or [])
 
     # Create data source that uses the gateway (logger is required first param)
-    data_source = ZMQDataSource(logger, gateway=gateway, pair=pair, history_days=history_days, notifier=notifier)
+    data_source = ZMQDataSource(logger, gateway=gateway, pair=pair, history_hours=history_hours, notifier=notifier)
 
     # Create trade executor that uses the same gateway (logger is required)
     trade_executor = ZMQTradeExecutor(
@@ -114,7 +114,7 @@ def create_multi_account_live_components(
     query_port: int = 5557,
     heartbeat_port: int = 5558,
     accounts_repo=None,
-    history_days: int = DEFAULT_HISTORY_DAYS,
+    history_hours: int = DEFAULT_HISTORY_HOURS,
     notifier: Notifier | None = None,
     instrument: str | None = None,
 ) -> tuple[ZMQDataSource, MultiAccountExecutor]:
@@ -153,7 +153,7 @@ def create_multi_account_live_components(
         command_port=command_port,
         query_port=query_port,
         heartbeat_port=heartbeat_port,
-        history_days=history_days,
+        history_hours=history_hours,
         instrument=instrument,
     )
 

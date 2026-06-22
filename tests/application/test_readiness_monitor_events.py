@@ -242,20 +242,24 @@ class TestLiveBarRouting:
         assert processed == []
         assert len(monitor._bar_buffer) == 1
 
-    def test_live_bar_buffered_during_warmup(self) -> None:
+    def test_live_bar_processed_during_warmup_stays_warming(self) -> None:
         processed: list[dict[str, Any]] = []
         monitor, _strategy = _make_monitor(
             DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=False)
         )
         monitor._live_bar_processor = processed.append
+        monitor._bar_buffer._processor = processed.append
         monitor._state_machine.connect()
         monitor.on_history_complete(_make_bars())
 
         assert monitor._state_machine.state.name == "WARMING_UP"
         bar = {"time": 9999, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}
         monitor.on_live_bar(bar)
-        assert processed == []
-        assert len(monitor._bar_buffer) == 1
+        # The live bar is now fed to the strategy so indicators can keep warming,
+        # but the state must stay WARMING_UP until the policy reports warm.
+        assert [b["time"] for b in processed] == [9999]
+        assert monitor._state_machine.state.name == "WARMING_UP"
+        assert len(monitor._bar_buffer) == 0
 
     def test_buffered_bars_flushed_when_ready(self) -> None:
         processed: list[dict[str, Any]] = []
@@ -270,7 +274,10 @@ class TestLiveBarRouting:
         bar1 = {"time": 9999, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}
         bar2 = {"time": 10000, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}
         monitor.on_live_bar(bar1)
-        assert len(monitor._bar_buffer) == 1
+        # First live bar is processed while still warming up.
+        assert monitor._state_machine.state.name == "WARMING_UP"
+        assert [b["time"] for b in processed] == [9999]
+        assert len(monitor._bar_buffer) == 0
 
         # Now make policy warm and re-trigger completion check via another live bar
         monitor._warmup_policy = _FakeWarmupPolicy(warm=True)

@@ -6,7 +6,7 @@ from typing import Protocol
 
 from cryptography.fernet import Fernet
 
-from src.config.models import DEFAULT_HISTORY_DAYS, AccountConfig
+from src.config.models import DEFAULT_HISTORY_HOURS, AccountConfig
 
 
 class ISettingsRepository(Protocol):
@@ -84,7 +84,12 @@ class SettingsService:
                 "pair": all_settings.get("pair", "MNQ"),
                 "instrument": all_settings.get("instrument", ""),
                 "session_end": all_settings.get("session_end", "16:58"),
-                "history_days": all_settings.get("history_days", str(DEFAULT_HISTORY_DAYS)),
+                "history_hours": all_settings.get(
+                    "history_hours",
+                    str(int(all_settings.get("history_days", str(DEFAULT_HISTORY_HOURS // 24))) * 24)
+                    if "history_days" in all_settings
+                    else str(DEFAULT_HISTORY_HOURS)
+                ),
             },
             "network": {
                 "flask_port": all_settings.get("flask_port", "5001"),

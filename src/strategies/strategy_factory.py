@@ -69,6 +69,7 @@ class StrategyFactory:
         options=None,
         config=None,
         live_mode: bool = False,
+        execution_context=None,
         **kwargs: Any,
     ) -> TsiCrossStrategy:
         """Build a ``TsiCrossStrategy`` with sensible defaults."""
@@ -109,4 +110,5 @@ class StrategyFactory:
             account_configs=account_configs,
             accounts_repo=accounts_repo,
             live_mode=live_mode,
+            execution_context=execution_context,
         )

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum, auto
 from threading import RLock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.analytics import AnalyticsReporter, NoOpReporter
 from src.application.ports import EventPublisher
@@ -24,6 +24,9 @@ from src.services.trade_executor import NoOpExecutor
 from src.services.trade_manager import TradeManager
 from src.strategies.entry_context import EntryContext, EntryFilter
 from src.utils.app_logger import ILogger
+
+if TYPE_CHECKING:
+    from src.domain.readiness.protocols import IExecutionContext
 
 
 class DecisionEventCategory(Enum):
@@ -82,7 +85,17 @@ class BaseStrategy:
         account_configs: list | None = None,
         accounts_repo=None,
         live_mode: bool = False,
+        execution_context: IExecutionContext | None = None,
     ):
+        if execution_context is None:
+            # Local import avoids a circular dependency with the live_readiness package.
+            from src.application.live_readiness.trading_context import (
+                AlwaysEnabledTradingContext,
+            )
+
+            execution_context = AlwaysEnabledTradingContext()
+        self._execution_context = execution_context
+
         self.min_stop_loss = float(min_stop_loss)
         self.logger = logger
         self.rr_ratio = float(rr_ratio)
@@ -137,7 +150,20 @@ class BaseStrategy:
         self._group_start: int | None = None
 
         self.entry_filters: list[EntryFilter] = []
-        self.is_warmup = False
+
+    @property
+    def is_warmup(self) -> bool:
+        """Warm-up mode is derived from the injected execution context.
+
+        The readiness state machine is the single source of truth in live mode;
+        this property removes the risk of a mutable flag drifting out of sync.
+        """
+        return self._execution_context.is_warmup()
+
+    @property
+    def execution_context(self) -> IExecutionContext:
+        """Execution context that controls trading/warmup behavior."""
+        return self._execution_context
 
     # ------------------------------------------------------------------
     # Reset
@@ -150,7 +176,6 @@ class BaseStrategy:
             self.total_pnl = 0.0
             self._buf.clear()
             self._group_start = None
-            self.is_warmup = False
 
     # ------------------------------------------------------------------
     # Account / Risk helpers

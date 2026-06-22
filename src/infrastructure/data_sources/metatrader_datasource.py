@@ -25,7 +25,7 @@ class MetaTraderConfig:
     login:            int
     password:         str
     server:           str
-    history_days:     int
+    history_hours:    int
     host:             str = "0.0.0.0"  # nosec B104
     port:             int = 8888
     server_timezone:   str = 'Etc/GMT-3'
@@ -36,7 +36,7 @@ class MetaTraderDataSource(CombinedDataSource):
         self.symbol       = symbol
         self.pair         = symbol
         self.creds        = {'login': cfg.login, 'password': cfg.password, 'server': cfg.server}
-        self._history_days = cfg.history_days
+        self._history_hours = cfg.history_hours
         self._host        = cfg.host
         self._port        = cfg.port
         self._tz_server   = ZoneInfo(cfg.server_timezone)
@@ -63,7 +63,7 @@ class MetaTraderDataSource(CombinedDataSource):
             return []
 
         utc_to   = datetime.now(timezone.utc)
-        utc_from = utc_to - timedelta(days=self._history_days)
+        utc_from = utc_to - timedelta(hours=self._history_hours)
         rates    = mt5.copy_rates_range(self.symbol, tf_const, utc_from, utc_to)
 
         if rates is None or len(rates) == 0:

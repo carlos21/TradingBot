@@ -197,7 +197,7 @@ class AppBuilder:
                 query_port=cfg.zmq_query_port,
                 heartbeat_port=cfg.zmq_heartbeat_port,
                 accounts_repo=accounts_repo,
-                history_days=cfg.history_days,
+                history_hours=cfg.history_hours,
                 notifier=notifier,
                 instrument=cfg.instrument,
             )
@@ -213,7 +213,7 @@ class AppBuilder:
                 command_port=cfg.zmq_command_port,
                 query_port=cfg.zmq_query_port,
                 heartbeat_port=cfg.zmq_heartbeat_port,
-                history_days=cfg.history_days,
+                history_hours=cfg.history_hours,
                 notifier=notifier,
                 instrument=cfg.instrument,
             )

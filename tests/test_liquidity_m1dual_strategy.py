@@ -3,7 +3,7 @@
 import pytest
 
 from src.strategies.liquidity_m1dual.strategy import LiquidityDualM1Strategy
-from tests.fakes import FakeLineRepository, FakeLogger, FakeTradeRepository
+from tests.fakes import FakeLineRepository, FakeLogger, FakeTradeRepository, MutableTradingContext
 
 
 def _make_socketio():
@@ -15,25 +15,24 @@ def _make_socketio():
     return SocketIO()
 
 
-@pytest.fixture
-def strategy():
-    socketio = _make_socketio()
-    line_repo = FakeLineRepository()
-    trade_repo = FakeTradeRepository()
-    logger = FakeLogger()
-    strat = LiquidityDualM1Strategy(
+def _make_strategy(warmup: bool = False):
+    return LiquidityDualM1Strategy(
         min_stop_loss=10.0,
         max_bounce=50.0,
-        event_publisher=socketio,
-        line_repository=line_repo,
-        trade_repository=trade_repo,
+        event_publisher=_make_socketio(),
+        line_repository=FakeLineRepository(),
+        trade_repository=FakeTradeRepository(),
         extra_sl_space={"MNQ": 0.0},
-        logger=logger,
+        logger=FakeLogger(),
+        point_value=2.0,
+        fee_per_rt=1.5,
+        execution_context=MutableTradingContext(warmup=warmup),
     )
-    # Source code bug: these attrs are referenced but not set in __init__
-    strat.point_value = 2.0
-    strat.fee_per_rt = 1.5
-    return strat
+
+
+@pytest.fixture
+def strategy():
+    return _make_strategy()
 
 
 class TestLiquidityDualM1StrategyInit:
@@ -67,8 +66,8 @@ class TestLiquidityDualM1StrategyLineManagement:
 
 class TestLiquidityDualM1StrategyWarmup:
 
-    def test_warmup_skips_processing(self, strategy):
-        strategy.is_warmup = True
+    def test_warmup_skips_processing(self):
+        strategy = _make_strategy(warmup=True)
         strategy.add_strategy_line("L1", 100.0, "long")
         bar = {"open": 105.0, "high": 106.0, "low": 95.0, "close": 95.0, "time": 1000, "pair": "MNQ"}
         strategy.on_raw_bar(bar)
@@ -79,7 +78,6 @@ class TestLiquidityDualM1StrategyWarmup:
 class TestLiquidityDualM1StrategyLongLogic:
 
     def test_first_cross_down(self, strategy):
-        strategy.is_warmup = False
         strategy.add_strategy_line("L1", 100.0, "long")
         bar = {"open": 105.0, "high": 106.0, "low": 95.0, "close": 95.0, "time": 1000, "pair": "MNQ"}
         strategy.on_raw_bar(bar)
@@ -87,7 +85,6 @@ class TestLiquidityDualM1StrategyLongLogic:
         assert strategy.strategy_lines["L1"]["extreme"] == 95.0
 
     def test_bounce_tracking(self, strategy):
-        strategy.is_warmup = False
         strategy.add_strategy_line("L1", 100.0, "long")
         # First cross
         bar1 = {"open": 105.0, "high": 106.0, "low": 95.0, "close": 95.0, "time": 1000, "pair": "MNQ"}
@@ -98,7 +95,6 @@ class TestLiquidityDualM1StrategyLongLogic:
         assert strategy.strategy_lines["L1"]["extreme"] == 90.0
 
     def test_entry_cross_opens_trade(self, strategy):
-        strategy.is_warmup = False
         strategy.add_strategy_line("L1", 100.0, "long")
         # First cross
         bar1 = {"open": 105.0, "high": 106.0, "low": 95.0, "close": 95.0, "time": 1000, "pair": "MNQ"}
@@ -113,7 +109,6 @@ class TestLiquidityDualM1StrategyLongLogic:
         assert strategy.open_trades[0]["type"] == "long"
 
     def test_entry_cross_depth_too_large(self, strategy):
-        strategy.is_warmup = False
         strategy.max_bounce = 3.0  # Very small max bounce
         strategy.add_strategy_line("L1", 100.0, "long")
         # First cross with large drop
@@ -127,7 +122,6 @@ class TestLiquidityDualM1StrategyLongLogic:
         assert len(strategy.open_trades) == 0
 
     def test_no_entry_when_open_trade_exists(self, strategy):
-        strategy.is_warmup = False
         strategy.add_strategy_line("L1", 100.0, "long")
         # First cross
         bar1 = {"open": 105.0, "high": 106.0, "low": 95.0, "close": 95.0, "time": 1000, "pair": "MNQ"}
@@ -147,7 +141,6 @@ class TestLiquidityDualM1StrategyLongLogic:
 class TestLiquidityDualM1StrategyShortLogic:
 
     def test_first_cross_up(self, strategy):
-        strategy.is_warmup = False
         strategy.add_strategy_line("L1", 100.0, "short")
         bar = {"open": 95.0, "high": 106.0, "low": 94.0, "close": 105.0, "time": 1000, "pair": "MNQ"}
         strategy.on_raw_bar(bar)
@@ -155,7 +148,6 @@ class TestLiquidityDualM1StrategyShortLogic:
         assert strategy.strategy_lines["L1"]["extreme"] == 106.0
 
     def test_entry_cross_opens_short_trade(self, strategy):
-        strategy.is_warmup = False
         strategy.add_strategy_line("L1", 100.0, "short")
         # First cross up
         bar1 = {"open": 95.0, "high": 106.0, "low": 94.0, "close": 105.0, "time": 1000, "pair": "MNQ"}
@@ -171,7 +163,6 @@ class TestLiquidityDualM1StrategyShortLogic:
 class TestLiquidityDualM1StrategyCheckOpenTrades:
 
     def test_sl_hit_closes_long(self, strategy):
-        strategy.is_warmup = False
         strategy.add_strategy_line("L1", 100.0, "long")
         bar1 = {"open": 105.0, "high": 106.0, "low": 95.0, "close": 95.0, "time": 1000, "pair": "MNQ"}
         strategy.on_raw_bar(bar1)
@@ -186,7 +177,6 @@ class TestLiquidityDualM1StrategyCheckOpenTrades:
         assert len(strategy.open_trades) == 0
 
     def test_tp_hit_closes_long(self, strategy):
-        strategy.is_warmup = False
         strategy.add_strategy_line("L1", 100.0, "long")
         bar1 = {"open": 105.0, "high": 106.0, "low": 95.0, "close": 95.0, "time": 1000, "pair": "MNQ"}
         strategy.on_raw_bar(bar1)

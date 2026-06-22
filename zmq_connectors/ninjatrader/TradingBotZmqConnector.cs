@@ -1502,16 +1502,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 double priceDiff = isLong ? (exitPrice - entryPrice) : (entryPrice - exitPrice);
                 double grossPnl = priceDiff * quantity * pointValue;
 
+                // NinjaScript's Order class does not expose a Commission property, so we
+                // cannot deduct per-order commission here. Downstream consumers can apply
+                // their own commission model to the reported gross PnL if needed.
                 double commission = 0.0;
-                try
-                {
-                    commission = (entryOrder.Commission) + (exitOrder.Commission);
-                }
-                catch
-                {
-                    // Order.Commission may not be available in all NT versions; ignore.
-                    commission = 0.0;
-                }
 
                 double realizedPnl = grossPnl - commission;
                 return (realizedPnl, commission);

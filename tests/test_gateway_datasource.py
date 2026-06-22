@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from src.config.models import DEFAULT_HISTORY_DAYS
+from src.config.models import DEFAULT_HISTORY_HOURS
 from src.infrastructure.gateway.datasource import DataSourceState, ZMQDataSource
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
 from src.infrastructure.gateway.protocol import MessageType
@@ -91,7 +91,7 @@ class TestInitialization:
     def test_init_defaults(self, logger):
         ds = ZMQDataSource(logger=logger)
         assert ds.pair == "MNQ"
-        assert ds.history_days == DEFAULT_HISTORY_DAYS
+        assert ds.history_hours == DEFAULT_HISTORY_HOURS
         assert ds.logger is logger
         assert ds._gateway is None
         assert ds._owns_gateway is True
@@ -809,7 +809,7 @@ class TestHistoryEndHandling:
         Regression test for the closed-market empty-history issue.
 
         When NinjaTrader's first BarsRequest returns 0 bars (e.g. market closed
-        and history_days=1), the C# connector expands its lookback and sends a
+        and history_hours=24), the C# connector expands its lookback and sends a
         late gap-fill batch. The Python side must keep those bars so the UI can
         display the most recent session instead of a single stale candle.
         """

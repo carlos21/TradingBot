@@ -18,7 +18,10 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from zoneinfo import ZoneInfo
 
-from src.config.models import DEFAULT_HISTORY_DAYS
+
+import math
+
+from src.config.models import DEFAULT_HISTORY_HOURS
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.notifier import NoOpNotifier, Notifier
 from src.utils.app_logger import ILogger
@@ -71,7 +74,7 @@ class ZMQDataSource(CombinedDataSource):
         gateway: TradingGateway | None = None,
         gateway_config: GatewayConfig | None = None,
         pair: str = "MNQ",
-        history_days: int = DEFAULT_HISTORY_DAYS,
+        history_hours: int = DEFAULT_HISTORY_HOURS,
         notifier: Notifier | None = None,
     ):
         """
@@ -82,10 +85,11 @@ class ZMQDataSource(CombinedDataSource):
             gateway: Existing TradingGateway instance (or None to create one)
             gateway_config: Configuration for creating a new gateway
             pair: Trading pair symbol
+            history_hours: Number of hours of historical bars to load on connect
         """
         self.logger = logger
         self.pair = pair
-        self.history_days = history_days
+        self.history_hours = history_hours
         self._gateway = gateway
         self._gateway_config = gateway_config or GatewayConfig()
         self._owns_gateway = gateway is None
@@ -721,7 +725,12 @@ class ZMQDataSource(CombinedDataSource):
     # -------------------------------------------------------------------------
 
     def request_refresh(self, days: int = None) -> None:
-        """Request historical data refresh from platform."""
+        """Request historical data refresh from platform.
+
+        The public setting is in hours, but the NinjaTrader connector expects
+        whole days, so we convert hours to days (ceil) when no explicit day
+        count is provided.
+        """
         if self._state == DataSourceState.REFRESHING:
             self.logger.info("Refresh request ignored: already refreshing")
             return
@@ -729,7 +738,9 @@ class ZMQDataSource(CombinedDataSource):
             self.logger.info("Refresh request ignored: platform not connected")
             return
         gateway = self._ensure_gateway()
-        gateway.send_refresh_request(days=days or self.history_days)
+        if days is None:
+            days = max(1, math.ceil(self.history_hours / 24))
+        gateway.send_refresh_request(days=days)
 
     @property
     def is_streaming(self) -> bool:

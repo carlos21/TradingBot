@@ -270,14 +270,23 @@ class DbConfigLoader:
             Base.metadata.create_all(engine)
 
             settings = session.query(AppSetting).all()
+            settings_dict: dict[str, str] = {}
             for row in settings:
                 if row.value is None or row.value == "":
                     continue
+                settings_dict[row.key] = row.value
                 attr = self._key_to_attr(row.key)
                 if attr and hasattr(cfg, attr):
                     parsed = self._parse_attr(attr, row.value)
                     if parsed is not None:
                         setattr(cfg, attr, parsed)
+
+            # Migration: old `history_days` settings are converted to `history_hours`.
+            if "history_hours" not in settings_dict and "history_days" in settings_dict:
+                try:
+                    cfg.history_hours = int(settings_dict["history_days"]) * 24
+                except ValueError:
+                    pass
 
             accounts = session.query(NtAccount).all()
             if accounts:
@@ -335,7 +344,7 @@ class DbConfigLoader:
             "reentry_threshold": "reentry_threshold",
             "broker_mode": "broker_mode",
             "broker_spread": "broker_spread",
-            "history_days": "history_days",
+            "history_hours": "history_hours",
         }
         return mapping.get(key)
 
@@ -346,6 +355,6 @@ class DbConfigLoader:
                     "sl_level_tolerance", "min_cross_depth", "reentry_threshold", "broker_spread"):
             return float(value)
         if attr in ("flask_port", "zmq_market_port", "zmq_command_port", "zmq_query_port",
-                    "zmq_heartbeat_port", "daily_trades_limit", "max_open_trades", "history_days"):
+                    "zmq_heartbeat_port", "daily_trades_limit", "max_open_trades", "history_hours"):
             return int(value)
         return value

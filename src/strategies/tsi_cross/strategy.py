@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections import deque
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.application.ports import EventPublisher
 from src.domain.types import Direction
@@ -24,6 +24,9 @@ from src.strategies.tsi_cross.bounce_detector import BounceDetector, SwingBounce
 from src.strategies.tsi_cross.config import TsiCrossConfig, TsiCrossNumbers
 from src.strategies.tsi_cross.tsi_analyzer import TsiAnalyzer
 from src.utils.app_logger import ILogger
+
+if TYPE_CHECKING:
+    from src.domain.readiness.protocols import IExecutionContext
 
 
 class TsiCrossStrategy(BaseStrategy):
@@ -48,6 +51,7 @@ class TsiCrossStrategy(BaseStrategy):
         account_configs=None,
         accounts_repo=None,
         live_mode: bool = False,
+        execution_context: IExecutionContext | None = None,
     ):
         self._tsi_config = config or TsiCrossConfig()
         self._tsi_numbers = numbers
@@ -76,6 +80,7 @@ class TsiCrossStrategy(BaseStrategy):
             account_configs=account_configs,
             accounts_repo=accounts_repo,
             live_mode=live_mode,
+            execution_context=execution_context,
         )
 
         self._analyzer = TsiAnalyzer(

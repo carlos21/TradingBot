@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-DEFAULT_HISTORY_DAYS = 30
+DEFAULT_HISTORY_HOURS = 720  # 30 days
 
 
 @dataclass
@@ -209,8 +209,8 @@ class AppConfig:
     """Platform this instance connects to: ``"ninjatrader"`` or ``"metatrader"``.
     Drives UI labels, auto-launch behaviour, and admin tabs."""
 
-    history_days: int = DEFAULT_HISTORY_DAYS
-    """Number of days of historical bars to load from the platform on connect."""
+    history_hours: int = DEFAULT_HISTORY_HOURS
+    """Number of hours of historical bars to load from the platform on connect."""
 
     # ------------------------------------------------------------------
     # Infra
@@ -284,8 +284,8 @@ class AppConfig:
             raise ValueError("max_open_trades cannot be negative")
         if self.broker_spread < 0:
             raise ValueError("broker_spread cannot be negative")
-        if self.history_days <= 0:
-            raise ValueError("history_days must be positive")
+        if self.history_hours <= 0:
+            raise ValueError("history_hours must be positive")
         if self.bars_per_second <= 0:
             raise ValueError("bars_per_second must be positive")
         if not (0 < self.flask_port <= 65535):

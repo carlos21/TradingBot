@@ -4,7 +4,7 @@
 from src.domain.types import Direction
 from src.strategies.tsi_cross.config import TsiCrossConfig, TsiCrossNumbers
 from src.strategies.tsi_cross.strategy import TsiCrossStrategy
-from tests.fakes import DummySocketIO, FakeLogger
+from tests.fakes import DummySocketIO, FakeLogger, MutableTradingContext
 
 
 class FakeTradeRepository:
@@ -50,7 +50,7 @@ class FakeExecutor:
         pass
 
 
-def _make_strategy():
+def _make_strategy(execution_context=None):
     return TsiCrossStrategy(
         numbers=TsiCrossNumbers(),
         config=TsiCrossConfig(
@@ -63,13 +63,13 @@ def _make_strategy():
         trade_repository=FakeTradeRepository(),
         trade_manager=FakeTradeManager(),
         logger=FakeLogger(),
+        execution_context=execution_context,
     )
 
 
 class TestTsiCrossStrategy:
     def test_warmup_mode_does_not_open_trades(self):
-        strategy = _make_strategy()
-        strategy.is_warmup = True
+        strategy = _make_strategy(execution_context=MutableTradingContext(warmup=True))
         for i in range(100):
             strategy.on_raw_bar({
                 "time": 1700000000 + i * 300,

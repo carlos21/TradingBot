@@ -100,7 +100,10 @@ def _load_csv_bars() -> tuple[
     return warmup_bars_raw, live_bars_raw, scenario
 
 
-def _make_strategy(state_machine: ReadinessStateMachine) -> LiquidityStrategyV2:
+def _make_strategy(
+    state_machine: ReadinessStateMachine,
+    timeframes: list[str] | None = None,
+) -> LiquidityStrategyV2:
     logger = FakeLogger()
     event_publisher = DummySocketIO()
     trade_repo = FakeTradeRepository()
@@ -139,7 +142,7 @@ def _make_strategy(state_machine: ReadinessStateMachine) -> LiquidityStrategyV2:
         fixed_stop_loss=numbers.fixed_stop_loss,
         options=options,
         candle_config=get_prod_candle_config(),
-        timeframes=["3m", "5m", "15m", "30m", "1h"],
+        timeframes=timeframes if timeframes is not None else ["3m", "5m", "15m", "30m", "1h"],
         point_value=numbers.point_value,
         account_balance=numbers.account_balance,
         sl_levels=numbers.sl_levels,
@@ -294,3 +297,78 @@ class TestReadinessRegression:
         assert len(fake_ds.requests) == 2
 
         monitor.stop()
+
+
+class TestHigherTimeframeWarmupFromLiveStream:
+    """Regression: live bars must contribute to higher-timeframe warm-up.
+
+    The deadlock scenario: historical replay leaves the 1h timeframe at 19/30
+    bars, below the data-limited floor of 20. Without flushing live bars into
+    the strategy, the count can never grow and the system stays NOT READY.
+    """
+
+    def test_live_bars_unblock_1h_warmup(self) -> None:
+        state_machine = ReadinessStateMachine()
+        strategy = _make_strategy(state_machine, timeframes=["1h"])
+
+        processed_bars: list[dict[str, Any]] = []
+
+        def _process_bar(bar: dict[str, Any]) -> None:
+            processed_bars.append(bar)
+            strategy.on_raw_bar(bar)
+
+        fake_ds = _FakeDataSource()
+        monitor = ReadinessMonitor(
+            state_machine=state_machine,
+            warmup_orchestrator=WarmupOrchestrator(strategy, logger=strategy.logger),
+            warmup_policy=MinimumBarsWarmupPolicy(min_bars=30),
+            bar_buffer=LiveBarBuffer(processor=_process_bar),
+            live_bar_processor=_process_bar,
+            data_source=fake_ds,
+            logger=strategy.logger,
+        )
+        monitor.set_pair("MNQ")
+
+        state_machine.connect()
+
+        # 20 hourly bars → only 19 complete 1h windows (the first window is
+        # still open until the second bar arrives). This mirrors the 19/30
+        # condition from the bug report.
+        hour = 3600
+        start = (1700000000 // hour) * hour
+        hist_bars = [
+            {
+                "time": start + i * hour,
+                "open": 30000.0 + i,
+                "high": 30010.0 + i,
+                "low": 29990.0 + i,
+                "close": 30000.0 + i,
+                "volume": 100,
+                "pair": "MNQ",
+            }
+            for i in range(20)
+        ]
+
+        monitor.on_history_complete(hist_bars)
+        if monitor._warmup_thread is not None:
+            monitor._warmup_thread.join(timeout=30.0)
+
+        assert state_machine.state.name == "WARMING_UP"
+        assert len(strategy.get_history("1h", 30)) == 19
+
+        # One live bar finalizes the 20th 1h window. Because 20 >= the
+        # data-limited floor of 20, the policy should now report warm.
+        live_bar = {
+            "time": start + 20 * hour,
+            "open": 30020.0,
+            "high": 30030.0,
+            "low": 30010.0,
+            "close": 30020.0,
+            "volume": 100,
+            "pair": "MNQ",
+        }
+        monitor.on_live_bar(live_bar)
+
+        assert state_machine.state.name == "READY"
+        assert len(strategy.get_history("1h", 30)) == 20
+        assert len(processed_bars) == 1
