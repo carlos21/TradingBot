@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- NinjaTrader 8 runs on .NET Framework 4.8 -->
+    <TargetFramework>net48</TargetFramework>
+    <LangVersion>8.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\TradingBot.NinjaTrader.Zmq\TradingBot.NinjaTrader.Zmq.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Update these HintPaths to point to your NinjaTrader 8 installation.
+         The NinjaTrader API namespaces used are NinjaTrader.Cbi, NinjaTrader.Data,
+         NinjaTrader.Gui, and NinjaTrader.NinjaScript. They are typically in
+         NinjaTrader.Core.dll and/or NinjaTrader.Custom.dll under
+         Documents\NinjaTrader 8\bin\Custom\. -->
+    <Reference Include="NinjaTrader.Core">
+      <HintPath>$(USERPROFILE)\Documents\NinjaTrader 8\bin\Custom\NinjaTrader.Core.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="NinjaTrader.Custom">
+      <HintPath>$(USERPROFILE)\Documents\NinjaTrader 8\bin\Custom\NinjaTrader.Custom.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="WindowsBase" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="NetMQ" Version="4.0.2.2" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+</Project>

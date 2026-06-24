@@ -171,3 +171,16 @@ csvs/*
 !csvs/NQ_live.csv
 scenarios_out/
 tsi_test_out/
+
+# .NET build outputs
+bin/
+obj/
+*.dll
+*.exe
+*.pdb
+*.user
+*.suo
+.vs/
+*.cache
+project.lock.json
+artifacts/

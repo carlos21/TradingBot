@@ -1,0 +1,47 @@
+using System;
+using System.Collections.Generic;
+using TradingBot.NinjaTrader.Zmq.Domain;
+
+namespace TradingBot.NinjaTrader.Zmq.Application
+{
+    /// <summary>
+    /// Chain of Responsibility + Strategy pattern for command handling.
+    /// </summary>
+    public sealed class CommandDispatcher
+    {
+        private readonly Dictionary<string, ICommandHandler> _handlers = new Dictionary<string, ICommandHandler>();
+        private readonly ILogger _logger;
+
+        public CommandDispatcher(ILogger logger)
+        {
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        }
+
+        public void Register(ICommandHandler handler)
+        {
+            if (handler == null) throw new ArgumentNullException(nameof(handler));
+            _handlers[handler.CommandType] = handler;
+        }
+
+        public bool Dispatch(MessageEnvelope envelope)
+        {
+            if (envelope == null) return false;
+
+            if (_handlers.TryGetValue(envelope.MsgType, out var handler))
+            {
+                try
+                {
+                    return handler.Handle(envelope.Payload);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"Command handler failed for {envelope.MsgType}", ex);
+                    return false;
+                }
+            }
+
+            _logger.Warning($"Unknown command: {envelope.MsgType}");
+            return false;
+        }
+    }
+}

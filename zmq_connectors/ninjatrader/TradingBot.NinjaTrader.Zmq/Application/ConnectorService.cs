@@ -1,0 +1,951 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
+using TradingBot.NinjaTrader.Zmq.Domain;
+
+namespace TradingBot.NinjaTrader.Zmq.Application
+{
+    /// <summary>
+    /// Headless orchestration service for the ZMQ connector.
+    /// Contains all business logic without any dependency on NinjaTrader APIs.
+    /// </summary>
+    public sealed class ConnectorService : IDisposable
+    {
+        private readonly ZmqConfiguration _config;
+        private readonly IZmqNetwork _network;
+        private readonly ILogger _logger;
+        private readonly CommandDispatcher _dispatcher;
+        private readonly IOrderTracker _orderTracker;
+        private readonly IStreamingCoordinator _streamingCoordinator;
+        private readonly IAccountProvider _accountProvider;
+        private readonly IOrderExecutionService _orderExecutionService;
+        private readonly IInstrumentProvider _instrumentProvider;
+        private readonly IBarHistoryService _barHistoryService;
+        private readonly IPnLCalculator _pnlCalculator;
+        private readonly IConnectorClock _clock;
+        private readonly ITradeIdExtractor _tradeIdExtractor;
+
+        private Thread _commandThread;
+        private Thread _heartbeatThread;
+        private CancellationTokenSource _cts;
+
+        private volatile bool _connected;
+        private readonly object _connectLock = new object();
+        private readonly object _seqNumLock = new object();
+
+        private long _commandsReceived = 0;
+
+        private readonly HashSet<int> _processedSeqNums = new HashSet<int>();
+        private readonly Queue<int> _processedSeqNumQueue = new Queue<int>();
+        private const int MAX_TRACKED_SEQ_NUMS = 1000;
+
+        public bool IsConnected => _connected;
+        public IZmqNetwork Network => _network;
+        public string Pair => string.IsNullOrEmpty(_streamingCoordinator?.CurrentInstrument)
+            ? "" : _streamingCoordinator.CurrentInstrument.Split(' ')[0];
+
+        public ConnectorService(
+            ZmqConfiguration config,
+            IZmqNetwork network,
+            ILogger logger,
+            CommandDispatcher dispatcher,
+            IOrderTracker orderTracker,
+            IStreamingCoordinator streamingCoordinator,
+            IAccountProvider accountProvider,
+            IOrderExecutionService orderExecutionService,
+            IInstrumentProvider instrumentProvider,
+            IBarHistoryService barHistoryService,
+            IPnLCalculator pnlCalculator,
+            IConnectorClock clock,
+            ITradeIdExtractor tradeIdExtractor)
+        {
+            _config = config ?? throw new ArgumentNullException(nameof(config));
+            _network = network ?? throw new ArgumentNullException(nameof(network));
+            _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+            _orderTracker = orderTracker ?? throw new ArgumentNullException(nameof(orderTracker));
+            _streamingCoordinator = streamingCoordinator ?? throw new ArgumentNullException(nameof(streamingCoordinator));
+            _accountProvider = accountProvider ?? throw new ArgumentNullException(nameof(accountProvider));
+            _orderExecutionService = orderExecutionService ?? throw new ArgumentNullException(nameof(orderExecutionService));
+            _instrumentProvider = instrumentProvider ?? throw new ArgumentNullException(nameof(instrumentProvider));
+            _barHistoryService = barHistoryService ?? throw new ArgumentNullException(nameof(barHistoryService));
+            _pnlCalculator = pnlCalculator ?? throw new ArgumentNullException(nameof(pnlCalculator));
+            _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+            _tradeIdExtractor = tradeIdExtractor ?? throw new ArgumentNullException(nameof(tradeIdExtractor));
+        }
+
+        public void Connect()
+        {
+            lock (_connectLock)
+            {
+                if (_connected)
+                {
+                    _logger.Warning("Already connected, ignoring connect request");
+                    return;
+                }
+
+                try
+                {
+                    _logger.Info("Starting ZeroMQ connection...");
+
+                    _network.Start();
+                    _cts = new CancellationTokenSource();
+                    _connected = true;
+
+                    _clock.Sleep(300);
+
+                    _network.SendConnect("ninjatrader", _config.PlatformVersion, pair: Pair);
+                    _logger.Success("Connected to Python TradingBot via ZeroMQ");
+                    if (string.IsNullOrEmpty(Pair))
+                        _logger.Info("Waiting for subscribe command from Python with the instrument to use");
+
+                    RestoreOrderTracking();
+                    ReportPositionsToPython();
+
+                    _commandThread = new Thread(CommandLoop) { IsBackground = true, Name = "ZMQ-Commands" };
+                    _commandThread.Start();
+
+                    _heartbeatThread = new Thread(HeartbeatLoop) { IsBackground = true, Name = "ZMQ-Heartbeat" };
+                    _heartbeatThread.Start();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("Connection error", ex);
+                    _network.SendError("ninjatrader", "connection_failed", ex.Message, FormatExceptionDetails(ex));
+                    Disconnect("connection error");
+                }
+            }
+        }
+
+        public void Disconnect(string reason = null)
+        {
+            lock (_connectLock)
+            {
+                if (reason != null)
+                    _logger?.Info($"Disconnecting: {reason}");
+
+                _connected = false;
+                _cts?.Cancel();
+
+                _streamingCoordinator?.Stop();
+                _clock.Sleep(100);
+
+                if (_commandThread != null && _commandThread.IsAlive)
+                {
+                    _commandThread.Join(600);
+                    _commandThread = null;
+                }
+                if (_heartbeatThread != null && _heartbeatThread.IsAlive)
+                {
+                    _heartbeatThread.Join(600);
+                    _heartbeatThread = null;
+                }
+
+                _network?.Stop();
+                _orderTracker?.Clear();
+
+                lock (_seqNumLock)
+                {
+                    _processedSeqNums.Clear();
+                    _processedSeqNumQueue.Clear();
+                }
+
+                _cts?.Dispose();
+                _cts = null;
+
+                _commandsReceived = 0;
+
+                _logger?.Info("Disconnected from Python TradingBot");
+            }
+        }
+
+        public void Dispose() => Disconnect("disposing");
+
+        private void RestoreOrderTracking()
+        {
+            foreach (var account in _accountProvider.GetAccounts())
+            {
+                var orders = _orderExecutionService.GetAllOrders(account);
+                foreach (var order in orders)
+                {
+                    string tradeId = _tradeIdExtractor.ExtractTradeId(order.Name);
+                    if (string.IsNullOrEmpty(tradeId)) continue;
+
+                    if (_tradeIdExtractor.IsEntryOrder(order.Name))
+                    {
+                        _orderTracker.TrackEntry(tradeId, order);
+                        _logger.Info($"[Recovery] Restored entry order for {tradeId}");
+                    }
+                    else if (_tradeIdExtractor.IsStopOrder(order.Name))
+                    {
+                        _orderTracker.TrackStopLoss(tradeId, order);
+                        _logger.Info($"[Recovery] Restored stop order for {tradeId}");
+                    }
+                    else if (_tradeIdExtractor.IsTargetOrder(order.Name))
+                    {
+                        _orderTracker.TrackTakeProfit(tradeId, order);
+                        _logger.Info($"[Recovery] Restored target order for {tradeId}");
+                    }
+                    else if (_tradeIdExtractor.IsCloseOrder(order.Name))
+                    {
+                        _orderTracker.TrackCloseOrder(tradeId, order);
+                        _logger.Info($"[Recovery] Restored close order for {tradeId}");
+                    }
+                }
+            }
+        }
+
+        private void ReportPositionsToPython()
+        {
+            try
+            {
+                var positions = new JArray();
+                var trackedTradeIds = new HashSet<string>(_orderTracker.GetActiveTradeIds());
+
+                foreach (var tradeId in trackedTradeIds)
+                {
+                    if (!_orderTracker.TryGetEntry(tradeId, out var entryOrder))
+                        continue;
+
+                    _orderTracker.TryGetStopLoss(tradeId, out var stopOrder);
+                    _orderTracker.TryGetTakeProfit(tradeId, out var targetOrder);
+
+                    var position = new JObject
+                    {
+                        ["trade_id"] = tradeId,
+                        ["direction"] = entryOrder.OrderSide == OrderSide.Buy ? "long" : "short",
+                        ["entry_price"] = entryOrder.AverageFillPrice,
+                        ["quantity"] = entryOrder.Filled > 0 ? entryOrder.Filled : entryOrder.Quantity,
+                        ["order_state"] = entryOrder.OrderState.ToString(),
+                        ["account"] = entryOrder.AccountName,
+                    };
+
+                    if (stopOrder != null)
+                        position["stop_loss"] = stopOrder.StopPrice;
+                    if (targetOrder != null)
+                        position["take_profit"] = targetOrder.LimitPrice;
+
+                    positions.Add(position);
+                }
+
+                var untrackedOrders = new JArray();
+                foreach (var account in _accountProvider.GetAccounts())
+                {
+                    foreach (var order in _orderExecutionService.GetWorkingOrders(account))
+                    {
+                        string tradeIdFromName = _tradeIdExtractor.ExtractTradeId(order.Name);
+                        if (!string.IsNullOrEmpty(tradeIdFromName) && !trackedTradeIds.Contains(tradeIdFromName))
+                        {
+                            untrackedOrders.Add(new JObject
+                            {
+                                ["order_name"] = order.Name,
+                                ["trade_id"] = tradeIdFromName,
+                                ["order_type"] = order.OrderType.ToString(),
+                                ["account"] = account.Name,
+                            });
+                        }
+                    }
+                }
+
+                _logger.Info($"[Sync] Reporting {positions.Count} position(s) to Python (broker is source of truth)");
+
+                if (positions.Count > 0 || untrackedOrders.Count > 0)
+                    _network.SendPositionSync(positions, untrackedOrders);
+
+                _logger.Success($"[Sync] Complete: {positions.Count} positions reported");
+
+                if (untrackedOrders.Count > 0)
+                    _logger.Warning($"[Sync] Found {untrackedOrders.Count} untracked orders on broker");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("[Sync] Error reporting positions to Python", ex);
+            }
+        }
+
+        private void CommandLoop()
+        {
+            _logger.Info("Command loop started");
+
+            while (_connected && !_cts.Token.IsCancellationRequested)
+            {
+                MessageEnvelope envelope = null;
+                string tradeId = null;
+                try
+                {
+                    envelope = _network?.ReceiveCommand(timeoutMs: 100);
+                    if (envelope == null) continue;
+
+                    if (IsDuplicateCommand(envelope.SeqNum))
+                    {
+                        _logger.Warning($"Duplicate command ignored: {envelope.MsgType} seq={envelope.SeqNum}");
+                        _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, true, message: "duplicate");
+                        continue;
+                    }
+
+                    _commandsReceived++;
+
+                    try { tradeId = envelope.Payload?["trade_id"]?.ToString(); }
+                    catch (Exception ex) { _logger.Warning($"Failed to extract trade_id from envelope: {ex.Message}"); }
+
+                    if (_dispatcher == null)
+                    {
+                        _logger.Error("Dispatcher is null, cannot process command");
+                        _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, false, tradeId, "dispatcher not available");
+                        continue;
+                    }
+
+                    bool dispatchSuccess = _dispatcher.Dispatch(envelope);
+                    if (dispatchSuccess)
+                        _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, true, tradeId);
+                    else
+                    {
+                        _logger.Error($"Command dispatch failed: {envelope.MsgType}");
+                        _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, false, tradeId, "handler returned failure");
+                        _network?.SendError("ninjatrader", "command_dispatch_failed", $"{envelope.MsgType}: handler returned failure");
+                    }
+
+                    if (_commandsReceived % 10 == 0) UpdateStats();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("Command loop error", ex);
+                    try
+                    {
+                        _network?.SendCommandAck(
+                            envelope?.MsgType ?? "unknown",
+                            envelope?.SeqNum ?? 0,
+                            false,
+                            tradeId,
+                            $"Command loop error: {ex.Message}");
+                    }
+                    catch (Exception ackEx)
+                    {
+                        _logger.Error("Failed to send error ack", ackEx);
+                    }
+                    _network?.SendError("ninjatrader", "command_loop_error", ex.Message, FormatExceptionDetails(ex));
+                }
+            }
+
+            _logger.Info("Command loop stopped");
+        }
+
+        private bool IsDuplicateCommand(int seqNum)
+        {
+            if (seqNum <= 0) return false;
+
+            lock (_seqNumLock)
+            {
+                if (_processedSeqNums.Contains(seqNum))
+                    return true;
+
+                _processedSeqNums.Add(seqNum);
+
+                if (_processedSeqNums.Count > MAX_TRACKED_SEQ_NUMS)
+                {
+                    int evictCount = MAX_TRACKED_SEQ_NUMS / 5;
+                    for (int i = 0; i < evictCount && _processedSeqNumQueue.Count > 0; i++)
+                        _processedSeqNums.Remove(_processedSeqNumQueue.Dequeue());
+                }
+                _processedSeqNumQueue.Enqueue(seqNum);
+
+                return false;
+            }
+        }
+
+        private void HeartbeatLoop()
+        {
+            _clock.Sleep(500);
+
+            while (_connected && !_cts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    _network?.SendHeartbeat("ninjatrader", "ok");
+
+                    for (int i = 0; i < 50 && _connected && !_cts.Token.IsCancellationRequested; i++)
+                        _clock.Sleep(100);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning("Heartbeat error: " + ex.Message);
+                    _network?.SendError("ninjatrader", "heartbeat_error", ex.Message);
+                }
+            }
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // Order / Execution Updates (called by the presentation layer adapter)
+        // ═══════════════════════════════════════════════════════════════════
+
+        public void OnOrderUpdate(BrokerOrder order)
+        {
+            try
+            {
+                if (order == null)
+                {
+                    _logger.Warning("Order update with no associated order");
+                    return;
+                }
+
+                _logger.Info($"ORDER UPDATE: {order.Name} state={order.OrderState} account={order.AccountName}");
+                string tradeIdFromName = _tradeIdExtractor.ExtractTradeId(order.Name);
+
+                if (_tradeIdExtractor.IsStopOrder(order.Name))
+                {
+                    if (!string.IsNullOrEmpty(tradeIdFromName))
+                    {
+                        _orderTracker.TrackStopLoss(tradeIdFromName, order);
+                        _logger.Info($"TRACKING stop order for {tradeIdFromName} (from name)");
+                    }
+                    else
+                    {
+                        _logger.Error($"CRITICAL: Stop order '{order.Name}' has no trade_id in name - cannot track!");
+                        _network.SendError("ninjatrader", "order_tracking_failed", $"Stop order '{order.Name}' missing trade_id in name");
+                    }
+                }
+                else if (_tradeIdExtractor.IsTargetOrder(order.Name))
+                {
+                    if (!string.IsNullOrEmpty(tradeIdFromName))
+                    {
+                        _orderTracker.TrackTakeProfit(tradeIdFromName, order);
+                        _logger.Info($"TRACKING target order for {tradeIdFromName} (from name)");
+                    }
+                    else
+                    {
+                        _logger.Error($"CRITICAL: Target order '{order.Name}' has no trade_id in name - cannot track!");
+                        _network.SendError("ninjatrader", "order_tracking_failed", $"Target order '{order.Name}' missing trade_id in name");
+                    }
+                }
+                else if (_tradeIdExtractor.IsEntryOrder(order.Name))
+                {
+                    if (!string.IsNullOrEmpty(tradeIdFromName))
+                    {
+                        _orderTracker.TrackEntry(tradeIdFromName, order);
+                        _logger.Info($"TRACKING entry order for {tradeIdFromName} (from name)");
+                    }
+                    else
+                    {
+                        _logger.Error($"CRITICAL: Entry order '{order.Name}' has no trade_id in name - cannot track!");
+                        _network.SendError("ninjatrader", "order_tracking_failed", $"Entry order '{order.Name}' missing trade_id in name");
+                    }
+                }
+                else if (_tradeIdExtractor.IsCloseOrder(order.Name))
+                {
+                    if (!string.IsNullOrEmpty(tradeIdFromName))
+                    {
+                        _orderTracker.TrackCloseOrder(tradeIdFromName, order);
+                        _logger.Info($"TRACKING close order for {tradeIdFromName} (from name)");
+                    }
+                    else
+                    {
+                        _logger.Error($"CRITICAL: Close order '{order.Name}' has no trade_id in name - cannot track!");
+                        _network.SendError("ninjatrader", "order_tracking_failed", $"Close order '{order.Name}' missing trade_id in name");
+                    }
+                }
+
+                if (order.OrderState == OrderState.Cancelled &&
+                    (_tradeIdExtractor.IsStopOrder(order.Name) || _tradeIdExtractor.IsTargetOrder(order.Name)))
+                {
+                    HandleCancelledBracketOrder(order);
+                }
+
+                if (order.OrderState == OrderState.Rejected || order.OrderState == OrderState.Cancelled)
+                {
+                    string oid = _tradeIdExtractor.ExtractTradeId(order.Name);
+
+                    if (order.OrderState == OrderState.Rejected && _tradeIdExtractor.IsEntryOrder(order.Name) && !string.IsNullOrEmpty(oid))
+                        _orderTracker.RemoveTrade(oid);
+
+                    if (order.OrderState == OrderState.Cancelled && _tradeIdExtractor.IsEntryOrder(order.Name) && !string.IsNullOrEmpty(oid))
+                    {
+                        if (_orderTracker.IsClosePending(oid))
+                        {
+                            _logger.Info($"[Close-Pending] Entry cancel confirmed for {oid} — cleaning up tracking");
+                            _orderTracker.RemoveTrade(oid);
+                        }
+                    }
+
+                    if (order.OrderState == OrderState.Cancelled &&
+                        (_tradeIdExtractor.IsStopOrder(order.Name) || _tradeIdExtractor.IsTargetOrder(order.Name)))
+                    {
+                        if (_orderTracker.IsExpectedCancellation(order.Name))
+                        {
+                            _orderTracker.RemoveExpectedCancellation(order.Name);
+                            return;
+                        }
+                    }
+
+                    _network.SendError("ninjatrader", "order_state", $"Order {order.Name} is {order.OrderState}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("Order update error", ex);
+            }
+        }
+
+        private void HandleCancelledBracketOrder(BrokerOrder order)
+        {
+            string tid = _tradeIdExtractor.ExtractTradeId(order.Name);
+            bool wasExpected = _orderTracker.IsExpectedCancellation(order.Name);
+            string modifyKey = !string.IsNullOrEmpty(tid)
+                ? (_tradeIdExtractor.IsStopOrder(order.Name) ? tid + ":sl" : tid + ":tp")
+                : null;
+
+            if (modifyKey == null || !_orderTracker.TryGetPendingModify(modifyKey, out var modInfo))
+                return;
+
+            if (!wasExpected)
+            {
+                _logger.Warning($"Order {order.Name} was cancelled unexpectedly. Discarding pending modify.");
+                _orderTracker.RemovePendingModify(modifyKey);
+                return;
+            }
+
+            if (!_orderTracker.TryGetEntry(tid, out _))
+            {
+                _logger.Warning($"Order {order.Name} cancelled but trade {tid} no longer active. Discarding pending modify.");
+                _orderTracker.RemovePendingModify(modifyKey);
+                return;
+            }
+
+            try
+            {
+                var account = ResolveAccountForOrder(order);
+                if (account == null)
+                {
+                    _logger.Error($"Cannot create replacement order for {tid}: account not found");
+                    _orderTracker.RemovePendingModify(modifyKey);
+                    return;
+                }
+
+                BrokerOrder newOrder;
+                if (modInfo.IsTarget)
+                {
+                    newOrder = _orderExecutionService.CreateTakeProfitOrder(
+                        modInfo.Instrument, account, modInfo.OrderSide, modInfo.Quantity, modInfo.NewPrice, tid);
+                }
+                else
+                {
+                    newOrder = _orderExecutionService.CreateStopLossOrder(
+                        modInfo.Instrument, account, modInfo.OrderSide, modInfo.Quantity, modInfo.NewPrice, tid);
+                }
+
+                if (newOrder != null)
+                {
+                    _orderExecutionService.SubmitOrder(newOrder);
+                    _orderTracker.RemovePendingModify(modifyKey);
+                    if (modInfo.IsTarget)
+                    {
+                        _orderTracker.TrackTakeProfit(tid, newOrder);
+                        _logger.Success($"Modified TP for {tid} to {modInfo.NewPrice}");
+                        _network.SendTradeLog(tid, "NT:MODIFY", $"Take profit changed to {modInfo.NewPrice}");
+                    }
+                    else
+                    {
+                        _orderTracker.TrackStopLoss(tid, newOrder);
+                        _logger.Success($"Modified SL for {tid} to {modInfo.NewPrice}");
+                        _network.SendTradeLog(tid, "NT:MODIFY", $"Stop loss changed to {modInfo.NewPrice}");
+                    }
+                }
+                else
+                {
+                    _orderTracker.RemovePendingModify(modifyKey);
+                    _logger.Error($"Failed to create replacement order for {tid}");
+                    _network.SendError("ninjatrader", "order_modify_failed", $"Failed to create replacement for {tid}");
+                }
+            }
+            catch (Exception modEx)
+            {
+                _orderTracker.RemovePendingModify(modifyKey);
+                _logger.Error($"Error creating replacement order for {tid}", modEx);
+                _network.SendError("ninjatrader", "order_modify_failed", $"Replacement failed for {tid}: {modEx.Message}");
+            }
+        }
+
+        public void OnExecutionUpdate(BrokerOrder order, double fillPrice, int quantity)
+        {
+            try
+            {
+                if (order == null)
+                {
+                    _logger.Warning("Execution update with no associated order");
+                    return;
+                }
+
+                string execTradeId = _tradeIdExtractor.ExtractTradeId(order.Name) ?? order.Name;
+                _logger.Info($"EXECUTION: {order.Name} @ {fillPrice} qty={quantity} account={order.AccountName}");
+                _network.SendTradeLog(execTradeId, "NT:EXECUTION", $"Execution: {quantity} @ {fillPrice}");
+
+                if (_tradeIdExtractor.IsEntryOrder(order.Name))
+                    HandleEntryFill(order, fillPrice);
+                else if (_tradeIdExtractor.IsStopOrder(order.Name))
+                    HandleStopLossFill(order, fillPrice);
+                else if (_tradeIdExtractor.IsTargetOrder(order.Name))
+                    HandleTakeProfitFill(order, fillPrice);
+                else if (_tradeIdExtractor.IsCloseOrder(order.Name))
+                    HandleCloseFill(order, fillPrice);
+                else
+                    HandlePotentialManualClose(order, fillPrice);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("Execution update error", ex);
+            }
+        }
+
+        private void HandleEntryFill(BrokerOrder order, double fillPrice)
+        {
+            if (order.OrderState != OrderState.Filled)
+            {
+                _logger.Info($"Entry {order.Name} state={order.OrderState} ({order.Filled}/{order.Quantity}), waiting for full fill before creating bracket.");
+                return;
+            }
+
+            string tradeId = _tradeIdExtractor.ExtractTradeId(order.Name);
+            if (string.IsNullOrEmpty(tradeId) || !_orderTracker.TryGetPendingEntry(tradeId, out var entry))
+            {
+                _logger.Warning($"PendingEntryInfo missing for {tradeId} — querying Python for trade details (crash recovery)");
+                entry = TryRecoverPendingEntryFromPython(tradeId);
+                if (entry == null)
+                {
+                    _logger.Error($"CRITICAL: Entry fill for order '{order.Name}' not found in tracking AND Python query failed! Position has NO SL/TP!");
+                    _network.SendError("ninjatrader", "fill_tracking_failed",
+                        $"Entry fill for order '{order.Name}' not recoverable — UNPROTECTED POSITION");
+                    return;
+                }
+                _logger.Success($"[Recovery] Recovered PendingEntryInfo for {tradeId} from Python: dir={entry.Direction} sl={entry.SlPoints} rr={entry.RrRatio}");
+            }
+
+            if (_orderTracker.IsClosePending(tradeId))
+            {
+                _logger.Warning($"[Close-Pending] Entry {tradeId} filled @ {fillPrice} despite cancel — flattening position immediately");
+                var flatAccount = ResolveAccountForOrder(order);
+                if (flatAccount != null && order.Instrument != null)
+                {
+                    bool isLong = entry.Direction == "long";
+                    var flatSide = isLong ? OrderSide.Sell : OrderSide.BuyToCover;
+                    int flatQty = order.Filled > 0 ? order.Filled : order.Quantity;
+                    var flatOrder = _orderExecutionService.CreateMarketCloseOrder(order.Instrument, flatAccount, flatSide, flatQty, tradeId);
+                    if (flatOrder != null)
+                    {
+                        _orderExecutionService.SubmitOrder(flatOrder);
+                        _logger.Success($"[Close-Pending] Submitted market close for {tradeId}: {flatSide} {flatQty} contracts");
+                    }
+                }
+                _network.SendTradeLog(tradeId, "NT:CLOSE_PENDING_FILL", $"Entry filled @ {fillPrice} after close request — flattened immediately");
+                _orderTracker.RemoveTrade(tradeId);
+                return;
+            }
+
+            var account = ResolveAccountForOrder(order);
+            if (account == null)
+            {
+                _logger.Error($"CRITICAL: Entry fill for {tradeId} — account not found!");
+                _network.SendError("ninjatrader", "fill_tracking_failed",
+                    $"Entry fill for {tradeId}: account not found");
+                return;
+            }
+
+            var (sl, tp) = CalculateSlTp(fillPrice, entry.Direction, entry.SlPoints, entry.RrRatio);
+
+            if (order.Instrument != null && !_orderTracker.TryGetStopLoss(tradeId, out _))
+            {
+                try
+                {
+                    bool isLong = entry.Direction == "long";
+                    var closeSide = isLong ? OrderSide.Sell : OrderSide.BuyToCover;
+                    int qty = order.Filled > 0 ? order.Filled : order.Quantity;
+
+                    var stopOrder = _orderExecutionService.CreateStopLossOrder(order.Instrument, account, closeSide, qty, sl, tradeId);
+                    var targetOrder = _orderExecutionService.CreateTakeProfitOrder(order.Instrument, account, closeSide, qty, tp, tradeId);
+
+                    if (stopOrder != null)
+                    {
+                        _orderExecutionService.SubmitOrder(stopOrder);
+                        _orderTracker.TrackStopLoss(tradeId, stopOrder);
+                    }
+                    if (targetOrder != null)
+                    {
+                        _orderExecutionService.SubmitOrder(targetOrder);
+                        _orderTracker.TrackTakeProfit(tradeId, targetOrder);
+                    }
+
+                    if (stopOrder != null && targetOrder != null)
+                    {
+                        _logger.Success($"BRACKET CREATED: {tradeId} SL={sl} TP={tp} qty={qty} account={account.Name}");
+                        _network.SendTradeLog(tradeId, "NT:ORDER", $"Bracket created: SL={sl} TP={tp} qty={qty}");
+                    }
+                    else
+                    {
+                        _logger.Warning($"Partial bracket for {tradeId}: stop={(stopOrder != null)} target={(targetOrder != null)}");
+                    }
+                }
+                catch (Exception bracketEx)
+                {
+                    _logger.Error($"Failed to create bracket orders for {tradeId}", bracketEx);
+                    _network.SendError("ninjatrader", "bracket_creation_failed", $"Failed to create SL/TP for {tradeId}: {bracketEx.Message}");
+                }
+            }
+
+            _logger.Success($"ENTRY FILL: {tradeId} @ {fillPrice} SL={sl} TP={tp} account={account.Name}");
+            _network.SendEntryFill(tradeId, fillPrice, sl, tp, account: account.Name);
+            _network.SendTradeLog(tradeId, "NT:FILL", $"Entry filled @ {fillPrice}");
+        }
+
+        private PendingEntryInfo TryRecoverPendingEntryFromPython(string tradeId)
+        {
+            try
+            {
+                var positions = _network.QueryPositions(timeoutMs: 3000);
+                if (positions == null || positions.Count == 0) return null;
+
+                foreach (var pos in positions)
+                {
+                    var posTradeId = pos["trade_id"]?.ToString();
+                    if (posTradeId != tradeId) continue;
+
+                    var direction = pos["direction"]?.ToString();
+                    var sl = pos["stop_loss"]?.Value<double>() ?? 0;
+                    var tp = pos["take_profit"]?.Value<double>() ?? 0;
+                    var entryPrice = pos["entry_price"]?.Value<double>() ?? 0;
+
+                    if (string.IsNullOrEmpty(direction) || entryPrice <= 0 || sl <= 0)
+                    {
+                        _logger.Warning($"[Recovery] Python position for {tradeId} has incomplete data: dir={direction} entry={entryPrice} sl={sl}");
+                        return null;
+                    }
+
+                    double slPoints = Math.Abs(entryPrice - sl);
+                    double risk = slPoints;
+                    double rrRatio = risk > 0 && tp > 0 ? Math.Abs(tp - entryPrice) / risk : 5.0;
+
+                    return new PendingEntryInfo(direction, slPoints, rrRatio);
+                }
+
+                _logger.Warning($"[Recovery] Trade {tradeId} not found in Python positions");
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"[Recovery] Failed to query Python for {tradeId}: {ex.Message}");
+                return null;
+            }
+        }
+
+        private void HandleStopLossFill(BrokerOrder order, double fillPrice)
+        {
+            string tradeId = _tradeIdExtractor.ExtractTradeId(order.Name);
+            if (string.IsNullOrEmpty(tradeId) || !_orderTracker.TryGetStopLoss(tradeId, out _))
+            {
+                _logger.Error($"CRITICAL: SL fill for order '{order.Name}' not found in tracking!");
+                _network.SendError("ninjatrader", "fill_tracking_failed", $"SL fill for order '{order.Name}' not found in tracking");
+                return;
+            }
+
+            if (order.OrderState != OrderState.Filled)
+            {
+                _logger.Warning($"Stop {order.Name} state={order.OrderState}, waiting for full fill.");
+                return;
+            }
+
+            var entryOrder = GetEntryForExit(tradeId);
+            var pnl = _pnlCalculator.Calculate(entryOrder, order);
+            _logger.Warning($"EXIT FILL (SL): {tradeId} @ {fillPrice} account={order.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+            _network.SendExitFill(tradeId, fillPrice, "SL", account: order.AccountName, realizedPnl: pnl?.RealizedPnl);
+            _network.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+            CancelWorkingBracketOrders(tradeId, order.AccountName);
+            _orderTracker.RemoveTrade(tradeId);
+        }
+
+        private void HandleTakeProfitFill(BrokerOrder order, double fillPrice)
+        {
+            string tradeId = _tradeIdExtractor.ExtractTradeId(order.Name);
+            if (string.IsNullOrEmpty(tradeId) || !_orderTracker.TryGetTakeProfit(tradeId, out _))
+            {
+                _logger.Error($"CRITICAL: TP fill for order '{order.Name}' not found in tracking!");
+                _network.SendError("ninjatrader", "fill_tracking_failed", $"TP fill for order '{order.Name}' not found in tracking");
+                return;
+            }
+
+            if (order.OrderState != OrderState.Filled)
+            {
+                _logger.Warning($"Target {order.Name} state={order.OrderState}, waiting for full fill.");
+                return;
+            }
+
+            var entryOrder = GetEntryForExit(tradeId);
+            var pnl = _pnlCalculator.Calculate(entryOrder, order);
+            _logger.Success($"EXIT FILL (TP): {tradeId} @ {fillPrice} account={order.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+            _network.SendExitFill(tradeId, fillPrice, "TP", account: order.AccountName, realizedPnl: pnl?.RealizedPnl);
+            _network.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+            CancelWorkingBracketOrders(tradeId, order.AccountName);
+            _orderTracker.RemoveTrade(tradeId);
+        }
+
+        private void HandleCloseFill(BrokerOrder order, double fillPrice)
+        {
+            string tradeId = _tradeIdExtractor.ExtractTradeId(order.Name);
+            if (string.IsNullOrEmpty(tradeId) || !_orderTracker.TryGetCloseOrder(tradeId, out _))
+            {
+                _logger.Error($"CRITICAL: Close fill for order '{order.Name}' not found in tracking!");
+                _network.SendError("ninjatrader", "fill_tracking_failed", $"Close fill for order '{order.Name}' not found in tracking");
+                return;
+            }
+
+            if (order.OrderState != OrderState.Filled)
+            {
+                _logger.Warning($"Close {order.Name} state={order.OrderState}, waiting for full fill.");
+                return;
+            }
+
+            var entryOrder = GetEntryForExit(tradeId);
+            var pnl = _pnlCalculator.Calculate(entryOrder, order);
+            _logger.Success($"POSITION CLOSED: {tradeId} @ {fillPrice} account={order.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+            _network.SendExitFill(tradeId, fillPrice, "CLOSE", account: order.AccountName, realizedPnl: pnl?.RealizedPnl);
+            _network.SendTradeLog(tradeId, "NT:FILL", $"Position closed @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+            CancelWorkingBracketOrders(tradeId, order.AccountName);
+            _orderTracker.RemoveTrade(tradeId);
+        }
+
+        private void HandlePotentialManualClose(BrokerOrder closeOrder, double fillPrice)
+        {
+            if (closeOrder?.Instrument == null) return;
+
+            foreach (var tradeId in _orderTracker.GetActiveTradeIds())
+            {
+                if (!_orderTracker.TryGetEntry(tradeId, out var entryOrder)) continue;
+                if (entryOrder.Instrument?.MasterInstrumentName != closeOrder.Instrument.MasterInstrumentName) continue;
+                if (entryOrder.OrderState != OrderState.Filled && entryOrder.OrderState != OrderState.PartFilled) continue;
+                if (!string.IsNullOrEmpty(closeOrder.AccountName) && !string.IsNullOrEmpty(entryOrder.AccountName) &&
+                    closeOrder.AccountName != entryOrder.AccountName) continue;
+
+                bool isOpposing = false;
+                if (entryOrder.OrderSide == OrderSide.Buy && closeOrder.OrderSide == OrderSide.Sell)
+                    isOpposing = true;
+                else if (entryOrder.OrderSide == OrderSide.SellShort && closeOrder.OrderSide == OrderSide.BuyToCover)
+                    isOpposing = true;
+
+                if (isOpposing)
+                {
+                    var pnl = _pnlCalculator.Calculate(entryOrder, closeOrder);
+                    _logger.Success($"MANUAL CLOSE DETECTED: {tradeId} @ {fillPrice} via {closeOrder.Name} account={closeOrder.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+                    _network.SendExitFill(tradeId, fillPrice, "CLOSE", account: closeOrder.AccountName, realizedPnl: pnl?.RealizedPnl);
+                    _network.SendTradeLog(tradeId, "NT:FILL", $"Manual position closed @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+                    CancelWorkingBracketOrders(tradeId, closeOrder.AccountName);
+                    _orderTracker.RemoveTrade(tradeId);
+                    return;
+                }
+            }
+        }
+
+        private BrokerOrder GetEntryForExit(string tradeId)
+        {
+            _orderTracker.TryGetEntry(tradeId, out var entry);
+            return entry;
+        }
+
+        private (double sl, double tp) CalculateSlTp(double fillPrice, string direction, double slPoints, double rrRatio)
+        {
+            var dir = direction?.ToLowerInvariant();
+            if (dir != "long" && dir != "short")
+                throw new ArgumentException($"Invalid direction '{direction}' — must be 'long' or 'short'");
+
+            if (dir == "long")
+                return (fillPrice - slPoints, fillPrice + (slPoints * rrRatio));
+            return (fillPrice + slPoints, fillPrice - (slPoints * rrRatio));
+        }
+
+        private void CancelWorkingBracketOrders(string tradeId, string accountName)
+        {
+            var account = _accountProvider.GetAccount(accountName);
+            if (account == null)
+            {
+                if (_orderTracker.TryGetEntry(tradeId, out var entryOrder))
+                    account = _accountProvider.GetAccount(entryOrder.AccountName);
+            }
+            if (account == null) return;
+
+            if (_orderTracker.TryGetStopLoss(tradeId, out var stopOrder) && stopOrder.IsWorking)
+            {
+                try
+                {
+                    _orderTracker.ExpectCancellation(stopOrder.Name);
+                    _orderExecutionService.CancelOrder(stopOrder);
+                    _logger.Info($"Cancelled working stop order for {tradeId}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning($"Failed to cancel stop order for {tradeId}: {ex.Message}");
+                }
+            }
+
+            if (_orderTracker.TryGetTakeProfit(tradeId, out var targetOrder) && targetOrder.IsWorking)
+            {
+                try
+                {
+                    _orderTracker.ExpectCancellation(targetOrder.Name);
+                    _orderExecutionService.CancelOrder(targetOrder);
+                    _logger.Info($"Cancelled working target order for {tradeId}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Warning($"Failed to cancel target order for {tradeId}: {ex.Message}");
+                }
+            }
+        }
+
+        private BrokerAccount ResolveAccountForOrder(BrokerOrder order)
+        {
+            return _accountProvider.GetAccount(order.AccountName);
+        }
+
+        // ═══════════════════════════════════════════════════════════════════
+        // Stats / Utilities
+        // ═══════════════════════════════════════════════════════════════════
+
+        public string GetStats()
+        {
+            var (ticks, bars, partials) = _streamingCoordinator?.GetStats() ?? (0, 0, 0);
+            return $"Ticks: {ticks} | Bars: {bars} | Partial: {partials} | Cmds: {_commandsReceived}";
+        }
+
+        public async Task<bool> TestConnectionAsync()
+        {
+            _logger.Info("=== TEST CONNECTION ===");
+            try
+            {
+                bool success = await Task.Run(() => _network?.SendTestPingWithResponse(2000) ?? false);
+                if (success)
+                    _logger.Success("TEST CONNECTION: PASSED - ZMQ REQ/REP working");
+                else
+                    _logger.Warning("TEST CONNECTION: FAILED - No response from Python");
+                return success;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("TEST CONNECTION: FAILED", ex);
+                return false;
+            }
+        }
+
+        private static string FormatExceptionDetails(Exception ex)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Exception: {ex.GetType().Name}");
+            sb.AppendLine($"Message: {ex.Message}");
+            sb.AppendLine($"StackTrace: {ex.StackTrace}");
+            if (ex.InnerException != null)
+            {
+                sb.AppendLine($"InnerException: {ex.InnerException.GetType().Name}");
+                sb.AppendLine($"InnerMessage: {ex.InnerException.Message}");
+            }
+            return sb.ToString();
+        }
+    }
+}

@@ -1,0 +1,20 @@
+namespace TradingBot.NinjaTrader.Zmq.Domain
+{
+    /// <summary>
+    /// Port for order execution. Implementations translate to broker-specific APIs.
+    /// </summary>
+    public interface IOrderExecutionService
+    {
+        BrokerOrder CreateEntryOrder(BrokerInstrument instrument, BrokerAccount account, OrderSide side, int quantity, string tradeId);
+        BrokerOrder CreateStopLossOrder(BrokerInstrument instrument, BrokerAccount account, OrderSide side, int quantity, double stopPrice, string tradeId);
+        BrokerOrder CreateTakeProfitOrder(BrokerInstrument instrument, BrokerAccount account, OrderSide side, int quantity, double limitPrice, string tradeId);
+        BrokerOrder CreateMarketCloseOrder(BrokerInstrument instrument, BrokerAccount account, OrderSide side, int quantity, string tradeId);
+
+        void SubmitOrder(BrokerOrder order);
+        void CancelOrder(BrokerOrder order);
+
+        BrokerOrder FindOrderByName(BrokerAccount account, string orderName);
+        IReadOnlyList<BrokerOrder> GetWorkingOrders(BrokerAccount account);
+        IReadOnlyList<BrokerOrder> GetAllOrders(BrokerAccount account);
+    }
+}
