@@ -74,6 +74,9 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                     return;
                 }
 
+                if (bars.Count > 0)
+                    _logger.Info($"[History] Sending {bars.Count} bars for {instrumentName} | first UTC: {bars[0].Time:yyyy-MM-dd HH:mm:ss} | last UTC: {bars[bars.Count - 1].Time:yyyy-MM-dd HH:mm:ss}");
+
                 var trimmed = TrimToLastSession(bars, days);
                 var jBars = trimmed.Select(bar => new JObject
                 {
@@ -117,7 +120,10 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
             return bars.Skip(bars.Count - maxBars).ToList();
         }
 
-        private static double ToUnixSeconds(DateTime dt) =>
-            (dt.ToUniversalTime() - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+        private static double ToUnixSeconds(DateTime dt)
+        {
+            var utc = dt.Kind == DateTimeKind.Utc ? dt : dt.ToUniversalTime();
+            return (utc - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+        }
     }
 }

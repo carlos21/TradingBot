@@ -4,6 +4,7 @@ using System.Threading;
 using NetMQ;
 using NetMQ.Sockets;
 using Newtonsoft.Json.Linq;
+using NinjaTrader.Core;
 using TradingBot.NinjaTrader.Zmq.Domain;
 
 namespace TradingBot.NinjaTrader.AddOn.Infrastructure
@@ -415,7 +416,20 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             }
         }
 
-        private static double ToUnixSeconds(DateTime dt) =>
-            (dt.ToUniversalTime() - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+        private static double ToUnixSeconds(DateTime dt)
+        {
+            DateTime utc;
+            if (dt.Kind == DateTimeKind.Utc)
+            {
+                utc = dt;
+            }
+            else
+            {
+                // NinjaTrader bar/tick times are in platform time; convert to UTC.
+                var platformTime = DateTime.SpecifyKind(dt, DateTimeKind.Unspecified);
+                utc = TimeZoneInfo.ConvertTimeToUtc(platformTime, Globals.GeneralOptions.TimeZoneInfo);
+            }
+            return (utc - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+        }
     }
 }

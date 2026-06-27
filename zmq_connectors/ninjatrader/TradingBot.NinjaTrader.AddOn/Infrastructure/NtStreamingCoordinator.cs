@@ -171,7 +171,7 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             _liveBarsRequest = new BarsRequest(_subscribedInstrument, 2)
             {
                 BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 },
-                TradingHours = TradingHours.Get("Default 24 x 7")
+                TradingHours = _subscribedInstrument.MasterInstrument.TradingHours
             };
             _liveBarsRequest.Update += OnLiveBarsUpdate;
             _liveBarsRequest.Request((bars, errorCode, errorMessage) =>

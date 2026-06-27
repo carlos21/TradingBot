@@ -4,9 +4,27 @@
     <!-- NinjaTrader 8 runs on .NET Framework 4.8 -->
     <TargetFramework>net48</TargetFramework>
     <LangVersion>8.0</LangVersion>
-    <Nullable>enable</Nullable>
+    <Nullable>disable</Nullable>
     <UseWPF>true</UseWPF>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+    <!-- This folder is symlinked into NinjaTrader's Custom\AddOns path, so NinjaTrader
+         recursively compiles every .cs file it sees. Disable auto-generated assembly
+         attributes to avoid CS0579 duplicate-attribute conflicts with NinjaTrader. -->
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+  </PropertyGroup>
+
+  <!-- Auto-detect NinjaTrader 8 installation directory.
+       Set the NINJATRADER_DIR environment variable to override.
+       We prefer the install directory over Documents\...\Custom because the Custom
+       assembly contains the already-compiled add-on code, which causes duplicate-type
+       errors when dotnet build also references the TradingBot.NinjaTrader.Zmq DLL. -->
+  <PropertyGroup>
+    <NinjaTraderDir Condition="'$(NinjaTraderDir)' == '' AND Exists('$(NINJATRADER_DIR)\NinjaTrader.Core.dll')">$(NINJATRADER_DIR)</NinjaTraderDir>
+    <NinjaTraderDir Condition="'$(NinjaTraderDir)' == '' AND Exists('C:\Program Files (x86)\NinjaTrader 8\bin\NinjaTrader.Core.dll')">C:\Program Files (x86)\NinjaTrader 8\bin\</NinjaTraderDir>
+    <NinjaTraderDir Condition="'$(NinjaTraderDir)' == '' AND Exists('C:\Program Files\NinjaTrader 8\bin\NinjaTrader.Core.dll')">C:\Program Files\NinjaTrader 8\bin\</NinjaTraderDir>
+    <NinjaTraderDir Condition="'$(NinjaTraderDir)' == '' AND Exists('$(USERPROFILE)\Documents\NinjaTrader 8\bin\Custom\NinjaTrader.Core.dll')">$(USERPROFILE)\Documents\NinjaTrader 8\bin\Custom\</NinjaTraderDir>
   </PropertyGroup>
 
   <ItemGroup>
@@ -14,17 +32,20 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Update these HintPaths to point to your NinjaTrader 8 installation.
-         The NinjaTrader API namespaces used are NinjaTrader.Cbi, NinjaTrader.Data,
-         NinjaTrader.Gui, and NinjaTrader.NinjaScript. They are typically in
-         NinjaTrader.Core.dll and/or NinjaTrader.Custom.dll under
-         Documents\NinjaTrader 8\bin\Custom\. -->
     <Reference Include="NinjaTrader.Core">
-      <HintPath>$(USERPROFILE)\Documents\NinjaTrader 8\bin\Custom\NinjaTrader.Core.dll</HintPath>
+      <HintPath>$(NinjaTraderDir)NinjaTrader.Core.dll</HintPath>
       <Private>false</Private>
     </Reference>
-    <Reference Include="NinjaTrader.Custom">
-      <HintPath>$(USERPROFILE)\Documents\NinjaTrader 8\bin\Custom\NinjaTrader.Custom.dll</HintPath>
+    <Reference Include="NinjaTrader.Custom" Condition="Exists('$(NinjaTraderDir)NinjaTrader.Custom.dll')">
+      <HintPath>$(NinjaTraderDir)NinjaTrader.Custom.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="NinjaTrader.Gui" Condition="Exists('$(NinjaTraderDir)NinjaTrader.Gui.dll')">
+      <HintPath>$(NinjaTraderDir)NinjaTrader.Gui.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="NinjaTrader.NinjaScript" Condition="Exists('$(NinjaTraderDir)NinjaTrader.NinjaScript.dll')">
+      <HintPath>$(NinjaTraderDir)NinjaTrader.NinjaScript.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="PresentationCore" />

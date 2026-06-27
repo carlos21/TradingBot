@@ -22,7 +22,7 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
             var orderExecutionService = new NtOrderExecutionService(instrumentProvider, accountProvider);
             var orderTracker = new NtOrderTracker();
             var streamingCoordinator = new NtStreamingCoordinator(network, logger, config);
-            var barHistoryService = new NtBarHistoryService(instrumentProvider);
+            var barHistoryService = new NtBarHistoryService(instrumentProvider, logger);
             var pnlCalculator = new NtPnLCalculator();
             var clock = new NtConnectorClock();
             var tradeIdExtractor = new NtTradeIdExtractor();

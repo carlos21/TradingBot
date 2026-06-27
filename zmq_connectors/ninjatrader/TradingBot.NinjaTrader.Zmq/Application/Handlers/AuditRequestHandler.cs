@@ -68,6 +68,9 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                 var startUtc = endUtc.AddMinutes(-(barsBack + 5)); // request a small buffer
                 var bars = await _barHistoryService.RequestHistoryAsync(instrument, startUtc, endUtc);
 
+                if (bars != null && bars.Count > 0)
+                    _logger.Info($"[Audit] Received {bars.Count} bars for {instrumentName} | first UTC: {bars[0].Time:yyyy-MM-dd HH:mm:ss} | last UTC: {bars[bars.Count - 1].Time:yyyy-MM-dd HH:mm:ss}");
+
                 var pair = instrumentName.Split(' ')[0];
                 var batch = new List<JObject>();
                 if (bars != null)
@@ -99,7 +102,10 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
             }
         }
 
-        private static double ToUnixSeconds(DateTime dt) =>
-            (dt.ToUniversalTime() - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+        private static double ToUnixSeconds(DateTime dt)
+        {
+            var utc = dt.Kind == DateTimeKind.Utc ? dt : dt.ToUniversalTime();
+            return (utc - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+        }
     }
 }
