@@ -3,29 +3,29 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using NinjaTrader.Cbi;
 using NinjaTrader.Data;
-using TradingBot.NinjaTrader.Zmq.Domain;
+using Domain = TradingBot.NinjaTrader.Zmq.Domain;
 
 namespace TradingBot.NinjaTrader.AddOn.Infrastructure
 {
     /// <summary>
     /// NinjaTrader-specific implementation of IBarHistoryService.
     /// </summary>
-    public sealed class NtBarHistoryService : IBarHistoryService
+    public sealed class NtBarHistoryService : Domain.IBarHistoryService
     {
-        private readonly IInstrumentProvider _instrumentProvider;
+        private readonly Domain.IInstrumentProvider _instrumentProvider;
 
-        public NtBarHistoryService(IInstrumentProvider instrumentProvider)
+        public NtBarHistoryService(Domain.IInstrumentProvider instrumentProvider)
         {
             _instrumentProvider = instrumentProvider ?? throw new ArgumentNullException(nameof(instrumentProvider));
         }
 
-        public async Task<IReadOnlyList<Bar>> RequestHistoryAsync(BrokerInstrument instrument, DateTime startUtc, DateTime endUtc, int minutes = 1)
+        public async Task<IReadOnlyList<Domain.Bar>> RequestHistoryAsync(Domain.BrokerInstrument instrument, DateTime startUtc, DateTime endUtc, int minutes = 1)
         {
-            var ntInstrument = Instrument.GetInstrument(instrument.Name);
+            var ntInstrument = global::NinjaTrader.Cbi.Instrument.GetInstrument(instrument.Name);
             if (ntInstrument == null)
                 throw new InvalidOperationException($"Instrument '{instrument.Name}' not found");
 
-            var tcs = new TaskCompletionSource<IReadOnlyList<Bar>>();
+            var tcs = new TaskCompletionSource<IReadOnlyList<Domain.Bar>>();
             var barsRequest = new BarsRequest(ntInstrument, startUtc, endUtc)
             {
                 BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = minutes },
@@ -50,10 +50,10 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                             return;
                         }
 
-                        var result = new List<Bar>();
+                        var result = new List<Domain.Bar>();
                         for (int i = 0; i < bars.Bars.Count; i++)
                         {
-                            result.Add(new Bar(
+                            result.Add(new Domain.Bar(
                                 bars.Bars.GetTime(i),
                                 bars.Bars.GetOpen(i),
                                 bars.Bars.GetHigh(i),

@@ -309,7 +309,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                         _network?.SendError("ninjatrader", "command_dispatch_failed", $"{envelope.MsgType}: handler returned failure");
                     }
 
-                    if (_commandsReceived % 10 == 0) UpdateStats();
                 }
                 catch (Exception ex)
                 {

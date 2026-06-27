@@ -1,76 +1,75 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using NinjaTrader.Cbi;
-using TradingBot.NinjaTrader.Zmq.Domain;
-using OrderSide = TradingBot.NinjaTrader.Zmq.Domain.OrderSide;
+using Nt = global::NinjaTrader.Cbi;
+using Domain = TradingBot.NinjaTrader.Zmq.Domain;
 
 namespace TradingBot.NinjaTrader.AddOn.Infrastructure
 {
-    public sealed class NtOrderExecutionService : IOrderExecutionService
+    public sealed class NtOrderExecutionService : Domain.IOrderExecutionService
     {
-        private readonly IInstrumentProvider _instrumentProvider;
-        private readonly IAccountProvider _accountProvider;
+        private readonly Domain.IInstrumentProvider _instrumentProvider;
+        private readonly Domain.IAccountProvider _accountProvider;
 
-        public NtOrderExecutionService(IInstrumentProvider instrumentProvider, IAccountProvider accountProvider)
+        public NtOrderExecutionService(Domain.IInstrumentProvider instrumentProvider, Domain.IAccountProvider accountProvider)
         {
             _instrumentProvider = instrumentProvider ?? throw new ArgumentNullException(nameof(instrumentProvider));
             _accountProvider = accountProvider ?? throw new ArgumentNullException(nameof(accountProvider));
         }
 
-        public BrokerOrder CreateEntryOrder(BrokerInstrument instrument, BrokerAccount account, OrderSide side, int quantity, string tradeId)
+        public Domain.BrokerOrder CreateEntryOrder(Domain.BrokerInstrument instrument, Domain.BrokerAccount account, Domain.OrderSide side, int quantity, string tradeId)
         {
             var ntInstrument = GetNtInstrument(instrument);
             var ntAccount = GetNtAccount(account);
             if (ntInstrument == null || ntAccount == null) return null;
 
             var order = ntAccount.CreateOrder(
-                ntInstrument, BrokerOrderMapper.ToNtOrderAction(side), NinjaTrader.Cbi.OrderType.Market,
-                OrderEntry.Automated, TimeInForce.Gtc, quantity, 0, 0, null, $"Entry_{tradeId}", DateTime.MinValue, null);
+                ntInstrument, BrokerOrderMapper.ToNtOrderAction(side), Nt.OrderType.Market,
+                Nt.OrderEntry.Automated, Nt.TimeInForce.Gtc, quantity, 0, 0, null, $"Entry_{tradeId}", DateTime.MinValue, null);
 
             return BrokerOrderMapper.ToBrokerOrder(order);
         }
 
-        public BrokerOrder CreateStopLossOrder(BrokerInstrument instrument, BrokerAccount account, OrderSide side, int quantity, double stopPrice, string tradeId)
+        public Domain.BrokerOrder CreateStopLossOrder(Domain.BrokerInstrument instrument, Domain.BrokerAccount account, Domain.OrderSide side, int quantity, double stopPrice, string tradeId)
         {
             var ntInstrument = GetNtInstrument(instrument);
             var ntAccount = GetNtAccount(account);
             if (ntInstrument == null || ntAccount == null) return null;
 
             var order = ntAccount.CreateOrder(
-                ntInstrument, BrokerOrderMapper.ToNtOrderAction(side), NinjaTrader.Cbi.OrderType.StopMarket,
-                OrderEntry.Automated, TimeInForce.Gtc, quantity, 0, stopPrice, $"OCO_{tradeId}", $"Stop_{tradeId}", DateTime.MinValue, null);
+                ntInstrument, BrokerOrderMapper.ToNtOrderAction(side), Nt.OrderType.StopMarket,
+                Nt.OrderEntry.Automated, Nt.TimeInForce.Gtc, quantity, 0, stopPrice, $"OCO_{tradeId}", $"Stop_{tradeId}", DateTime.MinValue, null);
 
             return BrokerOrderMapper.ToBrokerOrder(order);
         }
 
-        public BrokerOrder CreateTakeProfitOrder(BrokerInstrument instrument, BrokerAccount account, OrderSide side, int quantity, double limitPrice, string tradeId)
+        public Domain.BrokerOrder CreateTakeProfitOrder(Domain.BrokerInstrument instrument, Domain.BrokerAccount account, Domain.OrderSide side, int quantity, double limitPrice, string tradeId)
         {
             var ntInstrument = GetNtInstrument(instrument);
             var ntAccount = GetNtAccount(account);
             if (ntInstrument == null || ntAccount == null) return null;
 
             var order = ntAccount.CreateOrder(
-                ntInstrument, BrokerOrderMapper.ToNtOrderAction(side), NinjaTrader.Cbi.OrderType.Limit,
-                OrderEntry.Automated, TimeInForce.Gtc, quantity, limitPrice, 0, $"OCO_{tradeId}", $"Target_{tradeId}", DateTime.MinValue, null);
+                ntInstrument, BrokerOrderMapper.ToNtOrderAction(side), Nt.OrderType.Limit,
+                Nt.OrderEntry.Automated, Nt.TimeInForce.Gtc, quantity, limitPrice, 0, $"OCO_{tradeId}", $"Target_{tradeId}", DateTime.MinValue, null);
 
             return BrokerOrderMapper.ToBrokerOrder(order);
         }
 
-        public BrokerOrder CreateMarketCloseOrder(BrokerInstrument instrument, BrokerAccount account, OrderSide side, int quantity, string tradeId)
+        public Domain.BrokerOrder CreateMarketCloseOrder(Domain.BrokerInstrument instrument, Domain.BrokerAccount account, Domain.OrderSide side, int quantity, string tradeId)
         {
             var ntInstrument = GetNtInstrument(instrument);
             var ntAccount = GetNtAccount(account);
             if (ntInstrument == null || ntAccount == null) return null;
 
             var order = ntAccount.CreateOrder(
-                ntInstrument, BrokerOrderMapper.ToNtOrderAction(side), NinjaTrader.Cbi.OrderType.Market,
-                OrderEntry.Automated, TimeInForce.Gtc, quantity, 0, 0, null, $"Close_{tradeId}", DateTime.MinValue, null);
+                ntInstrument, BrokerOrderMapper.ToNtOrderAction(side), Nt.OrderType.Market,
+                Nt.OrderEntry.Automated, Nt.TimeInForce.Gtc, quantity, 0, 0, null, $"Close_{tradeId}", DateTime.MinValue, null);
 
             return BrokerOrderMapper.ToBrokerOrder(order);
         }
 
-        public void SubmitOrder(BrokerOrder order)
+        public void SubmitOrder(Domain.BrokerOrder order)
         {
             var ntAccount = GetNtAccount(_accountProvider.GetAccount(order.AccountName));
             var ntOrder = FindNtOrderByName(ntAccount, order.Name);
@@ -78,7 +77,7 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 ntAccount.Submit(new[] { ntOrder });
         }
 
-        public void CancelOrder(BrokerOrder order)
+        public void CancelOrder(Domain.BrokerOrder order)
         {
             var ntAccount = GetNtAccount(_accountProvider.GetAccount(order.AccountName));
             var ntOrder = FindNtOrderByName(ntAccount, order.Name);
@@ -86,19 +85,19 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 ntAccount.Cancel(new[] { ntOrder });
         }
 
-        public BrokerOrder FindOrderByName(BrokerAccount account, string orderName)
+        public Domain.BrokerOrder FindOrderByName(Domain.BrokerAccount account, string orderName)
         {
             var ntAccount = GetNtAccount(account);
             return BrokerOrderMapper.ToBrokerOrder(FindNtOrderByName(ntAccount, orderName));
         }
 
-        public IReadOnlyList<BrokerOrder> GetWorkingOrders(BrokerAccount account)
+        public IReadOnlyList<Domain.BrokerOrder> GetWorkingOrders(Domain.BrokerAccount account)
         {
-            var result = new List<BrokerOrder>();
+            var result = new List<Domain.BrokerOrder>();
             var ntAccount = GetNtAccount(account);
             if (ntAccount == null) return result;
 
-            foreach (var order in ntAccount.Orders ?? System.Linq.Enumerable.Empty<NinjaTrader.Cbi.Order>())
+            foreach (var order in ntAccount.Orders ?? Enumerable.Empty<Nt.Order>())
             {
                 if (IsActive(order))
                     result.Add(BrokerOrderMapper.ToBrokerOrder(order));
@@ -106,22 +105,22 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             return result;
         }
 
-        public IReadOnlyList<BrokerOrder> GetAllOrders(BrokerAccount account)
+        public IReadOnlyList<Domain.BrokerOrder> GetAllOrders(Domain.BrokerAccount account)
         {
-            var result = new List<BrokerOrder>();
+            var result = new List<Domain.BrokerOrder>();
             var ntAccount = GetNtAccount(account);
             if (ntAccount == null) return result;
 
-            foreach (var order in ntAccount.Orders ?? System.Linq.Enumerable.Empty<NinjaTrader.Cbi.Order>())
+            foreach (var order in ntAccount.Orders ?? Enumerable.Empty<Nt.Order>())
                 result.Add(BrokerOrderMapper.ToBrokerOrder(order));
             return result;
         }
 
-        private static NinjaTrader.Cbi.Order FindNtOrderByName(Account account, string orderName)
+        private static Nt.Order FindNtOrderByName(Nt.Account account, string orderName)
         {
             if (account == null || string.IsNullOrEmpty(orderName)) return null;
             var orders = account.Orders.ToArray();
-            NinjaTrader.Cbi.Order fallback = null;
+            Nt.Order fallback = null;
             for (int i = orders.Length - 1; i >= 0; i--)
             {
                 var order = orders[i];
@@ -132,25 +131,25 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             return fallback;
         }
 
-        private static bool IsActive(NinjaTrader.Cbi.Order order)
+        private static bool IsActive(Nt.Order order)
         {
-            return order.OrderState == NinjaTrader.Cbi.OrderState.Working ||
-                   order.OrderState == NinjaTrader.Cbi.OrderState.Accepted ||
-                   order.OrderState == NinjaTrader.Cbi.OrderState.Submitted ||
-                   order.OrderState == NinjaTrader.Cbi.OrderState.PartFilled ||
-                   order.OrderState == NinjaTrader.Cbi.OrderState.Filled;
+            return order.OrderState == Nt.OrderState.Working ||
+                   order.OrderState == Nt.OrderState.Accepted ||
+                   order.OrderState == Nt.OrderState.Submitted ||
+                   order.OrderState == Nt.OrderState.PartFilled ||
+                   order.OrderState == Nt.OrderState.Filled;
         }
 
-        private Instrument GetNtInstrument(BrokerInstrument instrument)
+        private Nt.Instrument GetNtInstrument(Domain.BrokerInstrument instrument)
         {
             if (instrument == null) return null;
-            return Instrument.GetInstrument(instrument.Name);
+            return Nt.Instrument.GetInstrument(instrument.Name);
         }
 
-        private Account GetNtAccount(BrokerAccount account)
+        private Nt.Account GetNtAccount(Domain.BrokerAccount account)
         {
             if (account == null) return null;
-            foreach (Account a in Account.All)
+            foreach (Nt.Account a in Nt.Account.All)
                 if (a.Name == account.Name) return a;
             return null;
         }

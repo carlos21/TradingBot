@@ -10,6 +10,7 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
         private readonly object _lock = new object();
         private StreamWriter _writer;
         private DateTime _currentDate;
+        private bool _fileAccessFailed;
 
         public FileLogger(string logDirectory)
         {
@@ -29,9 +30,22 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             var line = $"{now:yyyy-MM-dd HH:mm:ss.fff} [{level}] {message}";
             lock (_lock)
             {
-                EnsureWriter(now.Date);
-                _writer?.WriteLine(line);
-                _writer?.Flush();
+                if (_fileAccessFailed) return;
+
+                try
+                {
+                    EnsureWriter(now.Date);
+                    _writer?.WriteLine(line);
+                    _writer?.Flush();
+                }
+                catch (IOException)
+                {
+                    // File is locked by another process (likely a stale NinjaTrader instance).
+                    // Disable file logging for this session to avoid repeated crashes.
+                    _fileAccessFailed = true;
+                    _writer?.Dispose();
+                    _writer = null;
+                }
             }
         }
 

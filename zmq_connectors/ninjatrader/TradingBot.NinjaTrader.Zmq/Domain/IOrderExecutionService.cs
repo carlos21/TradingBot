@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace TradingBot.NinjaTrader.Zmq.Domain
 {
     /// <summary>

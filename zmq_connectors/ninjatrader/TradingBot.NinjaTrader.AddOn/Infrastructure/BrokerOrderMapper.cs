@@ -1,5 +1,5 @@
-using NinjaTrader.Cbi;
-using TradingBot.NinjaTrader.Zmq.Domain;
+using Nt = global::NinjaTrader.Cbi;
+using Domain = TradingBot.NinjaTrader.Zmq.Domain;
 
 namespace TradingBot.NinjaTrader.AddOn.Infrastructure
 {
@@ -8,16 +8,16 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
     /// </summary>
     public static class BrokerOrderMapper
     {
-        public static BrokerOrder ToBrokerOrder(NinjaTrader.Cbi.Order order)
+        public static Domain.BrokerOrder ToBrokerOrder(Nt.Order order)
         {
             if (order == null) return null;
 
-            var instrument = new BrokerInstrument(
+            var instrument = new Domain.BrokerInstrument(
                 order.Instrument?.FullName,
                 order.Instrument?.MasterInstrument?.Name ?? order.Instrument?.FullName,
                 order.Instrument?.MasterInstrument?.PointValue ?? 1.0);
 
-            return new BrokerOrder(
+            return new Domain.BrokerOrder(
                 order.Name,
                 order.Account?.Name,
                 instrument,
@@ -33,56 +33,56 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 order.Time);
         }
 
-        public static OrderSide ToOrderSide(NinjaTrader.Cbi.OrderAction action)
+        public static Domain.OrderSide ToOrderSide(Nt.OrderAction action)
         {
-            if (action == NinjaTrader.Cbi.OrderAction.Buy) return OrderSide.Buy;
-            if (action == NinjaTrader.Cbi.OrderAction.Sell) return OrderSide.Sell;
-            if (action == NinjaTrader.Cbi.OrderAction.SellShort) return OrderSide.SellShort;
-            return OrderSide.BuyToCover;
+            if (action == Nt.OrderAction.Buy) return Domain.OrderSide.Buy;
+            if (action == Nt.OrderAction.Sell) return Domain.OrderSide.Sell;
+            if (action == Nt.OrderAction.SellShort) return Domain.OrderSide.SellShort;
+            return Domain.OrderSide.BuyToCover;
         }
 
-        public static NinjaTrader.Cbi.OrderAction ToNtOrderAction(OrderSide side)
+        public static Nt.OrderAction ToNtOrderAction(Domain.OrderSide side)
         {
             switch (side)
             {
-                case OrderSide.Buy: return NinjaTrader.Cbi.OrderAction.Buy;
-                case OrderSide.Sell: return NinjaTrader.Cbi.OrderAction.Sell;
-                case OrderSide.SellShort: return NinjaTrader.Cbi.OrderAction.SellShort;
-                case OrderSide.BuyToCover: return NinjaTrader.Cbi.OrderAction.BuyToCover;
+                case Domain.OrderSide.Buy: return Nt.OrderAction.Buy;
+                case Domain.OrderSide.Sell: return Nt.OrderAction.Sell;
+                case Domain.OrderSide.SellShort: return Nt.OrderAction.SellShort;
+                case Domain.OrderSide.BuyToCover: return Nt.OrderAction.BuyToCover;
                 default: throw new System.ArgumentOutOfRangeException(nameof(side));
             }
         }
 
-        public static OrderType ToOrderType(NinjaTrader.Cbi.OrderType type)
+        public static Domain.OrderType ToOrderType(Nt.OrderType type)
         {
-            if (type == NinjaTrader.Cbi.OrderType.Market) return OrderType.Market;
-            if (type == NinjaTrader.Cbi.OrderType.Limit) return OrderType.Limit;
-            if (type == NinjaTrader.Cbi.OrderType.StopMarket) return OrderType.StopMarket;
-            return OrderType.StopLimit;
+            if (type == Nt.OrderType.Market) return Domain.OrderType.Market;
+            if (type == Nt.OrderType.Limit) return Domain.OrderType.Limit;
+            if (type == Nt.OrderType.StopMarket) return Domain.OrderType.StopMarket;
+            return Domain.OrderType.StopLimit;
         }
 
-        public static NinjaTrader.Cbi.OrderType ToNtOrderType(OrderType type)
+        public static Nt.OrderType ToNtOrderType(Domain.OrderType type)
         {
             switch (type)
             {
-                case OrderType.Market: return NinjaTrader.Cbi.OrderType.Market;
-                case OrderType.Limit: return NinjaTrader.Cbi.OrderType.Limit;
-                case OrderType.StopMarket: return NinjaTrader.Cbi.OrderType.StopMarket;
-                case OrderType.StopLimit: return NinjaTrader.Cbi.OrderType.StopLimit;
+                case Domain.OrderType.Market: return Nt.OrderType.Market;
+                case Domain.OrderType.Limit: return Nt.OrderType.Limit;
+                case Domain.OrderType.StopMarket: return Nt.OrderType.StopMarket;
+                case Domain.OrderType.StopLimit: return Nt.OrderType.StopLimit;
                 default: throw new System.ArgumentOutOfRangeException(nameof(type));
             }
         }
 
-        public static OrderState ToOrderState(NinjaTrader.Cbi.OrderState state)
+        public static Domain.OrderState ToOrderState(Nt.OrderState state)
         {
-            if (state == NinjaTrader.Cbi.OrderState.Initialized) return OrderState.Initialized;
-            if (state == NinjaTrader.Cbi.OrderState.Submitted) return OrderState.Submitted;
-            if (state == NinjaTrader.Cbi.OrderState.Accepted) return OrderState.Accepted;
-            if (state == NinjaTrader.Cbi.OrderState.Working) return OrderState.Working;
-            if (state == NinjaTrader.Cbi.OrderState.PartFilled) return OrderState.PartFilled;
-            if (state == NinjaTrader.Cbi.OrderState.Filled) return OrderState.Filled;
-            if (state == NinjaTrader.Cbi.OrderState.Cancelled) return OrderState.Cancelled;
-            return OrderState.Rejected;
+            if (state == Nt.OrderState.Initialized) return Domain.OrderState.Initialized;
+            if (state == Nt.OrderState.Submitted) return Domain.OrderState.Submitted;
+            if (state == Nt.OrderState.Accepted) return Domain.OrderState.Accepted;
+            if (state == Nt.OrderState.Working) return Domain.OrderState.Working;
+            if (state == Nt.OrderState.PartFilled) return Domain.OrderState.PartFilled;
+            if (state == Nt.OrderState.Filled) return Domain.OrderState.Filled;
+            if (state == Nt.OrderState.Cancelled) return Domain.OrderState.Cancelled;
+            return Domain.OrderState.Rejected;
         }
     }
 }
