@@ -54,3 +54,31 @@ class Notifier(Protocol):
     def send(self, message: str) -> None:
         """Send a notification message."""
         ...
+
+
+class IWarmupProgressListener(Protocol):
+    """Port for receiving warmup replay progress updates.
+
+    WarmupOrchestrator uses this to report progress without coupling to
+    any specific messaging mechanism (SocketIO, logging, metrics, etc.).
+    """
+
+    def on_warmup_progress(self, current: int, total: int) -> None:
+        """Called when warmup replay reaches a progress checkpoint."""
+        ...
+
+
+class IReadinessProgressEmitter(Protocol):
+    """Port for publishing readiness progress events to the outside world.
+
+    Implementations forward progress to SocketIO, message queues, metrics,
+    or any other consumer without coupling application code to infrastructure.
+    """
+
+    def emit_warmup_progress(self, current: int, total: int) -> None:
+        """Publish a warmup progress event."""
+        ...
+
+    def emit_phase_started(self, phase: str, reason: str) -> None:
+        """Publish an event indicating a readiness phase has started."""
+        ...

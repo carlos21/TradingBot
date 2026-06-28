@@ -523,3 +523,62 @@ class TestDegradeAndRecover:
         bar = {"time": 9999, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}
         monitor.on_live_bar(bar)
         assert monitor._state_machine.state.name == "DEGRADED"
+
+
+class _FakeProgressEmitter:
+    """Records phase/warmup progress emissions."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict]] = []
+
+    def emit_warmup_progress(self, current: int, total: int) -> None:
+        self.events.append(("warmup_progress", {"current": current, "total": total}))
+
+    def emit_phase_started(self, phase: str, reason: str) -> None:
+        self.events.append(("phase_started", {"phase": phase, "reason": reason}))
+
+
+class TestReadinessMonitorProgress:
+    def test_progress_tracker_updated_by_state_machine_observer(self) -> None:
+        monitor, _strategy = _make_monitor(
+            DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
+        )
+        monitor._state_machine.connect()
+        assert monitor.get_health()["readiness_percent"] == 15
+
+        monitor.on_history_complete(_make_bars())
+        _join_warmup(monitor)
+
+        health = monitor.get_health()
+        assert health["readiness_state"] == "READY"
+        assert health["readiness_percent"] == 95
+        assert health["phase"] is None
+
+    def test_phase_started_emitted_on_refresh_and_history(self) -> None:
+        emitter = _FakeProgressEmitter()
+        monitor, _strategy = _make_monitor(
+            DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
+        )
+        monitor._progress_emitter = emitter
+        monitor._state_machine.connect()
+
+        monitor.on_refresh_start()
+        monitor.on_history_complete(_make_bars())
+        _join_warmup(monitor)
+
+        phases = [e for e, _ in emitter.events if e == "phase_started"]
+        assert "phase_started" in phases
+        # Two phase_started events: refreshing and warmup.
+        assert phases.count("phase_started") == 2
+
+    def test_stale_history_surfaces_reason_in_health(self) -> None:
+        monitor, _strategy = _make_monitor(
+            DummySocketIO(), _StaleDataSource(), _FakeWarmupPolicy(warm=True)
+        )
+        monitor._state_machine.connect()
+        monitor.on_history_complete(_make_bars())
+        _join_warmup(monitor)
+
+        health = monitor.get_health()
+        assert health["readiness_state"] == "WARMING_UP"
+        assert "120m old" in health["readiness_reason"]

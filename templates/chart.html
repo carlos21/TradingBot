@@ -132,26 +132,54 @@
   </header>
 
   <!-- Floating Stream Health Monitor -->
-  <div id="streamHealthWrapper" class="hidden absolute bottom-4 right-4 z-50 flex flex-col items-end space-y-2" style="max-width: 420px;">
+  <div id="streamHealthWrapper" class="hidden absolute bottom-4 right-4 z-50 flex flex-col items-end space-y-2" style="max-width: 520px;">
     <!-- Compact Pill Bar -->
-    <div id="streamHealthBar" class="bg-surface-800/90 backdrop-blur border border-surface-700 rounded-full shadow-lg text-xs text-slate-300 px-3 py-1.5 flex items-center space-x-3 cursor-pointer select-none hover:bg-surface-700/90 transition-colors">
-      <span id="healthDot" class="w-2.5 h-2.5 rounded-full bg-slate-500 flex-shrink-0"></span>
-      <span id="healthState" class="font-semibold text-slate-400">--</span>
-      <span class="text-slate-600">|</span>
-      <span id="healthReadyBadge" class="hidden px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide">--</span>
-      <span class="text-slate-600">|</span>
-      <span id="healthLastBar">--</span>
-      <span class="text-slate-600">|</span>
-      <span id="healthCached">--</span>
-      <span id="healthAlertIcon" class="hidden text-amber-400">⚠️</span>
-      <svg id="healthChevron" class="w-3 h-3 text-slate-500 transform transition-transform flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-      </svg>
+    <div id="streamHealthBar" class="bg-surface-800/90 backdrop-blur border border-surface-700 rounded-full shadow-lg text-xs text-slate-300 px-3 py-1.5 cursor-pointer select-none hover:bg-surface-700/90 transition-colors">
+      <div class="flex items-center space-x-3">
+        <span id="healthDot" class="w-2.5 h-2.5 rounded-full bg-slate-500 flex-shrink-0"></span>
+        <span id="healthState" class="font-semibold text-slate-400">--</span>
+        <span class="text-slate-600">|</span>
+        <span id="healthReadyBadge" class="hidden px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide">--</span>
+        <span class="text-slate-600">|</span>
+        <span id="healthLastBar">--</span>
+        <span class="text-slate-600">|</span>
+        <span id="healthCached">--</span>
+        <span id="healthAlertIcon" class="hidden text-amber-400">⚠️</span>
+        <svg id="healthChevron" class="w-3 h-3 text-slate-500 transform transition-transform flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </div>
+      <!-- Compact readiness progress -->
+      <div class="w-full bg-surface-700 rounded-full h-1 mt-1.5 overflow-hidden">
+        <div id="healthCompactProgress" class="h-1 rounded-full bg-accent-500 transition-all duration-500" style="width: 0%"></div>
+      </div>
     </div>
 
     <!-- Floating Detailed Panel -->
-    <div id="streamHealthPanel" class="hidden bg-surface-800/95 backdrop-blur border border-surface-700 rounded-xl shadow-lg text-xs text-slate-300 px-4 py-3" style="width: 380px; max-height: 60vh; overflow-y: auto;">
-      <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3">
+    <div id="streamHealthPanel" class="hidden bg-surface-800/95 backdrop-blur border border-surface-700 rounded-xl shadow-lg text-xs text-slate-300 px-4 py-3" style="width: 500px; max-height: 80vh; overflow-y: auto;">
+      <!-- Readiness stepper -->
+      <div class="mb-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Readiness Pipeline</div>
+        <div id="readinessStepper" class="flex items-start px-3">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Active phase card -->
+      <div id="readinessPhaseCard" class="bg-surface-700/40 rounded-lg p-3 mb-4">
+        <!-- Populated by JS -->
+      </div>
+
+      <!-- Transition log -->
+      <div class="mb-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">State History</div>
+        <div id="readinessTransitionLog" class="max-h-56 overflow-y-auto bg-surface-900/50 rounded-lg p-2">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Metrics grid -->
+      <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 border-t border-surface-700 pt-3">
         <div><span class="text-slate-500">State:</span> <span id="detailState" class="font-mono">--</span></div>
         <div><span class="text-slate-500">Last bar:</span> <span id="detailLastBar" class="font-mono">--</span></div>
         <div><span class="text-slate-500">Cached:</span> <span id="detailCached" class="font-mono">--</span></div>

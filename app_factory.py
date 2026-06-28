@@ -39,6 +39,9 @@ from src.infrastructure.event_publisher import (
 )
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
+from src.infrastructure.readiness_progress_adapter import (
+    SocketIOReadinessProgressAdapter,
+)
 from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.infrastructure.parity_checker import NinjaTraderParityChecker
 from src.infrastructure.repositories.accounts_repository import NtAccountRepository
@@ -210,6 +213,7 @@ def _setup_live_mode_callbacks(
     history_loaded_deduper: HistoryLoadedDeduper,
 ):
     """Wire the data source into the readiness state machine."""
+    progress_emitter = SocketIOReadinessProgressAdapter(socketio)
     warmup_orchestrator = WarmupOrchestrator(strategy, logger=logger)
     warmup_policy = MinimumBarsWarmupPolicy(min_bars=30)
     bar_buffer = LiveBarBuffer(processor=loader.on_live_bar)
@@ -222,6 +226,7 @@ def _setup_live_mode_callbacks(
         data_source=data_source,
         socketio_publisher=socketio,
         history_loaded_emitter=history_loaded_deduper.emit,
+        progress_emitter=progress_emitter,
         logger=logger,
     )
     monitor.set_pair(pair)

@@ -7,6 +7,7 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Any
 
+from src.application.ports import IWarmupProgressListener
 from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
 
 if TYPE_CHECKING:
@@ -20,20 +21,32 @@ class WarmupOrchestrator:
 
     The orchestrator does not make readiness decisions itself; it only
     reports back to the ReadinessMonitor when the replay is finished.
+
+    Optional progress_listener receives checkpoint updates so UI/metrics
+    can show replay progress without coupling to SocketIO.
     """
 
     def __init__(
         self,
         strategy: LiquidityStrategyV2,
         logger: ILogger | None = None,
+        progress_listener: IWarmupProgressListener | None = None,
     ) -> None:
         self._strategy = strategy
         self._logger = logger
+        self._progress_listener = progress_listener
         self._stop_event = threading.Event()
 
     @property
     def strategy(self) -> LiquidityStrategyV2:
         return self._strategy
+
+    def set_progress_listener(
+        self,
+        listener: IWarmupProgressListener | None,
+    ) -> None:
+        """Attach or replace the progress listener after construction."""
+        self._progress_listener = listener
 
     def cancel(self) -> None:
         """Signal the running warmup to stop between bar replays."""
@@ -86,10 +99,13 @@ class WarmupOrchestrator:
                         )
                     return False
                 self._strategy.on_raw_bar(bar)
-                if self._logger and (i + 1) % progress_interval == 0:
-                    self._logger.info(
-                        f"[Warmup] Replay progress: {i + 1}/{len(bars)} bars"
-                    )
+                if (i + 1) % progress_interval == 0:
+                    if self._logger:
+                        self._logger.info(
+                            f"[Warmup] Replay progress: {i + 1}/{len(bars)} bars"
+                        )
+                    if self._progress_listener is not None:
+                        self._progress_listener.on_warmup_progress(i + 1, len(bars))
 
             if self._logger:
                 self._logger.info("[Warmup] Replay loop finished; restoring persisted state...")

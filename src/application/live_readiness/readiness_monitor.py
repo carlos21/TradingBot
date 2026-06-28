@@ -7,13 +7,18 @@ import threading
 import traceback
 from typing import TYPE_CHECKING, Any, Callable
 
-from src.application.ports import EventPublisher
+from src.application.ports import EventPublisher, IReadinessProgressEmitter
 from src.domain.readiness import ReadinessState, ReadinessStateMachine
 from src.domain.readiness.protocols import IWarmupPolicy
 from src.utils.app_logger import ILogger
 
 from .live_bar_buffer import LiveBarBuffer
+from .readiness_progress_tracker import ReadinessProgressTracker
 from .warmup_orchestrator import WarmupOrchestrator
+from .warmup_progress_reporter import (
+    WarmupProgressMulticaster,
+    WarmupProgressReporter,
+)
 
 if TYPE_CHECKING:
     from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
@@ -43,6 +48,8 @@ class ReadinessMonitor:
         data_source: CombinedDataSource | None = None,
         socketio_publisher: EventPublisher | None = None,
         history_loaded_emitter: Callable[[Any, dict[str, Any]], None] | None = None,
+        progress_tracker: ReadinessProgressTracker | None = None,
+        progress_emitter: IReadinessProgressEmitter | None = None,
         logger: ILogger | None = None,
         retry_base_delay_sec: float = 2.0,
         retry_max_delay_sec: float = 60.0,
@@ -55,7 +62,23 @@ class ReadinessMonitor:
         self._data_source = data_source
         self._socketio_publisher = socketio_publisher
         self._history_loaded_emitter = history_loaded_emitter
+        self._progress_tracker = progress_tracker or ReadinessProgressTracker()
+        self._progress_emitter = progress_emitter
+        if self._progress_emitter is not None:
+            reporter = WarmupProgressReporter(self._progress_emitter)
+            multicaster = WarmupProgressMulticaster(
+                [self._progress_tracker, reporter]
+            )
+            set_listener = getattr(
+                self._warmup_orchestrator, "set_progress_listener", None
+            )
+            if set_listener is not None:
+                set_listener(multicaster)
         self._logger = logger
+
+        # Observe the state machine so progress tracking stays in sync with
+        # every transition, including those driven by other components.
+        self._state_machine.add_observer(self)
         self._pair: str = ""
         self._retry_base_delay_sec = retry_base_delay_sec
         self._retry_max_delay_sec = retry_max_delay_sec
@@ -67,12 +90,25 @@ class ReadinessMonitor:
     def set_pair(self, pair: str) -> None:
         self._pair = pair
 
+    def on_readiness_changed(
+        self,
+        state: ReadinessState,
+        previous_state: ReadinessState,
+        reason: str,
+    ) -> None:
+        """Observer callback: keep progress tracker aligned with state machine."""
+        self._progress_tracker.update_state(state, reason)
+
     def on_refresh_start(self) -> None:
         """Called when the platform starts sending a fresh history batch."""
         self._cancel_retry_timer()
         self._cancel_warmup()
         self._state_machine.start_refresh()
         self._bar_buffer.clear()
+        if self._progress_emitter is not None:
+            self._progress_emitter.emit_phase_started(
+                "refreshing", "Historical data refresh started"
+            )
         if self._logger:
             self._logger.info("[Readiness] Refresh started — buffering live bars")
 
@@ -87,6 +123,11 @@ class ReadinessMonitor:
             return
 
         self._state_machine.history_loaded()
+
+        if self._progress_emitter is not None:
+            self._progress_emitter.emit_phase_started(
+                "warmup", "Indicator warmup replay started"
+            )
 
         # Notify the frontend that historical bars are available for display,
         # even if the data is not yet fresh enough for live trading.
@@ -105,7 +146,7 @@ class ReadinessMonitor:
 
         # Run warmup in a background thread so the gateway receive loop is not
         # blocked. Blocking the receive loop prevents heartbeat processing and
-        # causes a heartbeat timeout → disconnect → reconnect → refresh loop.
+        # causes a heartbeat timeout -> disconnect -> reconnect -> refresh loop.
         self._warmup_orchestrator.reset_cancel()
         self._warmup_in_progress = True
         bars_snapshot = list(bars)
@@ -302,6 +343,9 @@ class ReadinessMonitor:
                 if not complete:
                     if self._logger:
                         self._logger.info(f"[Readiness] History not ready: {reason}")
+                    # Surface the actual blocker (e.g. stale bars / market closed)
+                    # in the progress tracker without changing the state machine.
+                    self._progress_tracker.update_state(state, reason)
                     return
 
             if not self._warmup_policy.is_warm(self._warmup_orchestrator.strategy):
@@ -332,7 +376,9 @@ class ReadinessMonitor:
 
     def get_health(self) -> dict[str, Any]:
         """Return readiness-specific health fields."""
-        return {
+        health = {
             "readiness_state": self._state_machine.state.name,
             "readiness_reason": self._state_machine.reason,
         }
+        health.update(self._progress_tracker.get_snapshot())
+        return health
