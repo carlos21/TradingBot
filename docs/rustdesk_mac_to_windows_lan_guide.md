@@ -7,7 +7,7 @@ This guide covers controlling a Windows PC from a Mac on the same local network 
 RustDesk gives you two ways to connect:
 
 1. **Public servers (easiest)** — RustDesk's free relay servers handle the connection. No extra server needed.
-2. **Self-hosted server (most private)** — You run a small RustDesk server (e.g., on a local Linux box, NAS, or cheap VPS) so traffic never leaves your infrastructure.
+2. **Self-hosted server (most private)** — You run a small RustDesk server (e.g., on a local Raspberry Pi/NAS, or a cheap VPS) so traffic never leaves your infrastructure.
 
 For a **local network only**, you can also enable **Direct IP access** so the Mac connects straight to the Windows PC by its LAN IP (`192.168.x.x`), bypassing any relay.
 
@@ -38,6 +38,8 @@ For a **local network only**, you can also enable **Direct IP access** so the Ma
   - **One-time password**
   - A message like "Ready. For faster connection, please set up your own server"
 
+> This message is informational. It does not prevent you from connecting.
+
 ### 4. Set a permanent password
 
 - Click the **menu (⋮)** next to your ID → **Settings**.
@@ -67,9 +69,25 @@ For a **local network only**, you can also enable **Direct IP access** so the Ma
 
 ### 7. Windows Firewall
 
-- If you use direct IP access, Windows Defender Firewall may block RustDesk.
-- Add an inbound rule to allow RustDesk, or temporarily disable the firewall for testing.
-- RustDesk's default listener port for direct IP is **21118**.
+Direct IP access needs an inbound allow rule for TCP port 21118.
+
+Run this in PowerShell as Administrator:
+
+```powershell
+netsh advfirewall firewall add rule name="RustDesk Direct IP" dir=in action=allow protocol=tcp localport=21118
+```
+
+To verify:
+
+```powershell
+netsh advfirewall show allprofiles
+```
+
+If you temporarily disabled the firewall for testing, re-enable it with:
+
+```powershell
+netsh advfirewall set allprofiles state on
+```
 
 ---
 
@@ -138,7 +156,111 @@ Go to **System Settings → Privacy & Security**:
 
 ---
 
-## Part 4 — Self-host a RustDesk server (optional, for privacy / full control)
+## Part 4 — Network topology gotchas
+
+If direct IP does not connect even with Windows Firewall off and RustDesk listening on port 21118, the problem is almost always the network layout.
+
+### 1. Both devices must be on the same subnet
+
+Check the IP on each machine:
+
+- Windows: `ipconfig`
+- Mac: `ifconfig | grep "inet 192.168"`
+
+Both should be in the same `192.168.x.x` range with the same subnet mask (`255.255.255.0`).
+
+If the Mac is `192.168.1.44` and Windows is `192.168.0.198`, they are on different subnets and cannot talk directly.
+
+### 2. Guest networks isolate devices
+
+If the Mac is connected to a **Guest Network**, it usually cannot reach other devices on the local network, even if it has an IP in the same range.
+
+On TP-Link routers:
+
+1. Go to **Wireless → Guest Network**.
+2. Check the box **Allow guests to access your local network** if you must use the guest network.
+3. Better: connect the Mac to the **main Wi-Fi network** instead of the guest network.
+
+### 3. Cascading routers / double NAT
+
+If you have two routers creating two networks (for example, a main router and a secondary router acting as another router), devices on each router may be isolated.
+
+**Example:**
+- Router **JEANFRANCO** (main) creates `192.168.1.x`
+- Router **LA POPOC** (secondary) creates `192.168.0.x`
+- Mac on `JEANFRANCO`, Windows on `LA POPOC`
+
+To fix this, put the **secondary** router in **Access Point (AP) mode**:
+
+1. Connect a **LAN port** on the secondary router to a **LAN port** on the main router.
+   - Do **not** use the WAN/Internet port on the secondary router.
+2. On the secondary router, enable **AP Mode** or:
+   - Disable DHCP.
+   - Set its LAN IP to something in the main router's subnet (e.g., `192.168.1.2`), outside the main DHCP range.
+3. Reconnect devices. They should now all get IPs from the main router (`192.168.1.x`).
+
+> The Wi-Fi network name (SSID) and password on the secondary router can stay the same. It just stops routing/NATing and becomes a wireless access point.
+
+### 4. Router isolation settings
+
+Check your router for:
+
+- **AP Isolation**
+- **Client Isolation**
+- **Wireless Isolation**
+- **Access Control**
+- **IP & MAC Binding** with incorrect entries
+
+Disable any setting that blocks device-to-device communication.
+
+### 5. Quick test from Windows
+
+If you are unsure whether the network is the problem, ping the Mac from Windows:
+
+```powershell
+ping <mac-ip>
+```
+
+- **Reply received** → network path is open; check RustDesk/firewall on Windows.
+- **Destination host unreachable** or **Request timed out** → the router is blocking traffic between the devices.
+
+---
+
+## Part 5 — Keep the Windows IP stable
+
+Direct IP stops working if the Windows PC's IP changes. Use DHCP address reservation on the router so the PC always gets the same IP.
+
+### On a TP-Link router
+
+1. Go to **Advanced → Network → DHCP Server → Address Reservation**.
+2. Find the Windows PC by its Ethernet MAC address, or click **Add**.
+3. Reserve the current IP (e.g., `192.168.1.45`).
+4. Save and reboot the router.
+
+To find the Windows Ethernet MAC address:
+
+```powershell
+getmac
+```
+
+### Alternative: static IP on Windows
+
+1. Open **Settings → Network & Internet → Ethernet**.
+2. Click the Ethernet connection.
+3. Click **IP assignment → Edit**.
+4. Change to **Manual**.
+5. Turn on **IPv4** and set:
+   - IP address: `192.168.1.45`
+   - Subnet mask: `255.255.255.0`
+   - Gateway: `192.168.1.1`
+   - Preferred DNS: `192.168.1.1` (or `8.8.8.8`)
+6. Save.
+
+Router reservation is preferred because it avoids IP conflicts.
+
+---
+
+## Part 6 — Self-host a RustDesk server (optional, for privacy / full control)
 
 If you do not want to use RustDesk's public servers, run the open-source server on a Linux machine (a local Raspberry Pi/NAS, or a cheap VPS).
 
@@ -204,12 +326,14 @@ Now both machines register with your private server, and connections show as **"
 
 ---
 
-## Part 5 — Network / firewall checklist
+## Part 7 — Network / firewall checklist
 
 | Location | What to allow |
 |---|---|
-| Windows PC | RustDesk executable allowed in Windows Defender Firewall; inbound port 21118 if using direct IP |
+| Windows PC | RustDesk service running; Direct IP enabled; inbound TCP port 21118 allowed in Windows Defender Firewall |
 | macOS | RustDesk allowed for Screen Recording, Accessibility, Input Monitoring |
+| Router | Mac and Windows on the same subnet; no guest-network isolation; no AP/client isolation; secondary routers in AP mode if cascading |
+| IP stability | Windows PC has a DHCP reservation or static IP |
 | Router (if self-hosting) | Forward ports 21114–21119 TCP to your server; or use NAT hairpin if accessing by public domain from inside LAN |
 | VPN (optional) | If not home, use Tailscale/WireGuard; then connect to Windows via its VPN IP |
 
@@ -219,8 +343,9 @@ Now both machines register with your private server, and connections show as **"
 
 | Machine | Main tasks |
 |---|---|
-| **Windows PC** | Install RustDesk as service, set permanent password, enable direct IP access if desired, allow firewall. |
+| **Windows PC** | Install RustDesk as service, set permanent password, enable direct IP access, allow inbound port 21118, reserve a stable IP. |
 | **Mac** | Install RustDesk, grant Screen Recording / Accessibility / Input Monitoring, connect via Windows ID or LAN IP. |
+| **Router** | Keep both devices on the same subnet, disable isolation, put secondary routers in AP mode. |
 | **Optional server** | Run `rustdesk/hbbs` + `rustdesk/hbbr` via Docker, open ports, copy public key to both clients. |
 
 ---
