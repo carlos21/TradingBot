@@ -582,22 +582,30 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     verify_csv_data(csv_path, pair_name, start_ts, end_ts)
                     print(f"   [DEBUG] Scenario Start: {start_ts} | End: {end_ts}")
 
-                # Pre-seed 2 hours of warmup so 5m/15m TSI is fully warmed up by start
+                # Pre-seed 2 hours of warmup so 5m/15m TSI is fully warmed up by start.
+                # If scenario lines are created earlier than that, extend the warmup so
+                # their full lifetime (and any pre-session removal by filters) is replayed.
                 WARMUP_SECONDS = 2 * 3600
                 warmup_start_ts = start_ts - WARMUP_SECONDS
 
                 # Parse scenario lines and prepare seed lines so they are present during warmup
                 lines = [parse_line_spec(l) for l in sc.get("lines", [])]
                 seed_lines = []
+                earliest_line_ts = None
                 for i, l in enumerate(lines):
                     c_ts = 0.0
                     if l["at_raw"]:
                         c_ts = get_epoch(l["at_raw"])
+                        if earliest_line_ts is None or c_ts < earliest_line_ts:
+                            earliest_line_ts = c_ts
                     seed_lines.append({
                         "id": f"sc_line_{i}",
                         "price": float(l["level"]),
                         "creation_ts": c_ts,
                     })
+
+                if earliest_line_ts is not None:
+                    warmup_start_ts = min(warmup_start_ts, earliest_line_ts - WARMUP_SECONDS)
 
                 if not reset_app_state(base_url, start=warmup_start_ts, end=start_ts, seed_lines=seed_lines):
                     print(f"❌ [{name}] Reset failed")
