@@ -5,7 +5,6 @@ Organised by Clean Architecture layers: Domain -> Application -> Infrastructure.
 """
 
 import re
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,11 +28,9 @@ SNAP_BASE_DIR = PROJECT_ROOT / "scenarios_out" / "MNQ"
 # ---------------------------------------------------------------------------
 
 
-def _atomic_write_text(path: Path, content: str, backup: bool = True) -> None:
-    """Write content atomically and keep a `.bak` backup of the previous file."""
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Write content atomically via a temporary file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    if backup and path.exists():
-        shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     tmp_path.write_text(content, encoding="utf-8")
     tmp_path.replace(path)

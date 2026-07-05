@@ -114,7 +114,6 @@ class TestFileScenarioRepository:
         repo.insert(scenario, 0, [])
         doc = yaml.safe_load(path.read_text())
         assert len(doc["scenarios"]) == 1
-        assert path.with_suffix(".yaml.bak").exists()
 
     def test_replace_existing(self, tmp_path: Path):
         path = tmp_path / "scenarios.yaml"
