@@ -12,9 +12,18 @@ echo -e "${BOLD}${CYAN}▶ Running unit tests with coverage…${RST}\n"
 
 if command -v poetry &>/dev/null; then
     if [ $# -eq 0 ]; then
-        poetry run coverage run -m pytest tests/
+        poetry run coverage run -m pytest -c backend/pytest.ini backend/tests/
     else
-        poetry run coverage run -m pytest "$@"
+        # Allow callers to pass paths either as backend/tests/... or tests/...
+        args=()
+        for arg in "$@"; do
+            if [[ "$arg" == tests/* ]]; then
+                args+=("backend/$arg")
+            else
+                args+=("$arg")
+            fi
+        done
+        poetry run coverage run -m pytest -c backend/pytest.ini "${args[@]}"
     fi
     echo -e "\n${BOLD}${CYAN}▶ Coverage…${RST}\n"
     poetry run coverage report --format=total

@@ -14,7 +14,7 @@ import { ReplayControlsController } from '../application/ReplayControlsControlle
  */
 export function createChartApp(opts = {}) {
   const dom = new BrowserDomService();
-  const http = new FetchHttpClient();
+  const http = new FetchHttpClient(window.TRADINGBOT_API_URL || '');
   const socket = new IoSocketAdapter(opts.socket || io());
   const chartApi = new LightweightChartsAdapter(LightweightCharts);
   const storage = BrowserStorageAdapter.session();

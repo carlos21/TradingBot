@@ -36,7 +36,7 @@ from tests.fakes import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "csvs", "NQ_live.csv")
+CSV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "csvs", "NQ_live.csv")
 MNQ_TZ = ZoneInfo("America/Chicago")
 MNQ_FMT = "%d/%m/%Y %H:%M:%S"
 

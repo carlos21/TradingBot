@@ -1,2 +1,2 @@
 #!/bin/bash
-poetry run python scripts/fix_scenario.py "$@"
+poetry run python backend/scripts/fix_scenario.py "$@"

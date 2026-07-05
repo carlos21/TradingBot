@@ -1,4 +1,4 @@
-# src/app_factory.py
+# backend/app_factory.py
 from __future__ import annotations
 
 import os
@@ -295,23 +295,20 @@ def create_app(
     # Ensure standard library loggers emit datetimes in a consistent format.
     configure_logging()
 
-    app = Flask(__name__)
+    # Resolve repo root and frontend paths. The app factory lives in backend/,
+    # so its parent directory is the repo root.
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    frontend_dir = os.path.join(repo_root, "frontend")
+    static_dir = os.path.join(frontend_dir, "static")
+
+    app = Flask(__name__, static_folder=static_dir, static_url_path="/static")
     CORS(app)
     # Use threading async mode for better performance with local NinjaTrader
     socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
-    # Make platform_type available to all templates
+    # Resolve platform info once so it can be exposed via /api/config.
     _platform_type = getattr(app_config, "platform_type", "ninjatrader") if app_config else "ninjatrader"
     _platform_label = "NinjaTrader" if _platform_type == "ninjatrader" else "MetaTrader"
-
-    @app.context_processor
-    def inject_platform():
-        return {
-            "platform_type": _platform_type,
-            "platform_label": _platform_label,
-            "is_ninjatrader": _platform_type == "ninjatrader",
-            "is_metatrader": _platform_type == "metatrader",
-        }
 
     # Wire domain event bus → SocketIO bridge for decoupled notifications
     event_bus = EventBus()
@@ -682,10 +679,15 @@ def create_app(
             tstrategy.restore_open_trades()
 
     # Register routes
-    register_core_routes(app, pair, data_source, logger=logger)
+    register_core_routes(
+        app, pair, data_source, logger=logger,
+        frontend_dir=frontend_dir,
+        platform_type=_platform_type,
+        platform_label=_platform_label,
+    )
     register_lines_routes(app, lines_controller, logger)
     register_trades_routes(app, trades_controller, repos.trades, pair, trade_logger, logger)
-    register_admin_routes(app, admin_controller, logger)
+    register_admin_routes(app, admin_controller, logger, frontend_dir=frontend_dir)
     register_settings_routes(app, settings_controller, logger)
     register_nt_routes(app, nt_service, deploy_service, logger)
     if _platform_type == "metatrader":

@@ -1,5 +1,7 @@
 """Tests for src/routes/core_routes.py."""
 
+import os
+
 import pytest
 from flask import Flask
 
@@ -24,22 +26,42 @@ class GoodDataSource(CombinedDataSource):
 
 @pytest.fixture
 def app():
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=None)
     app.config["TESTING"] = True
     ds = GoodDataSource()
     logger = FakeLogger()
-    register_core_routes(app, pair="MNQ", data_source=ds, logger=logger)
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    frontend_dir = os.path.join(repo_root, "frontend")
+    register_core_routes(
+        app,
+        pair="MNQ",
+        data_source=ds,
+        logger=logger,
+        frontend_dir=frontend_dir,
+        platform_type="ninjatrader",
+        platform_label="NinjaTrader",
+    )
     return app
 
 
 class TestCoreRoutes:
 
-    def test_index_route_needs_template(self, app):
-        # index route renders chart.html which requires templates folder
-        # Skipping full integration, just verify route exists
-        with app.test_client():
-            # Will fail with TemplateNotFound in test env without templates
-            pass
+    def test_index_serves_static_html(self, app):
+        with app.test_client() as client:
+            resp = client.get("/")
+            assert resp.status_code == 200
+            assert resp.content_type.startswith("text/html")
+
+    def test_get_config(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/config")
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data["pair"] == "MNQ"
+            assert data["platform_type"] == "ninjatrader"
+            assert data["platform_label"] == "NinjaTrader"
+            assert data["is_ninjatrader"] is True
+            assert data["is_metatrader"] is False
 
     def test_get_pair(self, app):
         with app.test_client() as client:

@@ -15,6 +15,9 @@ if ! command -v npm &>/dev/null; then
     exit 1
 fi
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/../frontend"
+
 if [ $# -eq 0 ]; then
     npm run test:coverage
 else

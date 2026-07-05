@@ -10,7 +10,7 @@ class NtManagerService:
     """Manages NinjaTrader auto-login and NetMQ from the WSL backend."""
 
     def __init__(self, project_dir: str | None = None, logger=None):
-        self._project_dir = Path(project_dir) if project_dir else Path(__file__).resolve().parents[2]
+        self._project_dir = Path(project_dir) if project_dir else Path(__file__).resolve().parents[3]
         self._logger = logger
 
     def _can_run_windows_exe(self) -> bool:

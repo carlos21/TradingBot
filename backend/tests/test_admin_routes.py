@@ -1,5 +1,7 @@
 """Tests for src/routes/admin_routes.py."""
 
+import os
+
 import pytest
 from flask import Flask
 
@@ -38,11 +40,15 @@ class FakeAdminController:
 
 @pytest.fixture
 def app():
-    app = Flask(__name__)
+    app = Flask(__name__, static_folder=None)
     app.config["TESTING"] = True
     ctrl = FakeAdminController()
     logger = FakeLogger()
-    register_admin_routes(app, ctrl, logger)
+    frontend_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "frontend",
+    )
+    register_admin_routes(app, ctrl, logger, frontend_dir=frontend_dir)
     return app
 
 
@@ -53,12 +59,16 @@ class TestAdminRoutes:
             resp = client.get("/admin")
             assert resp.status_code == 302  # Redirect to /admin/overview
 
-    def test_admin_overview_needs_template(self, app):
-        # admin_page renders admin.html which requires templates folder
-        # Route exists but needs template rendering in test env
-        with app.test_client():
-            # Skip - template not available in test env
-            pass
+    def test_admin_overview_serves_static_html(self, app):
+        with app.test_client() as client:
+            resp = client.get("/admin/overview")
+            assert resp.status_code == 200
+            assert resp.content_type.startswith("text/html")
+
+    def test_admin_unknown_page_returns_404(self, app):
+        with app.test_client() as client:
+            resp = client.get("/admin/unknown")
+            assert resp.status_code == 404
 
     def test_admin_stats(self, app):
         with app.test_client() as client:

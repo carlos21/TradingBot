@@ -1,6 +1,6 @@
 """Admin dashboard HTTP routes."""
 
-from flask import Flask, abort, redirect, render_template, request
+from flask import Flask, abort, redirect, request, send_from_directory
 
 from src.controllers.admin_controller import AdminController
 from src.utils.app_logger import ILogger
@@ -15,12 +15,14 @@ def register_admin_routes(
     app: Flask,
     admin_controller: AdminController,
     _logger: ILogger,
+    frontend_dir: str,
 ):
     """Register admin dashboard routes.
 
     Args:
         app: Flask application instance
         admin_controller: Controller for admin operations
+        frontend_dir: Absolute path to the frontend HTML files
     """
 
     @app.route('/admin')
@@ -31,7 +33,7 @@ def register_admin_routes(
     def admin_page(page: str):
         if page not in ADMIN_PAGES:
             abort(404)
-        return render_template('admin.html', active_tab=page, active_page=page)
+        return send_from_directory(frontend_dir, 'admin.html')
 
     @app.route('/api/admin/stats', methods=['GET'])
     def admin_stats():

@@ -94,14 +94,16 @@ export class AdminDashboardController {
         this.logPanel = new LogPanel(this.socket, this.api);
       }
 
-      // Determine initial tab from server-rendered attribute or URL
+      // Determine initial tab from URL path or legacy server-rendered attribute
+      const win = this.dom.getWindow();
+      const path = win.location.pathname;
+      const match = path.match(/^\/admin\/(\w+)$/);
       const rootEl = this.dom.getElementById('admin-root');
-      const initialTab = rootEl?.dataset.activeTab || 'overview';
+      const initialTab = match?.[1] || rootEl?.dataset.activeTab || 'overview';
       console.log(`[AdminDashboardController] Initial tab: ${initialTab}`);
       this.switchTab(initialTab, false);
 
       // Set up browser back/forward handling
-      const win = this.dom.getWindow();
       this.dom.addEventListener(win, 'popstate', (e) => {
         const path = win.location.pathname;
         const match = path.match(/^\/admin\/(\w+)$/);

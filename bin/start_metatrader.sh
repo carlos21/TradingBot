@@ -94,4 +94,4 @@ echo "[${INSTANCE_NAME}] DB: $DB_PATH | Logs: $LOG_DIR | Flask port: $FLASK_PORT
 echo "[${INSTANCE_NAME}] ZMQ: Python binds 0.0.0.0:$ZMQ_MARKET_PORT/$ZMQ_COMMAND_PORT/$ZMQ_QUERY_PORT/$ZMQ_HEARTBEAT_PORT"
 echo "[${INSTANCE_NAME}] ZMQ: EA connects 127.0.0.1:$ZMQ_MARKET_PORT/$ZMQ_COMMAND_PORT/$ZMQ_QUERY_PORT/$ZMQ_HEARTBEAT_PORT"
 
-exec poetry run python app.py
+exec poetry run python backend/run.py

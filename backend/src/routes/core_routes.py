@@ -1,8 +1,9 @@
 """Core HTTP routes - index page and basic API."""
 
+import os
 import time
 
-from flask import Flask, jsonify, render_template
+from flask import Flask, jsonify, send_from_directory
 
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.utils.app_logger import ILogger
@@ -13,6 +14,9 @@ def register_core_routes(
     pair: str,
     data_source: CombinedDataSource,
     logger: ILogger,
+    frontend_dir: str,
+    platform_type: str,
+    platform_label: str,
 ):
     """Register core routes on the Flask app.
 
@@ -20,11 +24,24 @@ def register_core_routes(
         app: Flask application instance
         pair: Trading pair (e.g., "MNQ")
         data_source: Data source for historical bars
+        frontend_dir: Absolute path to the frontend HTML files
+        platform_type: Platform identifier (e.g., "ninjatrader")
+        platform_label: Human-readable platform label
     """
 
     @app.route('/')
     def index():
-        return render_template('chart.html', active_page='chart')
+        return send_from_directory(frontend_dir, 'index.html')
+
+    @app.route('/api/config')
+    def get_config():
+        return jsonify({
+            'pair': pair,
+            'platform_type': platform_type,
+            'platform_label': platform_label,
+            'is_ninjatrader': platform_type == 'ninjatrader',
+            'is_metatrader': platform_type == 'metatrader',
+        })
 
     @app.route('/api/pair')
     def get_pair():

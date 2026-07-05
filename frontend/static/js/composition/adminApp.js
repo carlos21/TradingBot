@@ -11,7 +11,7 @@ import { AdminDashboardController } from '../application/AdminDashboardControlle
  */
 export function createAdminApp(opts = {}) {
   const dom = new BrowserDomService();
-  const http = new FetchHttpClient();
+  const http = new FetchHttpClient(window.TRADINGBOT_API_URL || '');
   const api = new ApiClient({ httpClient: http });
   const socket = opts.socket || (typeof io !== 'undefined' ? new IoSocketAdapter(io()) : null);
   const notification = new BrowserNotificationAdapter();

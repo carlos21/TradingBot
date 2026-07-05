@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-poetry run python scripts/run_scenarios.py \
-  --yaml src/strategies/liquidity_v2/test_scenario.yaml \
+poetry run python backend/scripts/run_scenarios.py \
+  --yaml backend/src/strategies/liquidity_v2/test_scenario.yaml \
   --source-csv csvs/NQ_live.csv \
   --outdir ./scenarios_out \
   --port 5001 \
