@@ -155,8 +155,8 @@ From NinjaTrader UI:
   [Run E2E Tests]    →  Runs tp_hit, sl_hit, session_end sequentially
                         Each: POST /api/nt/run_e2e_test → poll test_result
 
-From shell script (./bin/e2e_test.sh):
-  Option 1: Run all  →  Same as above via curl
+From shell script (deprecated):
+  Option 1: Run all  →  Same as above via curl (deprecated script removed)
   Option 2: Single   →  Pick one scenario
   Option 3: Check    →  GET /api/nt/test_result/{trade_id}
   Option 4: Ping     →  POST /api/nt/test_connection

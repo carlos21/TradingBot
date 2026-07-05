@@ -76,6 +76,18 @@ docs/_build/
 .pybuilder/
 target/
 
+# Node / JS tooling
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+yarn.lock
+pnpm-lock.yaml
+
+# Vitest / JS coverage
+coverage/
+.nyc_output/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 

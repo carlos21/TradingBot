@@ -1,0 +1,17 @@
+{
+  "name": "tradingbot-frontend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Vanilla JS frontend for TradingBot",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^1.6.0",
+    "happy-dom": "^14.12.3",
+    "vitest": "^1.6.0"
+  }
+}

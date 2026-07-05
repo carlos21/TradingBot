@@ -3,7 +3,8 @@
  * Handles all HTTP requests to the backend
  */
 export class ApiClient {
-  constructor() {
+  constructor({ httpClient }) {
+    this.http = httpClient;
     this.baseUrl = '';
     this.pair = null;
   }
@@ -26,48 +27,19 @@ export class ApiClient {
 
   async get(url) {
     console.log(`[ApiClient] GET ${url}`);
-    const response = await fetch(`${this.baseUrl}${url}`);
-    console.log(`[ApiClient] Response status: ${response.status}`);
-    if (!response.ok) {
-      const text = await response.text();
-      console.error(`[ApiClient] Error response: ${text}`);
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    return response.json();
+    return this.http.get(`${this.baseUrl}${url}`);
   }
 
   async post(url, data) {
-    const response = await fetch(`${this.baseUrl}${url}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    return response.json();
+    return this.http.post(`${this.baseUrl}${url}`, data);
   }
 
   async put(url, data) {
-    const response = await fetch(`${this.baseUrl}${url}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    return response.json();
+    return this.http.put(`${this.baseUrl}${url}`, data);
   }
 
   async delete(url) {
-    const response = await fetch(`${this.baseUrl}${url}`, {
-      method: 'DELETE',
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    return response.status === 204 ? null : response.json();
+    return this.http.delete(`${this.baseUrl}${url}`);
   }
 
   // Settings API Methods

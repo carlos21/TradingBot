@@ -10,6 +10,19 @@ poetry run python app.py
 ```
 Starts the Flask-SocketIO server on port 5001.
 
+**Run frontend JS tests:**
+```bash
+npm test
+npm run test:watch
+npm run test:coverage
+```
+Runs the Vitest suite for the vanilla JS frontend (`static/js/`).
+
+**Install JS test dependencies:**
+```bash
+npm install
+```
+
 **Install dependencies:**
 ```bash
 poetry install
@@ -26,6 +39,19 @@ poetry install
 ```
 
 Both scripts invoke `scripts/run_scenarios.py` with Playwright browser automation against `src/strategies/liquidity_v2/scenarios.yaml` (full suite) or `src/strategies/liquidity_v2/test_scenario.yaml` (single case). Output is written to `scenarios_out/`.
+
+## Frontend Architecture
+
+The vanilla JS frontend under `static/js/` is organized in layers:
+
+- `domain/` — pure business logic with no DOM/I/O dependencies (e.g., time/session helpers, trade/marker builders, formatters).
+- `ports/` — abstract interfaces (`IHttpClient`, `ISocket`, `IDomService`, `IChartApi`, `IStorage`, `INotification`).
+- `adapters/` — concrete implementations using browser APIs (`FetchHttpClient`, `BrowserDomService`, `LightweightChartsAdapter`, etc.).
+- `application/` — controllers that orchestrate domain logic through ports (`ChartController`, `ChartSocketController`, `ReplayControlsController`, `AdminDashboardController`).
+- `composition/` — wiring roots that build adapters and controllers for each page (`chartApp.js`, `adminApp.js`).
+- `tests/` — unit and integration tests using Vitest and fake adapters.
+
+This structure follows SOLID principles and makes the UI testable without a browser for pure logic, and with lightweight fake adapters for controller tests.
 
 ## Rules
 

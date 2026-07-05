@@ -16,12 +16,8 @@ if command -v poetry &>/dev/null; then
     else
         poetry run coverage run -m pytest "$@"
     fi
-    echo -e "\n${BOLD}${CYAN}▶ Coverage report…${RST}\n"
-    if [ $# -eq 0 ]; then
-        poetry run coverage report
-    else
-        poetry run coverage report --fail-under=0
-    fi
+    echo -e "\n${BOLD}${CYAN}▶ Coverage…${RST}\n"
+    poetry run coverage report --format=total
 else
     echo -e "${RED}Poetry not found. Please install Poetry or activate the virtual environment.${RST}"
     exit 1

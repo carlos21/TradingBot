@@ -1,24 +1,30 @@
-export class ControlsView {
-  constructor(chartViewer, socket) {
-    this.chartViewer = chartViewer;
+/**
+ * Binds replay UI controls to the ChartController.
+ */
+export class ReplayControlsController {
+  constructor(controller, socket, domService, notification) {
+    this.controller = controller;
     this.socket = socket;
+    this.dom = domService;
+    this.notification = notification;
+
+    this.toggleBtn = null;
+    this.stepBtn = null;
+    this.prevBtn = null;
+    this.nextBtn = null;
+    this.tfButtons = [];
+    this.testLongBtn = null;
+    this.testShortBtn = null;
+    this.closeAllBtn = null;
+    this.testTradeControls = null;
+    this.testDropdownToggle = null;
+    this.testDropdownMenu = null;
+    this.startStreamingBtn = null;
+    this.reconnectBtn = null;
   }
 
   init() {
-    this.toggleBtn = document.getElementById('toggleReplayBtn');
-    this.stepBtn = document.getElementById('stepBarBtn');
-    this.prevBtn = document.getElementById('prevDayBtn');
-    this.nextBtn = document.getElementById('nextDayBtn');
-    this.tfButtons = Array.from(document.querySelectorAll('[data-timeframe]'));
-    this.testLongBtn = document.getElementById('testLongBtn');
-    this.testShortBtn = document.getElementById('testShortBtn');
-    this.closeAllBtn = document.getElementById('closeAllBtn');
-    this.testTradeControls = document.getElementById('testTradeControls');
-    this.testDropdownToggle = document.getElementById('testDropdownToggle');
-    this.testDropdownMenu = document.getElementById('testDropdownMenu');
-    this.startStreamingBtn = document.getElementById('startStreamingBtn');
-    this.reconnectBtn = document.getElementById('reconnectBtn');
-
+    this._bindElements();
     this._bindReplayEvents();
     this._bindTimeframeEvents();
     this._bindTestTradeEvents();
@@ -30,37 +36,55 @@ export class ControlsView {
       if (live_mode) this._applyLiveMode();
     });
 
-    const defaultBtn = document.querySelector(`[data-timeframe="${this.chartViewer.currentTF}"]`);
+    const defaultBtn = this.tfButtons.find(
+      b => b.getAttribute('data-timeframe') === this.controller.currentTF
+    );
     if (defaultBtn) this._setActiveTf(defaultBtn);
+  }
+
+  _bindElements() {
+    this.toggleBtn = this.dom.getElementById('toggleReplayBtn');
+    this.stepBtn = this.dom.getElementById('stepBarBtn');
+    this.prevBtn = this.dom.getElementById('prevDayBtn');
+    this.nextBtn = this.dom.getElementById('nextDayBtn');
+    this.tfButtons = this.dom.querySelectorAll('[data-timeframe]');
+    this.testLongBtn = this.dom.getElementById('testLongBtn');
+    this.testShortBtn = this.dom.getElementById('testShortBtn');
+    this.closeAllBtn = this.dom.getElementById('closeAllBtn');
+    this.testTradeControls = this.dom.getElementById('testTradeControls');
+    this.testDropdownToggle = this.dom.getElementById('testDropdownToggle');
+    this.testDropdownMenu = this.dom.getElementById('testDropdownMenu');
+    this.startStreamingBtn = this.dom.getElementById('startStreamingBtn');
+    this.reconnectBtn = this.dom.getElementById('reconnectBtn');
   }
 
   _bindReplayEvents() {
     if (!this.toggleBtn) return;
-    this.toggleBtn.addEventListener('click', () => {
-      this.chartViewer.toggleReplay();
-      this.toggleBtn.textContent = this.chartViewer.isPlaying ? 'Pause' : 'Play';
+    this.dom.addEventListener(this.toggleBtn, 'click', () => {
+      this.controller.toggleReplay();
+      this.toggleBtn.textContent = this.controller.isPlaying ? 'Pause' : 'Play';
     });
 
-    this.stepBtn.addEventListener('click', () => {
-      this.chartViewer.stepReplay();
+    this.dom.addEventListener(this.stepBtn, 'click', () => {
+      this.controller.stepReplay();
       this.toggleBtn.textContent = 'Play';
     });
 
-    this.prevBtn.addEventListener('click', () => this.chartViewer.jumpToDay(-1));
-    this.nextBtn.addEventListener('click', () => this.chartViewer.jumpToDay(1));
+    this.dom.addEventListener(this.prevBtn, 'click', () => this.controller.jumpToDay(-1));
+    this.dom.addEventListener(this.nextBtn, 'click', () => this.controller.jumpToDay(1));
   }
 
   _bindTimeframeEvents() {
-    this.tfButtons.forEach(btn => {
-      btn.addEventListener('click', () => {
+    for (const btn of this.tfButtons) {
+      this.dom.addEventListener(btn, 'click', () => {
         this._setActiveTf(btn);
-        this.chartViewer.changeTimeframe(btn.getAttribute('data-timeframe'));
+        this.controller.changeTimeframe(btn.getAttribute('data-timeframe'));
       });
-    });
+    }
   }
 
   _setActiveTf(button) {
-    this.tfButtons.forEach(b => b.classList.remove('active'));
+    for (const b of this.tfButtons) b.classList.remove('active');
     button.classList.add('active');
   }
 
@@ -88,8 +112,8 @@ export class ControlsView {
 
   _bindStreamingEvents() {
     if (this.startStreamingBtn) {
-      this.startStreamingBtn.addEventListener('click', async () => {
-        const statusEl = document.getElementById('connectionStatus');
+      this.dom.addEventListener(this.startStreamingBtn, 'click', async () => {
+        const statusEl = this.dom.getElementById('connectionStatus');
         if (statusEl) statusEl.textContent = 'Starting ZeroMQ gateway…';
         this._setStreamingLoading(true);
         try {
@@ -100,8 +124,6 @@ export class ControlsView {
             this._setStreamingLoading(false);
           } else {
             if (statusEl) statusEl.textContent = data.message || 'Starting…';
-            // Keep loading state — the overlay will hide once the platform connects,
-            // or stream_status/platform_disconnected events will reset the UI.
           }
         } catch (err) {
           if (statusEl) statusEl.textContent = 'Error: ' + err.message;
@@ -111,8 +133,8 @@ export class ControlsView {
     }
 
     if (this.reconnectBtn) {
-      this.reconnectBtn.addEventListener('click', async () => {
-        const statusEl = document.getElementById('connectionStatus');
+      this.dom.addEventListener(this.reconnectBtn, 'click', async () => {
+        const statusEl = this.dom.getElementById('connectionStatus');
         if (statusEl) statusEl.textContent = 'Reconnecting…';
         this.reconnectBtn.classList.add('hidden');
         try {
@@ -137,22 +159,21 @@ export class ControlsView {
 
     const closeMenu = () => this.testDropdownMenu.classList.add('hidden');
 
-    this.testDropdownToggle.addEventListener('click', (e) => {
+    this.dom.addEventListener(this.testDropdownToggle, 'click', e => {
       e.stopPropagation();
       this.testDropdownMenu.classList.toggle('hidden');
     });
 
-    // Close when clicking outside
-    document.addEventListener('click', (e) => {
+    const doc = this.dom.getDocument();
+    this.dom.addEventListener(doc, 'click', e => {
       if (!this.testDropdownToggle.contains(e.target) && !this.testDropdownMenu.contains(e.target)) {
         closeMenu();
       }
     });
 
-    // Close when clicking a menu item
-    this.testDropdownMenu.querySelectorAll('button').forEach(btn => {
-      btn.addEventListener('click', closeMenu);
-    });
+    for (const btn of this.testDropdownMenu.querySelectorAll('button')) {
+      this.dom.addEventListener(btn, 'click', closeMenu);
+    }
   }
 
   async _sendTestTrade(direction) {
@@ -160,7 +181,7 @@ export class ControlsView {
       const resp = await fetch('/api/trades/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pair: this.chartViewer.pair, direction })
+        body: JSON.stringify({ pair: this.controller.pair, direction }),
       });
       const contentType = resp.headers.get('content-type') || '';
       let data = {};
@@ -170,28 +191,30 @@ export class ControlsView {
         data = { error: (await resp.text()).trim() || resp.statusText };
       }
       if (resp.ok) {
-        alert(`Test ${direction.charAt(0).toUpperCase() + direction.slice(1)} sent: ` + data.trade_id);
+        this.notification.alert(
+          `Test ${direction.charAt(0).toUpperCase() + direction.slice(1)} sent: ` + data.trade_id
+        );
       } else {
-        alert('Failed: ' + (data.error || resp.statusText));
+        this.notification.alert('Failed: ' + (data.error || resp.statusText));
       }
     } catch (err) {
-      alert('Error: ' + err.message);
+      this.notification.alert('Error: ' + err.message);
     }
   }
 
   _bindTestTradeEvents() {
     if (!this.testLongBtn || !this.testShortBtn) return;
 
-    this.testLongBtn.addEventListener('click', () => this._sendTestTrade('long'));
-    this.testShortBtn.addEventListener('click', () => this._sendTestTrade('short'));
+    this.dom.addEventListener(this.testLongBtn, 'click', () => this._sendTestTrade('long'));
+    this.dom.addEventListener(this.testShortBtn, 'click', () => this._sendTestTrade('short'));
 
     if (this.closeAllBtn) {
-      this.closeAllBtn.addEventListener('click', async () => {
+      this.dom.addEventListener(this.closeAllBtn, 'click', async () => {
         try {
           const resp = await fetch('/api/trades/close-all', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pair: this.chartViewer.pair })
+            body: JSON.stringify({ pair: this.controller.pair }),
           });
           const contentType = resp.headers.get('content-type') || '';
           let data = {};
@@ -207,22 +230,23 @@ export class ControlsView {
             if (failed.length > 0) {
               msg += `\nFailed: ${failed.map(f => f.trade_id).join(', ')}`;
             }
-            alert(msg);
+            this.notification.alert(msg);
           } else {
-            alert('Failed: ' + (data.error || resp.statusText));
+            this.notification.alert('Failed: ' + (data.error || resp.statusText));
           }
         } catch (err) {
-          alert('Error: ' + err.message);
+          this.notification.alert('Error: ' + err.message);
         }
       });
     }
   }
 
   _applyLiveMode() {
-    document.querySelectorAll('.replay-control').forEach(el => el.style.display = 'none');
+    for (const el of this.dom.querySelectorAll('.replay-control')) {
+      el.style.display = 'none';
+    }
     if (this.stepBtn) this.stepBtn.style.display = 'none';
     if (this.toggleBtn) this.toggleBtn.style.display = 'none';
-
     if (this.testTradeControls) this.testTradeControls.classList.remove('hidden');
   }
 }

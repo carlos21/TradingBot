@@ -193,7 +193,6 @@ Helper scripts and the data-fetcher pipeline.
 | File | Responsibility |
 |------|----------------|
 | `scripts/run_scenarios.py` | Scenario-based integration test runner. |
-| `scripts/run_integration_tests.py` | HTTP integration test runner. |
 | `scripts/scenario_management.py` | Scenario discovery, diffing, YAML formatting. |
 | `scripts/add_scenario.py` | Add a new scenario. |
 | `scripts/fix_scenario.py` | Fix a single scenario expectation. |
