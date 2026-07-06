@@ -185,3 +185,6 @@ obj/
 *.cache
 project.lock.json
 artifacts/
+frontend/node_modules
+frontend/coverage
+coverage/
