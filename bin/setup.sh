@@ -43,5 +43,5 @@ fi
 
 echo ""
 echo "=== Setup complete! ==="
-echo "Run the app:        poetry run python app.py"
+echo "Run the app:        poetry run python backend/run.py"
 echo "Run scenarios:      ./bin/run_scenarios.sh"

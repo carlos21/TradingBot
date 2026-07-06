@@ -15,7 +15,10 @@ DEFAULT_MAC="04:7c:16:e4:7d:83"
 WOL_BROADCAST="192.168.1.255"
 WOL_MAC="04:7C:16:E4:7D:83"
 WOL_RETRIES=5
-WOL_WAIT_SEC=15
+WOL_WAIT_SEC=20
+WOL_INITIAL_WAIT=15
+WOL_BURST=3
+WOL_RETRY_BURST=2
 
 # RustDesk password
 # Single-quoted to preserve special characters literally (do not change to double quotes)
@@ -123,20 +126,29 @@ normalize_mac() {
     }'
 }
 
-# Send a Wake-on-LAN magic packet to the configured broadcast address and MAC.
+# Send Wake-on-LAN magic packet(s) to the configured broadcast address and MAC.
+# Optional argument: number of packets to send (default: WOL_BURST).
 send_wol() {
+    local count="${1:-$WOL_BURST}"
+
     if ! command -v wakeonlan >/dev/null 2>&1; then
         echo -e "${YELLOW}Warning:${NC} wakeonlan not found in PATH. Skipping Wake-on-LAN." >&2
         echo "Install it with: brew install wakeonlan" >&2
         return 0
     fi
 
-    echo -e "${BLUE}Sending Wake-on-LAN magic packet to ${WOL_MAC} via ${WOL_BROADCAST}${NC}"
-    wakeonlan -i "$WOL_BROADCAST" "$WOL_MAC" || true
+    echo -e "${BLUE}Sending ${count} Wake-on-LAN magic packet(s) to ${WOL_MAC} via ${WOL_BROADCAST}${NC}"
+    local i
+    for ((i = 0; i < count; i++)); do
+        wakeonlan -i "$WOL_BROADCAST" "$WOL_MAC" || true
+        if ((i < count - 1)); then
+            sleep 1
+        fi
+    done
 }
 
 # Scan the local subnet and populate MATCH_IP/MATCH_HOST/MATCH_MAC if the target
-# is found. Returns 0 when found, 1 otherwise.
+# is found. Always returns 0; callers check MATCH_IP to see if the PC was found.
 MATCH_IP=""
 MATCH_HOST=""
 MATCH_MAC=""
@@ -159,7 +171,7 @@ discover_pc() {
     local i ip
     for i in $(seq 1 254); do
         ip="${SUBNET}.${i}"
-        ping -c 1 -W $(echo "$TIMEOUT_MS / 1000" | bc -l | sed 's/0*$//; s/\.$//') "$ip" >/dev/null 2>&1 &
+        ping -c 1 -W "$PING_WAIT_ARG" "$ip" >/dev/null 2>&1 &
     done
     wait
 
@@ -207,7 +219,7 @@ discover_pc() {
         fi
     done < <(arp -a)
 
-    return $(( found == 0 ? 1 : 0 ))
+    return 0
 }
 
 # If no filter specified and not listing all, use the default Windows PC MAC
@@ -217,6 +229,19 @@ fi
 
 MAC_FILTER_NORMALIZED=$(normalize_mac "$MAC_FILTER")
 HOST_FILTER_LOWER=$(lowercase "$HOST_FILTER")
+
+# Validate timeout and compute the right -W argument for ping.
+# macOS/BSD ping expects milliseconds; Linux ping expects seconds.
+if ! [[ "$TIMEOUT_MS" =~ ^[0-9]+$ ]]; then
+    echo -e "${YELLOW}Warning:${NC} Invalid timeout '$TIMEOUT_MS'; using 1000ms." >&2
+    TIMEOUT_MS=1000
+fi
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    PING_WAIT_ARG="$TIMEOUT_MS"
+else
+    PING_WAIT_ARG=$(awk "BEGIN {printf \"%.1f\", $TIMEOUT_MS/1000}")
+fi
 
 # Get the default gateway and subnet
 GATEWAY=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}' | head -1)
@@ -249,8 +274,12 @@ if [[ "$LIST_ALL" == true ]]; then
 fi
 
 # Send Wake-on-LAN magic packet before scanning
+TOTAL_WAIT=0
 if [[ "$USE_WOL" == true ]]; then
     send_wol
+    echo -e "${YELLOW}Waiting ${WOL_INITIAL_WAIT}s for the PC to wake up before scanning...${NC}"
+    sleep "$WOL_INITIAL_WAIT"
+    TOTAL_WAIT=$WOL_INITIAL_WAIT
 fi
 
 # Scan with retries to give the PC time to wake up
@@ -258,10 +287,11 @@ ATTEMPT=0
 while [[ $ATTEMPT -le $WOL_RETRIES ]]; do
     if [[ $ATTEMPT -gt 0 ]]; then
         echo ""
-        echo -e "${YELLOW}PC not found yet. Waiting ${WOL_WAIT_SEC}s before retry ${ATTEMPT}/${WOL_RETRIES}...${NC}"
+        echo -e "${YELLOW}PC not found yet. Waiting ${WOL_WAIT_SEC}s before retry ${ATTEMPT}/${WOL_RETRIES} (waited ${TOTAL_WAIT}s so far)...${NC}"
         sleep "$WOL_WAIT_SEC"
+        TOTAL_WAIT=$((TOTAL_WAIT + WOL_WAIT_SEC))
         if [[ "$USE_WOL" == true ]]; then
-            send_wol
+            send_wol "$WOL_RETRY_BURST"
         fi
     fi
 
@@ -276,7 +306,7 @@ done
 
 if [[ -z "$MATCH_IP" ]]; then
     echo ""
-    echo -e "${RED}No matching device found after ${WOL_RETRIES} retries.${NC}"
+    echo -e "${RED}No matching device found after ${WOL_RETRIES} retries (${TOTAL_WAIT}s waited).${NC}"
     echo ""
     echo "Suggestions:"
     echo "  1. Make sure the Windows PC supports Wake-on-LAN and it is enabled in BIOS/Windows."

@@ -1,0 +1,219 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { ChartSocketController } from '../../application/ChartSocketController.js';
+import { FakeSocket } from '../fakes/FakeSocket.js';
+import { FakeDomService } from '../fakes/FakeDomService.js';
+
+function setupDocument() {
+  document.body.innerHTML = `
+    <div id="connectionOverlay" class="hidden" data-platform-label="MetaTrader">Overlay</div>
+    <div id="connectionStatus">Idle</div>
+    <button id="reconnectBtn" class="hidden">Reconnect</button>
+    <button id="startStreamingBtn">Start Streaming</button>
+  `;
+  return { doc: document, win: window };
+}
+
+function buildController(doc, win) {
+  const socket = new FakeSocket();
+  const dom = new FakeDomService(doc, win);
+  const controller = {
+    historyReady: false,
+    queueBar: vi.fn(),
+    processBar: vi.fn(),
+    handleIndicatorUpdate: vi.fn(),
+    handleTradeOpen: vi.fn(),
+    handleTradeClose: vi.fn(),
+    handleTradeUpdate: vi.fn(),
+    handleTradeEntryUpdate: vi.fn(),
+    handleLineRemoved: vi.fn(),
+    setLiveMode: vi.fn(),
+    setPlaying: vi.fn(),
+    setHistoryReady: vi.fn(),
+    handleHistoryReady: vi.fn(),
+    clearPendingBars: vi.fn(),
+  };
+  const socketController = new ChartSocketController(socket, controller, dom);
+  socketController.init();
+  return { socket, controller, dom, socketController };
+}
+
+describe('ChartSocketController', () => {
+  beforeEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  it('logs socket connect', () => {
+    const { socket } = buildController(...Object.values(setupDocument()));
+    const consoleLog = vi.spyOn(console, 'log').mockImplementation(() => {});
+    socket.trigger('connect');
+    expect(consoleLog).toHaveBeenCalledWith('[ChartSocketController] socket connected');
+    consoleLog.mockRestore();
+  });
+
+  it('queues bar when history is not ready', () => {
+    const { socket, controller } = buildController(...Object.values(setupDocument()));
+    const bar = { time: 1 };
+    socket.trigger('bar', bar);
+    expect(controller.queueBar).toHaveBeenCalledWith(bar);
+    expect(controller.processBar).not.toHaveBeenCalled();
+  });
+
+  it('processes bar when history is ready', () => {
+    const { socket, controller } = buildController(...Object.values(setupDocument()));
+    controller.historyReady = true;
+    const bar = { time: 1 };
+    socket.trigger('bar', bar);
+    expect(controller.processBar).toHaveBeenCalledWith(bar);
+    expect(controller.queueBar).not.toHaveBeenCalled();
+  });
+
+  it('routes indicator_update to controller', () => {
+    const { socket, controller } = buildController(...Object.values(setupDocument()));
+    const data = { tf: '1m', time: 1, tsi: 10, signal: 5 };
+    socket.trigger('indicator_update', data);
+    expect(controller.handleIndicatorUpdate).toHaveBeenCalledWith(data);
+  });
+
+  it('routes trade events to controller', () => {
+    const { socket, controller } = buildController(...Object.values(setupDocument()));
+    socket.trigger('trade_open', { trade_id: 't1' });
+    expect(controller.handleTradeOpen).toHaveBeenCalledWith({ trade_id: 't1' });
+
+    socket.trigger('trade_close', { trade_id: 't1' });
+    expect(controller.handleTradeClose).toHaveBeenCalledWith({ trade_id: 't1' });
+
+    socket.trigger('trade_update', { trade_id: 't1', stop_loss: 99 });
+    expect(controller.handleTradeUpdate).toHaveBeenCalledWith({ trade_id: 't1', stop_loss: 99 });
+
+    socket.trigger('trade_entry_update', { trade_id: 't1', entry_price: 100 });
+    expect(controller.handleTradeEntryUpdate).toHaveBeenCalledWith({ trade_id: 't1', entry_price: 100 });
+  });
+
+  it('routes line_removed to controller', () => {
+    const { socket, controller } = buildController(...Object.values(setupDocument()));
+    socket.trigger('line_removed', { id: 7 });
+    expect(controller.handleLineRemoved).toHaveBeenCalledWith(7);
+  });
+
+  it('sets window __done on stream_end', () => {
+    const { doc, win } = setupDocument();
+    const { socket } = buildController(doc, win);
+    socket.trigger('stream_end');
+    expect(win.__done).toBe(true);
+  });
+
+  it('sets live mode and triggers history ready on history_loaded', () => {
+    const { socket, controller } = buildController(...Object.values(setupDocument()));
+    const data = { pair: 'MNQ' };
+    socket.trigger('history_loaded', data);
+    expect(controller.setLiveMode).toHaveBeenCalledWith(true);
+    expect(controller.handleHistoryReady).toHaveBeenCalledWith(data);
+  });
+
+  it('sets live mode and triggers history ready on trading_ready', () => {
+    const { socket, controller } = buildController(...Object.values(setupDocument()));
+    const data = { pair: 'MNQ' };
+    socket.trigger('trading_ready', data);
+    expect(controller.setLiveMode).toHaveBeenCalledWith(true);
+    expect(controller.handleHistoryReady).toHaveBeenCalledWith(data);
+  });
+
+  it('updates overlay on stream_status', () => {
+    const { doc } = setupDocument();
+    const { socket } = buildController(doc, window);
+
+    socket.trigger('stream_status', { playing: false, live_mode: true, platform_connected: true });
+
+    const overlay = doc.getElementById('connectionOverlay');
+    expect(overlay.classList.contains('hidden')).toBe(true);
+  });
+
+  it('shows waiting overlay when live but platform not connected', () => {
+    const { doc } = setupDocument();
+    const { socket } = buildController(doc, window);
+
+    socket.trigger('stream_status', { playing: true, live_mode: true, platform_connected: false });
+
+    const overlay = doc.getElementById('connectionOverlay');
+    const status = doc.getElementById('connectionStatus');
+    expect(overlay.classList.contains('hidden')).toBe(false);
+    expect(status.textContent).toContain('Waiting for MetaTrader');
+  });
+
+  it('hides overlay when not live', () => {
+    const { doc } = setupDocument();
+    const { socket } = buildController(doc, window);
+
+    socket.trigger('stream_status', { playing: true, live_mode: false });
+
+    expect(doc.getElementById('connectionOverlay').classList.contains('hidden')).toBe(true);
+  });
+
+  it('pauses controller when stream_status reports not playing', () => {
+    const { socket, controller } = buildController(...Object.values(setupDocument()));
+    socket.trigger('stream_status', { playing: false, live_mode: false });
+    expect(controller.setPlaying).toHaveBeenCalledWith(false);
+  });
+
+  it('shows gateway started status and hides reconnect', () => {
+    const { doc } = setupDocument();
+    const { socket } = buildController(doc, window);
+
+    socket.trigger('gateway_started');
+
+    expect(doc.getElementById('connectionStatus').textContent).toContain('ZeroMQ gateway started');
+    expect(doc.getElementById('reconnectBtn').classList.contains('hidden')).toBe(true);
+  });
+
+  it('shows connected status and hides overlay on platform_connected', () => {
+    const { doc } = setupDocument();
+    const { socket } = buildController(doc, window);
+
+    socket.trigger('platform_connected');
+
+    expect(doc.getElementById('connectionOverlay').classList.contains('hidden')).toBe(true);
+    expect(doc.getElementById('connectionStatus').textContent).toBe('Connected! Loading chart...');
+    expect(doc.getElementById('reconnectBtn').classList.contains('hidden')).toBe(true);
+    expect(doc.getElementById('startStreamingBtn').classList.contains('hidden')).toBe(false);
+  });
+
+  it('shows disconnected status and overlay with reconnect button', () => {
+    const { doc } = setupDocument();
+    const { socket, controller } = buildController(doc, window);
+
+    socket.trigger('platform_disconnected');
+
+    expect(controller.setHistoryReady).toHaveBeenCalledWith(false);
+    expect(controller.clearPendingBars).toHaveBeenCalled();
+    expect(doc.getElementById('connectionOverlay').classList.contains('hidden')).toBe(false);
+    expect(doc.getElementById('connectionStatus').textContent).toContain('Lost connection');
+    expect(doc.getElementById('reconnectBtn').classList.contains('hidden')).toBe(false);
+    expect(doc.getElementById('startStreamingBtn').classList.contains('hidden')).toBe(true);
+  });
+
+  it('shows stopped status and hides reconnect', () => {
+    const { doc } = setupDocument();
+    const { socket, controller } = buildController(doc, window);
+
+    socket.trigger('gateway_stopped');
+
+    expect(controller.setHistoryReady).toHaveBeenCalledWith(false);
+    expect(controller.clearPendingBars).toHaveBeenCalled();
+    expect(doc.getElementById('connectionOverlay').classList.contains('hidden')).toBe(false);
+    expect(doc.getElementById('connectionStatus').textContent).toBe('Streaming stopped');
+    expect(doc.getElementById('reconnectBtn').classList.contains('hidden')).toBe(true);
+  });
+
+  it('falls back to NinjaTrader platform label', () => {
+    document.body.innerHTML = `
+      <div id="connectionOverlay" class="hidden">Overlay</div>
+      <div id="connectionStatus"></div>
+      <button id="reconnectBtn" class="hidden"></button>
+      <button id="startStreamingBtn"></button>
+    `;
+    const { socket } = buildController(document, window);
+    socket.trigger('gateway_started');
+    expect(document.getElementById('connectionStatus').textContent).toContain('NinjaTrader');
+  });
+});

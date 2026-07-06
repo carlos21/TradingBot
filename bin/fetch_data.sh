@@ -17,4 +17,6 @@ cd "$SCRIPT_DIR/.."
 # Ensure the default CSV output directory exists even on first run.
 mkdir -p csvs
 
+# fetcher is a module under backend/
+cd backend
 poetry run python -m fetcher.run "$@"

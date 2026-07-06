@@ -34,8 +34,8 @@ if [ -f "$PIDFILE" ]; then
     rm -f "$PIDFILE"
 fi
 
-# 2. Aggressively kill any leftover python app.py processes
-STALE_PIDS=$(pgrep -f "python.*app\.py" || true)
+# 2. Aggressively kill any leftover python backend/run.py processes
+STALE_PIDS=$(pgrep -f "python.*backend/run\.py" || true)
 if [ -n "$STALE_PIDS" ]; then
     echo "[liquid] Killing stale python processes: $STALE_PIDS"
     echo "$STALE_PIDS" | xargs kill -9 2>/dev/null || true
@@ -58,4 +58,4 @@ rm -f "${DB_FILE}-shm" "${DB_FILE}-wal" "${DB_FILE}-journal"
 echo "[liquid] Starting live — pair=$PAIR"
 # Write our PID before exec (exec keeps the same PID)
 echo $$ > "$PIDFILE"
-exec poetry run python app.py
+exec poetry run python backend/run.py

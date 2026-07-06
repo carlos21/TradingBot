@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Liquid Chart</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg" />
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            surface: {
+              950: 'rgb(var(--surface-950) / <alpha-value>)',
+              900: 'rgb(var(--surface-900) / <alpha-value>)',
+              850: 'rgb(var(--surface-850) / <alpha-value>)',
+              800: 'rgb(var(--surface-800) / <alpha-value>)',
+              700: 'rgb(var(--surface-700) / <alpha-value>)',
+              600: 'rgb(var(--surface-600) / <alpha-value>)',
+            },
+            slate: {
+              50: 'rgb(var(--slate-50) / <alpha-value>)',
+              100: 'rgb(var(--slate-100) / <alpha-value>)',
+              200: 'rgb(var(--slate-200) / <alpha-value>)',
+              300: 'rgb(var(--slate-300) / <alpha-value>)',
+              400: 'rgb(var(--slate-400) / <alpha-value>)',
+              500: 'rgb(var(--slate-500) / <alpha-value>)',
+              600: 'rgb(var(--slate-600) / <alpha-value>)',
+              700: 'rgb(var(--slate-700) / <alpha-value>)',
+              800: 'rgb(var(--slate-800) / <alpha-value>)',
+              900: 'rgb(var(--slate-900) / <alpha-value>)',
+            },
+            accent: {
+              DEFAULT: 'rgb(var(--accent-500) / <alpha-value>)',
+              50: 'rgb(var(--accent-50) / <alpha-value>)',
+              100: 'rgb(var(--accent-100) / <alpha-value>)',
+              200: 'rgb(var(--accent-200) / <alpha-value>)',
+              300: 'rgb(var(--accent-300) / <alpha-value>)',
+              400: 'rgb(var(--accent-400) / <alpha-value>)',
+              500: 'rgb(var(--accent-500) / <alpha-value>)',
+              600: 'rgb(var(--accent-600) / <alpha-value>)',
+            },
+          },
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+
+  <!-- Theme-aware color variables (space-separated RGB for Tailwind opacity support) -->
+  <style>
+    :root {
+      /* Surfaces */
+      --surface-950: 11 18 32;
+      --surface-900: 15 23 42;
+      --surface-850: 21 31 53;
+      --surface-800: 30 41 59;
+      --surface-700: 51 65 85;
+      --surface-600: 71 85 105;
+      /* Text / slate scale */
+      --slate-50: 248 250 252;
+      --slate-100: 241 245 249;
+      --slate-200: 226 232 240;
+      --slate-300: 203 213 225;
+      --slate-400: 148 163 184;
+      --slate-500: 100 116 139;
+      --slate-600: 71 85 105;
+      --slate-700: 51 65 85;
+      --slate-800: 30 41 59;
+      --slate-900: 15 23 42;
+      /* Accent - amber */
+      --accent-50: 255 251 235;
+      --accent-100: 254 243 199;
+      --accent-200: 253 230 138;
+      --accent-300: 252 211 77;
+      --accent-400: 251 191 36;
+      --accent-500: 245 158 11;
+      --accent-600: 217 119 6;
+    }
+  </style>
+
+  <!-- Apply saved theme as early as possible to avoid flash -->
+  <script>
+    (function () {
+      const THEMES = {
+        dark: {
+          surface: ['11 18 32','15 23 42','21 31 53','30 41 59','51 65 85','71 85 105'],
+          slate:   ['248 250 252','241 245 249','226 232 240','203 213 225','148 163 184','100 116 139','71 85 105','51 65 85','30 41 59','15 23 42'],
+        },
+        light: {
+          surface: ['255 255 255','248 250 252','241 245 249','241 245 249','226 232 240','203 213 225'],
+          slate:   ['15 23 42','30 41 59','51 65 85','71 85 105','148 163 184','203 213 225','226 232 240','241 245 249','248 250 252','255 255 255'],
+        },
+      };
+      let key = 'dark';
+      try { key = localStorage.getItem('liquid-theme') || 'dark'; } catch (e) {}
+      const theme = THEMES[key] || THEMES.dark;
+      const root = document.documentElement;
+      [950,900,850,800,700,600].forEach((shade, i) => root.style.setProperty('--surface-' + shade, theme.surface[i]));
+      [50,100,200,300,400,500,600,700,800,900].forEach((shade, i) => root.style.setProperty('--slate-' + shade, theme.slate[i]));
+    })();
+  </script>
+
+  <!-- Theme switcher UI handler -->
+  <script src="/static/js/ThemeManager.js"></script>
+
+  <!-- Runtime config loader (sets platform label, toggles platform-specific UI) -->
+  <script src="/static/js/configLoader.js"></script>
+
+  <!-- Lightweight Charts -->
+  <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+  <!-- Your custom CSS -->
+  <link rel="stylesheet" href="/static/css/styles.css" />
+
+  <!-- Shared Admin CSS -->
+  <link rel="stylesheet" href="/static/css/admin.css" />
+</head>
+<body class="bg-surface-950 text-slate-100 h-screen overflow-hidden">
+
+  <!-- Sidebar -->
+  <aside class="fixed left-0 top-0 h-full w-64 bg-surface-800 border-r border-surface-700 z-50 flex flex-col">
+    <!-- Header -->
+    <div class="p-6 border-b border-surface-700">
+      <h1 class="text-xl font-bold text-accent-400 tracking-tight">Liquid</h1>
+      <div id="pairSelectorContainer"
+           class="mt-2 flex items-center space-x-2 hidden">
+        <label class="text-sm text-slate-400">Pair:</label>
+        <select id="pairSelector" class="bg-surface-700 text-slate-100 text-sm rounded px-2 py-1 border border-surface-600 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none">
+          <option value="MNQ">MNQ</option>
+          <option value="ES">ES</option>
+        </select>
+        <span id="pairDisplay" class="text-sm text-slate-400 hidden">Loading...</span>
+      </div>
+      <!-- Chart page: show read-only pair label -->
+      <div class="mt-2 flex items-center space-x-2">
+        <label class="text-sm text-slate-400">Pair:</label>
+        <span id="chartPairDisplay" class="text-sm text-slate-100 font-medium"></span>
+      </div>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="p-4 space-y-1 flex-1 overflow-y-auto">
+      <!-- Trading Section -->
+      <div class="mb-2">
+        <div class="px-4 py-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Trading</div>
+        <a href="/"
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors">
+          📊 Chart
+        </a>
+        <a href="/admin/overview"
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors">
+          📈 Overview
+        </a>
+        <a href="/admin/trades"
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors">
+          💼 Trades
+        </a>
+        <a href="/admin/lines"
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors">
+          📉 Lines
+        </a>
+        <a href="/admin/analytics"
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors">
+          📊 Analytics
+        </a>
+        <a href="/admin/decisions"
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors">
+          📋 Decisions
+        </a>
+        <a href="/admin/logs"
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors">
+          📝 Logs
+        </a>
+      </div>
+
+      <!-- Global Section -->
+      <div class="pt-2 border-t border-surface-700">
+        <div class="px-4 py-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wider">Global</div>
+        <a href="/admin/settings"
+           class="nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors">
+          ⚙️ Settings
+        </a>
+        <a href="/admin/ninjatrader"
+           data-platform="ninjatrader"
+           class="hidden nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors">
+          📡 NinjaTrader
+        </a>
+        <a href="/admin/metatrader"
+           data-platform="metatrader"
+           class="hidden nav-link block w-full text-left px-4 py-2.5 rounded-lg text-slate-300 hover:bg-surface-700 transition-colors">
+          📡 MetaTrader
+        </a>
+      </div>
+    </nav>
+
+    <!-- Theme Switcher -->
+    <div class="p-4 border-t border-surface-700">
+      <label for="theme-selector" class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Theme</label>
+      <select id="theme-selector" class="w-full bg-surface-700 text-slate-100 text-sm rounded-lg px-3 py-2 border border-surface-600 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none cursor-pointer">
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+      </select>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <div class="ml-64 h-screen grid grid-rows-[auto_1fr] relative">
+    <!-- Warning banner for missing accounts -->
+    <div id="ntAccountsWarning" data-platform="ninjatrader" class="hidden px-4 py-2 bg-rose-600 text-slate-100 text-center font-bold text-sm">
+      ⚠️ No NT accounts configured — live trading is disabled.
+      <a href="/admin/settings" class="underline hover:text-amber-400">Add accounts in Settings →</a>
+    </div>
+
+    <!-- Connection Overlay (live mode only, shown until connected) -->
+    <div id="connectionOverlay" data-platform-label="Platform" class="hidden absolute inset-0 z-40 flex items-center justify-center bg-surface-950">
+      <div class="bg-surface-800 border border-surface-700 rounded-xl p-8 max-w-md w-full text-center shadow-lg">
+        <div class="mb-6">
+          <div class="w-16 h-16 bg-accent-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
+            <svg class="w-8 h-8 text-accent-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <h2 class="text-2xl font-bold text-slate-100 mb-2">Ready to Trade</h2>
+          <p class="text-slate-400 text-sm">Start streaming to connect with <span id="platform-label" data-config-key="platform_label">Platform</span> and load live market data.</p>
+        </div>
+
+        <button
+          id="startStreamingBtn"
+          class="w-full px-6 py-3 bg-accent-600 hover:bg-accent-500 text-slate-100 font-medium rounded-lg transition-colors flex items-center justify-center space-x-2"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+          </svg>
+          <span>Start Streaming</span>
+        </button>
+
+        <div id="connectionStatus" class="mt-4 text-sm text-slate-400 min-h-[1.5rem]">
+          Waiting to start...
+        </div>
+
+        <button
+          id="reconnectBtn"
+          class="hidden mt-3 px-4 py-2 bg-surface-700 hover:bg-surface-600 text-slate-100 text-sm rounded-lg transition-colors"
+        >
+          Reconnect
+        </button>
+      </div>
+    </div>
+
+    <!-- Header with timeframe buttons and replay controls -->
+    <header class="p-4 bg-surface-800 text-slate-100">
+      <div class="flex justify-between items-center">
+        <!-- Left group: timeframes -->
+        <div class="flex items-center space-x-4">
+          <!-- Timeframe buttons -->
+          <div class="flex space-x-2">
+            <button data-timeframe="1m"  class="px-2 py-1 rounded bg-surface-900 text-slate-100">1m</button>
+            <button data-timeframe="5m"  class="px-2 py-1 rounded bg-surface-900 text-slate-100">5m</button>
+            <button data-timeframe="15m" class="px-2 py-1 rounded bg-surface-900 text-slate-100">15m</button>
+            <button data-timeframe="30m" class="px-2 py-1 rounded bg-surface-900 text-slate-100">30m</button>
+            <button data-timeframe="1h"  class="px-2 py-1 rounded bg-surface-900 text-slate-100">1h</button>
+            <button data-timeframe="4h"  class="px-2 py-1 rounded bg-surface-900 text-slate-100">4h</button>
+          </div>
+          <!-- NT Accounts display -->
+          <div id="ntAccountsDisplay" data-platform="ninjatrader" class="hidden flex items-center space-x-1 ml-2 text-xs">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-4">
+          <!-- Test Actions Dropdown -->
+          <div id="testTradeControls" class="hidden relative">
+            <button
+              id="testDropdownToggle"
+              class="flex items-center space-x-1 px-2 py-1 text-xs text-slate-400 hover:text-slate-200 bg-surface-800 hover:bg-surface-700 rounded border border-surface-700 transition-colors"
+              title="Test actions"
+            >
+              <span>Test</span>
+              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </button>
+            <div
+              id="testDropdownMenu"
+              class="hidden absolute right-0 mt-1 w-32 bg-surface-800 border border-surface-700 rounded-lg shadow-lg z-50 overflow-hidden"
+            >
+              <button id="testLongBtn" class="w-full text-left px-3 py-2 text-sm text-emerald-400 hover:text-emerald-300 hover:bg-surface-700 transition-colors">
+                Test Long
+              </button>
+              <button id="testShortBtn" class="w-full text-left px-3 py-2 text-sm text-rose-500 hover:text-rose-400 hover:bg-surface-700 transition-colors">
+                Test Short
+              </button>
+              <div class="border-t border-surface-700"></div>
+              <button id="closeAllBtn" class="w-full text-left px-3 py-2 text-sm text-amber-400 hover:text-amber-300 hover:bg-surface-700 transition-colors">
+                Close All
+              </button>
+            </div>
+          </div>
+
+          <button id="prevDayBtn" class="replay-control">◀ Prev day</button>
+          <button id="nextDayBtn" class="replay-control">Next day ▶</button>
+          <span id="currentDayLabel"></span>
+        </div>
+
+        <!-- Right group: Play/Pause -->
+        <div class="flex items-center space-x-4">
+          <button
+            id="toggleReplayBtn"
+            class="px-4 py-2 bg-accent-600 hover:bg-accent-500 text-slate-100 font-medium rounded-lg transition-colors"
+          >
+            Play
+          </button>
+          <button
+            id="stepBarBtn"
+            class="px-4 py-2 bg-surface-700 hover:bg-surface-600 text-slate-100 font-medium rounded-lg transition-colors"
+            title="Step one bar"
+          >
+            &#x23ED;
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Floating Stream Health Monitor -->
+    <div id="streamHealthWrapper" class="hidden absolute bottom-4 right-4 z-50 flex flex-col items-end space-y-2" style="max-width: 520px;">
+      <!-- Compact Pill Bar -->
+      <div id="streamHealthBar" class="bg-surface-800/90 backdrop-blur border border-surface-700 rounded-full shadow-lg text-xs text-slate-300 px-3 py-1.5 cursor-pointer select-none hover:bg-surface-700/90 transition-colors">
+        <div class="flex items-center space-x-3">
+          <span id="healthDot" class="w-2.5 h-2.5 rounded-full bg-slate-500 flex-shrink-0"></span>
+          <span id="healthState" class="font-semibold text-slate-400">--</span>
+          <span class="text-slate-600">|</span>
+          <span id="healthReadyBadge" class="hidden px-1.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide">--</span>
+          <span class="text-slate-600">|</span>
+          <span id="healthLastBar">--</span>
+          <span class="text-slate-600">|</span>
+          <span id="healthCached">--</span>
+          <span id="healthAlertIcon" class="hidden text-amber-400">⚠️</span>
+          <svg id="healthChevron" class="w-3 h-3 text-slate-500 transform transition-transform flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+          </svg>
+        </div>
+        <!-- Compact readiness progress -->
+        <div class="w-full bg-surface-700 rounded-full h-1 mt-1.5 overflow-hidden">
+          <div id="healthCompactProgress" class="h-1 rounded-full bg-accent-500 transition-all duration-500" style="width: 0%"></div>
+        </div>
+      </div>
+
+      <!-- Floating Detailed Panel -->
+      <div id="streamHealthPanel" class="hidden bg-surface-800/95 backdrop-blur border border-surface-700 rounded-xl shadow-lg text-xs text-slate-300 px-4 py-3" style="width: 500px; max-height: 80vh; overflow-y: auto;">
+        <!-- Readiness stepper -->
+        <div class="mb-4">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Readiness Pipeline</div>
+          <div id="readinessStepper" class="flex items-start px-3">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Active phase card -->
+        <div id="readinessPhaseCard" class="bg-surface-700/40 rounded-lg p-3 mb-4">
+          <!-- Populated by JS -->
+        </div>
+
+        <!-- Transition log -->
+        <div class="mb-4">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-2">State History</div>
+          <div id="readinessTransitionLog" class="max-h-56 overflow-y-auto bg-surface-900/50 rounded-lg p-2">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Metrics grid -->
+        <div class="grid grid-cols-2 gap-x-4 gap-y-2 mb-3 border-t border-surface-700 pt-3">
+          <div><span class="text-slate-500">State:</span> <span id="detailState" class="font-mono">--</span></div>
+          <div><span class="text-slate-500">Last bar:</span> <span id="detailLastBar" class="font-mono">--</span></div>
+          <div><span class="text-slate-500">Cached:</span> <span id="detailCached" class="font-mono">--</span></div>
+          <div><span class="text-slate-500">Heartbeat:</span> <span id="detailHeartbeat" class="font-mono">--</span></div>
+          <div><span class="text-slate-500">Duplicates:</span> <span id="detailDuplicates" class="font-mono">--</span></div>
+          <div><span class="text-slate-500">Gaps:</span> <span id="detailGaps" class="font-mono">--</span></div>
+          <div><span class="text-slate-500">Ticks:</span> <span id="detailTicks" class="font-mono">--</span></div>
+          <div><span class="text-slate-500">Batches:</span> <span id="detailBatches" class="font-mono">--</span></div>
+          <div class="col-span-2"><span class="text-slate-500">Platform:</span> <span id="detailPlatform" class="font-mono">--</span></div>
+          <div class="col-span-2"><span class="text-slate-500">History:</span> <span id="detailHistory" class="font-mono">--</span></div>
+        </div>
+        <div class="flex items-center space-x-3 border-t border-surface-700 pt-2">
+          <button id="healthResyncBtn" class="px-3 py-1 bg-accent-600 hover:bg-accent-500 text-slate-100 rounded text-xs disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+            Re-sync
+          </button>
+          <button id="healthCheckParityBtn" class="px-3 py-1 bg-accent-600 hover:bg-accent-500 text-slate-100 rounded text-xs disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+            Check Parity
+          </button>
+          <span id="healthRefreshStatus" class="text-slate-500 hidden"></span>
+        </div>
+      </div>
+    </div>
+
+    <div id="chartContainer" class="bg-surface-950"></div>
+
+    <!-- Parity Check Results Modal -->
+    <div id="parityModal" class="fixed inset-0 bg-black/60 z-[60] hidden flex items-center justify-center p-4">
+      <div class="bg-surface-800 rounded-xl border border-surface-700 shadow-lg w-full max-w-2xl max-h-[80vh] flex flex-col">
+        <!-- Header -->
+        <div class="p-5 border-b border-surface-700 flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span id="parityModalIcon" class="text-2xl">✅</span>
+            <div>
+              <h3 class="text-lg font-bold text-slate-100">Parity Check Results</h3>
+              <p id="parityModalSummary" class="text-sm text-slate-400">--</p>
+            </div>
+          </div>
+          <button id="parityModalClose" class="text-slate-400 hover:text-slate-100 text-2xl">&times;</button>
+        </div>
+        <!-- Body -->
+        <div class="p-5 overflow-y-auto flex-1">
+          <div id="parityModalAllGood" class="hidden text-center py-8">
+            <div class="text-5xl mb-4">✅</div>
+            <p class="text-lg text-emerald-400 font-semibold">All bars match perfectly</p>
+            <p class="text-sm text-slate-400 mt-1">Python cache and NinjaTrader are in sync for the last 5 hours.</p>
+          </div>
+          <div id="parityModalGaps" class="hidden">
+            <p class="text-sm text-slate-400 mb-3">Gaps detected between Python cache and NinjaTrader:</p>
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-sm">
+                <thead class="text-xs text-slate-400 uppercase bg-surface-700/50">
+                  <tr>
+                    <th class="px-3 py-2">Time (CDT)</th>
+                    <th class="px-3 py-2">Duration</th>
+                    <th class="px-3 py-2">Type</th>
+                    <th class="px-3 py-2">Details</th>
+                    <th class="px-3 py-2">Market</th>
+                  </tr>
+                </thead>
+                <tbody id="parityModalGapsBody" class="divide-y divide-surface-700">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <!-- Footer -->
+        <div class="p-4 border-t border-surface-700 flex justify-between items-center text-xs text-slate-500">
+          <span id="parityModalCheckedAt">--</span>
+          <button id="parityModalCloseBtn" class="px-4 py-2 bg-surface-700 hover:bg-surface-600 text-slate-100 rounded-lg text-sm transition-colors">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Socket.IO & Main JS -->
+  <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
+  <script type="module" src="/static/js/main.js"></script>
+  <script>
+    // Populate chart pair display
+    fetch('/api/config')
+      .then(r => r.json())
+      .then(data => {
+        const el = document.getElementById('chartPairDisplay');
+        if (el) el.textContent = data.pair || '--';
+      })
+      .catch(() => {});
+  </script>
+</body>
+</html>

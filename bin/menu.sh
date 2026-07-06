@@ -10,8 +10,6 @@ RST='\033[0m'
 options=(
   "Run ALL scenarios              (run_scenarios.sh)"
   "Run TEST scenario              (run_test_scenario.sh)"
-  "Run integration tests          (run_integration_tests.sh)"
-  "Run E2E tests (NinjaTrader)    (e2e_test.sh)"
   "View trade logs                (trade_logs.sh)"
   "Add strategy line              (add_lines.sh)"
   "Add scenario                   (add_scenario.sh)"
@@ -25,8 +23,6 @@ options=(
 commands=(
   "./bin/run_scenarios.sh"
   "./bin/run_test_scenario.sh"
-  "./bin/run_integration_tests.sh"
-  "./bin/e2e_test.sh"
   "./bin/trade_logs.sh"
   "./bin/add_lines.sh"
   "./bin/add_scenario.sh"

@@ -909,7 +909,7 @@ $btnToggle.Add_Click({
 
             # Nuclear fallback: pkill inside WSL
             try {
-                & wsl -- pkill -f "app.py" 2>$null
+                & wsl -- pkill -f "backend/run.py" 2>$null
                 & wsl -- pkill -f "start_live" 2>$null
                 & wsl -- pkill -f "poetry run python" 2>$null
             } catch {}
@@ -1291,7 +1291,7 @@ $form.Add_FormClosing({
     }
     # Also try to clean up any orphaned WSL bot processes
     try {
-        & wsl -- pkill -f "app.py" 2>$null
+        & wsl -- pkill -f "backend/run.py" 2>$null
         & wsl -- pkill -f "start_live" 2>$null
     } catch {}
 })
