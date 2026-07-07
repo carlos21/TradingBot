@@ -4,6 +4,7 @@ Scenario management layer for discovery, persistence, and snapshot cleanup.
 Organised by Clean Architecture layers: Domain -> Application -> Infrastructure.
 """
 
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -17,9 +18,10 @@ import yaml
 # ---------------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = PROJECT_ROOT.parent
 SCENARIOS_YAML = PROJECT_ROOT / "src" / "strategies" / "liquidity_v2" / "scenarios.yaml"
 TEST_SCENARIO_YAML = PROJECT_ROOT / "src" / "strategies" / "liquidity_v2" / "test_scenario.yaml"
-SOURCE_CSV = PROJECT_ROOT / "csvs" / "NQ_live.csv"
+SOURCE_CSV = REPO_ROOT / "csvs" / "NQ_live.csv"
 SNAP_BASE_DIR = PROJECT_ROOT / "scenarios_out" / "MNQ"
 
 
@@ -320,6 +322,8 @@ class SubprocessDiscoveryRunner:
         self._test_scenario_yaml = str(
             test_scenario_yaml_path.relative_to(project_root)
         )
+        self._source_csv = os.path.relpath(SOURCE_CSV, project_root)
+        self._outdir = os.path.relpath(REPO_ROOT / "scenarios_out", project_root)
         self._extra_args = extra_cmd_args or []
 
     def run(self, results_json_path: str, rr_ratio: float = 5.0) -> bool:
@@ -331,9 +335,9 @@ class SubprocessDiscoveryRunner:
             "--yaml",
             self._test_scenario_yaml,
             "--source-csv",
-            "csvs/NQ_live.csv",
+            self._source_csv,
             "--outdir",
-            "./scenarios_out",
+            self._outdir,
             "--port",
             "5002",
             "--bars-per-second",

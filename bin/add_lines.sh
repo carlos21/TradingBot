@@ -11,6 +11,9 @@ RED='\033[91m'
 GRAY='\033[90m'
 RST='\033[0m'
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
+
 PAIR="${PAIR:-MNQ}"
 
 echo -e "${BOLD}${CYAN}  Add Strategy Lines  ${GRAY}(${PAIR})${RST}"
@@ -35,12 +38,13 @@ while true; do
 
   poetry run python3 -c "
 import sys
-sys.path.insert(0, '.')
-from src.database.database import setup_database
-from src.repositories.lines_repository import SQLLineRepository
+sys.path.insert(0, 'backend')
+from src.infrastructure.database.database_protocol import Base, get_database
+from src.infrastructure.repositories.lines_repository import SQLLineRepository
 from datetime import datetime, timezone
 
-setup_database()
+setup_database = lambda db_url: get_database(db_url).create_tables(Base)
+setup_database('sqlite:///./database.db')
 repo = SQLLineRepository()
 
 creation_date = datetime.fromtimestamp(float('${CREATION_TIME}'), tz=timezone.utc)

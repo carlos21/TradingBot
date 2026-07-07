@@ -15,10 +15,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from scenario_management import (
     PROJECT_ROOT,
+    REPO_ROOT,
     SCENARIOS_YAML,
     FileScenarioRepository,
     ScenarioYamlFormatter,
+    SOURCE_CSV,
 )
+
+# Paths relative to backend/ so subprocess cwd=PROJECT_ROOT resolves them correctly.
+SOURCE_CSV_REL = Path(os.path.relpath(SOURCE_CSV, PROJECT_ROOT))
+SCENARIOS_YAML_REL = SCENARIOS_YAML.relative_to(PROJECT_ROOT)
+OUTDIR_REL = Path(os.path.relpath(REPO_ROOT / "scenarios_out", PROJECT_ROOT))
 
 
 def write_discovery_yaml(scenarios: list, path: Path):
@@ -41,8 +48,8 @@ def run_all(yaml_path: str, results_json: str, extra_args: list = None) -> bool:
     cmd = [
         "poetry", "run", "python", "scripts/run_scenarios.py",
         "--yaml", yaml_path,
-        "--source-csv", "csvs/NQ_live.csv",
-        "--outdir", "./scenarios_out",
+        "--source-csv", str(SOURCE_CSV_REL),
+        "--outdir", str(OUTDIR_REL),
         "--port", "5002",
         "--bars-per-second", "5000",
         "--quiet",
