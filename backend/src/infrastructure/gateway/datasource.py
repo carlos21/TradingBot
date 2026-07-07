@@ -10,6 +10,7 @@ from __future__ import annotations
 import bisect
 import contextlib
 import logging
+import math
 import threading
 import time
 from collections import defaultdict
@@ -17,9 +18,6 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from enum import Enum, auto
 from zoneinfo import ZoneInfo
-
-
-import math
 
 from src.config.models import DEFAULT_HISTORY_HOURS
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource

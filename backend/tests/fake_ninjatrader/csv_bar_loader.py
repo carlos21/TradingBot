@@ -18,6 +18,10 @@ DEFAULT_FMT = "%d/%m/%Y %H:%M:%S"
 PAIR_FORMATS = {"EURUSD": "%Y.%m.%d %H:%M", "MNQ": "%d/%m/%Y %H:%M:%S"}
 PAIR_TZS = {"EURUSD": "Europe/London", "MNQ": "America/Chicago"}
 
+# csv_bar_loader.py lives in backend/tests/fake_ninjatrader, so project root is
+# four levels up.  Tests may be executed from backend/ or the repo root.
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
 
 def load_bars(
     filepath: str | Path,
@@ -45,6 +49,11 @@ def load_bars(
     fmt = time_fmt or PAIR_FORMATS.get(pair, DEFAULT_FMT)
     local_tz = ZoneInfo(tz or PAIR_TZS.get(pair, "UTC"))
     utc = ZoneInfo("UTC")
+
+    if fileobj is None:
+        filepath = Path(filepath)
+        if not filepath.is_absolute() and not filepath.exists():
+            filepath = PROJECT_ROOT / filepath
 
     bars: list[dict] = []
     with (fileobj or open(filepath, newline="")) as f:

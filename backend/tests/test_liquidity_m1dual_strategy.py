@@ -3,7 +3,12 @@
 import pytest
 
 from src.strategies.liquidity_m1dual.strategy import LiquidityDualM1Strategy
-from tests.fakes import FakeLineRepository, FakeLogger, FakeTradeRepository, MutableTradingContext
+from tests.fakes import (
+    FakeLineRepository,
+    FakeLogger,
+    FakeTradeRepository,
+    MutableTradingContext,
+)
 
 
 def _make_socketio():

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from src.application.services.strategy_trade_service import StrategyTradeService
 from src.config.models import AccountConfig
 from src.services.trade_manager import TradeManager
@@ -11,7 +9,6 @@ from src.strategies.base_strategy import BaseStrategy
 from src.strategies.liquidity_v2.base_strategy import BaseLiquidityStrategy
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from tests.fakes import (
-    FakeAnalyticsReporter,
     FakeLineRepository,
     FakeLogger,
     FakeNtAccountRepository,
@@ -153,16 +150,6 @@ class TestStrategyTradeServiceLiveFiltering:
             accounts_repo.upsert(
                 acct.name, risk_usd=acct.risk_usd, live_enabled=acct.live_enabled
             )
-
-        tm = TradeManager(
-            trade_repository=trade_repo,
-            trade_executor=FakeTradeExecutor(),
-            point_value=2.0,
-            account_balance=100000.0,
-            logger=FakeLogger(),
-            accounts_repo=accounts_repo,
-            live_mode=True,
-        )
 
         service = StrategyTradeService(
             trade_repository=trade_repo,

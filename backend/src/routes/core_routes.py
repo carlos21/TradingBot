@@ -1,6 +1,5 @@
 """Core HTTP routes - index page and basic API."""
 
-import os
 import time
 
 from flask import Flask, jsonify, send_from_directory

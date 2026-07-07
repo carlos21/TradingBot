@@ -14,7 +14,6 @@ from src.infrastructure.repositories.decision_log_repository import (
 from src.services.analytics_service import AnalyticsService
 from src.utils.app_logger import ILogger
 
-
 # Regex for the timestamp prefix of a log line.
 _LOG_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) ")
 
@@ -165,7 +164,7 @@ class AdminController:
             return jsonify({"logs": [], "sources": [], "has_more": False}), 200
 
         try:
-            with open(log_file, "r", encoding="utf-8") as f:
+            with open(log_file, encoding="utf-8") as f:
                 lines = [line.rstrip("\n") for line in f if line.strip()]
         except Exception as exc:  # noqa: BLE001
             self.logger.error(f"[AdminController] failed to read log file: {exc}")

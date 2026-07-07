@@ -15,6 +15,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import sys
 from typing import Protocol
@@ -283,10 +284,8 @@ class DbConfigLoader:
 
             # Migration: old `history_days` settings are converted to `history_hours`.
             if "history_hours" not in settings_dict and "history_days" in settings_dict:
-                try:
+                with contextlib.suppress(ValueError):
                     cfg.history_hours = int(settings_dict["history_days"]) * 24
-                except ValueError:
-                    pass
 
             accounts = session.query(NtAccount).all()
             if accounts:

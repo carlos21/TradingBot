@@ -21,8 +21,7 @@ from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
 from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from tests.fake_ninjatrader.fake_nt import FakeNinjaTrader
-from tests.fake_ninjatrader.order_tracker import FakeOrderTracker
-from tests.fakes import FakeLineRepository, FakeLogger, FakeTradeRepository
+from tests.fakes import FakeLineRepository, FakeTradeRepository
 
 
 def _setup_in_memory_db() -> Any:
