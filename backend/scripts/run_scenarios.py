@@ -10,12 +10,12 @@ import asyncio
 import csv
 import logging
 import sys
+import tempfile
 import time
 import os
-import signal
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
-from datetime import datetime, timezone
+from typing import Any, Dict, List, Tuple, Optional
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from multiprocessing import Process, Event
 
@@ -115,17 +115,22 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 # Server Process Logic
 # -------------------------------------------------------------------------
 
-def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT, session_end: str = "16:58", session_tz: str = "America/New_York"):
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT, session_end: str = "16:58", session_tz: str = "America/New_York", log_path: Optional[str] = None):
     try:
-        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist, risk_per_trade, risk_pct_per_trade, account_balance, use_fractional_lots, fee_per_rt, session_end, session_tz)
+        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist, risk_per_trade, risk_pct_per_trade, account_balance, use_fractional_lots, fee_per_rt, session_end, session_tz, log_path)
     except Exception as e:
         import traceback
         sys.stderr.write(f"\n❌ Server process crashed: {e}\n")
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
 
-def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT, session_end: str = "16:58", session_tz: str = "America/New_York"):
-    if quiet:
+def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT, session_end: str = "16:58", session_tz: str = "America/New_York", log_path: Optional[str] = None):
+    if log_path:
+        # Redirect both stdout and stderr to the log file so crash traces are captured.
+        log_file = open(log_path, "w", encoding="utf-8")
+        os.dup2(log_file.fileno(), sys.stdout.fileno())
+        os.dup2(log_file.fileno(), sys.stderr.fileno())
+    if quiet and not log_path:
         sys.stdout = open(os.devnull, 'w')
         import logging
         logging.disable(logging.CRITICAL)
@@ -266,16 +271,20 @@ def add_line_http(base_url: str, pair: str, price: float, creation_time: float =
         print(f"⚠️ Exception adding line {price}: {e}")
         return False
 
-def reset_app_state(base_url: str, start=None, end=None, seed_lines=None):
+def reset_app_state(base_url: str, start=None, end=None, seed_lines=None, max_retries: int = 3):
     payload = {}
     if start: payload['start_time'] = start
     if end:   payload['end_time'] = end
     if seed_lines: payload['seed_lines'] = seed_lines
-    try:
-        r = requests.post(f"{base_url}/__reset_all", json=payload, timeout=10)
-        return r.ok
-    except Exception:
-        return False
+    for attempt in range(max_retries):
+        try:
+            r = requests.post(f"{base_url}/__reset_all", json=payload, timeout=10)
+            if r.ok:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.2 * (attempt + 1))
+    return False
 
 def _check_trade(label: str, expect: Dict, trade: Dict, tol: float) -> List[str]:
     """Check a single trade against expected values. Returns list of error strings."""
@@ -488,46 +497,107 @@ def print_detailed_summary(logs: List[Dict], pair_tz: ZoneInfo):
 # Test Runner
 # -------------------------------------------------------------------------
 
+def _server_args(args, csv_path: Path, port: int, server_ready: Event, log_path: Optional[str] = None) -> tuple:
+    """Build positional args for run_test_server."""
+    no_breakeven = getattr(args, 'no_breakeven', False)
+    no_reentry_breakeven = getattr(args, 'no_reentry_breakeven', False)
+    mode = getattr(args, 'mode', 'real_futures')
+    broker_mode = 'cfd' if mode in ('real_cfd',) else 'futures'
+    broker_spread = getattr(args, 'cfd_spread', 0.0) if broker_mode == 'cfd' else 0.0
+    use_fractional_lots = mode in ('real_cfd',)
+    fee_per_rt = getattr(args, 'commission', None)
+    if fee_per_rt is None:
+        fee_per_rt = getattr(args, 'cfd_commission', FinancialCalc.DEFAULT_FEE_PER_RT) if mode == 'real_cfd' else FinancialCalc.DEFAULT_FEE_PER_RT
+    risk_per_trade = None if getattr(args, 'risk_pct', None) is not None else args.risk
+    session_end = getattr(args, 'session_end', '16:58')
+    session_tz = getattr(args, 'session_tz', 'America/New_York')
+    return (
+        str(csv_path.resolve()), args.bars_per_second, port, server_ready,
+        getattr(args, 'quiet', False), no_breakeven, no_reentry_breakeven,
+        broker_mode, broker_spread, args.rr, args.persist, risk_per_trade,
+        getattr(args, 'risk_pct', None), args.account, use_fractional_lots,
+        fee_per_rt, session_end, session_tz, log_path,
+    )
+
+
+def _start_test_server(args, csv_path: Path, port: int) -> tuple[Process, Event, Path]:
+    """Start the in-memory test server and return (process, ready_event, log_path)."""
+    server_ready = Event()
+    log_path = Path(tempfile.mkstemp(suffix=".log", prefix="run_scenarios_server_")[1])
+    proc = Process(
+        target=run_test_server,
+        args=_server_args(args, csv_path, port, server_ready, str(log_path)),
+    )
+    proc.start()
+    return proc, server_ready, log_path
+
+
+def _stop_server(proc: Process, log_path: Path) -> None:
+    """Terminate server process and dump its log on failure."""
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(timeout=5)
+    if proc.is_alive():
+        proc.kill()
+        proc.join(timeout=5)
+    if log_path.exists():
+        log_path.unlink(missing_ok=True)
+
+
+def _ensure_server_running(
+    base_url: str,
+    args,
+    csv_path: Path,
+    port: int,
+    quiet: bool,
+    server_proc: Process,
+    server_ready: Event,
+    log_path: Path,
+) -> tuple[Process, Event, Path]:
+    """Check server health; restart it if it has crashed or is unresponsive."""
+    try:
+        r = requests.get(f"{base_url}/api/pair", timeout=5)
+        if r.ok:
+            return server_proc, server_ready, log_path
+    except Exception:
+        pass
+
+    if not quiet:
+        print("\n🔄 Server unresponsive; restarting...")
+
+    # Dump last crash log for diagnostics before removing it.
+    if log_path.exists():
+        try:
+            crash_log = log_path.read_text(encoding="utf-8", errors="replace").strip()
+            if crash_log and not quiet:
+                last_lines = "\n".join(crash_log.splitlines()[-20:])
+                print(f"   Last server log lines:\n{last_lines}")
+        except Exception:
+            pass
+
+    _stop_server(server_proc, log_path)
+    return _start_test_server(args, csv_path, port)
+
+
 async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     quiet = getattr(args, 'quiet', False)
     if not quiet:
         print(f"🚀 Launching In-Memory Test Server with {csv_path}...")
 
     base_url = f"http://{APP_HOST}:{args.port}"
-    server_ready = Event()
 
-    no_breakeven = getattr(args, 'no_breakeven', False)
-    no_reentry_breakeven = getattr(args, 'no_reentry_breakeven', False)
-    # Determine broker mode for trade manager
-    mode = getattr(args, 'mode', 'real_futures')
-    broker_mode = 'cfd' if mode in ('real_cfd', ) else 'futures'
-    broker_spread = getattr(args, 'cfd_spread', 0.0) if broker_mode == 'cfd' else 0.0
-    use_fractional_lots = mode in ('real_cfd',)
-    # Commission: generic --commission overrides everything; otherwise real_cfd uses --cfd-commission
-    fee_per_rt = getattr(args, 'commission', None)
-    if fee_per_rt is None:
-        fee_per_rt = getattr(args, 'cfd_commission', FinancialCalc.DEFAULT_FEE_PER_RT) if mode == 'real_cfd' else FinancialCalc.DEFAULT_FEE_PER_RT
-
-    # When risk_pct is set, pass None for risk_per_trade so percentage takes precedence
-    risk_per_trade = None if getattr(args, 'risk_pct', None) is not None else args.risk
-    session_end = getattr(args, 'session_end', '16:58')
-    session_tz = getattr(args, 'session_tz', 'America/New_York')
-    server_proc = Process(
-        target=run_test_server,
-        args=(str(csv_path.resolve()), args.bars_per_second, args.port, server_ready, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, args.rr, args.persist, risk_per_trade, getattr(args, 'risk_pct', None), args.account, use_fractional_lots, fee_per_rt, session_end, session_tz)
-    )
-    server_proc.start()
+    server_proc, server_ready, log_path = _start_test_server(args, csv_path, args.port)
 
     if not server_ready.wait(timeout=30):
         print("❌ Server failed to start within timeout.")
-        server_proc.terminate()
+        _stop_server(server_proc, log_path)
         return
 
     try:
         wait_http_ok(f"{base_url}/api/pair")
     except TimeoutError:
         print("❌ Server process started but HTTP not reachable.")
-        server_proc.terminate()
+        _stop_server(server_proc, log_path)
         return
 
     pair_resp = requests.get(f"{base_url}/api/pair", timeout=10).json()
@@ -564,6 +634,12 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 filled = int(bar_len * i / total)
                 bar = "█" * filled + "░" * (bar_len - filled)
                 print(f"\r  {bar} {pct:3d}% ({i}/{total}) {name:<40}", end="", flush=True)
+
+                # Make sure the backend server is still alive before each scenario.
+                server_proc, server_ready, log_path = _ensure_server_running(
+                    base_url, args, csv_path, args.port, quiet,
+                    server_proc, server_ready, log_path,
+                )
                 
                 pair_name_val = sc.get("pair", "unknown")
                 date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
@@ -632,10 +708,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     sock.on('trade_open', (t) => {
                         window.__trades.push(t);
                         const n = window.__trades.length;
-                        if (window.chartViewer && window.chartViewer.series) {
+                        if (window.chartViewer && window.chartViewer.priceSeries) {
                             const sl = t.stop_loss ?? t.sl ?? t.stopLoss;
                             if (typeof sl === 'number') {
-                                const line = window.chartViewer.series.createPriceLine({
+                                const line = window.chartViewer.priceSeries.createPriceLine({
                                     price: sl,
                                     color: '#ff5252',
                                     lineWidth: 1,
@@ -728,7 +804,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     try:
                         # 1. Wait for data
                         await page.wait_for_function(
-                            "() => window.chartViewer.series.data().length > 0", 
+                            "() => window.chartViewer.priceSeries.data().length > 0", 
                             timeout=5000
                         )
                         
@@ -784,8 +860,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                                 await page.evaluate("""() => {
                                     if (window.__extraLines) {
                                         Object.entries(window.__extraLines).forEach(([tid, line]) => {
-                                            if (window.chartViewer && window.chartViewer.series) {
-                                                window.chartViewer.series.removePriceLine(line);
+                                            if (window.chartViewer && window.chartViewer.priceSeries) {
+                                                window.chartViewer.priceSeries.removePriceLine(line);
                                             }
                                         });
                                         window.__extraLines = {};
@@ -804,14 +880,16 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                         if not quiet:
                             print(f"   ⚠️ Snapshot failed: {e}")
 
+                # Brief cooldown so background threads/ZMQ sockets can settle before reset.
+                await asyncio.sleep(0.2)
+
             print(f"\r  {'█' * 30} 100% ({total}/{total}){' ' * 50}")
             await browser.close()
 
     finally:
         if not quiet:
             print("🛑 Terminating Test Server...")
-        server_proc.terminate()
-        server_proc.join()
+        _stop_server(server_proc, log_path)
 
     # ── ANSI helpers ──────────────────────────────────────────────────────────
     RST    = '\033[0m';  BOLD   = '\033[1m'
