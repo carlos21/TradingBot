@@ -138,9 +138,27 @@ class ZMQTradeExecutor(TradeExecutor):
             rr_ratio = trade.get("rr_ratio", 5.0)
             rr_ratio = self._require_positive(rr_ratio, "rr_ratio")
 
-            # Use per-account risk values if present in trade dict, otherwise fall back to global defaults
-            risk_usd = trade.get("risk_dollars") if trade.get("risk_dollars") is not None else self._risk_usd
-            risk_pct = trade.get("risk_pct") if trade.get("risk_pct") is not None else self._risk_pct
+            # Use the configured risk values from the account/strategy, not the
+            # Python-estimated risk_dollars. In live mode NinjaTrader is the
+            # source of truth for account balance and point value, so it should
+            # size from the same configured input the user chose.
+            risk_usd = trade.get("risk_usd")
+            risk_pct = trade.get("risk_pct")
+
+            if risk_usd is None and risk_pct is None:
+                # Fall back to executor-level defaults if no per-trade config.
+                risk_usd = self._risk_usd
+                risk_pct = self._risk_pct
+
+            # Prefer fixed-dollar risk when both are provided, matching
+            # FinancialCalc.risk_budget precedence.
+            if risk_usd is not None and risk_usd > 0:
+                risk_pct = None
+            elif risk_pct is not None and risk_pct > 0:
+                risk_usd = None
+            else:
+                risk_usd = None
+                risk_pct = None
 
             self._gateway.send_open_order(
                 trade_id=trade_id,

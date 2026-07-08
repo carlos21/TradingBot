@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using FluentAssertions;
 using Newtonsoft.Json.Linq;
@@ -98,7 +100,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             closeResult.Should().BeTrue();
 
             _orderExecutionService.DidNotReceiveWithAnyArgs().CreateEntryOrder(null, null, default, 0, null);
-            _network.Received(1).SendEntryFill("test-1", 20000, 19980, 20040, account: (string)null);
+            _network.Received(1).SendEntryFill("test-1", 20000, 19980, 20040, account: (string)null, quantity: 2);
             _network.Received(1).SendExitFill("test-1", 0, "CLOSE", account: (string)null);
         }
 
@@ -127,6 +129,86 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             _network.Received(1).SendRefreshStart();
             _network.Received(3).SendHistoryBatch("MNQ", Arg.Any<List<JObject>>(), Arg.Any<int>());
             _network.Received(1).SendHistoryEnd();
+        }
+
+        [Fact]
+        public void SafetyGuard_EndToEnd_Flattens_WhenBracketDisappears()
+        {
+            // Full connector wiring: open a trade, partial-fill it, attach a bracket,
+            // then simulate the stop-loss disappearing. The background safety loop must
+            // flatten the position within its check interval.
+            var network = Substitute.For<IZmqNetwork>();
+            var logger = new TestLogger();
+            var orderTracker = new InMemoryOrderTracker();
+            var dispatcher = new CommandDispatcher(logger);
+            var accountProvider = Substitute.For<IAccountProvider>();
+            var instrumentProvider = Substitute.For<IInstrumentProvider>();
+            var orderExecutionService = Substitute.For<IOrderExecutionService>();
+            var tradeIdExtractor = Substitute.For<ITradeIdExtractor>();
+            var clock = Substitute.For<IConnectorClock>();
+            var streamingCoordinator = Substitute.For<IStreamingCoordinator>();
+            var barHistoryService = Substitute.For<IBarHistoryService>();
+            var pnlCalculator = Substitute.For<IPnLCalculator>();
+            var config = TestDataFactory.Config();
+
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            accountProvider.GetAccount("Sim101").Returns(account);
+            instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+
+            var tradingMode = Substitute.For<ITradingMode>();
+            tradingMode.IsSimulation.Returns(false);
+
+            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
+
+            var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 2, instrument: instrument, avgFill: 20000);
+            var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19990);
+            var targetOrder = TestDataFactory.Order(name: "Target_test-1", side: OrderSide.Sell, state: OrderState.Working, limitPrice: 20040);
+            var closeOrder = TestDataFactory.Order(name: "Close_test-1", side: OrderSide.Sell, state: OrderState.Working);
+
+            orderExecutionService.CreateEntryOrder(instrument, account, OrderSide.Buy, Arg.Any<int>(), "test-1").Returns(entryOrder);
+            orderExecutionService.CreateStopLossOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "test-1").Returns(stopOrder);
+            orderExecutionService.CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "test-1").Returns(targetOrder);
+            orderExecutionService.CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), "test-1").Returns(closeOrder);
+            orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder> { stopOrder });
+
+            var service = new ConnectorService(
+                config, network, logger, dispatcher, orderTracker, streamingCoordinator,
+                accountProvider, orderExecutionService, instrumentProvider, barHistoryService,
+                pnlCalculator, clock, tradeIdExtractor);
+            service.SafetyGuardEnabled = true;
+            service.SafetyCheckIntervalMs = 50;
+
+            // Open the trade through the real dispatcher/handler pipeline.
+            var openResult = dispatcher.Dispatch(MessageEnvelope.Create(MessageType.OrderOpen,
+                TestDataFactory.OrderOpenPayload(riskUsd: 100, riskPoints: 10)));
+            openResult.Should().BeTrue();
+
+            // Simulate a partial entry fill. The handler should attach a bracket.
+            tradeIdExtractor.ExtractTradeId("Entry_test-1").Returns("test-1");
+            tradeIdExtractor.IsEntryOrder("Entry_test-1").Returns(true);
+            service.OnExecutionUpdate(entryOrder, 20000, 2);
+            orderExecutionService.Received(1).CreateStopLossOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "test-1");
+
+            // Now the stop-loss disappears (cancelled externally or never attached).
+            orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+
+            var flattened = new ManualResetEventSlim(false);
+            orderExecutionService.When(x => x.CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), "test-1"))
+                .Do(x => flattened.Set());
+
+            service.Connect();
+            try
+            {
+                flattened.Wait(TimeSpan.FromMilliseconds(500)).Should().BeTrue("safety guard should flatten after bracket disappears");
+                orderExecutionService.Received(1).SubmitOrder(closeOrder);
+                network.Received(1).SendError("ninjatrader", "missing_stop_loss_guard", Arg.Is<string>(s => s.Contains("test-1")));
+            }
+            finally
+            {
+                service.Disconnect("cleanup");
+            }
         }
     }
 }

@@ -317,43 +317,6 @@ function Find-LoginButton {
     return $null
 }
 
-function Find-TryItDialog {
-    param([int]$ProcessId, [int]$TimeoutSeconds = 30)
-
-    $btnCond = [System.Windows.Automation.PropertyCondition]::new(
-        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-        [System.Windows.Automation.ControlType]::Button
-    )
-
-    $sw = [System.Diagnostics.Stopwatch]::StartNew()
-    while ($sw.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
-        $desktop = [System.Windows.Automation.AutomationElement]::RootElement
-        $allWindows = $desktop.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
-
-        for ($i = 0; $i -lt $allWindows.Count; $i++) {
-            $win = $allWindows[$i]
-            $winHandle = [IntPtr]$win.Current.NativeWindowHandle
-            if ($winHandle -eq [IntPtr]::Zero) { continue }
-
-            $winPid = 0
-            [void][Win32HelperV2]::GetWindowThreadProcessId($winHandle, [ref]$winPid)
-            if ($winPid -ne $ProcessId) { continue }
-
-            $buttons = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond)
-            for ($j = 0; $j -lt $buttons.Count; $j++) {
-                $btn = $buttons[$j]
-                if ($btn.Current.Name -match "Launch|LAUNCH|launch|Try it|TRY IT|try it") {
-                    return @{ Button = $btn; Window = $win; Hwnd = $winHandle }
-                }
-            }
-        }
-
-        Start-Sleep -Milliseconds 500
-    }
-
-    return $null
-}
-
 function Escape-SendKeys {
     param([string]$Text)
     $special = @('+', '^', '%', '~', '(', ')', '{', '}', '[', ']')
@@ -536,30 +499,9 @@ try {
         Write-Host "Login submitted via SendKeys." -ForegroundColor Green
     }
 
-    # -- Dismiss "Launch" post-login dialog if it appears --
-    Write-Host "Checking for post-login dialogs..." -ForegroundColor Yellow
-    $launchDlg = Find-TryItDialog -ProcessId $ntProcess.Id -TimeoutSeconds 30
-    if ($launchDlg) {
-        Write-Host "Found 'Launch' dialog. Clicking it..." -ForegroundColor Green
-        Set-ForegroundWindowRobust -hWnd $launchDlg.Hwnd
-        Start-Sleep -Milliseconds 800
-
-        # Focus the button itself so Enter will trigger it
-        try { $launchDlg.Button.SetFocus() } catch {}
-        Start-Sleep -Milliseconds 300
-        [System.Windows.Forms.SendKeys]::SendWait("{ENTER}")
-
-        Write-Host "'Launch' dialog dismissed." -ForegroundColor Green
-    }
-
-    # -- Wait for exit if requested --
-    if ($WaitForExit) {
-        Write-Host "Waiting for NinjaTrader to exit..." -ForegroundColor Yellow
-        $ntProcess.WaitForExit()
-        Write-Host "NinjaTrader has exited." -ForegroundColor Green
-    } else {
-        Write-Host "NinjaTrader is running. You may close this window." -ForegroundColor Green
-    }
+    # -- Stop here; do not wait for or click the "Start Trading" dialog --
+    Write-Host "Login complete. Stopping before 'Start Trading' dialog." -ForegroundColor Green
+    return
 
 } catch {
     Write-Host ""

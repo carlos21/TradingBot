@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -52,10 +53,12 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
         private ConnectorService CreateService()
         {
-            return new ConnectorService(
+            var service = new ConnectorService(
                 _config, _network, _logger, _dispatcher, _orderTracker,
                 _streamingCoordinator, _accountProvider, _orderExecutionService,
                 _instrumentProvider, _barHistoryService, _pnlCalculator, _clock, _tradeIdExtractor);
+            service.SafetyGuardEnabled = false;
+            return service;
         }
 
         [Theory]
@@ -320,7 +323,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             var service = CreateService();
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
-            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
             var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19990);
             var target = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, state: OrderState.Working, limitPrice: 20040);
 
@@ -334,9 +337,8 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             service.OnExecutionUpdate(entry, 20000, 2);
 
-            _orderExecutionService.Received(1).SubmitOrder(stop);
-            _orderExecutionService.Received(1).SubmitOrder(target);
-            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20020, account: "Sim101");
+            _orderExecutionService.Received(1).SubmitOrders(Arg.Is<IReadOnlyList<BrokerOrder>>(list => list.Count == 2 && list.Contains(stop) && list.Contains(target)));
+            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20020, account: "Sim101", quantity: 2);
         }
 
         [Fact]
@@ -402,7 +404,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             var service = CreateService();
             var instrument = TestDataFactory.Instrument();
             var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, avgFill: 20000, instrument: instrument);
-            var manualClose = TestDataFactory.Order(name: "ManualClose", side: OrderSide.Sell, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var manualClose = TestDataFactory.Order(name: "ManualClose", side: OrderSide.Sell, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
 
             _orderTracker.TrackEntry("t1", entry);
             _pnlCalculator.Calculate(entry, manualClose).Returns(new PnlResult(5, 0));
@@ -420,7 +422,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             var service = CreateService();
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
-            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.SellShort, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.SellShort, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
             var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.BuyToCover, state: OrderState.Working, stopPrice: 20010);
             var target = TestDataFactory.Order(name: "Target_t1", side: OrderSide.BuyToCover, state: OrderState.Working, limitPrice: 19980);
 
@@ -434,25 +436,138 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             service.OnExecutionUpdate(entry, 20000, 2);
 
-            _orderExecutionService.Received(1).SubmitOrder(stop);
-            _orderExecutionService.Received(1).SubmitOrder(target);
-            _network.Received(1).SendEntryFill("t1", 20000, 20010, 19980, account: "Sim101");
+            _orderExecutionService.Received(1).SubmitOrders(Arg.Is<IReadOnlyList<BrokerOrder>>(list => list.Count == 2 && list.Contains(stop) && list.Contains(target)));
+            _network.Received(1).SendEntryFill("t1", 20000, 20010, 19980, account: "Sim101", quantity: 2);
         }
 
         [Fact]
-        public void OnExecutionUpdate_DoesNotCreateBracket_WhenEntryPartiallyFilled()
+        public void OnExecutionUpdate_CreatesBracket_WhenEntryPartiallyFilled()
         {
             var service = CreateService();
-            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 1, quantity: 2);
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 1, quantity: 2, instrument: instrument, avgFill: 20000);
+            var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19990);
+            var target = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, state: OrderState.Working, limitPrice: 20040);
 
             _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _accountProvider.GetAccount("Sim101").Returns(account);
             _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
             _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+            _orderExecutionService.CreateStopLossOrder(entry.Instrument, account, OrderSide.Sell, 1, 19990, "t1").Returns(stop);
+            _orderExecutionService.CreateTakeProfitOrder(entry.Instrument, account, OrderSide.Sell, 1, 20020, "t1").Returns(target);
 
             service.OnExecutionUpdate(entry, 20000, 1);
 
-            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateStopLossOrder(null, null, default, 0, 0, null);
-            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateTakeProfitOrder(null, null, default, 0, 0, null);
+            _orderExecutionService.Received(1).CreateStopLossOrder(entry.Instrument, account, OrderSide.Sell, 1, 19990, "t1");
+            _orderExecutionService.Received(1).CreateTakeProfitOrder(entry.Instrument, account, OrderSide.Sell, 1, 20020, "t1");
+            _orderExecutionService.Received(1).SubmitOrders(Arg.Is<IReadOnlyList<BrokerOrder>>(list => list.Count == 2 && list.Contains(stop) && list.Contains(target)));
+            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20020, account: "Sim101", quantity: 1);
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_Flattens_WhenStopLossMissing()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
+            var closeOrder = TestDataFactory.Order(name: "Close_t1", side: OrderSide.Sell, state: OrderState.Working);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+            _orderExecutionService.CreateMarketCloseOrder(entry.Instrument, account, OrderSide.Sell, 2, "t1").Returns(closeOrder);
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.Received(1).CreateMarketCloseOrder(entry.Instrument, account, OrderSide.Sell, 2, "t1");
+            _orderExecutionService.Received(1).SubmitOrder(closeOrder);
+            _network.Received(1).SendError("ninjatrader", "missing_stop_loss_guard", Arg.Is<string>(s => s.Contains("t1")));
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_DoesNothing_WhenStopLossWorking()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
+            var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19990);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackStopLoss("t1", stop);
+            _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder> { stop });
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+            _tradeIdExtractor.ExtractTradeId("Stop_t1").Returns("t1");
+            _tradeIdExtractor.IsStopOrder("Stop_t1").Returns(true);
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+            _network.DidNotReceiveWithAnyArgs().SendError(null, null, null);
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_DoesNothing_WhenEntryNotFilled()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Working, filled: 0, instrument: instrument, avgFill: 20000);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+            _network.DidNotReceiveWithAnyArgs().SendError(null, null, null);
+        }
+
+        [Fact]
+        public void SafetyLoop_FlattensUnprotectedPosition_AfterInterval()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            service.SafetyCheckIntervalMs = 50;
+            var flattened = new ManualResetEventSlim(false);
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
+            var closeOrder = TestDataFactory.Order(name: "Close_t1", side: OrderSide.Sell, state: OrderState.Working);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+            _orderExecutionService.CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), "t1").Returns(closeOrder);
+            _orderExecutionService.When(x => x.CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), "t1"))
+                .Do(x => flattened.Set());
+
+            service.Connect();
+            try
+            {
+                flattened.Wait(TimeSpan.FromMilliseconds(500)).Should().BeTrue("safety guard should flatten within timeout");
+                _orderExecutionService.Received(1).SubmitOrder(closeOrder);
+            }
+            finally
+            {
+                service.Disconnect("cleanup");
+            }
         }
 
         [Fact]
@@ -461,7 +576,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             var service = CreateService();
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
-            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
             var closeOrder = TestDataFactory.Order(name: "Close_t1", side: OrderSide.Sell, state: OrderState.Working);
 
             _orderTracker.TrackEntry("t1", entry);
@@ -578,7 +693,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             var service = CreateService();
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
-            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
             var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19990);
             var target = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, state: OrderState.Working, limitPrice: 20040);
 
@@ -594,9 +709,8 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             service.OnExecutionUpdate(entry, 20000, 2);
 
-            _orderExecutionService.Received(1).SubmitOrder(stop);
-            _orderExecutionService.Received(1).SubmitOrder(target);
-            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20040, account: "Sim101");
+            _orderExecutionService.Received(1).SubmitOrders(Arg.Is<IReadOnlyList<BrokerOrder>>(list => list.Count == 2 && list.Contains(stop) && list.Contains(target)));
+            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20040, account: "Sim101", quantity: 2);
         }
 
         [Fact]
@@ -604,7 +718,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         {
             var service = CreateService();
             var instrument = TestDataFactory.Instrument();
-            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
 
             _orderTracker.TrackEntry("t1", entry);
             _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
@@ -1044,6 +1158,72 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             _orderExecutionService.DidNotReceiveWithAnyArgs().CreateStopLossOrder(null, null, OrderSide.Buy, 0, 0, null);
         }
 
+        [Theory]
+        [InlineData(OrderState.Rejected)]
+        [InlineData(OrderState.Cancelled)]
+        public void OnOrderUpdate_SuppressesBracketError_WhenTradeIsClosePending(OrderState state)
+        {
+            var service = CreateService();
+            var targetOrder = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, state: state);
+            _orderTracker.MarkClosePending("t1");
+            _tradeIdExtractor.ExtractTradeId("Target_t1").Returns("t1");
+            _tradeIdExtractor.IsTargetOrder("Target_t1").Returns(true);
+
+            service.OnOrderUpdate(targetOrder);
+
+            _network.DidNotReceiveWithAnyArgs().SendError(null, null, null);
+            _logger.Infos.Should().Contain(i => i.Contains("Suppressed expected bracket error"));
+        }
+
+        [Theory]
+        [InlineData(OrderState.Rejected)]
+        [InlineData(OrderState.Cancelled)]
+        public void OnOrderUpdate_SuppressesBracketError_WhenEntryNoLongerTracked(OrderState state)
+        {
+            var service = CreateService();
+            var stopOrder = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: state);
+            _tradeIdExtractor.ExtractTradeId("Stop_t1").Returns("t1");
+            _tradeIdExtractor.IsStopOrder("Stop_t1").Returns(true);
+
+            service.OnOrderUpdate(stopOrder);
+
+            _network.DidNotReceiveWithAnyArgs().SendError(null, null, null);
+            _logger.Infos.Should().Contain(i => i.Contains("Suppressed expected bracket error"));
+        }
+
+        [Theory]
+        [InlineData(OrderState.Rejected)]
+        [InlineData(OrderState.Cancelled)]
+        public void OnOrderUpdate_SuppressesBracketError_WhenEntryNotFilled(OrderState state)
+        {
+            var service = CreateService();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Working);
+            var targetOrder = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, state: state);
+            _orderTracker.TrackEntry("t1", entry);
+            _tradeIdExtractor.ExtractTradeId("Target_t1").Returns("t1");
+            _tradeIdExtractor.IsTargetOrder("Target_t1").Returns(true);
+
+            service.OnOrderUpdate(targetOrder);
+
+            _network.DidNotReceiveWithAnyArgs().SendError(null, null, null);
+            _logger.Infos.Should().Contain(i => i.Contains("Suppressed expected bracket error"));
+        }
+
+        [Fact]
+        public void OnOrderUpdate_SendsError_WhenBracketOrderRejectedUnexpectedly()
+        {
+            var service = CreateService();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2);
+            var stopOrder = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Rejected);
+            _orderTracker.TrackEntry("t1", entry);
+            _tradeIdExtractor.ExtractTradeId("Stop_t1").Returns("t1");
+            _tradeIdExtractor.IsStopOrder("Stop_t1").Returns(true);
+
+            service.OnOrderUpdate(stopOrder);
+
+            _network.Received(1).SendError("ninjatrader", "order_state", Arg.Is<string>(s => s.Contains("Stop_t1") && s.Contains("Rejected")));
+        }
+
         [Fact]
         public void HandleCancelledBracketOrder_LogsError_WhenCreateTakeProfitOrderThrows()
         {
@@ -1092,7 +1272,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         {
             var service = CreateService();
             var instrument = TestDataFactory.Instrument();
-            var order = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var order = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
             _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 20, 2.0));
             _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
             _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
@@ -1104,13 +1284,14 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         }
 
         [Fact]
-        public void HandleEntryFill_CreatesPartialBracket_WhenStopOrderIsNull()
+        public void HandleEntryFill_FlattenPosition_WhenStopOrderIsNull()
         {
             var service = CreateService();
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
-            var order = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var order = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
             var target = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, state: OrderState.Working, limitPrice: 20040);
+            var flatOrder = TestDataFactory.Order(name: "Close_t1", side: OrderSide.Sell, state: OrderState.Working);
 
             _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 20, 2.0));
             _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
@@ -1118,31 +1299,58 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             _accountProvider.GetAccount("Sim101").Returns(account);
             _orderExecutionService.CreateStopLossOrder(instrument, account, OrderSide.Sell, 2, 19980, "t1").Returns((BrokerOrder)null);
             _orderExecutionService.CreateTakeProfitOrder(instrument, account, OrderSide.Sell, 2, 20040, "t1").Returns(target);
+            _orderExecutionService.CreateMarketCloseOrder(instrument, account, OrderSide.Sell, 2, "t1").Returns(flatOrder);
 
             service.OnExecutionUpdate(order, 20000, 2);
 
-            _logger.Warnings.Should().Contain(w => w.Contains("Partial bracket"));
-            _orderExecutionService.Received(1).SubmitOrder(target);
+            _logger.Errors.Should().Contain(e => e.Message.Contains("Failed to create complete bracket"));
+            _network.Received(1).SendError("ninjatrader", "bracket_creation_failed", Arg.Any<string>());
+            _orderExecutionService.Received(1).SubmitOrder(flatOrder);
         }
 
         [Fact]
-        public void HandleEntryFill_LogsError_WhenBracketCreationThrows()
+        public void HandleEntryFill_FlattenPosition_WhenBracketCreationThrows()
         {
             var service = CreateService();
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
-            var order = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var order = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
+            var flatOrder = TestDataFactory.Order(name: "Close_t1", side: OrderSide.Sell, state: OrderState.Working);
 
             _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 20, 2.0));
             _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
             _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
             _accountProvider.GetAccount("Sim101").Returns(account);
             _orderExecutionService.When(x => x.CreateStopLossOrder(instrument, account, OrderSide.Sell, 2, 19980, "t1")).Do(x => throw new InvalidOperationException("create failed"));
+            _orderExecutionService.CreateMarketCloseOrder(instrument, account, OrderSide.Sell, 2, "t1").Returns(flatOrder);
 
             service.OnExecutionUpdate(order, 20000, 2);
 
             _logger.Errors.Should().Contain(e => e.Message.Contains("Failed to create bracket orders"));
             _network.Received(1).SendError("ninjatrader", "bracket_creation_failed", Arg.Any<string>());
+            _orderExecutionService.Received(1).SubmitOrder(flatOrder);
+        }
+
+        [Fact]
+        public void OnOrderUpdate_FlattensPartialFill_WhenEntryCancelled()
+        {
+            var service = CreateService();
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entryOrder = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Cancelled, filled: 1, quantity: 2, instrument: instrument);
+            var flatOrder = TestDataFactory.Order(name: "Close_t1", side: OrderSide.Sell, state: OrderState.Working);
+
+            _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 20, 2.0));
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _orderExecutionService.CreateMarketCloseOrder(instrument, account, OrderSide.Sell, 1, "t1").Returns(flatOrder);
+
+            service.OnOrderUpdate(entryOrder);
+
+            _logger.Warnings.Should().Contain(w => w.Contains("cancelled after partial fill"));
+            _network.Received(1).SendError("ninjatrader", "partial_fill_cancelled", Arg.Any<string>());
+            _orderExecutionService.Received(1).SubmitOrder(flatOrder);
         }
 
         [Fact]
@@ -1284,8 +1492,8 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         {
             var service = CreateService();
             var instrument = TestDataFactory.Instrument();
-            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.SellShort, state: OrderState.Filled, filled: 2, instrument: instrument);
-            var closeOrder = TestDataFactory.Order(name: "ManualClose", side: OrderSide.BuyToCover, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.SellShort, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
+            var closeOrder = TestDataFactory.Order(name: "ManualClose", side: OrderSide.BuyToCover, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
             _orderTracker.TrackEntry("t1", entry);
             _tradeIdExtractor.ExtractTradeId("ManualClose").Returns("");
             _tradeIdExtractor.IsEntryOrder("ManualClose").Returns(false);
@@ -1303,8 +1511,8 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         {
             var service = CreateService();
             var instrument = TestDataFactory.Instrument();
-            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
-            var closeOrder = TestDataFactory.Order(name: "ManualClose", side: OrderSide.BuyToCover, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
+            var closeOrder = TestDataFactory.Order(name: "ManualClose", side: OrderSide.BuyToCover, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
             _orderTracker.TrackEntry("t1", entry);
             _tradeIdExtractor.ExtractTradeId("ManualClose").Returns("");
             _tradeIdExtractor.IsEntryOrder("ManualClose").Returns(false);

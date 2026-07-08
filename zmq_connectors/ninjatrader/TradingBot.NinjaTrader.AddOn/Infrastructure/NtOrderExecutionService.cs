@@ -73,8 +73,28 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
         {
             var ntAccount = GetNtAccount(_accountProvider.GetAccount(order.AccountName));
             var ntOrder = FindNtOrderByName(ntAccount, order.Name);
-            if (ntOrder != null)
+            if (ntOrder != null && IsSubmittable(ntOrder))
                 ntAccount.Submit(new[] { ntOrder });
+        }
+
+        public void SubmitOrders(IReadOnlyList<Domain.BrokerOrder> orders)
+        {
+            if (orders == null || orders.Count == 0) return;
+
+            // All orders in a bracket belong to the same account.
+            var ntAccount = GetNtAccount(_accountProvider.GetAccount(orders[0].AccountName));
+            if (ntAccount == null) return;
+
+            var ntOrders = new List<Nt.Order>(orders.Count);
+            foreach (var order in orders)
+            {
+                var ntOrder = FindNtOrderByName(ntAccount, order.Name);
+                if (ntOrder != null && IsSubmittable(ntOrder))
+                    ntOrders.Add(ntOrder);
+            }
+
+            if (ntOrders.Count > 0)
+                ntAccount.Submit(ntOrders.ToArray());
         }
 
         public void CancelOrder(Domain.BrokerOrder order)
@@ -138,6 +158,17 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                    order.OrderState == Nt.OrderState.Submitted ||
                    order.OrderState == Nt.OrderState.PartFilled ||
                    order.OrderState == Nt.OrderState.Filled;
+        }
+
+        private static bool IsSubmittable(Nt.Order order)
+        {
+            // Do not try to submit an order that is already terminal; NinjaTrader
+            // will throw a dialog error.
+            return order.OrderState == Nt.OrderState.Initialized ||
+                   order.OrderState == Nt.OrderState.Working ||
+                   order.OrderState == Nt.OrderState.Accepted ||
+                   order.OrderState == Nt.OrderState.Submitted ||
+                   order.OrderState == Nt.OrderState.PartFilled;
         }
 
         private Nt.Instrument GetNtInstrument(Domain.BrokerInstrument instrument)

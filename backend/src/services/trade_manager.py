@@ -96,6 +96,7 @@ class TradeManager:
             use_fractional_lots=use_fractional_lots,
             accounts_repo=accounts_repo,
             instrument=instrument,
+            live_mode=live_mode,
         )
         self._close_use_case = TradeCloseUseCase(
             trade_repository=trade_repository,
@@ -787,6 +788,10 @@ class TradeManager:
             self.logger.warning(f"[TradeManager] Entry fill for {trade_id} but trade not in memory")
             return
 
+        self.logger.info(
+            f"[TradeManager] ENTRY FILL received for {trade_id}: entry={entry_price} "
+            f"qty={quantity} SL={stop_loss} TP={take_profit}"
+        )
         self._broker_handler.update_balance(self.account_balance)
         self._broker_handler.handle_entry_fill(trade, entry_price, stop_loss, take_profit, quantity)
 
@@ -802,6 +807,11 @@ class TradeManager:
         if not trade:
             self.logger.warning(f"[TradeManager] Broker fill for {trade_id} but trade not in memory")
             return
+
+        self.logger.info(
+            f"[TradeManager] EXIT FILL received for {trade_id}: exit={exit_price} "
+            f"type={result_type} broker_pnl={broker_pnl_usd} broker_fees={broker_fees}"
+        )
 
         # Atomic guard: prevent duplicate fills from double-counting PnL
         if not self._guard_close(trade_id):

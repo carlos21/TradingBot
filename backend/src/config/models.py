@@ -95,7 +95,8 @@ class AppConfig:
 
     point_value: float = 2.0
     """Dollar value of one price point for the traded instrument.
-    ``2.0`` = MNQ ($2 per point)."""
+    ``2.0`` = MNQ ($2 per point). Used for backtest/analytics only;
+    live trading uses the instrument's point value from the broker platform."""
 
     min_stop_loss: float = 10.0
     """Minimum allowed stop-loss distance in points.

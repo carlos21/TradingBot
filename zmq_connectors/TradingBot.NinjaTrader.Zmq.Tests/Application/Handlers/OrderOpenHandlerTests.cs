@@ -69,7 +69,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             var result = _handler.Handle(payload);
 
             result.Should().BeTrue();
-            _network.Received(1).SendEntryFill("test-1", 20000, 19980, 20040, account: (string)null);
+            _network.Received(1).SendEntryFill("test-1", 20000, 19980, 20040, account: (string)null, quantity: 5);
             _network.Received(1).SendTradeLog("test-1", "NT:SIMULATE", Arg.Any<string>());
             _orderExecutionService.DidNotReceiveWithAnyArgs().CreateEntryOrder(null, null, default, 0, null);
         }
@@ -79,7 +79,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         {
             _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
-            var instrument = TestDataFactory.Instrument(pointValue: 0.5);
+            var instrument = TestDataFactory.Instrument();
             var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy);
 
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
@@ -98,13 +98,38 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
 
         [Theory]
         [InlineData(100.0, null, 10)]   // risk_usd 100 / (20 pts * 0.5 pv) = 10
-        [InlineData(null, 1.0, 50)]     // 1% of 50000 / 10 = 50 (capped at 100)
+        [InlineData(null, 1.0, 50)]     // 1% of 50000 / 10 = 50
         [InlineData(null, null, 1)]     // no risk -> 1
         public void Handle_LiveMode_CalculatesPositionSize(double? riskUsd, double? riskPct, int expectedQty)
         {
             _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account(cashValue: 50000);
-            var instrument = TestDataFactory.Instrument(pointValue: 0.5);
+            var instrument = TestDataFactory.Instrument(name: "TEST 09-25", master: "TEST", pointValue: 0.5);
+            var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("TEST 09-25").Returns(instrument);
+            _orderTracker.TryGetPendingEntry("test-1", out Arg.Any<PendingEntryInfo>()).Returns(false);
+            _orderTracker.TryGetEntry("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
+            _orderExecutionService.CreateEntryOrder(instrument, account, OrderSide.Buy, Arg.Any<int>(), "test-1").Returns(entryOrder);
+
+            _handler.Handle(TestDataFactory.OrderOpenPayload(riskUsd: riskUsd, riskPct: riskPct, riskPoints: 20, instrument: "TEST 09-25"));
+
+            _orderExecutionService.Received(1).CreateEntryOrder(instrument, account, OrderSide.Buy, expectedQty, "test-1");
+        }
+
+        [Theory]
+        [InlineData(9950, 1.6, 15, 5)]   // $159.20 / ($2 * 15) = 5.3 -> 5
+        [InlineData(9950, 1.6, 20, 4)]   // $159.20 / ($2 * 20) = 3.98 -> 4
+        [InlineData(9950, 1.6, 30, 3)]   // $159.20 / ($2 * 30) = 2.65 -> 3
+        [InlineData(9950, 1.6, 40, 2)]   // $159.20 / ($2 * 40) = 1.99 -> 2
+        [InlineData(50000, 1.6, 20, 20)] // $800 / $40 = 20
+        [InlineData(50000, 1.0, 20, 12)] // $500 / $40 = 12.5, Math.Round banker = 12
+        public void Handle_LiveMode_CalculatesMnqContracts_ForVariousStopDistances(
+            double cashValue, double riskPct, double riskPoints, int expectedQty)
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account(cashValue: cashValue);
+            var instrument = TestDataFactory.Instrument(name: "MNQ 09-25", master: "MNQ", pointValue: 2.0);
             var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy);
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
             _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
@@ -112,9 +137,147 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             _orderTracker.TryGetEntry("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
             _orderExecutionService.CreateEntryOrder(instrument, account, OrderSide.Buy, Arg.Any<int>(), "test-1").Returns(entryOrder);
 
-            _handler.Handle(TestDataFactory.OrderOpenPayload(riskUsd: riskUsd, riskPct: riskPct, riskPoints: 20));
+            _handler.Handle(TestDataFactory.OrderOpenPayload(riskPct: riskPct, riskPoints: riskPoints));
 
             _orderExecutionService.Received(1).CreateEntryOrder(instrument, account, OrderSide.Buy, expectedQty, "test-1");
+        }
+
+        [Theory]
+        [InlineData(160, 15, 5)]   // $160 / ($2 * 15) = 5.3 -> 5
+        [InlineData(160, 20, 4)]   // $160 / ($2 * 20) = 4
+        [InlineData(160, 30, 3)]   // $160 / ($2 * 30) = 2.65 -> 3
+        [InlineData(160, 40, 2)]   // $160 / ($2 * 40) = 2
+        public void Handle_LiveMode_CalculatesMnqContracts_ForFixedRiskUsd(
+            double riskUsd, double riskPoints, int expectedQty)
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account(cashValue: 9950);
+            var instrument = TestDataFactory.Instrument(name: "MNQ 09-25", master: "MNQ", pointValue: 2.0);
+            var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderTracker.TryGetPendingEntry("test-1", out Arg.Any<PendingEntryInfo>()).Returns(false);
+            _orderTracker.TryGetEntry("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
+            _orderExecutionService.CreateEntryOrder(instrument, account, OrderSide.Buy, Arg.Any<int>(), "test-1").Returns(entryOrder);
+
+            _handler.Handle(TestDataFactory.OrderOpenPayload(riskUsd: riskUsd, riskPoints: riskPoints));
+
+            _orderExecutionService.Received(1).CreateEntryOrder(instrument, account, OrderSide.Buy, expectedQty, "test-1");
+        }
+
+        [Fact]
+        public void Handle_LiveMode_IncidentScenario_40PointSlWithCorrectRiskPoints_OpensTwoContracts()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account(cashValue: 9950);
+            var instrument = TestDataFactory.Instrument(name: "MNQ 09-25", master: "MNQ", pointValue: 2.0);
+            var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderTracker.TryGetPendingEntry("test-1", out Arg.Any<PendingEntryInfo>()).Returns(false);
+            _orderTracker.TryGetEntry("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
+            _orderExecutionService.CreateEntryOrder(instrument, account, OrderSide.Buy, Arg.Any<int>(), "test-1").Returns(entryOrder);
+
+            // 1.6% of $9,950 = $159.20 risk. With a 40-point SL on MNQ ($2/pt), each contract risks $80.
+            // Expected qty = 159.20 / 80 = 1.99 -> 2 contracts. The 20-contract disaster only happens
+            // if the C# side receives the wrong risk_points (e.g., 4 instead of 40).
+            _handler.Handle(TestDataFactory.OrderOpenPayload(riskPct: 1.6, riskPoints: 40));
+
+            _orderExecutionService.Received(1).CreateEntryOrder(instrument, account, OrderSide.Buy, 2, "test-1");
+        }
+
+        [Fact]
+        public void Handle_LiveMode_IncidentScenario_WrongRiskPoints_OpensTwentyContracts()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account(cashValue: 9950);
+            var instrument = TestDataFactory.Instrument(name: "MNQ 09-25", master: "MNQ", pointValue: 2.0);
+            var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderTracker.TryGetPendingEntry("test-1", out Arg.Any<PendingEntryInfo>()).Returns(false);
+            _orderTracker.TryGetEntry("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
+            _orderExecutionService.CreateEntryOrder(instrument, account, OrderSide.Buy, Arg.Any<int>(), "test-1").Returns(entryOrder);
+
+            // If Python mistakenly sends risk_points=4 for a 40-point stop, C# calculates:
+            // $159.20 / ($2 * 4) = 19.9 -> 20 contracts. This documents the exact sizing bug.
+            _handler.Handle(TestDataFactory.OrderOpenPayload(riskPct: 1.6, riskPoints: 4));
+
+            _orderExecutionService.Received(1).CreateEntryOrder(instrument, account, OrderSide.Buy, 20, "test-1");
+        }
+
+        [Fact]
+        public void Handle_LiveMode_RejectsRiskPct_WhenImpliedRiskExceedsFivePercent()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account(cashValue: 9950);
+            var instrument = TestDataFactory.Instrument(name: "MNQ 09-25", master: "MNQ", pointValue: 2.0);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderTracker.TryGetPendingEntry("test-1", out Arg.Any<PendingEntryInfo>()).Returns(false);
+            _orderTracker.TryGetEntry("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
+
+            // 16% risk ($1,592) / 40pt SL -> 19.9 contracts -> $1,592 implied risk > 5% of $9,950 ($497.50)
+            var result = _handler.Handle(TestDataFactory.OrderOpenPayload(riskPct: 16.0, riskPoints: 40));
+
+            result.Should().BeFalse();
+            _network.Received(1).SendError("ninjatrader", "order_open_failed", Arg.Is<string>(s => s.Contains("5%")));
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateEntryOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void Handle_LiveMode_RejectsRiskUsdExceedingFivePercentOfAccount()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account(cashValue: 10000);
+            var instrument = TestDataFactory.Instrument();
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderTracker.TryGetPendingEntry("test-1", out Arg.Any<PendingEntryInfo>()).Returns(false);
+            _orderTracker.TryGetEntry("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
+
+            // risk_usd 1000 with slRisk $40 (MNQ $2/pt) -> 25 contracts -> implied risk $1000 > 5% of $10k
+            var result = _handler.Handle(TestDataFactory.OrderOpenPayload(riskUsd: 1000, riskPoints: 20));
+
+            result.Should().BeFalse();
+            _network.Received(1).SendError("ninjatrader", "order_open_failed", Arg.Is<string>(s => s.Contains("5%")));
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateEntryOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void Handle_LiveMode_RejectsRiskPctExceedingFivePercentOfAccount()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account(cashValue: 10000);
+            var instrument = TestDataFactory.Instrument();
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderTracker.TryGetPendingEntry("test-1", out Arg.Any<PendingEntryInfo>()).Returns(false);
+            _orderTracker.TryGetEntry("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
+
+            // 10% of $10k = $1000 risk / $40 slRisk = 25 contracts -> implied risk $1000 > 5% of $10k
+            var result = _handler.Handle(TestDataFactory.OrderOpenPayload(riskPct: 10.0, riskPoints: 20));
+
+            result.Should().BeFalse();
+            _network.Received(1).SendError("ninjatrader", "order_open_failed", Arg.Is<string>(s => s.Contains("5%")));
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateEntryOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void Handle_LiveMode_RejectsMnkWithWrongPointValue()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account();
+            // MNQ with point value $0.50 (tick value) instead of $2.00 (point value)
+            var instrument = TestDataFactory.Instrument(name: "MNQ 09-25", master: "MNQ", pointValue: 0.5);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+
+            var result = _handler.Handle(TestDataFactory.OrderOpenPayload());
+
+            result.Should().BeFalse();
+            _network.Received(1).SendError("ninjatrader", "point_value_mismatch", Arg.Any<string>());
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateEntryOrder(null, null, default, 0, null);
         }
 
         [Fact]

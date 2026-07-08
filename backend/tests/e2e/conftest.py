@@ -21,6 +21,7 @@ from src.infrastructure.database.database_protocol import Base, get_database
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
+from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
 from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
@@ -166,7 +167,7 @@ def live_app(
         platform_connects=True,
     )
     gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
-    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ")
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ", market_filter=MarketClosureFilter(instrument="MNQ"))
     trade_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
 
     repos = Repositories(
@@ -214,7 +215,7 @@ def live_app_scenario(
         platform_connects=True,
     )
     gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
-    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ")
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ", market_filter=MarketClosureFilter(instrument="MNQ"))
     trade_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
 
     repos = Repositories(
@@ -282,7 +283,7 @@ def live_app_multi(
         platform_connects=True,
     )
     gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
-    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ")
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ", market_filter=MarketClosureFilter(instrument="MNQ"))
 
     # Share the same gateway between data_source and trade executor
     zmq_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
@@ -432,7 +433,7 @@ def live_app_resilience(
         heartbeat_timeout_sec=1.0,
     )
     gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
-    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ")
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ", market_filter=MarketClosureFilter(instrument="MNQ"))
     trade_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
 
     repos = Repositories(

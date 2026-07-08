@@ -20,6 +20,7 @@ from enum import Enum, auto
 from zoneinfo import ZoneInfo
 
 from src.config.models import DEFAULT_HISTORY_HOURS
+from src.domain.parity import IMarketClosureFilter
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.notifier import NoOpNotifier, Notifier
 from src.utils.app_logger import ILogger
@@ -74,6 +75,7 @@ class ZMQDataSource(CombinedDataSource):
         pair: str = "MNQ",
         history_hours: int = DEFAULT_HISTORY_HOURS,
         notifier: Notifier | None = None,
+        market_filter: IMarketClosureFilter | None = None,
     ):
         """
         Initialize the ZMQ data source.
@@ -84,6 +86,7 @@ class ZMQDataSource(CombinedDataSource):
             gateway_config: Configuration for creating a new gateway
             pair: Trading pair symbol
             history_hours: Number of hours of historical bars to load on connect
+            market_filter: Optional filter that classifies gaps as scheduled market closures
         """
         self.logger = logger
         self.pair = pair
@@ -91,6 +94,7 @@ class ZMQDataSource(CombinedDataSource):
         self._gateway = gateway
         self._gateway_config = gateway_config or GatewayConfig()
         self._owns_gateway = gateway is None
+        self._market_filter = market_filter
 
         # Track the first connect so we always refresh history on startup.
         # After that, only refresh if the disconnect lasted long enough to be "real".
@@ -872,7 +876,7 @@ class ZMQDataSource(CombinedDataSource):
         if age_sec > 60:
             return False, f"Last bar is {age_sec // 60}m old (need < 1m)"
 
-        # Check for gaps in the last 2 hours
+        # Check for gaps in the last 2 hours, ignoring scheduled market closures.
         cutoff = now - 7200
         last_checked = None
         for bar in bars:
@@ -880,7 +884,9 @@ class ZMQDataSource(CombinedDataSource):
                 continue
             if last_checked is not None:
                 gap = bar["time"] - last_checked
-                if gap > 60:
+                if gap > self._gap_threshold:
+                    if self._market_filter is not None and self._market_filter.is_market_closed_gap(last_checked, bar["time"]):
+                        continue
                     return False, f"Gap detected: {gap // 60}m hole in last 2h"
             last_checked = bar["time"]
 

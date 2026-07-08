@@ -15,6 +15,12 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
         void SubmitOrder(BrokerOrder order);
         void CancelOrder(BrokerOrder order);
 
+        /// <summary>
+        /// Submit multiple orders to the broker in a single call.
+        /// Required for OCO-linked bracket orders (stop + target).
+        /// </summary>
+        void SubmitOrders(IReadOnlyList<BrokerOrder> orders);
+
         BrokerOrder FindOrderByName(BrokerAccount account, string orderName);
         IReadOnlyList<BrokerOrder> GetWorkingOrders(BrokerAccount account);
         IReadOnlyList<BrokerOrder> GetAllOrders(BrokerAccount account);

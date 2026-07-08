@@ -466,25 +466,31 @@ class FakeCredentialRepository(ICredentialRepository):
 
     def __init__(self):
         self._creds = []
+        self._seq = 0
 
     def get_credential(self, service: str) -> tuple[str, str] | None:
-        for c in self._creds:
-            if c["service"] == service:
-                return c["username"], c["password_encrypted"]
-        return None
+        # Match the real repository: return the most recently saved credential.
+        matches = [c for c in self._creds if c["service"] == service]
+        if not matches:
+            return None
+        most_recent = max(matches, key=lambda c: c["_order"])
+        return most_recent["username"], most_recent["password_encrypted"]
 
     def list_all(self) -> list[dict]:
         return [{"service": c["service"], "username": c["username"]} for c in self._creds]
 
     def save_credential(self, service: str, username: str, password_encrypted: str) -> None:
+        self._seq += 1
         for c in self._creds:
             if c["service"] == service and c["username"] == username:
                 c["password_encrypted"] = password_encrypted
+                c["_order"] = self._seq
                 return
         self._creds.append({
             "service": service,
             "username": username,
             "password_encrypted": password_encrypted,
+            "_order": self._seq,
         })
 
     def delete_credential(self, service: str) -> None:

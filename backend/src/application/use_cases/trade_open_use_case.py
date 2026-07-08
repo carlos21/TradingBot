@@ -51,6 +51,7 @@ class TradeOpenUseCase:
         use_fractional_lots: bool = False,
         accounts_repo=None,
         instrument: str | None = None,
+        live_mode: bool = False,
     ):
         self._repo = trade_repository
         self._executor = trade_executor
@@ -64,9 +65,10 @@ class TradeOpenUseCase:
         self._use_fractional_lots = use_fractional_lots
         self._accounts_repo = accounts_repo
         self._instrument = instrument
+        self._live_mode = live_mode
 
     def _get_current_risk(self) -> tuple[float | None, float | None]:
-        """Return (risk_per_trade, risk_pct_per_trade) from DB if available, else fallbacks."""
+        """Return (risk_usd, risk_pct) from DB if available, else fallbacks."""
         if self._accounts_repo is not None:
             try:
                 accounts = self._accounts_repo.list_accounts()
@@ -77,23 +79,32 @@ class TradeOpenUseCase:
                 pass
         return self._risk_per_trade, self._risk_pct_per_trade
 
+    def _effective_risk_config(
+        self,
+        risk_per_trade_override: float | None = None,
+        risk_pct_per_trade_override: float | None = None,
+    ) -> tuple[float | None, float | None]:
+        """Return the configured risk inputs with override > account > default precedence.
+
+        This is the source of truth for what NinjaTrader receives. In live mode
+        the broker sizes from these values, not from Python's dollar estimate.
+        """
+        if risk_per_trade_override is not None or risk_pct_per_trade_override is not None:
+            return risk_per_trade_override, risk_pct_per_trade_override
+        return self._get_current_risk()
+
     def _calc_contracts(self, risk_per_contract: float,
                         risk_per_trade_override: float | None = None,
                         risk_pct_per_trade_override: float | None = None) -> float:
         """Calculate number of contracts/lots, matching NinjaTrader's logic."""
-        if risk_per_trade_override is not None or risk_pct_per_trade_override is not None:
-            risk_budget = FinancialCalc.risk_budget(
-                self._account_balance,
-                risk_per_trade_override,
-                risk_pct_per_trade_override,
-            )
-        else:
-            risk_usd, risk_pct = self._get_current_risk()
-            risk_budget = FinancialCalc.risk_budget(
-                self._account_balance,
-                risk_usd,
-                risk_pct,
-            )
+        risk_usd, risk_pct = self._effective_risk_config(
+            risk_per_trade_override, risk_pct_per_trade_override
+        )
+        risk_budget = FinancialCalc.risk_budget(
+            self._account_balance,
+            risk_usd,
+            risk_pct,
+        )
 
         if self._use_fractional_lots:
             return FinancialCalc.lots(risk_budget, risk_per_contract)
@@ -118,14 +129,37 @@ class TradeOpenUseCase:
         params: dict | None = None,
     ) -> OpenResult:
         """Open a new trade with precomputed parameters."""
+        # In backtest/simulation mode Python is the source of truth for sizing,
+        # so an explicit account balance is required when using %-based risk.
+        if not self._live_mode:
+            using_risk_pct = (
+                risk_pct_per_trade_override is not None
+                or (self._accounts_repo is None and self._risk_pct_per_trade is not None)
+                or (self._accounts_repo is not None and any(
+                    a.risk_pct is not None for a in self._accounts_repo.list_accounts()
+                ))
+            )
+            if using_risk_pct and self._account_balance <= 0:
+                raise ValueError(
+                    "Backtest/simulation mode with risk_pct requires a positive account_balance. "
+                    "Set it before opening trades."
+                )
+
         risk_per_contract = risk * self._point_value
         contracts = self._calc_contracts(
             risk_per_contract,
             risk_per_trade_override,
             risk_pct_per_trade_override,
         )
-        risk_dollars, risk_pct = FinancialCalc.risk_fields(
+        risk_dollars, calculated_risk_pct = FinancialCalc.risk_fields(
             risk, contracts, self._point_value, self._account_balance
+        )
+
+        # Preserve the configured risk inputs so the executor can forward the
+        # same source of truth to the broker (e.g., NinjaTrader sizes from the
+        # configured risk_usd or risk_pct, not from Python's estimate).
+        risk_usd, risk_pct = self._effective_risk_config(
+            risk_per_trade_override, risk_pct_per_trade_override
         )
 
         # Persist open trade
@@ -139,7 +173,7 @@ class TradeOpenUseCase:
             entry_time=datetime.fromtimestamp(entry_time, tz=timezone.utc),
             params=params or {},
             risk_dollars=risk_dollars,
-            risk_pct=risk_pct,
+            risk_pct=calculated_risk_pct,
             contracts=contracts,
             source=source,
             account=account,
@@ -156,7 +190,7 @@ class TradeOpenUseCase:
             take_profit=take_profit,
             risk=risk,
             risk_dollars=risk_dollars,
-            risk_pct=risk_pct,
+            risk_pct=calculated_risk_pct,
             contracts=contracts,
             entry_time=entry_time,
             account=account,
@@ -176,6 +210,10 @@ class TradeOpenUseCase:
             'rr_ratio': rr_ratio,
             'entry_time': entry_time,
             'risk_dollars': risk_dollars,
+            # In live mode the broker is the source of truth for account balance
+            # and point value, so forward the *configured* risk inputs rather than
+            # Python's dollar estimate.
+            'risk_usd': risk_usd,
             'risk_pct': risk_pct,
             'contracts': contracts,
             'account': account,
@@ -214,7 +252,7 @@ class TradeOpenUseCase:
                 'take_profit': take_profit,
                 'risk': risk,
                 'risk_dollars': risk_dollars,
-                'risk_pct': risk_pct,
+                'risk_pct': calculated_risk_pct,
                 'contracts': contracts,
                 'entry_time': entry_time,
                 'rr_ratio': rr_ratio,

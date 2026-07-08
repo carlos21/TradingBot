@@ -151,6 +151,7 @@ class BaseLiquidityStrategy:
             use_fractional_lots=use_fractional_lots,
             accounts_repo=accounts_repo,
             instrument=None,
+            live_mode=live_mode,
         )
 
         self.strategy_lines: dict[Any, dict[str, Any]] = {}   # id -> { level, direction, extreme, creation_ts }

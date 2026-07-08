@@ -21,6 +21,7 @@ Usage:
 
 
 from src.config.models import DEFAULT_HISTORY_HOURS
+from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.notifier import Notifier
 from src.utils.app_logger import ILogger
 
@@ -82,7 +83,14 @@ def create_live_components(
     gateway.set_account_names(account_names or [])
 
     # Create data source that uses the gateway (logger is required first param)
-    data_source = ZMQDataSource(logger, gateway=gateway, pair=pair, history_hours=history_hours, notifier=notifier)
+    data_source = ZMQDataSource(
+        logger,
+        gateway=gateway,
+        pair=pair,
+        history_hours=history_hours,
+        notifier=notifier,
+        market_filter=MarketClosureFilter(instrument=pair),
+    )
 
     # Create trade executor that uses the same gateway (logger is required)
     trade_executor = ZMQTradeExecutor(

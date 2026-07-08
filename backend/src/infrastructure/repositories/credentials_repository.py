@@ -1,6 +1,8 @@
 """Repository for encrypted credentials."""
 from __future__ import annotations
 
+from sqlalchemy import desc
+
 from src.domain.repositories import CredentialRepository as ICredentialRepository
 from src.infrastructure.database.database import AppCredential
 from src.infrastructure.database.database_protocol import DatabaseProtocol
@@ -15,7 +17,14 @@ class CredentialRepository(SQLRepositoryBase, ICredentialRepository):
 
     def get_credential(self, service: str) -> tuple[str, str] | None:
         with self._session() as session:
-            row = session.query(AppCredential).filter_by(service=service).first()
+            # Return the most recently updated credential so username changes
+            # (which create new rows) are reflected immediately.
+            row = (
+                session.query(AppCredential)
+                .filter_by(service=service)
+                .order_by(desc(AppCredential.updated_at))
+                .first()
+            )
             if row:
                 return row.username, row.password_encrypted
             return None
@@ -49,10 +58,10 @@ class CredentialRepository(SQLRepositoryBase, ICredentialRepository):
     def delete_credential(self, service: str) -> None:
         with self._session() as session:
             try:
-                row = session.query(AppCredential).filter_by(service=service).first()
-                if row:
-                    session.delete(row)
-                    session.commit()
+                # Remove all credentials for the service; the UI only supports one
+                # credential per service.
+                session.query(AppCredential).filter_by(service=service).delete()
+                session.commit()
             except Exception:
                 session.rollback()
                 raise

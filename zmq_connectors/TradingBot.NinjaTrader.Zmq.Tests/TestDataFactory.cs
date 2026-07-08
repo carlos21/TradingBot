@@ -6,7 +6,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests
 {
     public static class TestDataFactory
     {
-        public static BrokerInstrument Instrument(string name = "MNQ 09-25", string master = "MNQ", double pointValue = 0.5)
+        public static BrokerInstrument Instrument(string name = "MNQ 09-25", string master = "MNQ", double pointValue = 2.0)
             => new BrokerInstrument(name, master, pointValue);
 
         public static BrokerAccount Account(string name = "Sim101", bool hasConnection = true, double cashValue = 50000)

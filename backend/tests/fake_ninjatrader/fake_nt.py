@@ -327,11 +327,13 @@ class FakeNinjaTrader:
             )
             return
 
+        quantity = self._expected_order_quantity(payload)
+
         ok, reason = self._tracker.track_entry(
             trade_id=trade_id,
             account=account,
             direction=direction,  # type: ignore[arg-type]
-            quantity=1,
+            quantity=quantity,
             entry_price=entry_price,
             stop_loss=stop_loss,
             take_profit=take_profit,
@@ -359,6 +361,38 @@ class FakeNinjaTrader:
                         "take_profit": take_profit,
                         "account": account,
                     }
+
+    def _expected_order_quantity(self, payload: dict[str, Any]) -> int:
+        """Mirror NinjaTrader's live position-size calculation for the fake.
+
+        Real NinjaTrader ignores any Python-side contract estimate and sizes
+        from the configured risk_usd/risk_pct plus the instrument point value.
+        The fake does the same so partial-fill tests exercise the real
+        cumulative-fill path.
+        """
+        instrument = payload.get("instrument", "")
+        # MNQ is $2 per full point; default to $1 for unknown instruments.
+        point_value = 2.0 if "MNQ" in instrument.upper() else 1.0
+
+        risk_points = float(payload.get("risk_points", 0))
+        sl_risk = risk_points * point_value
+        if sl_risk <= 0:
+            return 1
+
+        risk_usd = payload.get("risk_usd")
+        risk_pct = payload.get("risk_pct")
+
+        if risk_usd is not None and risk_usd > 0:
+            qty = round(risk_usd / sl_risk)
+        elif risk_pct is not None and risk_pct > 0:
+            # Fake accounts do not carry balances; use a deterministic default
+            # so risk_pct tests still produce stable sizing.
+            balance = 10000.0
+            qty = round(balance * risk_pct / 100.0 / sl_risk)
+        else:
+            return 1
+
+        return max(1, int(qty))
 
     def _handle_order_close(self, payload: dict[str, Any], seq_num: int) -> None:
         trade_id = payload.get("trade_id", "")
@@ -617,26 +651,41 @@ class FakeNinjaTrader:
         stop_loss: float | None = None,
         take_profit: float | None = None,
         account: str | None = None,
+        quantity: int | None = None,
+        fill_quantity: int | None = None,
+        include_bracket: bool = True,
     ) -> None:
-        """Simulate an entry fill and send ENTRY_FILL to Python."""
-        entry = self._tracker.fill_entry(trade_id)
+        """Simulate an entry fill and send ENTRY_FILL to Python.
+
+        ``quantity`` overrides the cumulative filled quantity reported to Python.
+        ``fill_quantity`` is the increment filled in this execution; if omitted,
+        the remaining unfilled quantity is filled at once. Use ``fill_quantity``
+        to simulate several partial fills for the same trade.
+
+        ``include_bracket=False`` omits stop-loss/take-profit from the fill
+        message, simulating a broker that did not attach the protective bracket.
+        """
+        entry = self._tracker.fill_entry(trade_id, fill_quantity=fill_quantity)
         if entry is None:
-            self._logger.warning(f"FakeNT: cannot fill entry for {trade_id} — not tracked or already filled")
+            self._logger.warning(f"FakeNT: cannot fill entry for {trade_id} — not tracked or already closed")
             return
 
         sl = stop_loss if stop_loss is not None else entry.stop_loss
         tp = take_profit if take_profit is not None else entry.take_profit
         acct = account or entry.account
+        # Report cumulative filled quantity unless caller explicitly overrides.
+        qty = quantity if quantity is not None else entry.filled_quantity
 
         msg = EntryFillMessage(
             trade_id=trade_id,
             entry_price=entry_price,
-            stop_loss=sl,
-            take_profit=tp,
+            stop_loss=sl if include_bracket else None,
+            take_profit=tp if include_bracket else None,
             account=acct,
+            quantity=qty,
         )
         self._publish(msg.to_envelope(seq_num=self._next_seq()))
-        self._send_trade_log(trade_id, "NT:FILL", f"Entry fill @ {entry_price}")
+        self._send_trade_log(trade_id, "NT:FILL", f"Entry fill @ {entry_price} qty={qty}")
 
     def simulate_exit_fill(
         self,

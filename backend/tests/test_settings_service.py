@@ -177,6 +177,26 @@ class TestSettingsServiceSaveFullSettings:
         })
         assert svc._creds.get_credential("ninjatrader") is None
 
+    def test_changing_username_returns_latest_credential(self):
+        """Changing the stored username must surface the new credential, not the old one."""
+        svc = _make_service()
+        svc.save_full_settings({
+            "trading": {},
+            "network": {},
+            "accounts": [],
+            "credentials": {"username": "old_user", "password": "old_pass"},
+        })
+        svc.save_full_settings({
+            "trading": {},
+            "network": {},
+            "accounts": [],
+            "credentials": {"username": "new_user", "password": "new_pass"},
+        })
+        cred = svc._creds.get_credential("ninjatrader")
+        assert cred == ("new_user", "new_pass")
+        # History is preserved for the dropdown.
+        assert {c["username"] for c in svc._creds.list_all()} == {"old_user", "new_user"}
+
     def test_save_none_values(self):
         svc = _make_service()
         svc.save_full_settings({

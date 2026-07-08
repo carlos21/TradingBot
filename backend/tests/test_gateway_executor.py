@@ -129,6 +129,52 @@ class TestZMQTradeExecutor:
         })
         assert gateway.send_open_order.call_args.kwargs["entry_price"] == 105.0
 
+    def test_on_trade_open_forwards_configured_risk_usd(self):
+        executor, gateway = self._make()
+        executor.on_trade_open({
+            "trade_id": "T1",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 95.0,
+            "take_profit": 110.0,
+            "risk": 5.0,
+            "risk_usd": 250.0,
+            "risk_pct": 1.5,
+        })
+        call_kwargs = gateway.send_open_order.call_args.kwargs
+        assert call_kwargs["risk_usd"] == 250.0
+        assert call_kwargs["risk_pct"] is None
+
+    def test_on_trade_open_forwards_configured_risk_pct_when_no_risk_usd(self):
+        executor, gateway = self._make()
+        executor.on_trade_open({
+            "trade_id": "T1",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 95.0,
+            "take_profit": 110.0,
+            "risk": 5.0,
+            "risk_pct": 1.6,
+        })
+        call_kwargs = gateway.send_open_order.call_args.kwargs
+        assert call_kwargs["risk_usd"] is None
+        assert call_kwargs["risk_pct"] == 1.6
+
+    def test_on_trade_open_falls_back_to_executor_defaults(self):
+        gateway = MagicMock()
+        executor = ZMQTradeExecutor(gateway, logger=FakeLogger(), risk_pct=2.0)
+        executor.on_trade_open({
+            "trade_id": "T1",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 95.0,
+            "take_profit": 110.0,
+            "risk": 5.0,
+        })
+        call_kwargs = gateway.send_open_order.call_args.kwargs
+        assert call_kwargs["risk_usd"] is None
+        assert call_kwargs["risk_pct"] == 2.0
+
     def test_on_trade_close_passes_account(self):
         executor, gateway = self._make()
         executor.on_trade_close("T1", 99.0, account="Sim101")

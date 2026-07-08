@@ -171,13 +171,14 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
         public void SendHistoryEnd() => Send(MessageType.HistoryEnd, new JObject());
         public void SendRefreshStart() => Send(MessageType.RefreshStart, new JObject());
 
-        public void SendEntryFill(string tradeId, double entryPrice, double? stopLoss = null, double? takeProfit = null, double? slippage = null, string account = null)
+        public void SendEntryFill(string tradeId, double entryPrice, double? stopLoss = null, double? takeProfit = null, double? slippage = null, string account = null, double? quantity = null)
         {
             var payload = new JObject { ["trade_id"] = tradeId, ["entry_price"] = entryPrice };
             if (stopLoss.HasValue) payload["stop_loss"] = stopLoss.Value;
             if (takeProfit.HasValue) payload["take_profit"] = takeProfit.Value;
             if (slippage.HasValue) payload["slippage"] = slippage.Value;
             if (account != null) payload["account"] = account;
+            if (quantity.HasValue) payload["quantity"] = quantity.Value;
             Send(MessageType.EntryFill, payload);
         }
 

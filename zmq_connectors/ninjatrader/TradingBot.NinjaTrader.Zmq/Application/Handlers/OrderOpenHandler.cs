@@ -52,7 +52,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                     int simQty = payload?["contracts"]?.Value<int>() ?? 1;
 
                     _logger.Info($"SIMULATE OPEN: {tradeId} {direction} {instrumentName} x{simQty} @ {entryPrice} SL={stopLoss} TP={takeProfit} account={accountName ?? "default"}");
-                    _network.SendEntryFill(tradeId, entryPrice, stopLoss, takeProfit, account: accountName);
+                    _network.SendEntryFill(tradeId, entryPrice, stopLoss, takeProfit, account: accountName, quantity: simQty);
                     _network.SendTradeLog(tradeId, "NT:SIMULATE", $"Simulated entry fill {direction} x{simQty} @ {entryPrice}");
                     return true;
                 }
@@ -74,6 +74,16 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                 var instrument = _instrumentProvider.GetInstrument(instrumentName);
                 if (instrument == null)
                     throw new InvalidOperationException($"Instrument '{instrumentName}' not found");
+
+                // Catastrophic-sizing guard: for MNQ the CME point value is $2 per full point.
+                // If NT reports something else, every position-size calculation will be wrong.
+                if (string.Equals(instrument.MasterInstrumentName, "MNQ", StringComparison.OrdinalIgnoreCase) &&
+                    Math.Abs(instrument.PointValue - 2.0) > 0.01)
+                {
+                    _logger.Error($"CRITICAL: MNQ point value from NinjaTrader is {instrument.PointValue} but expected ~2.0. Refusing order to prevent catastrophic sizing.");
+                    _network.SendError("ninjatrader", "point_value_mismatch", $"MNQ point value is {instrument.PointValue}, expected ~2.0");
+                    return false;
+                }
 
                 bool isLong = direction == "long";
                 var side = isLong ? OrderSide.Buy : OrderSide.SellShort;
@@ -141,19 +151,37 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
             double slRisk = slPoints * pointValue;
             if (slRisk <= 0) return 1;
 
-            const int MaxQuantity = 100;
             int qty = 1;
 
             if (riskUsd > 0)
+            {
+                // Live mode should never send risk_usd; treat unexpected values as a safety-critical event.
                 qty = (int)Math.Round(riskUsd / slRisk);
+                _logger.Warning($"ORDER_OPEN: risk_usd={riskUsd} was sent (live mode should use risk_pct). Calculated qty={qty} for {account.Name}.");
+            }
             else if (riskPct > 0)
             {
                 double balance = account.CashValue;
                 double risk = balance * riskPct / 100.0;
                 qty = (int)Math.Round(risk / slRisk);
+                _logger.Info($"POSITION SIZE: {instrument.MasterInstrumentName} balance={balance:C2} riskPct={riskPct}% slRisk={slRisk:C2} qty={qty}");
             }
 
-            return Math.Max(1, Math.Min(qty, MaxQuantity));
+            if (qty <= 0) qty = 1;
+
+            // Catastrophic-risk guard: refuse if the implied dollar risk exceeds 5% of account.
+            // This is NOT a hard position cap; it protects against config/unit bugs that would
+            // blow up the account (e.g., wrong point value, stale balance, risk_usd too large).
+            double impliedRisk = qty * slRisk;
+            double maxRisk = account.CashValue * 0.05;
+            if (maxRisk > 0 && impliedRisk > maxRisk)
+            {
+                throw new InvalidOperationException(
+                    $"Calculated risk {impliedRisk:C2} ({qty} contracts × {slRisk:C2}) exceeds 5% of account ({maxRisk:C2}). " +
+                    $"Refusing order. Check point_value ({pointValue}), account balance ({account.CashValue:C2}), and risk settings.");
+            }
+
+            return qty;
         }
     }
 }

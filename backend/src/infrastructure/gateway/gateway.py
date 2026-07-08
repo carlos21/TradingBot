@@ -717,13 +717,29 @@ to be:
     def _handle_entry_fill(self, payload: dict[str, Any]) -> None:
         """Handle entry fill notification."""
         trade_id = payload.get('trade_id')
-        self.logger.info(f"Entry fill: {trade_id} @ {payload.get('entry_price')}")
+        entry_price = payload.get('entry_price')
+        stop_loss = payload.get('stop_loss')
+        take_profit = payload.get('take_profit')
+        quantity = payload.get('quantity')
+        account = payload.get('account')
+        self.logger.info(
+            f"Entry fill: {trade_id} @ {entry_price} qty={quantity} account={account} "
+            f"SL={stop_loss} TP={take_profit}"
+        )
         self._maybe_advance_test_sequence(trade_id, 'entry_fill', payload)
 
     def _handle_exit_fill(self, payload: dict[str, Any]) -> None:
         """Handle exit fill notification."""
         trade_id = payload.get('trade_id')
-        self.logger.info(f"Exit fill: {trade_id} @ {payload.get('exit_price')} ({payload.get('result_type')})")
+        exit_price = payload.get('exit_price')
+        result_type = payload.get('result_type')
+        realized_pnl = payload.get('realized_pnl')
+        commission = payload.get('commission')
+        account = payload.get('account')
+        self.logger.info(
+            f"Exit fill: {trade_id} @ {exit_price} ({result_type}) "
+            f"pnl={realized_pnl} commission={commission} account={account}"
+        )
         self._maybe_advance_test_sequence(trade_id, 'exit_fill', payload)
 
     def _handle_position_sync(self, payload: dict[str, Any]) -> None:

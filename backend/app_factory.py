@@ -533,9 +533,13 @@ def create_app(
             entry_price = payload.get('entry_price')
             stop_loss = payload.get('stop_loss')
             take_profit = payload.get('take_profit')
+            quantity = payload.get('quantity')
             if trade_id and entry_price is not None:
-                trade_manager.handle_broker_entry_fill(trade_id, entry_price, stop_loss, take_profit)
-                logger.info(f"[BrokerFill] Entry fill handled for {trade_id} @ {entry_price}")
+                trade_manager.handle_broker_entry_fill(trade_id, entry_price, stop_loss, take_profit, quantity)
+                logger.info(
+                    f"[BrokerFill] Entry fill handled for {trade_id} @ {entry_price} "
+                    f"qty={quantity} SL={stop_loss} TP={take_profit}"
+                )
 
         def _handle_exit_fill(payload):
             trade_id = payload.get('trade_id')
@@ -720,7 +724,9 @@ def create_app(
 
     @app.errorhandler(500)
     def handle_500(error):
-        notifier.send(f"[Flask] Unhandled server error: {error}")
+        original = getattr(error, "original_exception", error)
+        logger.error("Unhandled server error: %s", original, exc_info=True)
+        notifier.send(f"[Flask] Unhandled server error: {original}")
         return jsonify({"error": "Internal server error"}), 500
 
     return AppWiring(

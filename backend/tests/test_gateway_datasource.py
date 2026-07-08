@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -16,6 +18,7 @@ from src.config.models import DEFAULT_HISTORY_HOURS
 from src.infrastructure.gateway.datasource import DataSourceState, ZMQDataSource
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
 from src.infrastructure.gateway.protocol import MessageType
+from src.infrastructure.market_closure_filter import MarketClosureFilter
 from tests.fakes import FakeLogger
 
 # ---------------------------------------------------------------------------
@@ -1419,3 +1422,78 @@ class TestStaleBarFallback:
             data_source.logger = original_logger
         mock_logger.warning.assert_not_called()
         assert data_source._gap_count == 1  # still counted internally
+
+
+# ---------------------------------------------------------------------------
+# History completeness with market-closure filter
+# ---------------------------------------------------------------------------
+
+
+class TestHistoryCompletenessMarketClosures:
+    """Gap detection should ignore scheduled market closures."""
+
+    @pytest.fixture
+    def filtered_data_source(self, logger, mock_gateway):
+        """Return a ZMQDataSource with a CME market-closure filter."""
+        ds = ZMQDataSource(
+            logger=logger,
+            gateway=mock_gateway,
+            pair="MNQ",
+            market_filter=MarketClosureFilter(instrument="MNQ"),
+        )
+        return ds
+
+    def test_maintenance_window_gap_accepted(self, filtered_data_source):
+        """The 61-minute CME daily maintenance gap must not block readiness."""
+        # 2026-07-07 16:00 CDT (maintenance start) = 21:00 UTC
+        # 2026-07-07 17:01 CDT (maintenance end)   = 22:01 UTC
+        chicago = ZoneInfo("America/Chicago")
+        t1 = int(datetime(2026, 7, 7, 16, 0, 0, tzinfo=chicago).timestamp())
+        t2 = int(datetime(2026, 7, 7, 17, 1, 0, tzinfo=chicago).timestamp())
+        # Keep the last bar fresh (< 1m old) while both bars remain inside the 2h window.
+        now = t2 + 30
+
+        filtered_data_source._historical_bars = [
+            make_bar(time_val=t1, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=t2, open_=10.0, high=11.0, low=9.0, close=10.5),
+        ]
+
+        with patch("time.time", return_value=now):
+            complete, reason = filtered_data_source.check_history_completeness()
+        assert complete is True, reason
+
+    def test_intraday_gap_still_rejected_with_filter(self, filtered_data_source):
+        """A non-maintenance gap must still be rejected."""
+        # 2026-07-07 10:30 CDT = 15:30 UTC
+        # 2026-07-07 11:00 CDT = 16:00 UTC
+        chicago = ZoneInfo("America/Chicago")
+        t1 = int(datetime(2026, 7, 7, 10, 30, 0, tzinfo=chicago).timestamp())
+        t2 = int(datetime(2026, 7, 7, 11, 0, 0, tzinfo=chicago).timestamp())
+        now = t2 + 30
+
+        filtered_data_source._historical_bars = [
+            make_bar(time_val=t1, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=t2, open_=10.0, high=11.0, low=9.0, close=10.5),
+        ]
+
+        with patch("time.time", return_value=now):
+            complete, reason = filtered_data_source.check_history_completeness()
+        assert complete is False
+        assert "Gap detected" in reason
+
+    def test_gap_rejected_without_filter(self, data_source):
+        """Without a market filter, the maintenance gap is still treated as invalid."""
+        chicago = ZoneInfo("America/Chicago")
+        t1 = int(datetime(2026, 7, 7, 16, 0, 0, tzinfo=chicago).timestamp())
+        t2 = int(datetime(2026, 7, 7, 17, 1, 0, tzinfo=chicago).timestamp())
+        now = t2 + 30
+
+        data_source._historical_bars = [
+            make_bar(time_val=t1, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=t2, open_=10.0, high=11.0, low=9.0, close=10.5),
+        ]
+
+        with patch("time.time", return_value=now):
+            complete, reason = data_source.check_history_completeness()
+        assert complete is False
+        assert "Gap detected" in reason

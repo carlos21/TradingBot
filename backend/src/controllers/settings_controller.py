@@ -1,9 +1,14 @@
 """Controller for settings API endpoints."""
 from __future__ import annotations
 
+import logging
+
 from flask import abort, jsonify, request
 
 from src.services.settings_service import SettingsService
+
+
+logger = logging.getLogger(__name__)
 
 
 class SettingsController:
@@ -17,7 +22,11 @@ class SettingsController:
 
     def save_settings(self):
         payload = request.get_json(silent=True) or {}
-        self._svc.save_full_settings(payload)
+        try:
+            self._svc.save_full_settings(payload)
+        except Exception as exc:
+            logger.exception("Failed to save settings: %s", exc)
+            abort(500, f"Failed to save settings: {exc}")
         return jsonify({"success": True}), 200
 
     def get_accounts(self):

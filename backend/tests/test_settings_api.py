@@ -1,6 +1,7 @@
 """Tests for settings HTTP API endpoints."""
 import pytest
 from flask import Flask
+from sqlalchemy import create_engine, inspect, text
 
 from src.controllers.settings_controller import SettingsController
 from src.infrastructure.database.database import setup_database
@@ -35,6 +36,11 @@ def app(tmp_path):
 @pytest.fixture
 def client(app):
     return app.test_client()
+
+
+class _ExplodingSettingsService:
+    def save_full_settings(self, payload):
+        raise RuntimeError("service failure")
 
 
 class TestSettingsApi:
@@ -77,3 +83,74 @@ class TestSettingsApi:
 
         resp = client.get("/api/accounts")
         assert resp.get_json() == []
+
+    def test_migration_adds_live_enabled_column(self, tmp_path):
+        """Regression: older nt_accounts tables without live_enabled must migrate."""
+        db_path = f"sqlite:///{tmp_path / 'legacy.db'}"
+        engine = create_engine(db_path)
+        with engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE nt_accounts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name VARCHAR(100) NOT NULL,
+                    risk_usd FLOAT,
+                    risk_pct FLOAT,
+                    rr_ratio FLOAT,
+                    updated_at DATETIME
+                )
+            """))
+            conn.commit()
+
+        assert "live_enabled" not in {c["name"] for c in inspect(engine).get_columns("nt_accounts")}
+
+        setup_database(db_url=db_path)
+
+        assert "live_enabled" in {c["name"] for c in inspect(engine).get_columns("nt_accounts")}
+
+        from src.infrastructure.database.database import get_db_session
+        session = get_db_session().__enter__()
+        settings_repo = SettingsRepository()
+        accounts_repo = NtAccountRepository()
+        creds_repo = CredentialRepository()
+        svc = SettingsService(settings_repo, accounts_repo, creds_repo)
+        ctrl = SettingsController(svc)
+
+        flask_app = Flask(__name__)
+        register_settings_routes(flask_app, ctrl, FakeLogger())
+
+        with flask_app.test_client() as client:
+            payload = {
+                "trading": {},
+                "network": {},
+                "accounts": [{"name": "LegacyAcct", "risk_usd": 100.0, "live_enabled": True}],
+                "credentials": {},
+            }
+            resp = client.post("/api/settings", json=payload)
+            assert resp.status_code == 200, resp.get_json()
+
+            resp = client.get("/api/settings")
+            data = resp.get_json()
+            assert len(data["accounts"]) == 1
+            assert data["accounts"][0]["name"] == "LegacyAcct"
+            assert data["accounts"][0]["live_enabled"] is True
+
+        session.close()
+
+    def test_save_settings_error_includes_message(self):
+        """The controller should surface a useful error when the service fails."""
+        from flask import jsonify
+
+        ctrl = SettingsController(_ExplodingSettingsService())
+
+        flask_app = Flask(__name__)
+        register_settings_routes(flask_app, ctrl, FakeLogger())
+
+        @flask_app.errorhandler(500)
+        def _handle_500(error):
+            return jsonify({"error": str(error.description)}), 500
+
+        with flask_app.test_client() as client:
+            resp = client.post("/api/settings", json={"accounts": []})
+            assert resp.status_code == 500
+            data = resp.get_json()
+            assert "service failure" in data["error"]

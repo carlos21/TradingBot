@@ -47,6 +47,7 @@ class StrategyTradeService:
         use_fractional_lots: bool = False,
         accounts_repo=None,
         instrument: str | None = None,
+        live_mode: bool = False,
     ):
         self._repo = trade_repository
         self._executor = trade_executor
@@ -64,6 +65,7 @@ class StrategyTradeService:
         self._use_fractional_lots = use_fractional_lots
         self._accounts_repo = accounts_repo
         self._instrument = instrument
+        self._live_mode = live_mode
 
     def _get_open_use_case(self) -> TradeOpenUseCase:
         """Lazy init so account balance can be updated before first use."""
@@ -81,6 +83,7 @@ class StrategyTradeService:
                 use_fractional_lots=self._use_fractional_lots,
                 accounts_repo=self._accounts_repo,
                 instrument=self._instrument,
+                live_mode=self._live_mode,
             )
         return self._open_use_case
 

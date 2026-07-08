@@ -21,6 +21,7 @@ class _TrackedOrder:
     stop_loss: float
     take_profit: float
     status: Literal["pending", "filled", "cancelled", "closed"] = "pending"
+    filled_quantity: int = 0
 
 
 class FakeOrderTracker:
@@ -78,21 +79,31 @@ class FakeOrderTracker:
         )
         return True, ""
 
-    def fill_entry(self, trade_id: str) -> _TrackedOrder | None:
-        """Mark an entry order as filled and auto-create SL/TP bracket orders."""
+    def fill_entry(self, trade_id: str, fill_quantity: int | None = None) -> _TrackedOrder | None:
+        """Record a fill (full or partial) and auto-create SL/TP bracket orders.
+
+        ``fill_quantity`` is the number of contracts filled in *this* execution.
+        If omitted, the full order quantity is filled at once. Returns the entry
+        as long as it is still open.
+        """
         entry = self._entries.get(trade_id)
         if entry is None:
             return None
-        if entry.status != "pending":
+        if entry.status in ("cancelled", "closed"):
             return None
 
-        entry.status = "filled"
-        # Create bracket orders
+        qty = fill_quantity if fill_quantity is not None else entry.quantity
+        entry.filled_quantity = min(entry.quantity, entry.filled_quantity + qty)
+        if entry.filled_quantity >= entry.quantity:
+            entry.status = "filled"
+
+        # Create/update bracket orders to cover the currently filled quantity.
+        bracket_qty = entry.filled_quantity
         self._stops[trade_id] = _TrackedOrder(
             trade_id=trade_id,
             account=entry.account,
             direction=entry.direction,
-            quantity=entry.quantity,
+            quantity=bracket_qty,
             entry_price=entry.stop_loss,
             stop_loss=entry.stop_loss,
             take_profit=entry.take_profit,
@@ -102,7 +113,7 @@ class FakeOrderTracker:
             trade_id=trade_id,
             account=entry.account,
             direction=entry.direction,
-            quantity=entry.quantity,
+            quantity=bracket_qty,
             entry_price=entry.take_profit,
             stop_loss=entry.stop_loss,
             take_profit=entry.take_profit,

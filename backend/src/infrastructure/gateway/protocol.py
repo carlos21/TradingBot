@@ -322,7 +322,7 @@ class EntryFillMessage:
     stop_loss: float | None = None   # Broker-calculated SL
     take_profit: float | None = None # Broker-calculated TP
     slippage: float | None = None    # Difference from requested entry
-    contracts: int | None = None  # Not sent by C# NT connector; always None in live mode
+    quantity: int | None = None      # Broker-reported filled quantity (C# uses 'quantity')
     account: str | None = None       # NT account that reported the fill
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
@@ -336,8 +336,8 @@ class EntryFillMessage:
             payload["take_profit"] = self.take_profit
         if self.slippage is not None:
             payload["slippage"] = self.slippage
-        if self.contracts is not None:
-            payload["contracts"] = self.contracts
+        if self.quantity is not None:
+            payload["quantity"] = self.quantity
         if self.account is not None:
             payload["account"] = self.account
 

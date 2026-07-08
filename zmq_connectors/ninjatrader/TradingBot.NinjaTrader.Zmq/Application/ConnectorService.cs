@@ -31,7 +31,21 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
         private Thread _commandThread;
         private Thread _heartbeatThread;
+        private Thread _safetyThread;
         private CancellationTokenSource _cts;
+
+        /// <summary>
+        /// When true, the background safety loop will flatten any open position
+        /// that does not have a working stop-loss attached. This is the last-line
+        /// defense against the partial-fill / missing-bracket scenario.
+        /// </summary>
+        public bool SafetyGuardEnabled { get; set; } = true;
+
+        /// <summary>
+        /// Interval between safety checks. Default is 3 seconds. Can be shortened
+        /// in tests to exercise the loop without waiting.
+        /// </summary>
+        public int SafetyCheckIntervalMs { get; set; } = 3000;
 
         private volatile bool _connected;
         private readonly object _connectLock = new object();
@@ -111,6 +125,10 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
                     _heartbeatThread = new Thread(HeartbeatLoop) { IsBackground = true, Name = "ZMQ-Heartbeat" };
                     _heartbeatThread.Start();
+
+                    _safetyThread = new Thread(SafetyLoop) { IsBackground = true, Name = "ZMQ-Safety" };
+                    _safetyThread.Start();
+                    _logger.Info($"Safety guard started (enabled={SafetyGuardEnabled}, interval={SafetyCheckIntervalMs}ms)");
                 }
                 catch (Exception ex)
                 {
@@ -143,6 +161,11 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 {
                     _heartbeatThread.Join(600);
                     _heartbeatThread = null;
+                }
+                if (_safetyThread != null && _safetyThread.IsAlive)
+                {
+                    _safetyThread.Join(600);
+                    _safetyThread = null;
                 }
 
                 _network?.Stop();
@@ -377,6 +400,99 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             }
         }
 
+        private void SafetyLoop()
+        {
+            // Use real Thread.Sleep rather than _clock.Sleep so the production
+            // guard keeps running even if the clock abstraction is mocked.
+            Thread.Sleep(SafetyCheckIntervalMs);
+
+            while (_connected && !_cts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    if (SafetyGuardEnabled)
+                        RunSafetyCheckOnce();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("Safety guard error", ex);
+                }
+
+                Thread.Sleep(SafetyCheckIntervalMs);
+            }
+        }
+
+        /// <summary>
+        /// One-shot safety check: any tracked entry with filled contracts but no
+        /// working stop-loss is flattened immediately. Exposed publicly so tests
+        /// can exercise the guard without waiting for the background loop.
+        /// </summary>
+        public void RunSafetyCheckOnce()
+        {
+            foreach (var tradeId in _orderTracker.GetActiveTradeIds().ToList())
+            {
+                if (!_orderTracker.TryGetEntry(tradeId, out var entryOrder))
+                    continue;
+
+                if (entryOrder.Filled <= 0)
+                    continue;
+
+                if (entryOrder.OrderState == OrderState.Cancelled ||
+                    entryOrder.OrderState == OrderState.Rejected)
+                    continue;
+
+                if (_orderTracker.IsClosePending(tradeId))
+                    continue;
+
+                // A working stop in the tracker is sufficient *unless* the broker
+                // no longer reports it as working. Cross-check with live orders.
+                bool hasWorkingStop = false;
+                if (_orderTracker.TryGetStopLoss(tradeId, out var trackedStop) && trackedStop.IsWorking)
+                {
+                    var account = _accountProvider.GetAccount(entryOrder.AccountName);
+                    if (account != null)
+                    {
+                        var workingOrders = _orderExecutionService.GetWorkingOrders(account);
+                        hasWorkingStop = workingOrders.Any(o =>
+                            _tradeIdExtractor.IsStopOrder(o.Name) &&
+                            _tradeIdExtractor.ExtractTradeId(o.Name) == tradeId &&
+                            o.IsWorking);
+                    }
+                    else
+                    {
+                        hasWorkingStop = true; // trust tracker if account lookup fails
+                    }
+                }
+
+                if (hasWorkingStop)
+                    continue;
+
+                var instrumentName = entryOrder.Instrument?.MasterInstrumentName ?? entryOrder.Instrument?.Name ?? "unknown";
+                var trackedSl = _orderTracker.TryGetStopLoss(tradeId, out var ts) ? ts.StopPrice.ToString("F2") : "none";
+                _logger.Error(
+                    $"SAFETY GUARD: Entry {tradeId} on {instrumentName}/{entryOrder.AccountName} " +
+                    $"has {entryOrder.Filled} filled contract(s) @ {entryOrder.AverageFillPrice:F2} " +
+                    $"with no working stop-loss (tracked SL={trackedSl}). Flattening immediately.");
+                _network.SendError("ninjatrader", "missing_stop_loss_guard",
+                    $"Entry {tradeId} ({instrumentName}/{entryOrder.AccountName}) has {entryOrder.Filled} filled contract(s) " +
+                    $"@ {entryOrder.AverageFillPrice:F2} without a working stop-loss — flattening");
+                _network.SendTradeLog(tradeId, "NT:SAFETY_GUARD",
+                    $"Flattening {entryOrder.Filled} contracts on {instrumentName}/{entryOrder.AccountName}: no working stop-loss");
+
+                var pendingEntry = GetPendingEntryOrFallback(tradeId, entryOrder);
+                FlattenPosition(entryOrder, pendingEntry, tradeId, "Safety guard: no working stop-loss");
+            }
+        }
+
+        private PendingEntryInfo GetPendingEntryOrFallback(string tradeId, BrokerOrder entryOrder)
+        {
+            if (_orderTracker.TryGetPendingEntry(tradeId, out var pendingEntry))
+                return pendingEntry;
+
+            string direction = entryOrder.OrderSide == OrderSide.Buy ? "long" : "short";
+            return new PendingEntryInfo(direction, 0, 0);
+        }
+
         // ═══════════════════════════════════════════════════════════════════
         // Order / Execution Updates (called by the presentation layer adapter)
         // ═══════════════════════════════════════════════════════════════════
@@ -467,6 +583,14 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                             _logger.Info($"[Close-Pending] Entry cancel confirmed for {oid} — cleaning up tracking");
                             _orderTracker.RemoveTrade(oid);
                         }
+                        else if (order.Filled > 0 && _orderTracker.TryGetPendingEntry(oid, out var pendingEntry))
+                        {
+                            // Market order was partially filled then cancelled: the remaining contracts
+                            // were never filled, but the filled portion has no bracket. Flatten immediately.
+                            _logger.Warning($"CRITICAL: Entry {oid} cancelled after partial fill ({order.Filled}/{order.Quantity}). Flattening filled portion immediately.");
+                            _network.SendError("ninjatrader", "partial_fill_cancelled", $"Entry {oid} cancelled after partial fill — flattening");
+                            FlattenPosition(order, pendingEntry, oid, "Entry cancelled after partial fill");
+                        }
                     }
 
                     if (order.OrderState == OrderState.Cancelled &&
@@ -477,6 +601,12 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                             _orderTracker.RemoveExpectedCancellation(order.Name);
                             return;
                         }
+                    }
+
+                    if (ShouldSuppressBracketOrderError(order))
+                    {
+                        _logger.Info($"Suppressed expected bracket error for {order.Name} ({order.OrderState}) — trade is closing or closed");
+                        return;
                     }
 
                     _network.SendError("ninjatrader", "order_state", $"Order {order.Name} is {order.OrderState}");
@@ -567,6 +697,32 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             }
         }
 
+        /// <summary>
+        /// Suppresses Rejected/Cancelled error messages for bracket orders (stop/target)
+        /// when the trade is already closing or closed. This avoids noisy OCO cancellation
+        /// logs after a stop-loss or take-profit fills and cancels the opposing bracket leg.
+        /// </summary>
+        private bool ShouldSuppressBracketOrderError(BrokerOrder order)
+        {
+            if (!_tradeIdExtractor.IsStopOrder(order.Name) && !_tradeIdExtractor.IsTargetOrder(order.Name))
+                return false;
+
+            string tid = _tradeIdExtractor.ExtractTradeId(order.Name);
+            if (string.IsNullOrEmpty(tid))
+                return false;
+
+            if (_orderTracker.IsClosePending(tid))
+                return true;
+
+            if (!_orderTracker.TryGetEntry(tid, out var entry))
+                return true;
+
+            if (entry.OrderState != OrderState.Filled && entry.OrderState != OrderState.PartFilled)
+                return true;
+
+            return false;
+        }
+
         public void OnExecutionUpdate(BrokerOrder order, double fillPrice, int quantity)
         {
             try
@@ -600,13 +756,23 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
         private void HandleEntryFill(BrokerOrder order, double fillPrice)
         {
-            if (order.OrderState != OrderState.Filled)
+            string tradeId = _tradeIdExtractor.ExtractTradeId(order.Name);
+
+            // Protect the position as soon as any contracts are filled. Large market
+            // orders can be filled in multiple partial executions; waiting for the
+            // order to reach the Filled state leaves the position exposed.
+            if (order.Filled <= 0)
             {
-                _logger.Info($"Entry {order.Name} state={order.OrderState} ({order.Filled}/{order.Quantity}), waiting for full fill before creating bracket.");
+                _logger.Info($"Entry {order.Name} state={order.OrderState} ({order.Filled}/{order.Quantity}) — no fills yet, skipping bracket.");
                 return;
             }
 
-            string tradeId = _tradeIdExtractor.ExtractTradeId(order.Name);
+            if (order.OrderState == OrderState.PartFilled)
+            {
+                _logger.Warning($"Entry {order.Name} partial fill ({order.Filled}/{order.Quantity}) — attaching protective bracket now.");
+                _network.SendTradeLog(tradeId, "NT:WARNING", $"Partial entry fill {order.Filled}/{order.Quantity} — bracket attached");
+            }
+
             if (string.IsNullOrEmpty(tradeId) || !_orderTracker.TryGetPendingEntry(tradeId, out var entry))
             {
                 _logger.Warning($"PendingEntryInfo missing for {tradeId} — querying Python for trade details (crash recovery)");
@@ -624,21 +790,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             if (_orderTracker.IsClosePending(tradeId))
             {
                 _logger.Warning($"[Close-Pending] Entry {tradeId} filled @ {fillPrice} despite cancel — flattening position immediately");
-                var flatAccount = ResolveAccountForOrder(order);
-                if (flatAccount != null && order.Instrument != null)
-                {
-                    bool isLong = entry.Direction == "long";
-                    var flatSide = isLong ? OrderSide.Sell : OrderSide.BuyToCover;
-                    int flatQty = order.Filled > 0 ? order.Filled : order.Quantity;
-                    var flatOrder = _orderExecutionService.CreateMarketCloseOrder(order.Instrument, flatAccount, flatSide, flatQty, tradeId);
-                    if (flatOrder != null)
-                    {
-                        _orderExecutionService.SubmitOrder(flatOrder);
-                        _logger.Success($"[Close-Pending] Submitted market close for {tradeId}: {flatSide} {flatQty} contracts");
-                    }
-                }
-                _network.SendTradeLog(tradeId, "NT:CLOSE_PENDING_FILL", $"Entry filled @ {fillPrice} after close request — flattened immediately");
-                _orderTracker.RemoveTrade(tradeId);
+                FlattenPosition(order, entry, tradeId, "Close-pending entry filled");
                 return;
             }
 
@@ -651,49 +803,53 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 return;
             }
 
-            var (sl, tp) = CalculateSlTp(fillPrice, entry.Direction, entry.SlPoints, entry.RrRatio);
+            var (sl, tp) = CalculateSlTp(order.AverageFillPrice, entry.Direction, entry.SlPoints, entry.RrRatio);
 
-            if (order.Instrument != null && !_orderTracker.TryGetStopLoss(tradeId, out _))
+            if (order.Instrument == null)
             {
-                try
-                {
-                    bool isLong = entry.Direction == "long";
-                    var closeSide = isLong ? OrderSide.Sell : OrderSide.BuyToCover;
-                    int qty = order.Filled > 0 ? order.Filled : order.Quantity;
-
-                    var stopOrder = _orderExecutionService.CreateStopLossOrder(order.Instrument, account, closeSide, qty, sl, tradeId);
-                    var targetOrder = _orderExecutionService.CreateTakeProfitOrder(order.Instrument, account, closeSide, qty, tp, tradeId);
-
-                    if (stopOrder != null)
-                    {
-                        _orderExecutionService.SubmitOrder(stopOrder);
-                        _orderTracker.TrackStopLoss(tradeId, stopOrder);
-                    }
-                    if (targetOrder != null)
-                    {
-                        _orderExecutionService.SubmitOrder(targetOrder);
-                        _orderTracker.TrackTakeProfit(tradeId, targetOrder);
-                    }
-
-                    if (stopOrder != null && targetOrder != null)
-                    {
-                        _logger.Success($"BRACKET CREATED: {tradeId} SL={sl} TP={tp} qty={qty} account={account.Name}");
-                        _network.SendTradeLog(tradeId, "NT:ORDER", $"Bracket created: SL={sl} TP={tp} qty={qty}");
-                    }
-                    else
-                    {
-                        _logger.Warning($"Partial bracket for {tradeId}: stop={(stopOrder != null)} target={(targetOrder != null)}");
-                    }
-                }
-                catch (Exception bracketEx)
-                {
-                    _logger.Error($"Failed to create bracket orders for {tradeId}", bracketEx);
-                    _network.SendError("ninjatrader", "bracket_creation_failed", $"Failed to create SL/TP for {tradeId}: {bracketEx.Message}");
-                }
+                _logger.Error($"CRITICAL: Entry fill for {tradeId} has no instrument — cannot create bracket");
+                _network.SendError("ninjatrader", "bracket_creation_failed", $"Entry fill for {tradeId}: instrument is null");
+                return;
             }
 
-            _logger.Success($"ENTRY FILL: {tradeId} @ {fillPrice} SL={sl} TP={tp} account={account.Name}");
-            _network.SendEntryFill(tradeId, fillPrice, sl, tp, account: account.Name);
+            // If a bracket already exists (e.g., from a previous partial-fill attempt), replace it
+            // so the quantity matches the final filled amount and prices match the actual fill.
+            CancelWorkingBracketOrders(tradeId, account.Name);
+
+            try
+            {
+                bool isLong = entry.Direction == "long";
+                var closeSide = isLong ? OrderSide.Sell : OrderSide.BuyToCover;
+                int qty = order.Filled > 0 ? order.Filled : order.Quantity;
+
+                var stopOrder = _orderExecutionService.CreateStopLossOrder(order.Instrument, account, closeSide, qty, sl, tradeId);
+                var targetOrder = _orderExecutionService.CreateTakeProfitOrder(order.Instrument, account, closeSide, qty, tp, tradeId);
+
+                if (stopOrder == null || targetOrder == null)
+                {
+                    _logger.Error($"CRITICAL: Failed to create complete bracket for {tradeId} (stop={stopOrder != null}, target={targetOrder != null}). Flattening position immediately.");
+                    _network.SendError("ninjatrader", "bracket_creation_failed", $"Incomplete bracket for {tradeId} — flattening");
+                    FlattenPosition(order, entry, tradeId, "Incomplete bracket — stop/target creation failed");
+                    return;
+                }
+
+                _orderExecutionService.SubmitOrders(new List<BrokerOrder> { stopOrder, targetOrder });
+                _orderTracker.TrackStopLoss(tradeId, stopOrder);
+                _orderTracker.TrackTakeProfit(tradeId, targetOrder);
+
+                _logger.Success($"BRACKET CREATED: {tradeId} SL={sl} TP={tp} qty={qty} account={account.Name}");
+                _network.SendTradeLog(tradeId, "NT:ORDER", $"Bracket created: SL={sl} TP={tp} qty={qty}");
+            }
+            catch (Exception bracketEx)
+            {
+                _logger.Error($"CRITICAL: Failed to create bracket orders for {tradeId}. Flattening position immediately.", bracketEx);
+                _network.SendError("ninjatrader", "bracket_creation_failed", $"Failed to create SL/TP for {tradeId}: {bracketEx.Message}");
+                FlattenPosition(order, entry, tradeId, $"Bracket creation exception: {bracketEx.Message}");
+                return;
+            }
+
+            _logger.Success($"ENTRY FILL: {tradeId} @ {order.AverageFillPrice} SL={sl} TP={tp} qty={order.Filled} account={account.Name}");
+            _network.SendEntryFill(tradeId, order.AverageFillPrice, sl, tp, account: account.Name, quantity: order.Filled);
             _network.SendTradeLog(tradeId, "NT:FILL", $"Entry filled @ {fillPrice}");
         }
 
@@ -840,6 +996,59 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                     _orderTracker.RemoveTrade(tradeId);
                     return;
                 }
+            }
+        }
+
+        private void FlattenPosition(BrokerOrder entryOrder, PendingEntryInfo entry, string tradeId, string reason)
+        {
+            try
+            {
+                if (entryOrder.Filled <= 0)
+                {
+                    _logger.Warning($"Flatten requested for {tradeId} but entry has 0 filled contracts. Skipping.");
+                    return;
+                }
+
+                if (_orderTracker.TryGetCloseOrder(tradeId, out _))
+                {
+                    _logger.Warning($"Flatten requested for {tradeId} but a close order is already active ({reason}). Ignoring duplicate.");
+                    return;
+                }
+
+                var account = ResolveAccountForOrder(entryOrder);
+                if (account == null || entryOrder.Instrument == null)
+                {
+                    _logger.Error($"CRITICAL: Cannot flatten {tradeId}: account or instrument missing ({reason})");
+                    _network.SendError("ninjatrader", "flatten_failed", $"Cannot flatten {tradeId}: {reason}");
+                    return;
+                }
+
+                bool isLong = entry.Direction == "long";
+                var flatSide = isLong ? OrderSide.Sell : OrderSide.BuyToCover;
+                int flatQty = entryOrder.Filled > 0 ? entryOrder.Filled : entryOrder.Quantity;
+
+                var flatOrder = _orderExecutionService.CreateMarketCloseOrder(entryOrder.Instrument, account, flatSide, flatQty, tradeId);
+                if (flatOrder != null)
+                {
+                    _orderTracker.TrackCloseOrder(tradeId, flatOrder);
+                    _orderExecutionService.SubmitOrder(flatOrder);
+                    _logger.Success($"FLATTENED {tradeId} on {entryOrder.Instrument?.MasterInstrumentName}/{account.Name}: {flatSide} {flatQty} contracts ({reason})");
+                    _network.SendTradeLog(tradeId, "NT:FLATTEN", $"Flattened {flatQty} contracts on {entryOrder.Instrument?.MasterInstrumentName}/{account.Name}: {reason}");
+                }
+                else
+                {
+                    _logger.Error($"CRITICAL: CreateMarketCloseOrder returned null for {tradeId} ({reason})");
+                    _network.SendError("ninjatrader", "flatten_failed", $"CreateMarketCloseOrder null for {tradeId}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"CRITICAL: Exception flattening {tradeId} ({reason})", ex);
+                _network.SendError("ninjatrader", "flatten_failed", $"Exception flattening {tradeId}: {ex.Message}");
+            }
+            finally
+            {
+                _orderTracker.RemoveTrade(tradeId);
             }
         }
 
