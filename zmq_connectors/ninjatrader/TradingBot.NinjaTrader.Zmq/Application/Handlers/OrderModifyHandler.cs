@@ -91,15 +91,24 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                         var stopOrder = FindStopOrderForTrade(account, tradeId);
                         if (stopOrder == null)
                             throw new InvalidOperationException($"Stop order not found for trade {tradeId}");
-
-                        _orderTracker.TrackStopLoss(tradeId, stopOrder);
                         if (!stopOrder.IsWorking)
                             throw new InvalidOperationException($"Stop order is not modifiable (state: {stopOrder.OrderState})");
 
+                        _orderTracker.TrackStopLoss(tradeId, stopOrder);
                         _orderTracker.TrackPendingModify(slKey, new PendingModifyInfo(newSl, instrument, stopOrder.OrderSide, stopOrder.Quantity));
-                        _orderTracker.ExpectCancellation(stopOrder.Name);
-                        _orderExecutionService.CancelOrder(stopOrder);
-                        modifiedAny = true;
+                        try
+                        {
+                            _orderExecutionService.ModifyOrder(stopOrder, stopPrice: newSl, limitPrice: null);
+                            _orderTracker.RemovePendingModify(slKey);
+                            _logger.Success($"Modified SL for {tradeId} to {newSl}");
+                            _network.SendTradeLog(tradeId, "NT:MODIFY", $"Stop loss changed to {newSl}");
+                            modifiedAny = true;
+                        }
+                        catch
+                        {
+                            _orderTracker.RemovePendingModify(slKey);
+                            throw;
+                        }
                     }
                 }
 
@@ -116,15 +125,24 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                         var targetOrder = FindTargetOrderForTrade(account, tradeId);
                         if (targetOrder == null)
                             throw new InvalidOperationException($"Target order not found for trade {tradeId}");
-
-                        _orderTracker.TrackTakeProfit(tradeId, targetOrder);
                         if (!targetOrder.IsWorking)
                             throw new InvalidOperationException($"Target order is not modifiable (state: {targetOrder.OrderState})");
 
+                        _orderTracker.TrackTakeProfit(tradeId, targetOrder);
                         _orderTracker.TrackPendingModify(tpKey, new PendingModifyInfo(newTp, instrument, targetOrder.OrderSide, targetOrder.Quantity, isTarget: true));
-                        _orderTracker.ExpectCancellation(targetOrder.Name);
-                        _orderExecutionService.CancelOrder(targetOrder);
-                        modifiedAny = true;
+                        try
+                        {
+                            _orderExecutionService.ModifyOrder(targetOrder, stopPrice: null, limitPrice: newTp);
+                            _orderTracker.RemovePendingModify(tpKey);
+                            _logger.Success($"Modified TP for {tradeId} to {newTp}");
+                            _network.SendTradeLog(tradeId, "NT:MODIFY", $"Take profit changed to {newTp}");
+                            modifiedAny = true;
+                        }
+                        catch
+                        {
+                            _orderTracker.RemovePendingModify(tpKey);
+                            throw;
+                        }
                     }
                 }
 
@@ -134,8 +152,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                     return false;
                 }
 
-                _logger.Info($"MODIFY PENDING: Cancelled orders for {tradeId}, replacements queued");
-                _network.SendTradeLog(tradeId, "NT:MODIFY", "Modify cancel requested, replacements queued");
                 return true;
             }
             catch (Exception ex)

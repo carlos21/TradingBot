@@ -128,3 +128,79 @@ class TestControllerCloseTrade:
         with pytest.raises(Exception) as exc_info:
             controller.close_trade("NONEXISTENT")
         assert exc_info.value.code == 404
+
+
+class TestModifyStopLoss:
+    """Tests for the stop-loss modification endpoint."""
+
+    def test_modify_stop_loss_for_open_trade(self, app_context):  # noqa: ARG002
+        controller, tm, executor, repo = _make_controller(close_price=105.0)
+
+        tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
+        trade_id = tm.open_trades[0]["trade_id"]
+
+        resp, status = controller.modify_stop_loss(trade_id, 88.0)
+
+        assert status == 200
+        data = resp.get_json()
+        assert data["trade_id"] == trade_id
+        assert data["stop_loss"] == 88.0
+        assert tm.open_trades[0]["stop_loss"] == 88.0
+        assert len(executor.sl_updates) == 1
+        assert executor.sl_updates[0] == (trade_id, 88.0)
+
+    def test_modify_stop_loss_falls_back_to_repository_trade(self, app_context):  # noqa: ARG002
+        controller, tm, executor, repo = _make_controller(close_price=105.0)
+
+        trade = tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
+        trade_id = trade["trade_id"]
+        # Simulate the trade no longer being in the in-memory open list
+        tm.open_trades.clear()
+
+        resp, status = controller.modify_stop_loss(trade_id, 87.0)
+
+        assert status == 200
+        data = resp.get_json()
+        assert data["trade_id"] == trade_id
+        assert data["stop_loss"] == 87.0
+        assert repo.get_trade(trade_id).stop_loss == 87.0
+        assert len(executor.sl_updates) == 1
+        assert executor.sl_updates[0] == (trade_id, 87.0)
+
+    def test_modify_stop_loss_not_found_returns_404(self, app_context):  # noqa: ARG002
+        controller, tm, executor, repo = _make_controller(close_price=105.0)
+
+        with pytest.raises(Exception) as exc_info:
+            controller.modify_stop_loss("NONEXISTENT", 88.0)
+        assert exc_info.value.code == 404
+
+    def test_modify_stop_loss_closed_trade_returns_404(self, app_context):  # noqa: ARG002
+        controller, tm, executor, repo = _make_controller(close_price=105.0)
+
+        tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
+        trade_id = tm.open_trades[0]["trade_id"]
+        tm.close_trade(trade_id, 95.0, 600.0)
+
+        with pytest.raises(Exception) as exc_info:
+            controller.modify_stop_loss(trade_id, 88.0)
+        assert exc_info.value.code == 404
+
+    def test_modify_stop_loss_invalid_value_returns_400(self, app_context):  # noqa: ARG002
+        controller, tm, executor, repo = _make_controller(close_price=105.0)
+
+        tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
+        trade_id = tm.open_trades[0]["trade_id"]
+
+        with pytest.raises(Exception) as exc_info:
+            controller.modify_stop_loss(trade_id, "not-a-number")
+        assert exc_info.value.code == 400
+
+    def test_modify_stop_loss_non_positive_returns_400(self, app_context):  # noqa: ARG002
+        controller, tm, executor, repo = _make_controller(close_price=105.0)
+
+        tm.open_trade("MNQ", "long", 100.0, 90.0, 130.0, 10.0, 500.0, 5.0)
+        trade_id = tm.open_trades[0]["trade_id"]
+
+        with pytest.raises(Exception) as exc_info:
+            controller.modify_stop_loss(trade_id, 0)
+        assert exc_info.value.code == 400

@@ -105,6 +105,24 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 ntAccount.Cancel(new[] { ntOrder });
         }
 
+        public void ModifyOrder(Domain.BrokerOrder order, double? stopPrice, double? limitPrice)
+        {
+            if (order == null) throw new ArgumentNullException(nameof(order));
+            if (!stopPrice.HasValue && !limitPrice.HasValue) return;
+
+            var ntAccount = GetNtAccount(_accountProvider.GetAccount(order.AccountName));
+            var ntOrder = FindActiveNtOrderByName(ntAccount, order.Name);
+            if (ntOrder == null)
+                throw new InvalidOperationException($"Order '{order.Name}' not found or not in a modifiable state");
+
+            if (stopPrice.HasValue)
+                ntOrder.StopPriceChanged = stopPrice.Value;
+            if (limitPrice.HasValue)
+                ntOrder.LimitPriceChanged = limitPrice.Value;
+
+            ntAccount.Change(new[] { ntOrder });
+        }
+
         public Domain.BrokerOrder FindOrderByName(Domain.BrokerAccount account, string orderName)
         {
             var ntAccount = GetNtAccount(account);
@@ -151,13 +169,28 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             return fallback;
         }
 
+        private static Nt.Order FindActiveNtOrderByName(Nt.Account account, string orderName)
+        {
+            if (account == null || string.IsNullOrEmpty(orderName)) return null;
+            var orders = account.Orders.ToArray();
+            for (int i = orders.Length - 1; i >= 0; i--)
+            {
+                var order = orders[i];
+                if (order.Name == orderName && IsModifiable(order))
+                    return order;
+            }
+            return null;
+        }
+
         private static bool IsActive(Nt.Order order)
         {
             return order.OrderState == Nt.OrderState.Working ||
                    order.OrderState == Nt.OrderState.Accepted ||
                    order.OrderState == Nt.OrderState.Submitted ||
                    order.OrderState == Nt.OrderState.PartFilled ||
-                   order.OrderState == Nt.OrderState.Filled;
+                   order.OrderState == Nt.OrderState.Filled ||
+                   order.OrderState == Nt.OrderState.ChangePending ||
+                   order.OrderState == Nt.OrderState.ChangeSubmitted;
         }
 
         private static bool IsSubmittable(Nt.Order order)
@@ -166,6 +199,14 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             // will throw a dialog error.
             return order.OrderState == Nt.OrderState.Initialized ||
                    order.OrderState == Nt.OrderState.Working ||
+                   order.OrderState == Nt.OrderState.Accepted ||
+                   order.OrderState == Nt.OrderState.Submitted ||
+                   order.OrderState == Nt.OrderState.PartFilled;
+        }
+
+        private static bool IsModifiable(Nt.Order order)
+        {
+            return order.OrderState == Nt.OrderState.Working ||
                    order.OrderState == Nt.OrderState.Accepted ||
                    order.OrderState == Nt.OrderState.Submitted ||
                    order.OrderState == Nt.OrderState.PartFilled;

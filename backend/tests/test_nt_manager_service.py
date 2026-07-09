@@ -126,7 +126,23 @@ class TestNtManagerServiceOpenNtAndLogin:
                     with patch("subprocess.Popen") as mock_popen:
                         svc.open_nt_and_login("user", "pass'word")
                         call_args = mock_popen.call_args[0][0]
-                        assert "pass''word" in call_args
+                        user_idx = call_args.index("-Username")
+                        pass_idx = call_args.index("-Password")
+                        assert call_args[user_idx + 1] == "user"
+                        assert call_args[pass_idx + 1] == "pass'word"
+
+    def test_password_with_at_sign(self):
+        svc = NtManagerService()
+        with patch.object(svc, "_can_run_windows_exe", return_value=True):
+            with patch.object(svc, "find_nt_exe", return_value={"found": False}):
+                with patch.object(svc, "_wsl_to_windows_path", return_value="C:\\script.ps1"):
+                    with patch("subprocess.Popen") as mock_popen:
+                        svc.open_nt_and_login("user", "MiPuchuxD21@")
+                        call_args = mock_popen.call_args[0][0]
+                        user_idx = call_args.index("-Username")
+                        pass_idx = call_args.index("-Password")
+                        assert call_args[user_idx + 1] == "user"
+                        assert call_args[pass_idx + 1] == "MiPuchuxD21@"
 
     def test_launch_exception(self):
         svc = NtManagerService()

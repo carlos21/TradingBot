@@ -3,6 +3,7 @@ import { ReplayControlsController } from '../../application/ReplayControlsContro
 import { FakeSocket } from '../fakes/FakeSocket.js';
 import { FakeDomService } from '../fakes/FakeDomService.js';
 import { FakeNotification } from '../fakes/FakeNotification.js';
+import { FakeTradeService } from '../fakes/FakeTradeService.js';
 
 function buildControls(doc, win) {
   const controller = {
@@ -17,8 +18,9 @@ function buildControls(doc, win) {
   const socket = new FakeSocket();
   const dom = new FakeDomService(doc, win);
   const notification = new FakeNotification();
-  const controls = new ReplayControlsController(controller, socket, dom, notification);
-  return { controller, socket, dom, notification, controls };
+  const tradeService = new FakeTradeService();
+  const controls = new ReplayControlsController(controller, socket, dom, notification, tradeService);
+  return { controller, socket, dom, notification, controls, tradeService };
 }
 
 function setupDocument() {
@@ -30,14 +32,17 @@ function setupDocument() {
     <button data-timeframe="1m">1m</button>
     <button data-timeframe="5m">5m</button>
     <div id="testTradeControls" class="hidden">
-      <button id="testLongBtn">Test Long</button>
-      <button id="testShortBtn">Test Short</button>
-      <button id="closeAllBtn">Close All</button>
-    </div>
-    <div id="testDropdown">
-      <button id="testDropdownToggle">Test</button>
-      <div id="testDropdownMenu" class="hidden">
-        <button>Option 1</button>
+      <button id="testTradeBtn">Test</button>
+      <div id="testTradeModal" class="hidden">
+        <button id="testTradeModalClose">×</button>
+        <button id="testLongBtn">Test Long</button>
+        <button id="testShortBtn">Test Short</button>
+        <button id="closeAllBtn">Close All</button>
+        <select id="modifySlTradeSelect">
+          <option value="">Select open trade…</option>
+        </select>
+        <input id="modifySlInput" type="number" step="0.01" />
+        <button id="modifySlBtn">Update SL</button>
       </div>
     </div>
     <button id="startStreamingBtn">Start Streaming</button>
@@ -205,37 +210,20 @@ describe('ReplayControlsController', () => {
 
   describe('test trades', () => {
     it('sends test long trade and alerts trade id', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        headers: { get: () => 'application/json' },
-        json: async () => ({ trade_id: 't1' }),
-      });
-
-      const { controls, notification } = buildControls(document, window);
+      const { controls, notification, tradeService } = buildControls(document, window);
+      tradeService.openTestTrade.mockResolvedValue({ trade_id: 't1' });
       controls.init();
 
       document.getElementById('testLongBtn').click();
       await new Promise(r => setTimeout(r, 10));
 
-      expect(global.fetch).toHaveBeenCalledWith(
-        '/api/trades/test',
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ pair: 'MNQ', direction: 'long' }),
-        })
-      );
+      expect(tradeService.openTestTrade).toHaveBeenCalledWith('MNQ', 'long');
       expect(notification.alerts[0]).toContain('Test Long sent: t1');
     });
 
     it('sends test short trade and alerts error on failure', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        statusText: 'Bad Request',
-        headers: { get: () => 'application/json' },
-        json: async () => ({ error: 'Invalid pair' }),
-      });
-
-      const { controls, notification } = buildControls(document, window);
+      const { controls, notification, tradeService } = buildControls(document, window);
+      tradeService.openTestTrade.mockRejectedValue(new Error('Invalid pair'));
       controls.init();
 
       document.getElementById('testShortBtn').click();
@@ -244,66 +232,21 @@ describe('ReplayControlsController', () => {
       expect(notification.alerts[0]).toBe('Failed: Invalid pair');
     });
 
-    it('handles non-JSON error response for test trades', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        statusText: 'Server Error',
-        headers: { get: () => 'text/plain' },
-        text: async () => 'boom',
-      });
-
-      const { controls, notification } = buildControls(document, window);
-      controls.init();
-
-      document.getElementById('testLongBtn').click();
-      await new Promise(r => setTimeout(r, 10));
-
-      expect(notification.alerts[0]).toBe('Failed: boom');
-    });
-
-    it('alerts network error for test trades', async () => {
-      global.fetch = vi.fn().mockRejectedValue(new Error('Offline'));
-
-      const { controls, notification } = buildControls(document, window);
-      controls.init();
-
-      document.getElementById('testShortBtn').click();
-      await new Promise(r => setTimeout(r, 10));
-
-      expect(notification.alerts[0]).toBe('Error: Offline');
-    });
-
     it('closes all trades and reports count', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        headers: { get: () => 'application/json' },
-        json: async () => ({ count: 2, failed: [] }),
-      });
-
-      const { controls, notification } = buildControls(document, window);
+      const { controls, notification, tradeService } = buildControls(document, window);
+      tradeService.closeAllTrades.mockResolvedValue({ count: 2, failed: [] });
       controls.init();
 
       document.getElementById('closeAllBtn').click();
       await new Promise(r => setTimeout(r, 10));
 
-      expect(global.fetch).toHaveBeenCalledWith(
-        '/api/trades/close-all',
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ pair: 'MNQ' }),
-        })
-      );
+      expect(tradeService.closeAllTrades).toHaveBeenCalledWith('MNQ');
       expect(notification.alerts[0]).toBe('Close All sent. 2 trade(s) closed.');
     });
 
     it('reports failed close-all trades', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        headers: { get: () => 'application/json' },
-        json: async () => ({ count: 1, failed: [{ trade_id: 't2' }] }),
-      });
-
-      const { controls, notification } = buildControls(document, window);
+      const { controls, notification, tradeService } = buildControls(document, window);
+      tradeService.closeAllTrades.mockResolvedValue({ count: 1, failed: [{ trade_id: 't2' }] });
       controls.init();
 
       document.getElementById('closeAllBtn').click();
@@ -313,43 +256,109 @@ describe('ReplayControlsController', () => {
     });
   });
 
-  describe('dropdown', () => {
-    it('toggles dropdown menu', () => {
+  describe('modal', () => {
+    it('opens modal on Test button click', () => {
       const { controls } = buildControls(document, window);
       controls.init();
 
-      const toggle = document.getElementById('testDropdownToggle');
-      const menu = document.getElementById('testDropdownMenu');
-
-      toggle.click();
-      expect(menu.classList.contains('hidden')).toBe(false);
-
-      toggle.click();
-      expect(menu.classList.contains('hidden')).toBe(true);
+      document.getElementById('testTradeBtn').click();
+      expect(document.getElementById('testTradeModal').classList.contains('hidden')).toBe(false);
     });
 
-    it('closes dropdown when clicking outside', () => {
+    it('closes modal on close button click', () => {
       const { controls } = buildControls(document, window);
       controls.init();
 
-      const toggle = document.getElementById('testDropdownToggle');
-      const menu = document.getElementById('testDropdownMenu');
-
-      toggle.click();
-      document.body.click();
-      expect(menu.classList.contains('hidden')).toBe(true);
+      document.getElementById('testTradeBtn').click();
+      document.getElementById('testTradeModalClose').click();
+      expect(document.getElementById('testTradeModal').classList.contains('hidden')).toBe(true);
     });
 
-    it('closes dropdown when selecting an option', () => {
+    it('closes modal when clicking backdrop', () => {
       const { controls } = buildControls(document, window);
       controls.init();
 
-      const toggle = document.getElementById('testDropdownToggle');
-      const menu = document.getElementById('testDropdownMenu');
+      document.getElementById('testTradeBtn').click();
+      document.getElementById('testTradeModal').click();
+      expect(document.getElementById('testTradeModal').classList.contains('hidden')).toBe(true);
+    });
+  });
 
-      toggle.click();
-      menu.querySelector('button').click();
-      expect(menu.classList.contains('hidden')).toBe(true);
+  describe('modify stop loss', () => {
+    it('loads open trades into select when modal opens', async () => {
+      const { controls, tradeService } = buildControls(document, window);
+      tradeService.listTrades.mockResolvedValue([
+        { trade_id: 't1', status: 'open', type: 'long', entry: 20000, stop_loss: 19980 },
+        { trade_id: 't2', status: 'closed', type: 'short', entry: 20100, stop_loss: 20120 },
+      ]);
+      controls.init();
+
+      document.getElementById('testTradeBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      expect(tradeService.listTrades).toHaveBeenCalledWith('MNQ');
+      const select = document.getElementById('modifySlTradeSelect');
+      expect(select.options.length).toBe(2);
+      expect(select.options[1].value).toBe('t1');
+    });
+
+    it('sends modify stop-loss request', async () => {
+      const { controls, notification, tradeService } = buildControls(document, window);
+      tradeService.listTrades.mockResolvedValue([
+        { trade_id: 't1', status: 'open', type: 'long', entry: 20000, stop_loss: 19980 },
+      ]);
+      tradeService.modifyStopLoss.mockResolvedValue({});
+      controls.init();
+
+      document.getElementById('testTradeBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      const select = document.getElementById('modifySlTradeSelect');
+      select.value = 't1';
+      const input = document.getElementById('modifySlInput');
+      input.value = '19990';
+
+      document.getElementById('modifySlBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      expect(tradeService.modifyStopLoss).toHaveBeenCalledWith('t1', 19990);
+      expect(notification.alerts[0]).toContain('Updated SL for t1');
+    });
+
+    it('alerts when no trade selected', async () => {
+      const { controls, notification, tradeService } = buildControls(document, window);
+      tradeService.listTrades.mockResolvedValue([]);
+      tradeService.modifyStopLoss.mockResolvedValue({});
+      controls.init();
+
+      document.getElementById('testTradeBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      document.getElementById('modifySlInput').value = '19990';
+      document.getElementById('modifySlBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      expect(notification.alerts[0]).toBe('Please select a trade');
+      expect(tradeService.modifyStopLoss).not.toHaveBeenCalled();
+    });
+
+    it('alerts when stop loss is invalid', async () => {
+      const { controls, notification, tradeService } = buildControls(document, window);
+      tradeService.listTrades.mockResolvedValue([
+        { trade_id: 't1', status: 'open', type: 'long', entry: 20000, stop_loss: 19980 },
+      ]);
+      controls.init();
+
+      document.getElementById('testTradeBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      document.getElementById('modifySlTradeSelect').value = 't1';
+      document.getElementById('modifySlInput').value = '-5';
+      document.getElementById('modifySlBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      expect(notification.alerts[0]).toBe('Please enter a valid stop-loss price');
+      expect(tradeService.modifyStopLoss).not.toHaveBeenCalled();
     });
   });
 

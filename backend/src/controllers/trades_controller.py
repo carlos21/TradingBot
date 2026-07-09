@@ -136,6 +136,46 @@ class TradesController:
         # Strategy state is updated reactively via TRADE_CLOSED domain events
         return jsonify(payload), 200
 
+    def modify_stop_loss(self, trade_id: str, new_sl: float):
+        trade = next(
+            (t for t in self.trade_manager.open_trades if t['trade_id'] == trade_id),
+            None,
+        )
+        if trade is None:
+            trade_data = self.trade_manager.trade_repository.get_trade(trade_id)
+            if trade_data is None or trade_data.exit_time is not None:
+                abort(404, f"Trade id={trade_id} not found or already closed")
+            trade = {
+                'trade_id': trade_data.trade_id,
+                'pair': trade_data.pair,
+                'type': trade_data.trade_type,
+                'entry': trade_data.entry_price,
+                'stop_loss': trade_data.stop_loss,
+                'take_profit': trade_data.take_profit,
+                'account': trade_data.account,
+            }
+
+        try:
+            new_sl = float(new_sl)
+        except (TypeError, ValueError):
+            abort(400, '"stop_loss" must be a number')
+
+        if new_sl <= 0:
+            abort(400, '"stop_loss" must be positive')
+
+        self.trade_manager.trade_repository.update_stop_loss(trade_id, new_sl)
+        self.trade_manager.update_local_trade_sl(trade_id, new_sl)
+
+        account = trade.get('account')
+        self.trade_manager.trade_executor.on_sl_update(trade_id, new_sl)
+
+        self.logger.info(f"[TradesController] Modified SL for {trade_id}: {new_sl} account={account}")
+        return jsonify({
+            'trade_id': trade_id,
+            'stop_loss': new_sl,
+            'account': account,
+        }), 200
+
     def close_all_trades(self, pair: str):
         """Close all open trades for a pair, reusing the same path as session-end / manual close."""
         open_trades = [t for t in self.trade_manager.open_trades if t['pair'] == pair]

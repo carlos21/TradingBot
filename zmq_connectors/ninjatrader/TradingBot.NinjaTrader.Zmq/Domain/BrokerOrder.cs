@@ -56,7 +56,9 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
             OrderState == OrderState.Working ||
             OrderState == OrderState.Accepted ||
             OrderState == OrderState.Submitted ||
-            OrderState == OrderState.PartFilled;
+            OrderState == OrderState.PartFilled ||
+            OrderState == OrderState.ChangePending ||
+            OrderState == OrderState.ChangeSubmitted;
 
         public BrokerOrder WithState(OrderState state) =>
             new BrokerOrder(Name, AccountName, Instrument, OrderType, OrderSide, state, Quantity, Filled,
@@ -92,6 +94,8 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
         PartFilled,
         Filled,
         Cancelled,
-        Rejected
+        Rejected,
+        ChangePending,
+        ChangeSubmitted
     }
 }

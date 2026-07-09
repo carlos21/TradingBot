@@ -94,8 +94,13 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
 
             result.Should().BeTrue();
             _orderTracker.Received(1).TrackPendingModify("test-1:sl", Arg.Any<PendingModifyInfo>());
-            _orderTracker.Received(1).ExpectCancellation("Stop_test-1");
-            _orderExecutionService.Received(1).CancelOrder(stopOrder);
+            _orderTracker.Received(1).RemovePendingModify("test-1:sl");
+            _orderExecutionService.Received(1).ModifyOrder(
+                stopOrder,
+                Arg.Is<double?>(x => x.HasValue && Math.Abs(x.Value - 19980) < 0.01),
+                Arg.Is<double?>(x => x == null));
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CancelOrder(null);
+            _orderTracker.DidNotReceiveWithAnyArgs().ExpectCancellation(null);
         }
 
         [Fact]
@@ -116,8 +121,13 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
 
             result.Should().BeTrue();
             _orderTracker.Received(1).TrackPendingModify("test-1:tp", Arg.Any<PendingModifyInfo>());
-            _orderTracker.Received(1).ExpectCancellation("Target_test-1");
-            _orderExecutionService.Received(1).CancelOrder(targetOrder);
+            _orderTracker.Received(1).RemovePendingModify("test-1:tp");
+            _orderExecutionService.Received(1).ModifyOrder(
+                targetOrder,
+                Arg.Is<double?>(x => x == null),
+                Arg.Is<double?>(x => x.HasValue && Math.Abs(x.Value - 20040) < 0.01));
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CancelOrder(null);
+            _orderTracker.DidNotReceiveWithAnyArgs().ExpectCancellation(null);
         }
 
         [Fact]
@@ -307,8 +317,18 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             result.Should().BeTrue();
             _orderTracker.Received(1).TrackPendingModify("test-1:sl", Arg.Any<PendingModifyInfo>());
             _orderTracker.Received(1).TrackPendingModify("test-1:tp", Arg.Any<PendingModifyInfo>());
-            _orderExecutionService.Received(1).CancelOrder(stopOrder);
-            _orderExecutionService.Received(1).CancelOrder(targetOrder);
+            _orderTracker.Received(1).RemovePendingModify("test-1:sl");
+            _orderTracker.Received(1).RemovePendingModify("test-1:tp");
+            _orderExecutionService.Received(1).ModifyOrder(
+                stopOrder,
+                Arg.Is<double?>(x => x.HasValue && Math.Abs(x.Value - 19980) < 0.01),
+                Arg.Is<double?>(x => x == null));
+            _orderExecutionService.Received(1).ModifyOrder(
+                targetOrder,
+                Arg.Is<double?>(x => x == null),
+                Arg.Is<double?>(x => x.HasValue && Math.Abs(x.Value - 20040) < 0.01));
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CancelOrder(null);
+            _orderTracker.DidNotReceiveWithAnyArgs().ExpectCancellation(null);
         }
 
         [Fact]
@@ -401,6 +421,10 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
 
             result.Should().BeTrue();
             _orderExecutionService.DidNotReceiveWithAnyArgs().FindOrderByName(null, null);
+            _orderExecutionService.Received(1).ModifyOrder(
+                stopOrder,
+                Arg.Is<double?>(x => x.HasValue && Math.Abs(x.Value - 19980) < 0.01),
+                Arg.Is<double?>(x => x == null));
         }
 
         [Fact]
@@ -420,6 +444,10 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
 
             result.Should().BeTrue();
             _orderExecutionService.DidNotReceiveWithAnyArgs().FindOrderByName(null, null);
+            _orderExecutionService.Received(1).ModifyOrder(
+                targetOrder,
+                Arg.Is<double?>(x => x == null),
+                Arg.Is<double?>(x => x.HasValue && Math.Abs(x.Value - 20040) < 0.01));
         }
     }
 }

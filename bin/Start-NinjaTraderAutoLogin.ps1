@@ -65,9 +65,15 @@ if (-not ("Win32HelperV2" -as [Type])) {
         [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint idAttach, uint idAttachTo, bool fAttach);
         [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
         [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam);
+        [DllImport("user32.dll")] public static extern short GetKeyState(int nVirtKey);
+        [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
         public const int SW_RESTORE = 9;
         public const int SW_SHOW = 5;
         public const uint WM_SETTEXT = 0x000C;
+        public const int VK_CAPITAL = 0x14;
+        public const int VK_SHIFT = 0x10;
+        public const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
+        public const uint KEYEVENTF_KEYUP = 0x0002;
     }
 "@
 }
@@ -76,12 +82,74 @@ if (-not ("Win32HelperV2" -as [Type])) {
 # Helpers
 # =============================================================================
 
+function Get-CapsLockState {
+    $state = [Win32HelperV2]::GetKeyState([Win32HelperV2]::VK_CAPITAL)
+    return ($state -band 0x0001) -ne 0
+}
+
+function Set-CapsLockState([bool]$On) {
+    $currentlyOn = Get-CapsLockState
+    if ($currentlyOn -eq $On) { return }
+    # Press and release Caps Lock via keybd_event (more reliable than SendKeys).
+    [Win32HelperV2]::keybd_event([Win32HelperV2]::VK_CAPITAL, 0x3a, [Win32HelperV2]::KEYEVENTF_EXTENDEDKEY, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 50
+    [Win32HelperV2]::keybd_event([Win32HelperV2]::VK_CAPITAL, 0x3a, [Win32HelperV2]::KEYEVENTF_EXTENDEDKEY -bor [Win32HelperV2]::KEYEVENTF_KEYUP, [UIntPtr]::Zero)
+    Start-Sleep -Milliseconds 100
+}
+
 function Disable-CapsLockIfOn {
-    if ([System.Windows.Forms.Control]::IsKeyLocked('CapsLock')) {
-        [System.Windows.Forms.SendKeys]::SendWait('{CAPSLOCK}')
-        Start-Sleep -Milliseconds 100
-        Write-Host 'Caps Lock was ON — toggled it off before typing credentials.' -ForegroundColor Yellow
+    if (Get-CapsLockState) {
+        Set-CapsLockState -On $false
+        if (Get-CapsLockState) {
+            Write-Host 'Caps Lock is still ON after toggle; SendKeys will compensate for case.' -ForegroundColor Yellow
+        } else {
+            Write-Host 'Caps Lock was ON — toggled it off before typing credentials.' -ForegroundColor Yellow
+        }
     }
+}
+
+function Send-KeysCaseCorrect {
+    param([string]$Text)
+
+    $capsOn = Get-CapsLockState
+    $special = @('+', '^', '%', '~', '(', ')', '{', '}', '[', ']')
+    $result = New-Object System.Text.StringBuilder
+
+    foreach ($char in $Text.ToCharArray()) {
+        $charStr = $char.ToString()
+
+        # Escape SendKeys special characters first.
+        if ($special -contains $charStr) {
+            [void]$result.Append("{$charStr}")
+            continue
+        }
+
+        $isLetter = [char]::IsLetter($char)
+        $isUpper = [char]::IsUpper($char)
+
+        if ($isLetter -and $capsOn) {
+            # Caps Lock inverts the effect of Shift for letters.
+            if ($isUpper) {
+                # Want uppercase; with CapsLock ON a plain keystroke gives uppercase.
+                [void]$result.Append([char]::ToLower($char))
+            } else {
+                # Want lowercase; with CapsLock ON we need Shift+letter.
+                [void]$result.Append("+$([char]::ToUpper($char))")
+            }
+        } elseif ($isLetter) {
+            # Normal behaviour when Caps Lock is OFF.
+            if ($isUpper) {
+                [void]$result.Append("+$([char]::ToLower($char))")
+            } else {
+                [void]$result.Append($char)
+            }
+        } else {
+            # Digits and symbols are not affected by Caps Lock.
+            [void]$result.Append($char)
+        }
+    }
+
+    return $result.ToString()
 }
 
 function Find-NinjaTraderExe {
@@ -269,16 +337,15 @@ function Set-TextBoxValue {
         }
     } catch {}
 
-    # 3. Last resort: SendKeys. Force Caps Lock OFF right before typing
-    #    because SendKeys sends uppercase as Shift+key, which inverts case
-    #    when Caps Lock is ON.
+    # 3. Last resort: SendKeys. Disable Caps Lock and build a case-correct
+    #    sequence so the final text is right even if the toggle fails.
     try {
         Disable-CapsLockIfOn
         $Element.SetFocus()
         Start-Sleep -Milliseconds 150
         [System.Windows.Forms.SendKeys]::SendWait("^a")
         Start-Sleep -Milliseconds 50
-        $safe = Escape-SendKeys -Text $Value
+        $safe = Send-KeysCaseCorrect -Text $Value
         [System.Windows.Forms.SendKeys]::SendWait($safe)
         return $true
     } catch {}
@@ -483,8 +550,8 @@ try {
 
         Disable-CapsLockIfOn
 
-        $safeUser = Escape-SendKeys -Text $username
-        $safePass = Escape-SendKeys -Text $password
+        $safeUser = Send-KeysCaseCorrect -Text $username
+        $safePass = Send-KeysCaseCorrect -Text $password
 
         [System.Windows.Forms.SendKeys]::SendWait($safeUser)
         Start-Sleep -Milliseconds 300

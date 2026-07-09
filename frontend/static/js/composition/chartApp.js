@@ -4,6 +4,7 @@ import { IoSocketAdapter } from '../adapters/browser/IoSocketAdapter.js';
 import { BrowserStorageAdapter } from '../adapters/browser/BrowserStorageAdapter.js';
 import { BrowserNotificationAdapter } from '../adapters/browser/BrowserNotificationAdapter.js';
 import { LightweightChartsAdapter } from '../adapters/charts/LightweightChartsAdapter.js';
+import { HttpTradeService } from '../adapters/HttpTradeService.js';
 import { ChartController } from '../application/ChartController.js';
 import { ChartSocketController } from '../application/ChartSocketController.js';
 import { ReplayControlsController } from '../application/ReplayControlsController.js';
@@ -19,6 +20,7 @@ export function createChartApp(opts = {}) {
   const chartApi = new LightweightChartsAdapter(LightweightCharts);
   const storage = BrowserStorageAdapter.session();
   const notification = new BrowserNotificationAdapter();
+  const tradeService = new HttpTradeService(http);
 
   const controller = new ChartController({
     domService: dom,
@@ -32,7 +34,7 @@ export function createChartApp(opts = {}) {
   const socketController = new ChartSocketController(socket, controller, dom);
   socketController.init();
 
-  const controls = new ReplayControlsController(controller, socket, dom, notification);
+  const controls = new ReplayControlsController(controller, socket, dom, notification, tradeService);
   controls.init();
 
   return { controller, socketController, controls, socket };

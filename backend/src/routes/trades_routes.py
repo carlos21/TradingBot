@@ -60,6 +60,16 @@ def register_trades_routes(
     def close_trade(trade_id):
         return trades_controller.close_trade(trade_id)
 
+    @app.route('/api/trades/<string:trade_id>/stop-loss', methods=['POST'])
+    def modify_stop_loss(trade_id):
+        data = request.get_json() or {}
+        stop_loss = data.get('stop_loss')
+        try:
+            stop_loss = float(stop_loss)
+        except (TypeError, ValueError):
+            abort(400, '"stop_loss" must be a number')
+        return trades_controller.modify_stop_loss(trade_id, stop_loss)
+
     @app.route('/api/trades/close-all', methods=['POST'])
     def close_all_trades():
         data = request.get_json() or {}

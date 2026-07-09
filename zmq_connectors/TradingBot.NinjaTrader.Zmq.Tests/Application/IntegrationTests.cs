@@ -210,5 +210,146 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
                 service.Disconnect("cleanup");
             }
         }
+
+        [Fact]
+        public void ModifyStopLoss_Live_CallsModifyOrder_NotCancel()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19980);
+
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderExecutionService.FindOrderByName(account, "Stop_test-1").Returns(stopOrder);
+
+            var result = _dispatcher.Dispatch(MessageEnvelope.Create(MessageType.OrderModify,
+                TestDataFactory.OrderModifyPayload(stopLoss: 19990)));
+
+            result.Should().BeTrue();
+            _orderExecutionService.Received(1).ModifyOrder(
+                stopOrder,
+                Arg.Is<double?>(x => x.HasValue && Math.Abs(x.Value - 19990) < 0.01),
+                Arg.Is<double?>(x => x == null));
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CancelOrder(Arg.Any<BrokerOrder>());
+            _orderTracker.TryGetPendingModify("test-1:sl", out _).Should().BeFalse();
+        }
+
+        [Fact]
+        public void ModifyStopLossAndTakeProfit_Live_CallsModifyOrderForBoth()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19980);
+            var targetOrder = TestDataFactory.Order(name: "Target_test-1", side: OrderSide.Sell, state: OrderState.Working, limitPrice: 20040);
+
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderExecutionService.FindOrderByName(account, "Stop_test-1").Returns(stopOrder);
+            _orderExecutionService.FindOrderByName(account, "Target_test-1").Returns(targetOrder);
+
+            var result = _dispatcher.Dispatch(MessageEnvelope.Create(MessageType.OrderModify,
+                TestDataFactory.OrderModifyPayload(stopLoss: 19990, takeProfit: 20050)));
+
+            result.Should().BeTrue();
+            _orderExecutionService.Received(1).ModifyOrder(
+                stopOrder,
+                Arg.Is<double?>(x => x.HasValue && Math.Abs(x.Value - 19990) < 0.01),
+                Arg.Is<double?>(x => x == null));
+            _orderExecutionService.Received(1).ModifyOrder(
+                targetOrder,
+                Arg.Is<double?>(x => x == null),
+                Arg.Is<double?>(x => x.HasValue && Math.Abs(x.Value - 20050) < 0.01));
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CancelOrder(Arg.Any<BrokerOrder>());
+        }
+
+        [Fact]
+        public void ModifyStopLoss_Live_ReturnsFalse_WhenOrderNotWorking()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Filled, stopPrice: 19980);
+
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderExecutionService.FindOrderByName(account, "Stop_test-1").Returns(stopOrder);
+
+            var result = _dispatcher.Dispatch(MessageEnvelope.Create(MessageType.OrderModify,
+                TestDataFactory.OrderModifyPayload(stopLoss: 19990)));
+
+            result.Should().BeFalse();
+            _orderExecutionService.DidNotReceiveWithAnyArgs().ModifyOrder(Arg.Any<BrokerOrder>(), Arg.Any<double?>(), Arg.Any<double?>());
+        }
+
+        [Fact]
+        public void SafetyGuard_DoesNotFlatten_AfterSuccessfulModify()
+        {
+            var network = Substitute.For<IZmqNetwork>();
+            var logger = new TestLogger();
+            var orderTracker = new InMemoryOrderTracker();
+            var dispatcher = new CommandDispatcher(logger);
+            var accountProvider = Substitute.For<IAccountProvider>();
+            var instrumentProvider = Substitute.For<IInstrumentProvider>();
+            var orderExecutionService = Substitute.For<IOrderExecutionService>();
+            var tradeIdExtractor = Substitute.For<ITradeIdExtractor>();
+            var clock = Substitute.For<IConnectorClock>();
+            var streamingCoordinator = Substitute.For<IStreamingCoordinator>();
+            var barHistoryService = Substitute.For<IBarHistoryService>();
+            var pnlCalculator = Substitute.For<IPnLCalculator>();
+            var config = TestDataFactory.Config();
+
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            accountProvider.GetAccount("Sim101").Returns(account);
+            instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+
+            var tradingMode = Substitute.For<ITradingMode>();
+            tradingMode.IsSimulation.Returns(false);
+
+            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderModifyHandler(network, logger, orderTracker, tradeIdExtractor, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
+
+            var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 2, instrument: instrument, avgFill: 20000);
+            var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19990);
+            var targetOrder = TestDataFactory.Order(name: "Target_test-1", side: OrderSide.Sell, state: OrderState.Working, limitPrice: 20040);
+
+            orderExecutionService.CreateEntryOrder(instrument, account, OrderSide.Buy, Arg.Any<int>(), "test-1").Returns(entryOrder);
+            orderExecutionService.CreateStopLossOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "test-1").Returns(stopOrder);
+            orderExecutionService.CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "test-1").Returns(targetOrder);
+            orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder> { stopOrder, targetOrder });
+
+            var service = new ConnectorService(
+                config, network, logger, dispatcher, orderTracker, streamingCoordinator,
+                accountProvider, orderExecutionService, instrumentProvider, barHistoryService,
+                pnlCalculator, clock, tradeIdExtractor);
+            service.SafetyGuardEnabled = true;
+
+            // Open and attach bracket.
+            tradeIdExtractor.ExtractTradeId("Entry_test-1").Returns("test-1");
+            tradeIdExtractor.IsEntryOrder("Entry_test-1").Returns(true);
+            tradeIdExtractor.IsStopOrder("Stop_test-1").Returns(true);
+            tradeIdExtractor.IsTargetOrder("Target_test-1").Returns(true);
+            dispatcher.Dispatch(MessageEnvelope.Create(MessageType.OrderOpen,
+                TestDataFactory.OrderOpenPayload(riskUsd: 100, riskPoints: 10))).Should().BeTrue();
+            service.OnExecutionUpdate(entryOrder, 20000, 2);
+            orderExecutionService.Received(1).CreateStopLossOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "test-1");
+
+            // Move the stop-loss in place.
+            tradeIdExtractor.ExtractTradeId("Stop_test-1").Returns("test-1");
+            dispatcher.Dispatch(MessageEnvelope.Create(MessageType.OrderModify,
+                TestDataFactory.OrderModifyPayload(stopLoss: 19995))).Should().BeTrue();
+            orderExecutionService.Received(1).ModifyOrder(
+                stopOrder,
+                Arg.Is<double?>(x => x.HasValue && Math.Abs(x.Value - 19995) < 0.01),
+                Arg.Is<double?>(x => x == null));
+
+            // Safety check must NOT flatten while the stop is still working.
+            service.RunSafetyCheckOnce();
+            orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), Arg.Any<BrokerAccount>(), Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<string>());
+            network.DidNotReceiveWithAnyArgs().SendError(Arg.Any<string>(), Arg.Any<string>(), Arg.Any<string>());
+        }
     }
 }

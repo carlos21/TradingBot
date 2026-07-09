@@ -2,11 +2,12 @@
  * Binds replay UI controls to the ChartController.
  */
 export class ReplayControlsController {
-  constructor(controller, socket, domService, notification) {
+  constructor(controller, socket, domService, notification, tradeService) {
     this.controller = controller;
     this.socket = socket;
     this.dom = domService;
     this.notification = notification;
+    this.tradeService = tradeService;
 
     this.toggleBtn = null;
     this.stepBtn = null;
@@ -17,8 +18,12 @@ export class ReplayControlsController {
     this.testShortBtn = null;
     this.closeAllBtn = null;
     this.testTradeControls = null;
-    this.testDropdownToggle = null;
-    this.testDropdownMenu = null;
+    this.testTradeBtn = null;
+    this.testTradeModal = null;
+    this.testTradeModalClose = null;
+    this.modifySlTradeSelect = null;
+    this.modifySlInput = null;
+    this.modifySlBtn = null;
     this.startStreamingBtn = null;
     this.reconnectBtn = null;
   }
@@ -29,7 +34,7 @@ export class ReplayControlsController {
     this._bindTimeframeEvents();
     this._bindTestTradeEvents();
     this._bindStreamingEvents();
-    this._bindTestDropdown();
+    this._bindTestModal();
 
     this.socket.on('stream_status', ({ playing, live_mode }) => {
       if (!playing && this.toggleBtn) this.toggleBtn.textContent = 'Play';
@@ -52,8 +57,12 @@ export class ReplayControlsController {
     this.testShortBtn = this.dom.getElementById('testShortBtn');
     this.closeAllBtn = this.dom.getElementById('closeAllBtn');
     this.testTradeControls = this.dom.getElementById('testTradeControls');
-    this.testDropdownToggle = this.dom.getElementById('testDropdownToggle');
-    this.testDropdownMenu = this.dom.getElementById('testDropdownMenu');
+    this.testTradeBtn = this.dom.getElementById('testTradeBtn');
+    this.testTradeModal = this.dom.getElementById('testTradeModal');
+    this.testTradeModalClose = this.dom.getElementById('testTradeModalClose');
+    this.modifySlTradeSelect = this.dom.getElementById('modifySlTradeSelect');
+    this.modifySlInput = this.dom.getElementById('modifySlInput');
+    this.modifySlBtn = this.dom.getElementById('modifySlBtn');
     this.startStreamingBtn = this.dom.getElementById('startStreamingBtn');
     this.reconnectBtn = this.dom.getElementById('reconnectBtn');
   }
@@ -154,51 +163,64 @@ export class ReplayControlsController {
     }
   }
 
-  _bindTestDropdown() {
-    if (!this.testDropdownToggle || !this.testDropdownMenu) return;
+  _openTestModal() {
+    if (!this.testTradeModal) return;
+    this.testTradeModal.classList.remove('hidden');
+    this._loadOpenTradesForModify();
+  }
 
-    const closeMenu = () => this.testDropdownMenu.classList.add('hidden');
+  _closeTestModal() {
+    if (!this.testTradeModal) return;
+    this.testTradeModal.classList.add('hidden');
+  }
 
-    this.dom.addEventListener(this.testDropdownToggle, 'click', e => {
+  _bindTestModal() {
+    if (!this.testTradeBtn || !this.testTradeModal) return;
+
+    this.dom.addEventListener(this.testTradeBtn, 'click', e => {
       e.stopPropagation();
-      this.testDropdownMenu.classList.toggle('hidden');
+      this._openTestModal();
     });
+
+    if (this.testTradeModalClose) {
+      this.dom.addEventListener(this.testTradeModalClose, 'click', () => this._closeTestModal());
+    }
 
     const doc = this.dom.getDocument();
     this.dom.addEventListener(doc, 'click', e => {
-      if (!this.testDropdownToggle.contains(e.target) && !this.testDropdownMenu.contains(e.target)) {
-        closeMenu();
+      if (e.target === this.testTradeModal) {
+        this._closeTestModal();
       }
     });
+  }
 
-    for (const btn of this.testDropdownMenu.querySelectorAll('button')) {
-      this.dom.addEventListener(btn, 'click', closeMenu);
+  async _loadOpenTradesForModify() {
+    if (!this.modifySlTradeSelect) return;
+    this.modifySlTradeSelect.innerHTML = '<option value="">Select open trade…</option>';
+
+    try {
+      const trades = await this.tradeService.listTrades(this.controller.pair);
+      const openTrades = (trades || []).filter(t => t.status === 'open');
+      for (const trade of openTrades) {
+        const option = this.dom.createElement('option');
+        option.value = trade.trade_id;
+        option.textContent = `${trade.trade_id} — ${trade.type} @ ${trade.entry} (SL ${trade.stop_loss})`;
+        this.modifySlTradeSelect.appendChild(option);
+      }
+    } catch (err) {
+      this.notification.alert('Failed to load open trades: ' + err.message);
     }
   }
 
   async _sendTestTrade(direction) {
     try {
-      const resp = await fetch('/api/trades/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pair: this.controller.pair, direction }),
-      });
-      const contentType = resp.headers.get('content-type') || '';
-      let data = {};
-      if (contentType.includes('application/json')) {
-        data = await resp.json();
-      } else {
-        data = { error: (await resp.text()).trim() || resp.statusText };
-      }
-      if (resp.ok) {
-        this.notification.alert(
-          `Test ${direction.charAt(0).toUpperCase() + direction.slice(1)} sent: ` + data.trade_id
-        );
-      } else {
-        this.notification.alert('Failed: ' + (data.error || resp.statusText));
-      }
+      const data = await this.tradeService.openTestTrade(this.controller.pair, direction);
+      this.notification.alert(
+        `Test ${direction.charAt(0).toUpperCase() + direction.slice(1)} sent: ` + data.trade_id
+      );
+      this._closeTestModal();
     } catch (err) {
-      this.notification.alert('Error: ' + err.message);
+      this.notification.alert('Failed: ' + err.message);
     }
   }
 
@@ -211,31 +233,40 @@ export class ReplayControlsController {
     if (this.closeAllBtn) {
       this.dom.addEventListener(this.closeAllBtn, 'click', async () => {
         try {
-          const resp = await fetch('/api/trades/close-all', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ pair: this.controller.pair }),
-          });
-          const contentType = resp.headers.get('content-type') || '';
-          let data = {};
-          if (contentType.includes('application/json')) {
-            data = await resp.json();
-          } else {
-            data = { error: (await resp.text()).trim() || resp.statusText };
+          const data = await this.tradeService.closeAllTrades(this.controller.pair);
+          const count = data.count || 0;
+          const failed = data.failed || [];
+          let msg = `Close All sent. ${count} trade(s) closed.`;
+          if (failed.length > 0) {
+            msg += `\nFailed: ${failed.map(f => f.trade_id).join(', ')}`;
           }
-          if (resp.ok) {
-            const count = data.count || 0;
-            const failed = data.failed || [];
-            let msg = `Close All sent. ${count} trade(s) closed.`;
-            if (failed.length > 0) {
-              msg += `\nFailed: ${failed.map(f => f.trade_id).join(', ')}`;
-            }
-            this.notification.alert(msg);
-          } else {
-            this.notification.alert('Failed: ' + (data.error || resp.statusText));
-          }
+          this.notification.alert(msg);
+          this._closeTestModal();
         } catch (err) {
-          this.notification.alert('Error: ' + err.message);
+          this.notification.alert('Failed: ' + err.message);
+        }
+      });
+    }
+
+    if (this.modifySlBtn) {
+      this.dom.addEventListener(this.modifySlBtn, 'click', async () => {
+        const tradeId = this.modifySlTradeSelect?.value;
+        const newSl = parseFloat(this.modifySlInput?.value);
+        if (!tradeId) {
+          this.notification.alert('Please select a trade');
+          return;
+        }
+        if (!Number.isFinite(newSl) || newSl <= 0) {
+          this.notification.alert('Please enter a valid stop-loss price');
+          return;
+        }
+        try {
+          await this.tradeService.modifyStopLoss(tradeId, newSl);
+          this.notification.alert(`Updated SL for ${tradeId} to ${newSl}`);
+          this.modifySlInput.value = '';
+          this._loadOpenTradesForModify();
+        } catch (err) {
+          this.notification.alert('Failed to update SL: ' + err.message);
         }
       });
     }

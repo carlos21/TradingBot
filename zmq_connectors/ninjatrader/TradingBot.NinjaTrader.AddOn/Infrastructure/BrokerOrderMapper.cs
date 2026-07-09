@@ -82,6 +82,8 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             if (state == Nt.OrderState.PartFilled) return Domain.OrderState.PartFilled;
             if (state == Nt.OrderState.Filled) return Domain.OrderState.Filled;
             if (state == Nt.OrderState.Cancelled) return Domain.OrderState.Cancelled;
+            if (state == Nt.OrderState.ChangePending) return Domain.OrderState.ChangePending;
+            if (state == Nt.OrderState.ChangeSubmitted) return Domain.OrderState.ChangeSubmitted;
             return Domain.OrderState.Rejected;
         }
     }

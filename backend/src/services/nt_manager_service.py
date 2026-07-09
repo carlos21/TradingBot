@@ -95,16 +95,16 @@ class NtManagerService:
 
         win_script = self._wsl_to_windows_path(ps_script)
 
-        # Escape special PowerShell characters in password
-        safe_password = password.replace("'", "''")
-
+        # When passing arguments via a list, subprocess sends each element as a
+        # separate command-line token. No shell quoting is required; wrapping
+        # values in quotes would make the quotes part of the literal value.
         cmd = [
             "powershell.exe",
             "-NoProfile",
             "-ExecutionPolicy", "Bypass",
             "-File", win_script,
             "-Username", username,
-            "-Password", safe_password,
+            "-Password", password,
         ]
 
         # Try to locate NinjaTrader; if not found in registry, let PowerShell auto-detect
