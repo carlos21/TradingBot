@@ -31,5 +31,10 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
         BrokerOrder FindOrderByName(BrokerAccount account, string orderName);
         IReadOnlyList<BrokerOrder> GetWorkingOrders(BrokerAccount account);
         IReadOnlyList<BrokerOrder> GetAllOrders(BrokerAccount account);
+
+        /// <summary>
+        /// Returns the non-zero positions currently held in the account.
+        /// </summary>
+        IReadOnlyList<BrokerPosition> GetAccountPositions(BrokerAccount account);
     }
 }

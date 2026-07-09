@@ -3,11 +3,12 @@
 Tests Socket.IO event handlers with a mocked SocketIO instance.
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from src.config.models import DEFAULT_HISTORY_HOURS
+from src.domain.parity import ParityResult
 from src.infrastructure.gateway.datasource import DataSourceState, ZMQDataSource
 from src.routes.socketio_handlers import register_socketio_handlers
 from tests.fakes import FakeDataSource, FakeLogger
@@ -481,6 +482,99 @@ class TestJumpDayHandler:
 
         assert result is None
         assert loader._jump_calls == []
+
+
+class TestCheckParityHandler:
+    def _make_parity_service(self, result=None, side_effect=None):
+        service = MagicMock()
+        if side_effect is not None:
+            service.check_parity.side_effect = side_effect
+        else:
+            service.check_parity.return_value = result or ParityResult(
+                checked_at=1710000000,
+                bars_checked=100,
+                gaps_found=0,
+                gaps=[],
+                all_good=True,
+                summary="All good",
+            )
+        return service
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_check_parity_no_payload_succeeds(self, mock_emit, socketio, loader, logger):
+        parity_service = self._make_parity_service()
+        data_source = FakeDataSource()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=False,
+            _logger=logger,
+            parity_service=parity_service,
+        )
+        handler = socketio.handlers["check_parity"]
+        handler()
+
+        parity_service.check_parity.assert_called_once_with(hours_back=5)
+        result_call = next(call for call in mock_emit.call_args_list if call[0][0] == "parity_result")
+        assert result_call[0][1]["all_good"] is True
+        assert result_call[0][1]["summary"] == "All good"
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_check_parity_empty_payload_succeeds(self, mock_emit, socketio, loader, logger):
+        parity_service = self._make_parity_service()
+        data_source = FakeDataSource()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=False,
+            _logger=logger,
+            parity_service=parity_service,
+        )
+        handler = socketio.handlers["check_parity"]
+        handler({})
+
+        parity_service.check_parity.assert_called_once_with(hours_back=5)
+        result_call = next(call for call in mock_emit.call_args_list if call[0][0] == "parity_result")
+        assert result_call[0][1]["all_good"] is True
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_check_parity_service_unavailable(self, mock_emit, socketio, loader, logger):
+        data_source = FakeDataSource()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=False,
+            _logger=logger,
+            parity_service=None,
+        )
+        handler = socketio.handlers["check_parity"]
+        handler()
+
+        result_call = next(call for call in mock_emit.call_args_list if call[0][0] == "parity_result")
+        assert result_call[0][1]["ok"] is False
+        assert "Parity service not available" in result_call[0][1]["error"]
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_check_parity_service_raises(self, mock_emit, socketio, loader, logger):
+        parity_service = self._make_parity_service(side_effect=RuntimeError("audit failed"))
+        data_source = FakeDataSource()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=False,
+            _logger=logger,
+            parity_service=parity_service,
+        )
+        handler = socketio.handlers["check_parity"]
+        handler()
+
+        result_call = next(call for call in mock_emit.call_args_list if call[0][0] == "parity_result")
+        assert result_call[0][1]["ok"] is False
+        assert "audit failed" in result_call[0][1]["error"]
 
 
 class TestConnectionChangeCallback:

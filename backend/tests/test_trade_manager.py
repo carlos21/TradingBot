@@ -234,9 +234,9 @@ class TestSessionEndClose:
         assert len(tm.open_trades) == 1
         assert len(tm.trade_repository.closed) == 0
 
-    def test_skips_broker_sync_trade_at_session_end(self):
+    def test_skips_user_controlled_trade_at_session_end(self):
         tm = _make_manager(session_end_time="16:58", session_tz="America/New_York")
-        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500, source="broker_sync")
+        _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, entry_time=500, source="manual")
         from zoneinfo import ZoneInfo
         ny = ZoneInfo("America/New_York")
         bar_dt = datetime(2025, 6, 15, 16, 59, tzinfo=ny)
@@ -510,7 +510,7 @@ class TestStreamEndCloseRemaining:
         assert tm.trade_repository.closed[0]["result_type"] == "BE"
 
     def test_stream_end_skips_user_controlled_sources(self):
-        for source in ("manual", "test", "broker_sync"):
+        for source in ("manual", "test"):
             tm = _make_manager()
             _add_open_trade(tm, entry=100, sl=90, tp=130, risk=10, source=source)
             tm.close_remaining_trades_at_stream_end(90, 3000.0)

@@ -285,7 +285,7 @@ def register_socketio_handlers(
 
     @socketio.on("check_parity")
     @_safe_handler
-    def on_check_parity():
+    def on_check_parity(_payload=None):
         if parity_service is None:
             emit("parity_result", {
                 "ok": False,

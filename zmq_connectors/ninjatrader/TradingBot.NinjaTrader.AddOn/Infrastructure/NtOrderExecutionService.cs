@@ -154,6 +154,46 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             return result;
         }
 
+        public IReadOnlyList<Domain.BrokerPosition> GetAccountPositions(Domain.BrokerAccount account)
+        {
+            var result = new List<Domain.BrokerPosition>();
+            var ntAccount = GetNtAccount(account);
+            if (ntAccount == null) return result;
+
+            foreach (var position in ntAccount.Positions ?? Enumerable.Empty<Nt.Position>())
+            {
+                int qty = position.Quantity;
+                if (qty == 0) continue;
+
+                string direction;
+                switch (position.MarketPosition)
+                {
+                    case Nt.MarketPosition.Long:
+                        direction = "long";
+                        break;
+                    case Nt.MarketPosition.Short:
+                        direction = "short";
+                        qty = System.Math.Abs(qty);
+                        break;
+                    default:
+                        continue;
+                }
+
+                var instrument = new Domain.BrokerInstrument(
+                    position.Instrument?.FullName,
+                    position.Instrument?.MasterInstrument?.Name ?? position.Instrument?.FullName,
+                    position.Instrument?.MasterInstrument?.PointValue ?? 1.0);
+                result.Add(new Domain.BrokerPosition(
+                    account.Name,
+                    instrument,
+                    qty,
+                    direction,
+                    position.AveragePrice));
+            }
+
+            return result;
+        }
+
         private static Nt.Order FindNtOrderByName(Nt.Account account, string orderName)
         {
             if (account == null || string.IsNullOrEmpty(orderName)) return null;

@@ -242,7 +242,7 @@ class TestDailyTradesLimitFilter:
                 risk_dollars=None, risk_pct=None, contracts=None,
                 entry_time=datetime(2025, 6, 15, 13, 0, tzinfo=timezone.utc),
                 exit_price=None, exit_time=None, result=None, result_type=None,
-                fees=None, pnl_usd=None, params=None, source="broker_sync",
+                fees=None, pnl_usd=None, params=None, source="manual",
             ),
         ]
         ctx = _make_ctx(strategy=strategy, bar_time=bar_time)

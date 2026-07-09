@@ -443,86 +443,28 @@ def create_app(
     # Broker (NinjaTrader) is the source of truth - it reports actual positions to Python
     if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
         def _handle_position_sync(payload):
-            """Reconcile Python state with broker reality after reconnect.
-            
-            Broker (NinjaTrader) is the source of truth. If there's a mismatch,
-            we update Python's state to match the broker.
+            """Log broker-reported positions after reconnect.
+
+            The connector no longer recreates Python trades from broker positions.
+            NinjaTrader's safety guard is responsible for flattening any position
+            that is not properly protected by a stop-loss.
             """
             positions = payload.get('positions', [])
-            broker_trade_ids = {p['trade_id'] for p in positions}
+            count = payload.get('count', 0)
+            source = payload.get('source', 'unknown')
+            untracked = payload.get('untracked_orders', [])
 
-            # ------------------------------------------------------------------
-            # 1. Broker has positions Python doesn't know about → CREATE them
-            # ------------------------------------------------------------------
-            python_trade_ids = {t['trade_id'] for t in trade_manager.open_trades}
+            logger.info(f"📊 POSITION SYNC from {source}: {count} position(s)")
             for pos in positions:
-                trade_id = pos['trade_id']
-                if trade_id in python_trade_ids:
-                    continue
+                trade_id = pos.get('trade_id')
+                direction = pos.get('direction')
+                entry = pos.get('entry_price')
+                logger.info(f"   - {trade_id}: {direction} @ {entry}")
 
-                # Check DB — trade might exist but wasn't loaded (shouldn't happen)
-                db_trade = repos.trades.get_trade(trade_id)
-                if db_trade and db_trade.exit_time is None:
-                    logger.error(f"[PositionSync] CRITICAL: Trade {trade_id} is open in DB but missing from open_trades — adding back")
-                    trade_manager.open_trades.append({
-                        'trade_id': db_trade.trade_id,
-                        'pair': db_trade.pair,
-                        'type': db_trade.trade_type,
-                        'entry': db_trade.entry_price,
-                        'stop_loss': db_trade.stop_loss,
-                        'take_profit': db_trade.take_profit,
-                        'risk': db_trade.risk,
-                        'risk_dollars': db_trade.risk_dollars,
-                        'risk_pct': db_trade.risk_pct,
-                        'contracts': db_trade.contracts,
-                        'status': 'open',
-                        'entry_time': db_trade.entry_time.timestamp(),
-                    })
-                    continue
-
-                if db_trade and db_trade.exit_time is not None:
-                    logger.error(f"[PositionSync] DISCREPANCY: Broker has open position {trade_id} but DB shows it closed at {db_trade.exit_time}. Re-opening from broker data.")
-
-                # Create trade from broker data so session-end close can manage it.
-                # Do NOT send a new order_open — the broker already holds this position.
-                direction = pos.get('direction', 'long')
-                entry_price = float(pos.get('entry_price', 0))
-                stop_loss = pos.get('stop_loss')
-                take_profit = pos.get('take_profit')
-                quantity = float(pos.get('quantity', 1))
-                account_name = pos.get('account')
-
-                # Use broker SL/TP if available, otherwise sensible defaults
-                if stop_loss is None:
-                    stop_loss = entry_price - 20.0 if direction == 'long' else entry_price + 20.0
-                if take_profit is None:
-                    take_profit = entry_price + 100.0 if direction == 'long' else entry_price - 100.0
-
-                try:
-                    trade = trade_manager.create_synced_trade(
-                        trade_id=trade_id,
-                        pair=pair,
-                        trade_type=direction,
-                        entry_price=entry_price,
-                        stop_loss=stop_loss,
-                        take_profit=take_profit,
-                        quantity=quantity,
-                        account=account_name,
-                    )
-                    logger.info(f"[PositionSync] Created trade {trade['trade_id']} from broker position {trade_id} ({direction} @ {entry_price}, qty={quantity})")
-                except Exception as e:
-                    logger.error(f"[PositionSync] Failed to create trade from broker position {trade_id}: {e}")
-
-            # ------------------------------------------------------------------
-            # 2. Python has trades broker doesn't report → log, but DON'T auto-close
-            #    on the first sync.  Broker tracking may still be restoring.
-            # ------------------------------------------------------------------
-            python_trade_ids = {t['trade_id'] for t in trade_manager.open_trades}
-            for trade in list(trade_manager.open_trades):
-                if trade['trade_id'] not in broker_trade_ids:
-                    logger.warning(f"[PositionSync] Trade {trade['trade_id']} not reported by broker. Keeping open in Python — will retry at session end.")
-
-            logger.info(f"[PositionSync] Reconciliation complete: {len(positions)} broker position(s), {len(trade_manager.open_trades)} Python position(s)")
+            if untracked:
+                logger.warning(f"   ⚠️ {len(untracked)} untracked order(s) on broker")
+                for order in untracked:
+                    logger.warning(f"      - {order.get('order_name')}")
 
         data_source.gateway.on_position_sync(_handle_position_sync)
         logger.info("[ZMQ] Position sync handler registered for crash recovery")

@@ -31,7 +31,7 @@ class TradeManager:
 
     # Sources that are user- or broker-controlled and should not be auto-closed
     # by Python's session-end timer (broker/NinjaTrader manages their lifecycle).
-    USER_CONTROLLED_SOURCES = ("manual", "test", "broker_sync")
+    USER_CONTROLLED_SOURCES = ("manual", "test")
 
     def __init__(self, trade_repository: TradeRepository, socketio: EventPublisher | None = None,
                  point_value: float = 0.0, account_balance: float = 0.0,
@@ -538,82 +538,6 @@ class TradeManager:
                 ))
         if self.logger:
             self.logger.warning(f"[TradeManager] Cancelled trade {trade_id} ({reason})")
-
-    def create_synced_trade(
-        self,
-        trade_id: str,
-        pair: str,
-        trade_type: str,
-        entry_price: float,
-        stop_loss: float,
-        take_profit: float,
-        quantity: float,
-        account: str | None,
-    ) -> dict:
-        """Create a trade locally from a broker position without sending an order.
-
-        Used during POSITION_SYNC when the broker reports a position Python does
-        not know about. The position already exists on the broker, so we must not
-        send a new order_open command.
-        """
-        risk = abs(entry_price - stop_loss)
-        contracts, risk_dollars, risk_pct = FinancialCalc.size_position(
-            risk_points=risk,
-            point_value=self.point_value,
-            account_balance=self.account_balance,
-            risk_per_trade=self.risk_per_trade,
-            risk_pct_per_trade=self.risk_pct_per_trade,
-            use_fractional_lots=self.use_fractional_lots,
-        )
-        if quantity is not None and quantity > 0:
-            contracts = quantity
-            risk_dollars, risk_pct = FinancialCalc.risk_fields(
-                risk, contracts, self.point_value, self.account_balance
-            )
-        entry_time = datetime.now(tz=timezone.utc)
-
-        trade_data = self.trade_repository.insert_trade(
-            pair=pair,
-            trade_type=trade_type,
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
-            risk=risk,
-            entry_time=entry_time,
-            risk_dollars=risk_dollars,
-            risk_pct=risk_pct,
-            contracts=contracts,
-            source="broker_sync",
-            account=account,
-            trade_id=trade_id,
-        )
-
-        trade = {
-            'trade_id': trade_data.trade_id,
-            'pair': trade_data.pair,
-            'type': trade_data.trade_type,
-            'entry': trade_data.entry_price,
-            'stop_loss': trade_data.stop_loss,
-            'take_profit': trade_data.take_profit,
-            'risk': trade_data.risk,
-            'risk_dollars': trade_data.risk_dollars,
-            'risk_pct': trade_data.risk_pct,
-            'contracts': trade_data.contracts,
-            'entry_time': trade_data.entry_time.timestamp(),
-            'account': trade_data.account,
-            'status': 'open',
-            'source': 'broker_sync',
-        }
-        with self._lock:
-            self.open_trades.append(trade)
-        self._monitored_trades.add(trade_id)
-
-        if self.logger:
-            self.logger.info(
-                f"[PositionSync] Created trade {trade_id} from broker position "
-                f"({trade_type} @ {entry_price}, qty={quantity})"
-            )
-        return trade
 
     def close_trade(self, trade_id: str, exit_price: float, exit_time: float):
         with self._lock:

@@ -422,8 +422,8 @@ class TestProtocolRobustness:
         nt._tracker.mark_processed(1)
         assert nt._tracker.is_duplicate(1) is True
 
-    def test_position_sync_reconciles(self, e2e_harness: E2EHarness) -> None:
-        """FakeNT sends POSITION_SYNC and Python creates missing trades."""
+    def test_position_sync_does_not_recreate_trades(self, e2e_harness: E2EHarness) -> None:
+        """FakeNT sends POSITION_SYNC and Python logs positions but does not create trades."""
         app = e2e_harness.app
         nt = e2e_harness.nt
 
@@ -442,11 +442,10 @@ class TestProtocolRobustness:
         nt.send_position_sync()
         time.sleep(0.2)
 
-        # Python should have created the trade from broker data
+        # Python must NOT recreate the trade from broker data
         tm = app.trade_manager
         orphan = next((t for t in tm.open_trades if t["trade_id"] == "ORPHAN-1"), None)
-        assert orphan is not None, "Python should create trade from POSITION_SYNC"
-        assert orphan["entry"] == pytest.approx(21000.0)
+        assert orphan is None, "Python should not create trades from POSITION_SYNC"
 
     def test_heartbeat_disconnect(self, e2e_harness: E2EHarness) -> None:
         """When FakeNT stops sending heartbeats, Python detects disconnect."""

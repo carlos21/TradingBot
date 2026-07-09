@@ -57,6 +57,11 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         private readonly Queue<int> _processedSeqNumQueue = new Queue<int>();
         private const int MAX_TRACKED_SEQ_NUMS = 1000;
 
+        // Prevents the safety guard from submitting duplicate flatten orders for the
+        // same orphan position while waiting for the market fill to arrive.
+        private readonly Dictionary<string, DateTime> _recentOrphanFlattens = new Dictionary<string, DateTime>();
+        private static readonly TimeSpan OrphanFlattenCooldown = TimeSpan.FromSeconds(30);
+
         public bool IsConnected => _connected;
         public IZmqNetwork Network => _network;
         public string Pair => string.IsNullOrEmpty(_streamingCoordinator?.CurrentInstrument)
@@ -423,12 +428,32 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         }
 
         /// <summary>
-        /// One-shot safety check: any tracked entry with filled contracts but no
-        /// working stop-loss is flattened immediately. Exposed publicly so tests
-        /// can exercise the guard without waiting for the background loop.
+        /// One-shot safety check:
+        /// 1. Any tracked entry with filled contracts but no working stop-loss is
+        ///    flattened only if the broker still holds the position.
+        /// 2. Any orphan account position on the configured instrument without a
+        ///    working stop-loss is flattened immediately.
+        /// Exposed publicly so tests can exercise the guard without waiting for the
+        /// background loop.
         /// </summary>
         public void RunSafetyCheckOnce()
         {
+            var accounts = _accountProvider.GetAccounts() ?? new List<BrokerAccount>();
+            var accountPositions = new List<BrokerPosition>();
+            foreach (var account in accounts)
+            {
+                try
+                {
+                    var positions = _orderExecutionService.GetAccountPositions(account) ?? new List<BrokerPosition>();
+                    accountPositions.AddRange(positions);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"Safety guard: failed to read positions for {account.Name}", ex);
+                }
+            }
+
+            // 1. Tracked entries: flatten if no working SL and the broker still holds the position.
             foreach (var tradeId in _orderTracker.GetActiveTradeIds().ToList())
             {
                 if (!_orderTracker.TryGetEntry(tradeId, out var entryOrder))
@@ -444,15 +469,13 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 if (_orderTracker.IsClosePending(tradeId))
                     continue;
 
-                // A working stop in the tracker is sufficient *unless* the broker
-                // no longer reports it as working. Cross-check with live orders.
                 bool hasWorkingStop = false;
                 if (_orderTracker.TryGetStopLoss(tradeId, out var trackedStop) && trackedStop.IsWorking)
                 {
                     var account = _accountProvider.GetAccount(entryOrder.AccountName);
                     if (account != null)
                     {
-                        var workingOrders = _orderExecutionService.GetWorkingOrders(account);
+                        var workingOrders = _orderExecutionService.GetWorkingOrders(account) ?? new List<BrokerOrder>();
                         hasWorkingStop = workingOrders.Any(o =>
                             _tradeIdExtractor.IsStopOrder(o.Name) &&
                             _tradeIdExtractor.ExtractTradeId(o.Name) == tradeId &&
@@ -466,6 +489,17 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
                 if (hasWorkingStop)
                     continue;
+
+                // Do not flatten a position that is already flat at the broker.
+                var actualPosition = accountPositions.FirstOrDefault(p =>
+                    p.AccountName == entryOrder.AccountName &&
+                    p.Instrument?.MasterInstrumentName == entryOrder.Instrument?.MasterInstrumentName &&
+                    (entryOrder.OrderSide == OrderSide.Buy ? p.IsLong : p.IsShort));
+                if (actualPosition == null || actualPosition.Quantity <= 0)
+                {
+                    _logger.Warning($"SAFETY GUARD: Entry {tradeId} has no working stop-loss, but the account position is flat. Skipping flatten.");
+                    continue;
+                }
 
                 var instrumentName = entryOrder.Instrument?.MasterInstrumentName ?? entryOrder.Instrument?.Name ?? "unknown";
                 var trackedSl = _orderTracker.TryGetStopLoss(tradeId, out var ts) ? ts.StopPrice.ToString("F2") : "none";
@@ -481,6 +515,41 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
                 var pendingEntry = GetPendingEntryOrFallback(tradeId, entryOrder);
                 FlattenPosition(entryOrder, pendingEntry, tradeId, "Safety guard: no working stop-loss");
+            }
+
+            // 2. Account-level sweep: flatten any orphan position without a working stop-loss.
+            var currentPair = Pair;
+            foreach (var position in accountPositions)
+            {
+                if (position.Quantity == 0)
+                    continue;
+
+                if (!string.IsNullOrEmpty(currentPair) &&
+                    position.Instrument?.MasterInstrumentName != currentPair)
+                    continue;
+
+                var account = accounts.FirstOrDefault(a => a.Name == position.AccountName);
+                if (account == null)
+                    continue;
+
+                var workingOrders = _orderExecutionService.GetWorkingOrders(account) ?? new List<BrokerOrder>();
+                if (HasWorkingStopForPosition(position, workingOrders))
+                    continue;
+
+                // If a tracked entry exists for this same instrument/account, the tracked
+                // loop above already handled it (either it has a working stop or it was flattened).
+                bool hasTrackedEntry = _orderTracker.GetActiveTradeIds().Any(id =>
+                {
+                    if (!_orderTracker.TryGetEntry(id, out var e))
+                        return false;
+                    return e.AccountName == position.AccountName &&
+                           e.Instrument?.MasterInstrumentName == position.Instrument?.MasterInstrumentName &&
+                           (position.IsLong ? e.OrderSide == OrderSide.Buy : e.OrderSide == OrderSide.Sell || e.OrderSide == OrderSide.SellShort);
+                });
+                if (hasTrackedEntry)
+                    continue;
+
+                FlattenAccountPosition(account, position, "Safety guard: no working stop-loss");
             }
         }
 
@@ -903,6 +972,10 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 return;
             }
 
+            // Mark close-pending as soon as the SL starts filling so that any OCO
+            // rejection/cancellation of the opposing target order is treated as expected.
+            _orderTracker.MarkClosePending(tradeId);
+
             if (order.OrderState != OrderState.Filled)
             {
                 _logger.Warning($"Stop {order.Name} state={order.OrderState}, waiting for full fill.");
@@ -927,6 +1000,10 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 _network.SendError("ninjatrader", "fill_tracking_failed", $"TP fill for order '{order.Name}' not found in tracking");
                 return;
             }
+
+            // Mark close-pending as soon as the TP starts filling so that any OCO
+            // rejection/cancellation of the opposing stop order is treated as expected.
+            _orderTracker.MarkClosePending(tradeId);
 
             if (order.OrderState != OrderState.Filled)
             {
@@ -1049,6 +1126,78 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             finally
             {
                 _orderTracker.RemoveTrade(tradeId);
+            }
+        }
+
+        private bool HasWorkingStopForPosition(BrokerPosition position, IReadOnlyList<BrokerOrder> workingOrders)
+        {
+            foreach (var order in workingOrders)
+            {
+                if (!order.IsWorking)
+                    continue;
+                if (order.OrderType != OrderType.StopMarket && order.OrderType != OrderType.StopLimit)
+                    continue;
+                if (order.Instrument?.MasterInstrumentName != position.Instrument?.MasterInstrumentName)
+                    continue;
+
+                bool closesLong = position.IsLong && (order.OrderSide == OrderSide.Sell || order.OrderSide == OrderSide.SellShort);
+                bool closesShort = position.IsShort && (order.OrderSide == OrderSide.Buy || order.OrderSide == OrderSide.BuyToCover);
+
+                if (closesLong || closesShort)
+                    return true;
+            }
+            return false;
+        }
+
+        private bool ShouldSkipOrphanFlatten(string accountName, string instrumentName)
+        {
+            var key = $"{accountName}|{instrumentName}";
+            var now = DateTime.UtcNow;
+
+            var expired = _recentOrphanFlattens
+                .Where(kv => now - kv.Value > OrphanFlattenCooldown)
+                .Select(kv => kv.Key)
+                .ToList();
+            foreach (var k in expired)
+                _recentOrphanFlattens.Remove(k);
+
+            return _recentOrphanFlattens.ContainsKey(key);
+        }
+
+        private void FlattenAccountPosition(BrokerAccount account, BrokerPosition position, string reason)
+        {
+            try
+            {
+                var instrumentName = position.Instrument?.MasterInstrumentName ?? position.Instrument?.Name ?? "unknown";
+                if (ShouldSkipOrphanFlatten(account.Name, instrumentName))
+                    return;
+
+                var flatSide = position.IsLong ? OrderSide.Sell : OrderSide.BuyToCover;
+                var tradeId = $"orphan_{Guid.NewGuid():N}";
+
+                var flatOrder = _orderExecutionService.CreateMarketCloseOrder(position.Instrument, account, flatSide, position.Quantity, tradeId);
+                if (flatOrder == null)
+                {
+                    _logger.Error($"CRITICAL: Could not create orphan flatten order for {instrumentName}/{account.Name}");
+                    _network.SendError("ninjatrader", "flatten_failed", $"CreateMarketCloseOrder null for orphan {instrumentName}");
+                    return;
+                }
+
+                _orderExecutionService.SubmitOrder(flatOrder);
+                _recentOrphanFlattens[$"{account.Name}|{instrumentName}"] = DateTime.UtcNow;
+
+                _logger.Error(
+                    $"SAFETY GUARD: Flattened orphan {position.Direction} position of {position.Quantity} " +
+                    $"{instrumentName} on {account.Name} ({reason}).");
+                _network.SendError("ninjatrader", "missing_stop_loss_guard",
+                    $"Orphan {position.Direction} position of {position.Quantity} {instrumentName} on {account.Name} flattened ({reason})");
+                _network.SendTradeLog(tradeId, "NT:SAFETY_GUARD",
+                    $"Flattened orphan {position.Quantity} contracts on {instrumentName}/{account.Name}: {reason}");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"CRITICAL: Exception flattening orphan position on {account.Name}", ex);
+                _network.SendError("ninjatrader", "flatten_failed", $"Exception flattening orphan position: {ex.Message}");
             }
         }
 

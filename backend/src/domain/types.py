@@ -124,7 +124,6 @@ class TradeSource(Enum):
     STRATEGY = "strategy"
     MANUAL = "manual"
     TEST = "test"
-    BROKER_SYNC = "broker_sync"
 
     @classmethod
     def from_string(cls, value: str) -> "TradeSource":

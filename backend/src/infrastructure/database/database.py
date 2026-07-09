@@ -35,7 +35,7 @@ class Trade(Base):
     pnl_usd      = Column(Float,   nullable=True)
     params       = Column(JSON,    nullable=True)       # any extra metadata (e.g. {"rr": "1:4"})
     logs         = Column(JSON,    nullable=True)       # per-trade lifecycle log entries
-    source       = Column(String(20), nullable=True)    # strategy, manual, test, broker_sync
+    source       = Column(String(20), nullable=True)    # strategy, manual, test
     account      = Column(String(50), nullable=True)    # NT account name (NULL for signal trades)
     signal_id    = Column(String(50), nullable=True)    # parent signal trade_id for multi-account expansion
     created_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -212,7 +212,7 @@ def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str | None 
         for t in all_trades:
             # Skip manual, test, and broker-sync trades
             trade_source = str(t.source or "strategy").lower()
-            if trade_source in ("manual", "test", "broker_sync"):
+            if trade_source in ("manual", "test"):
                 continue
 
             # t.entry_time may be naive or aware. Make it aware in UTC first.

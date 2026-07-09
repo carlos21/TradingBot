@@ -380,6 +380,65 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         }
 
         [Fact]
+        public void OnExecutionUpdate_MarksClosePending_WhenStopLossPartiallyFills()
+        {
+            var service = CreateService();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, avgFill: 20000);
+            var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.PartFilled, filled: 1);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackStopLoss("t1", stop);
+            _tradeIdExtractor.ExtractTradeId("Stop_t1").Returns("t1");
+            _tradeIdExtractor.IsStopOrder("Stop_t1").Returns(true);
+
+            service.OnExecutionUpdate(stop, 19990, 1);
+
+            _orderTracker.IsClosePending("t1").Should().BeTrue();
+        }
+
+        [Fact]
+        public void OnExecutionUpdate_MarksClosePending_WhenTakeProfitPartiallyFills()
+        {
+            var service = CreateService();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, avgFill: 20000);
+            var target = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, state: OrderState.PartFilled, filled: 1);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackTakeProfit("t1", target);
+            _tradeIdExtractor.ExtractTradeId("Target_t1").Returns("t1");
+            _tradeIdExtractor.IsTargetOrder("Target_t1").Returns(true);
+
+            service.OnExecutionUpdate(target, 20040, 1);
+
+            _orderTracker.IsClosePending("t1").Should().BeTrue();
+        }
+
+        [Fact]
+        public void OnOrderUpdate_SuppressesTargetRejection_WhenStopLossTriggered()
+        {
+            var service = CreateService();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, avgFill: 20000);
+            var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Filled, filled: 2);
+            var target = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, state: OrderState.Rejected);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackStopLoss("t1", stop);
+            _orderTracker.TrackTakeProfit("t1", target);
+            _orderTracker.MarkClosePending("t1");
+
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.ExtractTradeId("Target_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+            _tradeIdExtractor.IsTargetOrder("Target_t1").Returns(true);
+            _tradeIdExtractor.IsStopOrder("Target_t1").Returns(false);
+
+            service.OnOrderUpdate(target);
+
+            _network.DidNotReceive().SendError("ninjatrader", "order_state", Arg.Any<string>());
+            _logger.Infos.Should().Contain(m => m.Contains("Suppressed expected bracket error"));
+        }
+
+        [Fact]
         public void OnExecutionUpdate_HandlesCloseFill()
         {
             var service = CreateService();
@@ -478,8 +537,13 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             _orderTracker.TrackEntry("t1", entry);
             _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
             _accountProvider.GetAccount("Sim101").Returns(account);
             _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 2, "long", 20000)
+            });
             _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
             _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
             _orderExecutionService.CreateMarketCloseOrder(entry.Instrument, account, OrderSide.Sell, 2, "t1").Returns(closeOrder);
@@ -550,8 +614,13 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             _orderTracker.TrackEntry("t1", entry);
             _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
             _accountProvider.GetAccount("Sim101").Returns(account);
             _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 2, "long", 20000)
+            });
             _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
             _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
             _orderExecutionService.CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), "t1").Returns(closeOrder);
@@ -568,6 +637,54 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             {
                 service.Disconnect("cleanup");
             }
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_FlattensOrphanPosition_WithoutStopLoss()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var closeOrder = TestDataFactory.Order(name: "Close_orphan", side: OrderSide.Sell, state: OrderState.Working);
+
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 5, "long", 20100)
+            });
+            _orderExecutionService.CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, OrderSide.Sell, 5, Arg.Is<string>(s => s.StartsWith("orphan_"))).Returns(closeOrder);
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.Received(1).CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, OrderSide.Sell, 5, Arg.Is<string>(s => s.StartsWith("orphan_")));
+            _orderExecutionService.Received(1).SubmitOrder(closeOrder);
+            _network.Received(1).SendError("ninjatrader", "missing_stop_loss_guard", Arg.Is<string>(s => s.Contains("orphan")));
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_DoesNotFlattenOrphanPosition_WhenStopLossWorking()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var stop = TestDataFactory.Order(name: "Stop_manual", side: OrderSide.Sell, orderType: OrderType.StopMarket, state: OrderState.Working, stopPrice: 19900);
+
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder> { stop });
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 5, "long", 20100)
+            });
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+            _network.DidNotReceiveWithAnyArgs().SendError(null, null, null);
         }
 
         [Fact]
