@@ -62,6 +62,11 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         private readonly Dictionary<string, DateTime> _recentOrphanFlattens = new Dictionary<string, DateTime>();
         private static readonly TimeSpan OrphanFlattenCooldown = TimeSpan.FromSeconds(30);
 
+        // Gives the bracket orders a chance to reach "Working" state after an entry fill
+        // before the safety guard treats the position as unprotected.
+        private readonly Dictionary<string, DateTime> _recentEntryFills = new Dictionary<string, DateTime>();
+        private static readonly TimeSpan EntryFillGracePeriod = TimeSpan.FromSeconds(2);
+
         public bool IsConnected => _connected;
         public IZmqNetwork Network => _network;
         public string Pair => string.IsNullOrEmpty(_streamingCoordinator?.CurrentInstrument)
@@ -439,6 +444,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         public void RunSafetyCheckOnce()
         {
             var accounts = _accountProvider.GetAccounts() ?? new List<BrokerAccount>();
+            CleanupRecentEntryFills();
             var accountPositions = new List<BrokerPosition>();
             foreach (var account in accounts)
             {
@@ -497,7 +503,17 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                     (entryOrder.OrderSide == OrderSide.Buy ? p.IsLong : p.IsShort));
                 if (actualPosition == null || actualPosition.Quantity <= 0)
                 {
-                    _logger.Warning($"SAFETY GUARD: Entry {tradeId} has no working stop-loss, but the account position is flat. Skipping flatten.");
+                    // The broker position is already flat but the tracker still holds the entry.
+                    // Remove the stale tracker entry so the safety guard stops checking it and
+                    // the warning does not spam every safety-check cycle.
+                    _logger.Debug($"SAFETY GUARD: Entry {tradeId} has no working stop-loss, but the account position is flat. Removing stale tracker entry.");
+                    _orderTracker.RemoveTrade(tradeId);
+                    continue;
+                }
+
+                if (IsWithinEntryFillGracePeriod(tradeId))
+                {
+                    _logger.Debug($"SAFETY GUARD: Entry {tradeId} was just filled; waiting {EntryFillGracePeriod.TotalSeconds}s for bracket to become working.");
                     continue;
                 }
 
@@ -920,6 +936,8 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             _logger.Success($"ENTRY FILL: {tradeId} @ {order.AverageFillPrice} SL={sl} TP={tp} qty={order.Filled} account={account.Name}");
             _network.SendEntryFill(tradeId, order.AverageFillPrice, sl, tp, account: account.Name, quantity: order.Filled);
             _network.SendTradeLog(tradeId, "NT:FILL", $"Entry filled @ {fillPrice}");
+
+            _recentEntryFills[tradeId] = _clock.UtcNow;
         }
 
         private PendingEntryInfo TryRecoverPendingEntryFromPython(string tradeId)
@@ -1162,6 +1180,24 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 _recentOrphanFlattens.Remove(k);
 
             return _recentOrphanFlattens.ContainsKey(key);
+        }
+
+        private bool IsWithinEntryFillGracePeriod(string tradeId)
+        {
+            if (!_recentEntryFills.TryGetValue(tradeId, out var fillTime))
+                return false;
+            return _clock.UtcNow - fillTime < EntryFillGracePeriod;
+        }
+
+        private void CleanupRecentEntryFills()
+        {
+            var now = _clock.UtcNow;
+            var expired = _recentEntryFills
+                .Where(kv => now - kv.Value > EntryFillGracePeriod)
+                .Select(kv => kv.Key)
+                .ToList();
+            foreach (var k in expired)
+                _recentEntryFills.Remove(k);
         }
 
         private void FlattenAccountPosition(BrokerAccount account, BrokerPosition position, string reason)

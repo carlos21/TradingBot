@@ -46,6 +46,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
             accountProvider.GetAccount("Sim101").Returns(account);
             instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            clock.UtcNow.Returns(DateTime.UtcNow);
 
             var tradingMode = Substitute.For<ITradingMode>();
             tradingMode.IsSimulation.Returns(false);
@@ -112,6 +113,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
             accountProvider.GetAccount("Sim101").Returns(account);
             instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            clock.UtcNow.Returns(DateTime.UtcNow);
 
             var tradingMode = Substitute.For<ITradingMode>();
             tradingMode.IsSimulation.Returns(false);
@@ -146,6 +148,13 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             dispatcher.Dispatch(MessageEnvelope.Create(MessageType.OrderOpen,
                 TestDataFactory.OrderOpenPayload(tradeId: "guard", riskPct: 1.6, riskPoints: 20, account: "Sim101")));
             service.OnExecutionUpdate(entryOrder, 30157.25, 7);
+
+            // Advance past the entry-fill grace period and simulate the broker still holding the position.
+            clock.UtcNow.Returns(DateTime.UtcNow.AddSeconds(3));
+            orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 7, "long", 30157.25)
+            });
 
             // The tracker thinks a stop exists, but the broker does not report it working.
             orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder> { entryOrder });

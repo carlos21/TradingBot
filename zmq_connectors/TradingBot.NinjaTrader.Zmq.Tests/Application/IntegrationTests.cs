@@ -156,6 +156,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
             accountProvider.GetAccount("Sim101").Returns(account);
             instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            clock.UtcNow.Returns(DateTime.UtcNow);
 
             var tradingMode = Substitute.For<ITradingMode>();
             tradingMode.IsSimulation.Returns(false);
@@ -193,6 +194,13 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             // Now the stop-loss disappears (cancelled externally or never attached).
             orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+
+            // Advance past the entry-fill grace period and simulate the broker still holding the position.
+            clock.UtcNow.Returns(DateTime.UtcNow.AddSeconds(3));
+            orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 2, "long", 20000)
+            });
 
             var flattened = new ManualResetEventSlim(false);
             orderExecutionService.When(x => x.CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), "test-1"))
@@ -305,6 +313,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
             accountProvider.GetAccount("Sim101").Returns(account);
             instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            clock.UtcNow.Returns(DateTime.UtcNow);
 
             var tradingMode = Substitute.For<ITradingMode>();
             tradingMode.IsSimulation.Returns(false);

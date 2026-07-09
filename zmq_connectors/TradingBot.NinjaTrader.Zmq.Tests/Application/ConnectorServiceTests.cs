@@ -661,7 +661,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             _orderExecutionService.Received(1).CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, OrderSide.Sell, 5, Arg.Is<string>(s => s.StartsWith("orphan_")));
             _orderExecutionService.Received(1).SubmitOrder(closeOrder);
-            _network.Received(1).SendError("ninjatrader", "missing_stop_loss_guard", Arg.Is<string>(s => s.Contains("orphan")));
+            _network.Received(1).SendError("ninjatrader", "missing_stop_loss_guard", Arg.Is<string>(s => s.Contains("Orphan")));
         }
 
         [Fact]
@@ -685,6 +685,73 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
             _network.DidNotReceiveWithAnyArgs().SendError(null, null, null);
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_RespectsEntryFillGracePeriod()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
+            var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, orderType: OrderType.StopMarket, state: OrderState.Working, stopPrice: 19990);
+            var target = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, orderType: OrderType.Limit, state: OrderState.Working, limitPrice: 20020);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 2, "long", 20000)
+            });
+            _orderExecutionService.CreateStopLossOrder(entry.Instrument, account, OrderSide.Sell, 2, 19990, "t1").Returns(stop);
+            _orderExecutionService.CreateTakeProfitOrder(entry.Instrument, account, OrderSide.Sell, 2, 20020, "t1").Returns(target);
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+
+            // Simulate entry fill - this starts the grace period
+            service.OnExecutionUpdate(entry, 20000, 2);
+
+            // Immediately run safety check - bracket not yet working, but grace applies
+            service.RunSafetyCheckOnce();
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+
+            // Advance past the grace period
+            _clock.UtcNow.Returns(_clock.UtcNow.AddSeconds(3));
+            service.RunSafetyCheckOnce();
+
+            // Now it should have flattened
+            _orderExecutionService.Received(1).CreateMarketCloseOrder(entry.Instrument, account, OrderSide.Sell, 2, "t1");
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_RemovesStaleTrackerEntry_WhenPositionFlat()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+            // Position is flat - entry was closed but tracker was not cleaned up.
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>());
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+
+            service.RunSafetyCheckOnce();
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+            _network.DidNotReceiveWithAnyArgs().SendError(null, null, null);
+            _orderTracker.GetActiveTradeIds().Should().NotContain("t1");
         }
 
         [Fact]
