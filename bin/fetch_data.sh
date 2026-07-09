@@ -14,9 +14,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
-# Ensure the default CSV output directory exists even on first run.
-mkdir -p csvs
+# The CSV lives at the project root, not under backend/.
+CSV_DIR="../csvs"
+mkdir -p "$CSV_DIR"
 
 # fetcher is a module under backend/
 cd backend
-poetry run python -m fetcher.run "$@"
+FETCH_OUTPUT="$CSV_DIR/NQ_live.csv" poetry run python -m fetcher.run "$@"
