@@ -72,6 +72,7 @@ class BrokerFillHandler:
         stop_loss: float | None = None,
         take_profit: float | None = None,
         quantity: float | None = None,
+        account_balance: float | None = None,
     ) -> dict:
         """Update trade state when broker reports an entry fill.
 
@@ -83,6 +84,9 @@ class BrokerFillHandler:
             quantity: Optional broker-reported filled quantity. When provided,
                 it overrides Python's risk-based contract calculation so the
                 two sides stay in sync.
+            account_balance: Optional broker-reported account CashValue. When
+                provided, it becomes Python's source of truth for balance and
+                is used to compute risk_pct/risk_dollars.
 
         Returns the updated trade dict.
         """
@@ -93,6 +97,11 @@ class BrokerFillHandler:
             trade['stop_loss'] = stop_loss
         if take_profit is not None:
             trade['take_profit'] = take_profit
+
+        # NinjaTrader is the source of truth for account balance in live mode.
+        if account_balance is not None and account_balance > 0:
+            self._account_balance = account_balance
+            trade['account_balance'] = account_balance
 
         # Recalculate risk distance from the (possibly updated) stop loss.
         is_long = trade['type'] == 'long'
@@ -127,14 +136,16 @@ class BrokerFillHandler:
             self._logger.info(
                 f"[BrokerFillHandler] ENTRY FILL: {trade['trade_id']} @ {entry_price} "
                 f"qty={trade['contracts']} (was {old_entry}, slippage={entry_price - old_entry:+.2f}) "
-                f"SL={trade['stop_loss']} TP={trade['take_profit']}"
+                f"SL={trade['stop_loss']} TP={trade['take_profit']} "
+                f"balance={self._account_balance:.2f}"
             )
 
         if self._trade_logger:
             self._trade_logger.log(
                 trade['trade_id'], "NT_ENTRY_FILL",
                 f"Filled @ {entry_price:.2f} qty={trade['contracts']} (slippage: {entry_price - old_entry:+.2f}) "
-                f"SL={trade['stop_loss']:.2f} TP={trade['take_profit']:.2f}"
+                f"SL={trade['stop_loss']:.2f} TP={trade['take_profit']:.2f} "
+                f"balance={self._account_balance:.2f}"
             )
 
         # Persist to DB and emit UI update only on success so memory and DB stay consistent.
@@ -149,6 +160,8 @@ class BrokerFillHandler:
             )
             if trade.get('contracts') is not None:
                 self._repo.update_contracts(trade['trade_id'], trade['contracts'])
+            if trade.get('account_balance') is not None:
+                self._repo.update_account_balance(trade['trade_id'], trade['account_balance'])
 
             if self._publisher:
                 self._publisher.emit('trade_entry_update', {
@@ -160,6 +173,7 @@ class BrokerFillHandler:
                     'risk': trade['risk'],
                     'risk_dollars': trade.get('risk_dollars'),
                     'risk_pct': trade.get('risk_pct'),
+                    'account_balance': trade.get('account_balance'),
                 })
         except Exception as e:
             if self._logger:

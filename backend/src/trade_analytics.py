@@ -77,6 +77,7 @@ class TradeDetail:
     risk: float
     risk_dollars: float | None
     risk_pct: float | None
+    account_balance: float | None
     contracts: float | None
     entry_time: float  # timestamp
     exit_price: float | None
@@ -99,6 +100,7 @@ class TradeDetail:
             "risk": self.risk,
             "risk_dollars": self.risk_dollars,
             "risk_pct": self.risk_pct,
+            "account_balance": self.account_balance,
             "contracts": self.contracts,
             "entry_time": self.entry_time,
             "exit_price": self.exit_price,

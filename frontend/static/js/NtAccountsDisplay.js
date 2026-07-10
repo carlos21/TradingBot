@@ -37,7 +37,8 @@ export class NtAccountsDisplay {
       const res = await fetch('/api/accounts');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const accounts = await res.json();
-      this.render(accounts, accounts.length === 0 ? 'No NT accounts configured' : null);
+      const liveAccounts = (accounts || []).filter(a => a.live_enabled !== false);
+      this.render(liveAccounts, liveAccounts.length === 0 ? 'No NT accounts configured' : null);
     } catch (e) {
       console.error('[NtAccountsDisplay] Failed to load accounts:', e);
       this.render([], 'Failed to load accounts');

@@ -155,6 +155,7 @@ class TestTradeDetail:
             risk=10.0,
             risk_dollars=200.0,
             risk_pct=0.2,
+            account_balance=50000.0,
             contracts=2.0,
             entry_time=1700000000.0,
             exit_price=130.0,

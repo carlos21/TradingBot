@@ -84,9 +84,15 @@ export class TradeHistory {
       const pnlText = trade.pnl_usd !== null && trade.pnl_usd !== undefined
         ? `$${trade.pnl_usd.toFixed(2)}`
         : (result !== null && result !== undefined ? `${result.toFixed(2)}R` : '-');
-      // Calculate % return on account: result (R) × risk_pct (% of account risked)
+      // Calculate % return on account. Prefer exact broker-reported values:
+      // pnl_usd / account_balance * 100. Fall back to R * risk_pct for legacy trades.
       let pctText = '-';
-      if (result !== null && result !== undefined && trade.risk_pct) {
+      if (trade.pnl_usd !== null && trade.pnl_usd !== undefined
+          && trade.account_balance !== null && trade.account_balance !== undefined
+          && trade.account_balance > 0) {
+        const pct = trade.pnl_usd / trade.account_balance * 100;
+        pctText = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
+      } else if (result !== null && result !== undefined && trade.risk_pct) {
         const pct = result * trade.risk_pct;
         pctText = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
       }

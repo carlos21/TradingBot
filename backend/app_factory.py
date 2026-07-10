@@ -476,11 +476,15 @@ def create_app(
             stop_loss = payload.get('stop_loss')
             take_profit = payload.get('take_profit')
             quantity = payload.get('quantity')
+            account_balance = payload.get('account_balance')
             if trade_id and entry_price is not None:
-                trade_manager.handle_broker_entry_fill(trade_id, entry_price, stop_loss, take_profit, quantity)
+                trade_manager.handle_broker_entry_fill(
+                    trade_id, entry_price, stop_loss, take_profit, quantity,
+                    account_balance=account_balance,
+                )
                 logger.info(
                     f"[BrokerFill] Entry fill handled for {trade_id} @ {entry_price} "
-                    f"qty={quantity} SL={stop_loss} TP={take_profit}"
+                    f"qty={quantity} SL={stop_loss} TP={take_profit} balance={account_balance}"
                 )
 
         def _handle_exit_fill(payload):
@@ -489,6 +493,7 @@ def create_app(
             result_type = payload.get('result_type', 'CLOSE')
             broker_pnl_usd = payload.get('realized_pnl')
             broker_fees = payload.get('commission')
+            account_balance = payload.get('account_balance')
             if trade_id and exit_price is not None:
                 trade_manager.handle_broker_fill(
                     trade_id,
@@ -496,6 +501,7 @@ def create_app(
                     result_type,
                     broker_pnl_usd=broker_pnl_usd,
                     broker_fees=broker_fees,
+                    account_balance=account_balance,
                 )
                 logger.info(
                     f"[BrokerFill] Exit fill for {trade_id} @ {exit_price} ({result_type}) "

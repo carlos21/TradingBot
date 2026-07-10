@@ -25,6 +25,7 @@ class Trade(Base):
     risk         = Column(Float,   nullable=False)
     risk_dollars = Column(Float,   nullable=True)
     risk_pct     = Column(Float,   nullable=True)
+    account_balance = Column(Float, nullable=True)
     contracts    = Column(Float,   nullable=True)
     entry_time   = Column(DateTime(timezone=True), nullable=False)
     exit_price   = Column(Float,   nullable=True)
@@ -141,6 +142,11 @@ def setup_database(db_url: str = "sqlite:///./database.db"):
         elif 'contracts' not in columns:
             with db.get_engine().connect() as conn:
                 conn.execute(text("ALTER TABLE trades ADD COLUMN contracts FLOAT"))
+                conn.commit()
+            # logger removed - pass via constructor if needed
+        if 'account_balance' not in columns:
+            with db.get_engine().connect() as conn:
+                conn.execute(text("ALTER TABLE trades ADD COLUMN account_balance FLOAT"))
                 conn.commit()
             # logger removed - pass via constructor if needed
         if 'fees' not in columns:

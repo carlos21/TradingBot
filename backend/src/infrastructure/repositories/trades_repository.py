@@ -47,6 +47,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
             risk=t.risk,
             risk_dollars=t.risk_dollars,
             risk_pct=t.risk_pct,
+            account_balance=t.account_balance,
             contracts=t.contracts,
             entry_time=self._ensure_utc(t.entry_time),
             exit_price=t.exit_price,
@@ -75,6 +76,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
         params: dict | None = None,
         risk_dollars: float | None = None,
         risk_pct: float | None = None,
+        account_balance: float | None = None,
         contracts: float | None = None,
         source: str | None = None,
         account: str | None = None,
@@ -92,6 +94,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
                 risk=risk,
                 risk_dollars=risk_dollars,
                 risk_pct=risk_pct,
+                account_balance=account_balance,
                 contracts=contracts,
                 entry_time=entry_time,
                 params=params or {},
@@ -201,6 +204,24 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
                 db.close()
                 raise DBNotFoundException(f"Trade {trade_id} not found")
             t.contracts = contracts
+            try:
+                db.commit()
+                db.refresh(t)
+            except Exception as e:
+                db.rollback()
+                raise DBException(str(e)) from e
+            finally:
+                db.close()
+
+        return self._make_trade_data(t)
+
+    def update_account_balance(self, trade_id: str, account_balance: float) -> TradeData:
+        with self._session() as db:
+            t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
+            if not t:
+                db.close()
+                raise DBNotFoundException(f"Trade {trade_id} not found")
+            t.account_balance = account_balance
             try:
                 db.commit()
                 db.refresh(t)

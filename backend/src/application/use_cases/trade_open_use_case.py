@@ -174,6 +174,7 @@ class TradeOpenUseCase:
             params=params or {},
             risk_dollars=risk_dollars,
             risk_pct=calculated_risk_pct,
+            account_balance=self._account_balance if self._account_balance > 0 else None,
             contracts=contracts,
             source=source,
             account=account,

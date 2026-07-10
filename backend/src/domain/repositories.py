@@ -84,6 +84,7 @@ class TradeWriter(ABC):
                      entry_time: datetime, params: dict | None = None,
                      risk_dollars: float | None = None,
                      risk_pct: float | None = None,
+                     account_balance: float | None = None,
                      contracts: float | None = None,
                      trade_id: str | None = None) -> TradeData:
         """Insert a new trade. If trade_id is provided, use it instead of generating a UUID."""
@@ -122,6 +123,10 @@ class TradeModifier(ABC):
     @abstractmethod
     def update_contracts(self, trade_id: str, contracts: float) -> TradeData:
         """Update the contracts/lots field for a trade."""
+
+    @abstractmethod
+    def update_account_balance(self, trade_id: str, account_balance: float) -> TradeData:
+        """Update the account balance snapshot for a trade."""
 
 
 class TradeLogger(ABC):

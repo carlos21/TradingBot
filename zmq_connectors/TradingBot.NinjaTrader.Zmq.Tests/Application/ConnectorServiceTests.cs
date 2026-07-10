@@ -338,7 +338,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             service.OnExecutionUpdate(entry, 20000, 2);
 
             _orderExecutionService.Received(1).SubmitOrders(Arg.Is<IReadOnlyList<BrokerOrder>>(list => list.Count == 2 && list.Contains(stop) && list.Contains(target)));
-            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20020, account: "Sim101", quantity: 2);
+            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20020, account: "Sim101", quantity: 2, accountBalance: account.CashValue);
         }
 
         [Fact]
@@ -357,6 +357,27 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             service.OnExecutionUpdate(stop, 19990, 2);
 
             _network.Received(1).SendExitFill("t1", 19990, "SL", account: "Sim101", realizedPnl: -20);
+            _orderTracker.TryGetStopLoss("t1", out _).Should().BeFalse();
+        }
+
+        [Fact]
+        public void OnExecutionUpdate_StopLossFill_SendsAccountBalance()
+        {
+            var service = CreateService();
+            var account = TestDataFactory.Account(cashValue: 54321);
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, avgFill: 20000);
+            var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Filled, filled: 2);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackStopLoss("t1", stop);
+            _pnlCalculator.Calculate(entry, stop).Returns(new PnlResult(-20, 0));
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _tradeIdExtractor.ExtractTradeId("Stop_t1").Returns("t1");
+            _tradeIdExtractor.IsStopOrder("Stop_t1").Returns(true);
+
+            service.OnExecutionUpdate(stop, 19990, 2);
+
+            _network.Received(1).SendExitFill("t1", 19990, "SL", account: "Sim101", realizedPnl: -20, accountBalance: 54321);
             _orderTracker.TryGetStopLoss("t1", out _).Should().BeFalse();
         }
 
@@ -496,7 +517,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             service.OnExecutionUpdate(entry, 20000, 2);
 
             _orderExecutionService.Received(1).SubmitOrders(Arg.Is<IReadOnlyList<BrokerOrder>>(list => list.Count == 2 && list.Contains(stop) && list.Contains(target)));
-            _network.Received(1).SendEntryFill("t1", 20000, 20010, 19980, account: "Sim101", quantity: 2);
+            _network.Received(1).SendEntryFill("t1", 20000, 20010, 19980, account: "Sim101", quantity: 2, accountBalance: account.CashValue);
         }
 
         [Fact]
@@ -522,7 +543,30 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             _orderExecutionService.Received(1).CreateStopLossOrder(entry.Instrument, account, OrderSide.Sell, 1, 19990, "t1");
             _orderExecutionService.Received(1).CreateTakeProfitOrder(entry.Instrument, account, OrderSide.Sell, 1, 20020, "t1");
             _orderExecutionService.Received(1).SubmitOrders(Arg.Is<IReadOnlyList<BrokerOrder>>(list => list.Count == 2 && list.Contains(stop) && list.Contains(target)));
-            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20020, account: "Sim101", quantity: 1);
+            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20020, account: "Sim101", quantity: 1, accountBalance: account.CashValue);
+        }
+
+        [Fact]
+        public void OnExecutionUpdate_EntryFill_SendsAccountBalance()
+        {
+            var service = CreateService();
+            var account = TestDataFactory.Account(cashValue: 12345.67);
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
+            var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19990);
+            var target = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, state: OrderState.Working, limitPrice: 20040);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+            _orderExecutionService.CreateStopLossOrder(entry.Instrument, account, OrderSide.Sell, 2, 19990, "t1").Returns(stop);
+            _orderExecutionService.CreateTakeProfitOrder(entry.Instrument, account, OrderSide.Sell, 2, 20020, "t1").Returns(target);
+
+            service.OnExecutionUpdate(entry, 20000, 2);
+
+            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20020, account: "Sim101", quantity: 2, accountBalance: 12345.67);
         }
 
         [Fact]
@@ -894,7 +938,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             service.OnExecutionUpdate(entry, 20000, 2);
 
             _orderExecutionService.Received(1).SubmitOrders(Arg.Is<IReadOnlyList<BrokerOrder>>(list => list.Count == 2 && list.Contains(stop) && list.Contains(target)));
-            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20040, account: "Sim101", quantity: 2);
+            _network.Received(1).SendEntryFill("t1", 20000, 19990, 20040, account: "Sim101", quantity: 2, accountBalance: account.CashValue);
         }
 
         [Fact]

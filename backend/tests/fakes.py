@@ -144,7 +144,7 @@ class FakeTradeRepository:
         """Alias used by __reset_all to clear only in-memory fakes between scenarios."""
         self.clear()
 
-    def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None, risk_dollars=None, risk_pct=None, contracts=None, source=None, account=None, signal_id=None, trade_id=None):
+    def insert_trade(self, pair, trade_type, entry_price, stop_loss, take_profit, risk, entry_time, params=None, risk_dollars=None, risk_pct=None, account_balance=None, contracts=None, source=None, account=None, signal_id=None, trade_id=None):
         self._seq += 1
         trade_id = trade_id if trade_id else f"T{self._seq}"
 
@@ -158,6 +158,7 @@ class FakeTradeRepository:
             "risk": risk,
             "risk_dollars": risk_dollars,
             "risk_pct": risk_pct,
+            "account_balance": account_balance,
             "contracts": contracts,
             "entry_time": entry_time,
             "params": params,
@@ -175,6 +176,7 @@ class FakeTradeRepository:
             risk=risk,
             risk_dollars=risk_dollars,
             risk_pct=risk_pct,
+            account_balance=account_balance,
             contracts=contracts,
             entry_time=entry_time,
             exit_price=None,
@@ -221,6 +223,12 @@ class FakeTradeRepository:
                 t['contracts'] = contracts
                 return
 
+    def update_account_balance(self, trade_id, account_balance):
+        for t in self.inserted:
+            if t['trade_id'] == trade_id:
+                t['account_balance'] = account_balance
+                return
+
     def close_trade(self, trade_id, exit_price, exit_time, result, result_type=None, fees=None, pnl_usd=None):
         self.closed.append({
             "trade_id": trade_id,
@@ -259,6 +267,7 @@ class FakeTradeRepository:
                     risk=t['risk'],
                     risk_dollars=t.get('risk_dollars'),
                     risk_pct=t.get('risk_pct'),
+                    account_balance=t.get('account_balance'),
                     contracts=t.get('contracts'),
                     entry_time=t['entry_time'],
                     exit_price=closed_info['exit_price'] if closed_info else None,
@@ -301,6 +310,7 @@ class FakeTradeRepository:
                 risk=t['risk'],
                 risk_dollars=t.get('risk_dollars'),
                 risk_pct=t.get('risk_pct'),
+                account_balance=t.get('account_balance'),
                 contracts=t.get('contracts'),
                 entry_time=t['entry_time'],
                 exit_price=exit_price,

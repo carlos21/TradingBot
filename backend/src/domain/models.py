@@ -36,6 +36,7 @@ class TradeData:
     risk: float
     risk_dollars: float | None
     risk_pct: float | None
+    account_balance: float | None
     contracts: float | None
     entry_time: datetime
     exit_price: float | None

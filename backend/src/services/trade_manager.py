@@ -706,7 +706,8 @@ class TradeManager:
     # ------------------------------------------------------------------
     def handle_broker_entry_fill(self, trade_id: str, entry_price: float,
                                 stop_loss: float = None, take_profit: float = None,
-                                quantity: float | None = None):
+                                quantity: float | None = None,
+                                account_balance: float | None = None):
         trade = next((t for t in self.open_trades if t['trade_id'] == trade_id), None)
         if not trade:
             self.logger.warning(f"[TradeManager] Entry fill for {trade_id} but trade not in memory")
@@ -714,10 +715,19 @@ class TradeManager:
 
         self.logger.info(
             f"[TradeManager] ENTRY FILL received for {trade_id}: entry={entry_price} "
-            f"qty={quantity} SL={stop_loss} TP={take_profit}"
+            f"qty={quantity} SL={stop_loss} TP={take_profit} balance={account_balance}"
         )
+
+        # NinjaTrader is the source of truth for account balance in live mode.
+        if account_balance is not None and account_balance > 0:
+            self.account_balance = account_balance
+            self._open_use_case.update_account_balance(self.account_balance)
+
         self._broker_handler.update_balance(self.account_balance)
-        self._broker_handler.handle_entry_fill(trade, entry_price, stop_loss, take_profit, quantity)
+        self._broker_handler.handle_entry_fill(
+            trade, entry_price, stop_loss, take_profit, quantity,
+            account_balance=account_balance,
+        )
 
     def handle_broker_fill(
         self,
@@ -726,6 +736,7 @@ class TradeManager:
         result_type: str = None,
         broker_pnl_usd: float | None = None,
         broker_fees: float | None = None,
+        account_balance: float | None = None,
     ):
         trade = next((t for t in self.open_trades if t['trade_id'] == trade_id), None)
         if not trade:
@@ -734,8 +745,15 @@ class TradeManager:
 
         self.logger.info(
             f"[TradeManager] EXIT FILL received for {trade_id}: exit={exit_price} "
-            f"type={result_type} broker_pnl={broker_pnl_usd} broker_fees={broker_fees}"
+            f"type={result_type} broker_pnl={broker_pnl_usd} broker_fees={broker_fees} "
+            f"balance={account_balance}"
         )
+
+        # NinjaTrader is the source of truth for account balance in live mode.
+        if account_balance is not None and account_balance > 0:
+            self.account_balance = account_balance
+            self._open_use_case.update_account_balance(self.account_balance)
+            self._broker_handler.update_balance(self.account_balance)
 
         # Atomic guard: prevent duplicate fills from double-counting PnL
         if not self._guard_close(trade_id):
@@ -768,6 +786,13 @@ class TradeManager:
 
         # Broker is source of truth — trade is closed even if DB persist failed
         self._cleanup_after_close_attempt(trade_id, result, remove_on_failure=True)
+
+        # Persist the broker-reported exit-time balance on the closed trade record.
+        if account_balance is not None and account_balance > 0:
+            try:
+                self.trade_repository.update_account_balance(trade_id, account_balance)
+            except Exception as e:
+                self.logger.error(f"[TradeManager] Failed to persist account balance for {trade_id}: {e}")
 
     def notify_strategy_close(self, trade_id: str, exit_price: float, result: float,
                                pnl_usd: float, fees: float, result_type: str, exit_time: float):

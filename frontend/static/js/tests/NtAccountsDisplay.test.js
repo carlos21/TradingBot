@@ -206,4 +206,72 @@ describe('NtAccountsDisplay', () => {
     expect(popover.textContent).toContain('B');
     expect(popover.textContent).toContain('C');
   });
+
+  it('renders only live-enabled accounts', async () => {
+    mockFetch([
+      { name: 'LiveOne', live_enabled: true },
+      { name: 'DisabledOne', live_enabled: false },
+      { name: 'LiveTwo', live_enabled: true },
+    ]);
+
+    const display = new NtAccountsDisplay({ on: () => {}, emit: () => {} });
+    await display.loadAccounts();
+
+    const container = document.getElementById('ntAccountsDisplay');
+    expect(container.textContent).toContain('LiveOne');
+    expect(container.textContent).toContain('LiveTwo');
+    expect(container.textContent).not.toContain('DisabledOne');
+  });
+
+  it('excludes non-live accounts from the overflow popover', async () => {
+    mockFetch([
+      { name: 'A', live_enabled: true },
+      { name: 'B', live_enabled: false },
+      { name: 'C', live_enabled: true },
+      { name: 'D', live_enabled: false },
+      { name: 'E', live_enabled: true },
+    ]);
+
+    const display = new NtAccountsDisplay({ on: () => {}, emit: () => {} });
+    await display.loadAccounts();
+
+    const overflowBtn = document.querySelector('#ntAccountsDisplay button');
+    overflowBtn.click();
+
+    const popover = document.querySelector('body > div.absolute');
+    expect(popover.textContent).toContain('All Accounts (3)');
+    expect(popover.textContent).toContain('A');
+    expect(popover.textContent).toContain('C');
+    expect(popover.textContent).toContain('E');
+    expect(popover.textContent).not.toContain('B');
+    expect(popover.textContent).not.toContain('D');
+  });
+
+  it('treats accounts without live_enabled as live-enabled for backward compatibility', async () => {
+    mockFetch([
+      { name: 'LegacyA' },
+      { name: 'LegacyB' },
+    ]);
+
+    const display = new NtAccountsDisplay({ on: () => {}, emit: () => {} });
+    await display.loadAccounts();
+
+    const container = document.getElementById('ntAccountsDisplay');
+    expect(container.textContent).toContain('LegacyA');
+    expect(container.textContent).toContain('LegacyB');
+  });
+
+  it('shows empty state when all accounts are non-live', async () => {
+    mockFetch([
+      { name: 'DisabledA', live_enabled: false },
+      { name: 'DisabledB', live_enabled: false },
+    ]);
+
+    const display = new NtAccountsDisplay({ on: () => {}, emit: () => {} });
+    await display.loadAccounts();
+
+    expect(document.getElementById('ntAccountsDisplay').textContent).toContain('No accounts');
+    expect(document.getElementById('ntAccountsWarning').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('testTradeControls').classList.contains('hidden')).toBe(true);
+  });
 });

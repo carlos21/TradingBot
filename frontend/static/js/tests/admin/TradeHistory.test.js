@@ -274,4 +274,46 @@ describe('TradeHistory', () => {
     expect(history.formatTime(null)).toBe('-');
     expect(history.formatTime(1700000000)).toContain('Nov');
   });
+
+  it('renders exact percentage from pnl_usd and account_balance', async () => {
+    const { http, api } = buildApi();
+    http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=50&offset=0', {
+      trades: [sampleTrade({ result: 5, pnl_usd: 4050, account_balance: 50625, risk_pct: 1.6 })],
+      total: 1,
+    });
+
+    const history = new TradeHistory(api);
+    await history.load();
+
+    const tbody = document.getElementById('trades-tbody');
+    expect(tbody.textContent).toContain('+8.00%');
+  });
+
+  it('falls back to result * risk_pct when account_balance is missing', async () => {
+    const { http, api } = buildApi();
+    http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=50&offset=0', {
+      trades: [sampleTrade({ result: 5, pnl_usd: 4050, account_balance: null, risk_pct: 1.6 })],
+      total: 1,
+    });
+
+    const history = new TradeHistory(api);
+    await history.load();
+
+    const tbody = document.getElementById('trades-tbody');
+    expect(tbody.textContent).toContain('+8.00%');
+  });
+
+  it('renders negative exact percentage for losses', async () => {
+    const { http, api } = buildApi();
+    http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=50&offset=0', {
+      trades: [sampleTrade({ result: -1, pnl_usd: -810, account_balance: 50625, risk_pct: 1.6, result_type: 'SL' })],
+      total: 1,
+    });
+
+    const history = new TradeHistory(api);
+    await history.load();
+
+    const tbody = document.getElementById('trades-tbody');
+    expect(tbody.textContent).toContain('-1.60%');
+  });
 });

@@ -324,6 +324,7 @@ class EntryFillMessage:
     slippage: float | None = None    # Difference from requested entry
     quantity: int | None = None      # Broker-reported filled quantity (C# uses 'quantity')
     account: str | None = None       # NT account that reported the fill
+    account_balance: float | None = None  # Broker-reported account CashValue at fill time
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
@@ -340,6 +341,8 @@ class EntryFillMessage:
             payload["quantity"] = self.quantity
         if self.account is not None:
             payload["account"] = self.account
+        if self.account_balance is not None:
+            payload["account_balance"] = self.account_balance
 
         return MessageEnvelope.create(
             msg_type=MessageType.ENTRY_FILL,
@@ -358,6 +361,7 @@ class ExitFillMessage:
     account: str | None = None    # NT account that reported the fill
     realized_pnl: float | None = None  # Broker-reported realized PnL in USD
     commission: float | None = None    # Broker-reported commission in USD
+    account_balance: float | None = None  # Broker-reported account CashValue at fill time
 
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         payload = {
@@ -373,6 +377,8 @@ class ExitFillMessage:
             payload["realized_pnl"] = self.realized_pnl
         if self.commission is not None:
             payload["commission"] = self.commission
+        if self.account_balance is not None:
+            payload["account_balance"] = self.account_balance
 
         return MessageEnvelope.create(
             msg_type=MessageType.EXIT_FILL,

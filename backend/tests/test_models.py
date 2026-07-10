@@ -44,6 +44,7 @@ class TestTradeData:
             "risk": 10.0,
             "risk_dollars": None,
             "risk_pct": None,
+            "account_balance": None,
             "contracts": None,
             "entry_time": datetime(2025, 1, 1, tzinfo=timezone.utc),
             "exit_price": None,

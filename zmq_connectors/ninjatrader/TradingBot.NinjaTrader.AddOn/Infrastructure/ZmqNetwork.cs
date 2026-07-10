@@ -171,7 +171,7 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
         public void SendHistoryEnd() => Send(MessageType.HistoryEnd, new JObject());
         public void SendRefreshStart() => Send(MessageType.RefreshStart, new JObject());
 
-        public void SendEntryFill(string tradeId, double entryPrice, double? stopLoss = null, double? takeProfit = null, double? slippage = null, string account = null, double? quantity = null)
+        public void SendEntryFill(string tradeId, double entryPrice, double? stopLoss = null, double? takeProfit = null, double? slippage = null, string account = null, double? quantity = null, double? accountBalance = null)
         {
             var payload = new JObject { ["trade_id"] = tradeId, ["entry_price"] = entryPrice };
             if (stopLoss.HasValue) payload["stop_loss"] = stopLoss.Value;
@@ -179,10 +179,11 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             if (slippage.HasValue) payload["slippage"] = slippage.Value;
             if (account != null) payload["account"] = account;
             if (quantity.HasValue) payload["quantity"] = quantity.Value;
+            if (accountBalance.HasValue) payload["account_balance"] = accountBalance.Value;
             Send(MessageType.EntryFill, payload);
         }
 
-        public void SendExitFill(string tradeId, double exitPrice, string resultType, string account = null, double? realizedPnl = null, double? commission = null)
+        public void SendExitFill(string tradeId, double exitPrice, string resultType, string account = null, double? realizedPnl = null, double? commission = null, double? accountBalance = null)
         {
             var payload = new JObject
             {
@@ -194,6 +195,7 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             if (account != null) payload["account"] = account;
             if (realizedPnl.HasValue) payload["realized_pnl"] = realizedPnl.Value;
             if (commission.HasValue) payload["commission"] = commission.Value;
+            if (accountBalance.HasValue) payload["account_balance"] = accountBalance.Value;
             Send(MessageType.ExitFill, payload);
         }
 

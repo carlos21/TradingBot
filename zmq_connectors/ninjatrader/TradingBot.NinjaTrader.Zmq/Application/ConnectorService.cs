@@ -933,9 +933,9 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 return;
             }
 
-            _logger.Success($"ENTRY FILL: {tradeId} @ {order.AverageFillPrice} SL={sl} TP={tp} qty={order.Filled} account={account.Name}");
-            _network.SendEntryFill(tradeId, order.AverageFillPrice, sl, tp, account: account.Name, quantity: order.Filled);
-            _network.SendTradeLog(tradeId, "NT:FILL", $"Entry filled @ {fillPrice}");
+            _logger.Success($"ENTRY FILL: {tradeId} @ {order.AverageFillPrice} SL={sl} TP={tp} qty={order.Filled} account={account.Name} balance={account.CashValue:C2}");
+            _network.SendEntryFill(tradeId, order.AverageFillPrice, sl, tp, account: account.Name, quantity: order.Filled, accountBalance: account.CashValue);
+            _network.SendTradeLog(tradeId, "NT:FILL", $"Entry filled @ {fillPrice} balance={account.CashValue:C2}");
 
             _recentEntryFills[tradeId] = _clock.UtcNow;
         }
@@ -1002,9 +1002,11 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
             var entryOrder = GetEntryForExit(tradeId);
             var pnl = _pnlCalculator.Calculate(entryOrder, order);
-            _logger.Warning($"EXIT FILL (SL): {tradeId} @ {fillPrice} account={order.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
-            _network.SendExitFill(tradeId, fillPrice, "SL", account: order.AccountName, realizedPnl: pnl?.RealizedPnl);
-            _network.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+            var account = ResolveAccountForOrder(order);
+            var balanceInfo = account != null ? $" balance={account.CashValue:C2}" : "";
+            _logger.Warning($"EXIT FILL (SL): {tradeId} @ {fillPrice} account={order.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
+            _network.SendExitFill(tradeId, fillPrice, "SL", account: order.AccountName, realizedPnl: pnl?.RealizedPnl, accountBalance: account?.CashValue);
+            _network.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
             CancelWorkingBracketOrders(tradeId, order.AccountName);
             _orderTracker.RemoveTrade(tradeId);
         }
@@ -1031,9 +1033,11 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
             var entryOrder = GetEntryForExit(tradeId);
             var pnl = _pnlCalculator.Calculate(entryOrder, order);
-            _logger.Success($"EXIT FILL (TP): {tradeId} @ {fillPrice} account={order.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
-            _network.SendExitFill(tradeId, fillPrice, "TP", account: order.AccountName, realizedPnl: pnl?.RealizedPnl);
-            _network.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+            var account = ResolveAccountForOrder(order);
+            var balanceInfo = account != null ? $" balance={account.CashValue:C2}" : "";
+            _logger.Success($"EXIT FILL (TP): {tradeId} @ {fillPrice} account={order.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
+            _network.SendExitFill(tradeId, fillPrice, "TP", account: order.AccountName, realizedPnl: pnl?.RealizedPnl, accountBalance: account?.CashValue);
+            _network.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
             CancelWorkingBracketOrders(tradeId, order.AccountName);
             _orderTracker.RemoveTrade(tradeId);
         }
@@ -1056,9 +1060,11 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
             var entryOrder = GetEntryForExit(tradeId);
             var pnl = _pnlCalculator.Calculate(entryOrder, order);
-            _logger.Success($"POSITION CLOSED: {tradeId} @ {fillPrice} account={order.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
-            _network.SendExitFill(tradeId, fillPrice, "CLOSE", account: order.AccountName, realizedPnl: pnl?.RealizedPnl);
-            _network.SendTradeLog(tradeId, "NT:FILL", $"Position closed @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+            var account = ResolveAccountForOrder(order);
+            var balanceInfo = account != null ? $" balance={account.CashValue:C2}" : "";
+            _logger.Success($"POSITION CLOSED: {tradeId} @ {fillPrice} account={order.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
+            _network.SendExitFill(tradeId, fillPrice, "CLOSE", account: order.AccountName, realizedPnl: pnl?.RealizedPnl, accountBalance: account?.CashValue);
+            _network.SendTradeLog(tradeId, "NT:FILL", $"Position closed @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
             CancelWorkingBracketOrders(tradeId, order.AccountName);
             _orderTracker.RemoveTrade(tradeId);
         }
@@ -1084,9 +1090,11 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 if (isOpposing)
                 {
                     var pnl = _pnlCalculator.Calculate(entryOrder, closeOrder);
-                    _logger.Success($"MANUAL CLOSE DETECTED: {tradeId} @ {fillPrice} via {closeOrder.Name} account={closeOrder.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
-                    _network.SendExitFill(tradeId, fillPrice, "CLOSE", account: closeOrder.AccountName, realizedPnl: pnl?.RealizedPnl);
-                    _network.SendTradeLog(tradeId, "NT:FILL", $"Manual position closed @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}");
+                    var account = ResolveAccountForOrder(closeOrder);
+                    var balanceInfo = account != null ? $" balance={account.CashValue:C2}" : "";
+                    _logger.Success($"MANUAL CLOSE DETECTED: {tradeId} @ {fillPrice} via {closeOrder.Name} account={closeOrder.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
+                    _network.SendExitFill(tradeId, fillPrice, "CLOSE", account: closeOrder.AccountName, realizedPnl: pnl?.RealizedPnl, accountBalance: account?.CashValue);
+                    _network.SendTradeLog(tradeId, "NT:FILL", $"Manual position closed @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
                     CancelWorkingBracketOrders(tradeId, closeOrder.AccountName);
                     _orderTracker.RemoveTrade(tradeId);
                     return;
