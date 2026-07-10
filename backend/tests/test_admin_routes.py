@@ -25,6 +25,9 @@ class FakeAdminController:
     def delete_trade(self, trade_id):
         return {"deleted": True, "trade_id": trade_id}
 
+    def delete_trades(self, trade_ids):
+        return {"deleted": True, "trade_ids": trade_ids}
+
     def get_analytics(self, pair):
         return {"pair": pair}
 
@@ -108,6 +111,33 @@ class TestAdminRoutes:
             data = resp.get_json()
             assert data["deleted"] is True
             assert data["trade_id"] == "T1"
+
+    def test_admin_bulk_delete_trades(self, app):
+        with app.test_client() as client:
+            resp = client.post(
+                "/api/admin/trades/bulk-delete",
+                json={"trade_ids": ["T1", "T2"]},
+            )
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data["deleted"] is True
+            assert data["trade_ids"] == ["T1", "T2"]
+
+    def test_admin_bulk_delete_trades_requires_list(self, app):
+        with app.test_client() as client:
+            resp = client.post(
+                "/api/admin/trades/bulk-delete",
+                json={"trade_ids": []},
+            )
+            assert resp.status_code == 400
+
+    def test_admin_bulk_delete_trades_rejects_invalid_ids(self, app):
+        with app.test_client() as client:
+            resp = client.post(
+                "/api/admin/trades/bulk-delete",
+                json={"trade_ids": ["T1", ""]},
+            )
+            assert resp.status_code == 400
 
     def test_admin_analytics(self, app):
         with app.test_client() as client:

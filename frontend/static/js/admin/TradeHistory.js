@@ -10,6 +10,7 @@ export class TradeHistory {
     this.limit = 50;
     this.offset = 0;
     this.selectedAccount = '';
+    this.selectedTradeIds = new Set();
     this.onTradeClick = null;
   }
 
@@ -72,7 +73,7 @@ export class TradeHistory {
 
     if (!this.trades || this.trades.length === 0) {
       console.log('[TradeHistory] No trades to display');
-      tbody.innerHTML = '<tr><td colspan="9" class="px-4 py-8 text-center text-slate-500">No trades found</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="10" class="px-4 py-8 text-center text-slate-500">No trades found</td></tr>';
       return;
     }
     console.log(`[TradeHistory] Rendering ${this.trades.length} trades`);
@@ -97,8 +98,12 @@ export class TradeHistory {
         pctText = `${pct > 0 ? '+' : ''}${pct.toFixed(2)}%`;
       }
 
+      const isSelected = this.selectedTradeIds.has(trade.trade_id);
       return `
         <tr class="cursor-pointer transition-colors hover:bg-accent-500/10" data-trade-id="${trade.trade_id}">
+          <td class="px-4 py-3">
+            <input type="checkbox" class="trade-select-checkbox rounded border-surface-600 bg-surface-700 text-accent-500 focus:ring-accent-500" data-trade-id="${trade.trade_id}" ${isSelected ? 'checked' : ''}>
+          </td>
           <td class="px-4 py-3">
             <span class="px-2 py-1 rounded text-xs font-medium ${trade.type === 'long' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-500'}">
               ${trade.type.toUpperCase()}
@@ -132,7 +137,7 @@ export class TradeHistory {
     // Add click handlers
     tbody.querySelectorAll('tr').forEach(row => {
       row.addEventListener('click', (e) => {
-        if (e.target.closest('.view-logs-btn') || e.target.closest('.delete-trade-btn')) {
+        if (e.target.closest('.view-logs-btn') || e.target.closest('.delete-trade-btn') || e.target.closest('.trade-select-checkbox')) {
           return;
         }
         const tradeId = row.dataset.tradeId;
@@ -157,6 +162,7 @@ export class TradeHistory {
         }
         try {
           await this.api.deleteTrade(tradeId);
+          this.selectedTradeIds.delete(tradeId);
           this.load();
         } catch (error) {
           console.error('[TradeHistory] Failed to delete trade:', error);
@@ -164,6 +170,83 @@ export class TradeHistory {
         }
       });
     });
+
+    tbody.querySelectorAll('.trade-select-checkbox').forEach(checkbox => {
+      checkbox.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const tradeId = checkbox.dataset.tradeId;
+        if (checkbox.checked) {
+          this.selectedTradeIds.add(tradeId);
+        } else {
+          this.selectedTradeIds.delete(tradeId);
+        }
+        this.updateBulkDeleteButton();
+        this.updateSelectAllCheckbox();
+      });
+    });
+
+    this.attachSelectAllHandler();
+    this.attachBulkDeleteHandler();
+    this.updateBulkDeleteButton();
+    this.updateSelectAllCheckbox();
+  }
+
+  attachSelectAllHandler() {
+    const selectAll = document.getElementById('select-all-trades');
+    if (!selectAll) return;
+    selectAll.replaceWith(selectAll.cloneNode(true));
+    const fresh = document.getElementById('select-all-trades');
+    fresh.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const checked = fresh.checked;
+      this.trades.forEach(trade => {
+        if (checked) {
+          this.selectedTradeIds.add(trade.trade_id);
+        } else {
+          this.selectedTradeIds.delete(trade.trade_id);
+        }
+      });
+      this.render();
+      this.updateBulkDeleteButton();
+    });
+  }
+
+  attachBulkDeleteHandler() {
+    const btn = document.getElementById('bulk-delete-trades-btn');
+    if (!btn) return;
+    btn.replaceWith(btn.cloneNode(true));
+    const fresh = document.getElementById('bulk-delete-trades-btn');
+    fresh.addEventListener('click', async () => {
+      const ids = [...this.selectedTradeIds];
+      if (ids.length === 0) return;
+      if (!confirm(`Delete ${ids.length} trade${ids.length === 1 ? '' : 's'} and all related data? This cannot be undone.`)) {
+        return;
+      }
+      try {
+        await this.api.deleteTrades(ids);
+        this.selectedTradeIds.clear();
+        this.load();
+      } catch (error) {
+        console.error('[TradeHistory] Failed to delete trades:', error);
+        alert('Failed to delete trades: ' + error.message);
+      }
+    });
+  }
+
+  updateBulkDeleteButton() {
+    const btn = document.getElementById('bulk-delete-trades-btn');
+    if (!btn) return;
+    const count = this.selectedTradeIds.size;
+    btn.textContent = count > 0 ? `Delete Selected (${count})` : 'Delete Selected';
+    btn.disabled = count === 0;
+  }
+
+  updateSelectAllCheckbox() {
+    const selectAll = document.getElementById('select-all-trades');
+    if (!selectAll || this.trades.length === 0) return;
+    const visibleIds = this.trades.map(t => t.trade_id);
+    const allSelected = visibleIds.every(id => this.selectedTradeIds.has(id));
+    selectAll.checked = allSelected;
   }
 
   updatePagination() {

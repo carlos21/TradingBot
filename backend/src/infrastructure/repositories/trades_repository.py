@@ -371,4 +371,32 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
             finally:
                 db.close()
 
+    def delete_trades(self, trade_ids: list[str]) -> None:
+        """Delete multiple trades and any child trades linked via signal_id atomically."""
+        if not trade_ids:
+            return
+        with self._session() as db:
+            existing = {
+                t.trade_id for t in
+                db.query(Trade.trade_id).filter(Trade.trade_id.in_(trade_ids)).all()
+            }
+            missing = set(trade_ids) - existing
+            if missing:
+                db.close()
+                missing_id = sorted(missing)[0]
+                raise DBNotFoundException(f"Trade {missing_id} not found")
+            try:
+                db.query(Trade).filter(Trade.signal_id.in_(trade_ids)).delete(
+                    synchronize_session=False
+                )
+                db.query(Trade).filter(Trade.trade_id.in_(trade_ids)).delete(
+                    synchronize_session=False
+                )
+                db.commit()
+            except Exception as e:
+                db.rollback()
+                raise DBException(str(e)) from e
+            finally:
+                db.close()
+
 

@@ -122,6 +122,35 @@ class TestAdminControllerTradeDetails:
         assert data["trade_id"] == trade.trade_id
 
 
+class TestAdminControllerDeleteTrades:
+
+    def test_delete_trades_removes_requested_trades(self, controller):
+        ctrl, repo, _ = controller
+        from datetime import datetime, timezone
+        t1 = repo.insert_trade(
+            pair="MNQ", trade_type="long", entry_price=100.0,
+            stop_loss=90.0, take_profit=130.0, risk=10.0,
+            entry_time=datetime.now(timezone.utc), trade_id="T1",
+        )
+        t2 = repo.insert_trade(
+            pair="MNQ", trade_type="short", entry_price=110.0,
+            stop_loss=120.0, take_profit=80.0, risk=10.0,
+            entry_time=datetime.now(timezone.utc), trade_id="T2",
+        )
+        resp, status = ctrl.delete_trades([t1.trade_id, t2.trade_id])
+        assert status == 200
+        data = resp.get_json()
+        assert data["deleted"] is True
+        assert set(data["trade_ids"]) == {t1.trade_id, t2.trade_id}
+        assert repo.get_trade(t1.trade_id) is None
+        assert repo.get_trade(t2.trade_id) is None
+
+    def test_delete_trades_not_found(self, controller):
+        ctrl, _, _ = controller
+        with pytest.raises(Exception):
+            ctrl.delete_trades(["NONEXISTENT"])
+
+
 class TestAdminControllerAnalytics:
 
     def test_get_analytics(self, controller):

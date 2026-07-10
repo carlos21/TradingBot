@@ -108,6 +108,10 @@ export class ApiClient {
     return this.delete(`/api/admin/trades/${tradeId}`);
   }
 
+  async deleteTrades(tradeIds) {
+    return this.post('/api/admin/trades/bulk-delete', { trade_ids: tradeIds });
+  }
+
   async getAnalytics() {
     return this.get(`/api/admin/analytics?pair=${this.pair}`);
   }

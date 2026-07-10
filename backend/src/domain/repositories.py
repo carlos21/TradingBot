@@ -99,6 +99,10 @@ class TradeWriter(ABC):
     def delete_trade(self, trade_id: str) -> None:
         """Delete a trade and any related child trades."""
 
+    @abstractmethod
+    def delete_trades(self, trade_ids: list[str]) -> None:
+        """Delete multiple trades and their related child trades atomically."""
+
 
 class TradeModifier(ABC):
     """Interface for modifying existing trades."""

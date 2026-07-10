@@ -327,6 +327,18 @@ class FakeTradeRepository:
             ))
         return results
 
+    def delete_trade(self, trade_id: str) -> None:
+        self.inserted = [t for t in self.inserted if t['trade_id'] != trade_id]
+        self.closed = [c for c in self.closed if c['trade_id'] != trade_id]
+
+    def delete_trades(self, trade_ids: list[str]) -> None:
+        ids = set(trade_ids)
+        missing = ids - {t['trade_id'] for t in self.inserted}
+        if missing:
+            raise Exception(f"Trade {sorted(missing)[0]} not found")
+        self.inserted = [t for t in self.inserted if t['trade_id'] not in ids]
+        self.closed = [c for c in self.closed if c['trade_id'] not in ids]
+
 
 class FakeNotifier(Notifier):
     def __init__(self):

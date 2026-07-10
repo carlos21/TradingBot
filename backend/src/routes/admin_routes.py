@@ -75,6 +75,20 @@ def register_admin_routes(
             _logger.error(f"[AdminRoutes] delete_trade failed: {exc}")
             abort(500, "Failed to delete trade")
 
+    @app.route('/api/admin/trades/bulk-delete', methods=['POST'])
+    def admin_bulk_delete_trades():
+        body = request.get_json(silent=True) or {}
+        trade_ids = body.get('trade_ids')
+        if not isinstance(trade_ids, list) or not trade_ids:
+            abort(400, "Request body must contain a non-empty 'trade_ids' list")
+        if not all(isinstance(tid, str) and tid for tid in trade_ids):
+            abort(400, "All trade_ids must be non-empty strings")
+        try:
+            return admin_controller.delete_trades(trade_ids)
+        except Exception as exc:
+            _logger.error(f"[AdminRoutes] bulk_delete_trades failed: {exc}")
+            abort(500, "Failed to delete trades")
+
     @app.route('/api/admin/analytics', methods=['GET'])
     def admin_analytics():
         pair = request.args.get('pair')

@@ -90,6 +90,17 @@ class AdminController:
             abort(500, "Failed to delete trade")
         return jsonify({"deleted": True, "trade_id": trade_id}), 200
 
+    def delete_trades(self, trade_ids: list[str]):
+        """Delete multiple trades and any related child trades."""
+        try:
+            self._analytics.delete_trades(trade_ids)
+        except Exception as exc:  # noqa: BLE001
+            if isinstance(exc, DBNotFoundException):
+                abort(404, str(exc))
+            self.logger.error(f"Failed to delete trades {trade_ids}: {exc}")
+            abort(500, "Failed to delete trades")
+        return jsonify({"deleted": True, "trade_ids": trade_ids}), 200
+
     def get_analytics(self, pair: str):
         """Get all analytics data for charts."""
         equity_curve = self._analytics.get_equity_curve(pair)
