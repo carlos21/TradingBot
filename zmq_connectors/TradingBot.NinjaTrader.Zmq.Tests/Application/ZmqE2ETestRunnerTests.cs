@@ -93,5 +93,18 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             result.Should().Be(0);
             _logger.Errors.Should().Contain(e => e.Exception != null && e.Exception.Message == "network down");
         }
+        [Fact]
+        public async Task RunAllScenariosAsync_SkipsMultiAccount_WhenNoAccountsConnectedAtScenarioTime()
+        {
+            // First call validates the simulation environment, second call inside multi_account returns empty.
+            _accountProvider.GetAccounts().Returns(
+                new List<BrokerAccount> { TestDataFactory.Account(name: "Sim101") },
+                new List<BrokerAccount>());
+
+            var result = await _runner.RunAllScenariosAsync();
+
+            result.Should().Be(7); // 3 basic + 4 feature (multi_account skipped)
+            _logger.Warnings.Should().Contain(w => w.Contains("multi_account: No accounts connected"));
+        }
     }
 }

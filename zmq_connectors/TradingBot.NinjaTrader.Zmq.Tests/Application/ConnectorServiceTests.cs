@@ -1917,5 +1917,491 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             tracked.Should().Be(closeOrder);
             _logger.Infos.Should().Contain(i => i.Contains("TRACKING close order for t1"));
         }
+
+        [Fact]
+        public void Disconnect_JoinsHeartbeatAndSafetyThreads_WhenAlive()
+        {
+            var service = CreateService();
+            service.SafetyCheckIntervalMs = 50;
+            service.Connect();
+            System.Threading.Thread.Sleep(800);
+
+            service.Disconnect("cleanup");
+
+            service.IsConnected.Should().BeFalse();
+            _network.Received(1).Stop();
+        }
+
+        [Fact]
+        public void CommandLoop_LogsWarning_WhenTradeIdExtractionThrows()
+        {
+            var service = CreateService();
+            var payload = new JObject { ["trade_id"] = new ThrowingToStringJObject() };
+            var envelope = MessageEnvelope.Create(MessageType.OrderOpen, payload, seqNum: 1);
+
+            var callCount = 0;
+            _network.ReceiveCommand(Arg.Any<int>()).Returns(x =>
+            {
+                callCount++;
+                return callCount == 1 ? envelope : null;
+            });
+
+            service.Connect();
+            System.Threading.Thread.Sleep(300);
+            service.Disconnect("cleanup");
+
+            _logger.Warnings.Should().Contain(w => w.Contains("Failed to extract trade_id"));
+        }
+
+        [Fact]
+        public void SafetyLoop_LogsError_WhenRunSafetyCheckThrows()
+        {
+            var orderTracker = Substitute.For<IOrderTracker>();
+            orderTracker.GetActiveTradeIds().Returns(x => throw new InvalidOperationException("tracker down"));
+            var service = new ConnectorService(
+                _config, _network, _logger, _dispatcher, orderTracker,
+                _streamingCoordinator, _accountProvider, _orderExecutionService,
+                _instrumentProvider, _barHistoryService, _pnlCalculator, _clock, _tradeIdExtractor);
+            service.SafetyGuardEnabled = true;
+            service.SafetyCheckIntervalMs = 50;
+
+            service.Connect();
+            System.Threading.Thread.Sleep(200);
+            service.Disconnect("cleanup");
+
+            _logger.Errors.Should().Contain(e => e.Message.Contains("Safety guard error"));
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_LogsError_WhenGetAccountPositionsThrows()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2);
+            _orderTracker.TrackEntry("t1", entry);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _orderExecutionService.GetAccountPositions(account).Returns(x => throw new InvalidOperationException("positions down"));
+
+            service.RunSafetyCheckOnce();
+
+            _logger.Errors.Should().Contain(e => e.Message.Contains("failed to read positions"));
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_IgnoresActiveTradeIdWithoutEntry()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Working);
+            _orderTracker.TrackStopLoss("t1", stop);
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_IgnoresCancelledEntry()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Cancelled, filled: 1, instrument: instrument);
+            _orderTracker.TrackEntry("t1", entry);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 1, "long", 20000)
+            });
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_IgnoresClosePendingEntry()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.MarkClosePending("t1");
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 2, "long", 20000)
+            });
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_TrustsTrackedStop_WhenAccountLookupFails()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Working);
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackStopLoss("t1", stop);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _accountProvider.GetAccount("Sim101").Returns((BrokerAccount)null);
+            _tradeIdExtractor.ExtractTradeId("Stop_t1").Returns("t1");
+            _tradeIdExtractor.IsStopOrder("Stop_t1").Returns(true);
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_Flattens_WhenStopLossMissing_WithoutPendingEntry()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument, avgFill: 20000);
+            var closeOrder = TestDataFactory.Order(name: "Close_t1", side: OrderSide.Sell, state: OrderState.Working);
+
+            _orderTracker.TrackEntry("t1", entry);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 2, "long", 20000)
+            });
+            _orderExecutionService.CreateMarketCloseOrder(entry.Instrument, account, OrderSide.Sell, 2, "t1").Returns(closeOrder);
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.Received(1).CreateMarketCloseOrder(entry.Instrument, account, OrderSide.Sell, 2, "t1");
+            _orderExecutionService.Received(1).SubmitOrder(closeOrder);
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_SkipsOrphanPosition_WithZeroQuantity()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 0, "long", 20000)
+            });
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_SkipsOrphanPosition_WhenPairMismatch()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var esInstrument = TestDataFactory.Instrument(name: "ES 09-25", master: "ES");
+            _streamingCoordinator.CurrentInstrument.Returns("MNQ 09-25");
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, esInstrument, 2, "long", 4500)
+            });
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_SkipsOrphanPosition_WhenAccountMissing()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var instrument = TestDataFactory.Instrument();
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { TestDataFactory.Account(name: "Sim101") });
+            _orderExecutionService.GetAccountPositions(Arg.Any<BrokerAccount>()).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition("OtherAccount", instrument, 2, "long", 20000)
+            });
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_SkipsOrphanPosition_WhenTrackedEntryExists()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Working, filled: 0, instrument: instrument);
+            _orderTracker.TrackEntry("t1", entry);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 2, "long", 20000)
+            });
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void ShouldSuppressBracketOrderError_ReturnsFalse_WhenTradeIdIsEmpty()
+        {
+            var service = CreateService();
+            var target = TestDataFactory.Order(name: "Target_", side: OrderSide.Sell, state: OrderState.Rejected);
+            _tradeIdExtractor.ExtractTradeId("Target_").Returns("");
+            _tradeIdExtractor.IsTargetOrder("Target_").Returns(true);
+
+            service.OnOrderUpdate(target);
+
+            _network.Received(1).SendError("ninjatrader", "order_state", Arg.Is<string>(s => s.Contains("Target_") && s.Contains("Rejected")));
+        }
+
+        [Fact]
+        public void OnExecutionUpdate_EntryFill_NoFills_SkipsBracket()
+        {
+            var service = CreateService();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Working, filled: 0);
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+
+            service.OnExecutionUpdate(entry, 20000, 0);
+
+            _logger.Infos.Should().Contain(i => i.Contains("no fills yet"));
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateStopLossOrder(null, null, default, 0, 0, null);
+        }
+
+        [Fact]
+        public void OnExecutionUpdate_EntryFill_NoInstrument_LogsError()
+        {
+            var service = CreateService();
+            var entry = new BrokerOrder("Entry_t1", "Sim101", null, OrderType.Market, OrderSide.Buy, OrderState.Filled, 2, 2, 20000);
+            _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+            _accountProvider.GetAccount("Sim101").Returns(TestDataFactory.Account());
+
+            service.OnExecutionUpdate(entry, 20000, 2);
+
+            _network.Received(1).SendError("ninjatrader", "bracket_creation_failed", Arg.Is<string>(s => s.Contains("instrument is null")));
+        }
+
+        [Fact]
+        public void FlattenPosition_Returns_WhenEntryHasNoFills()
+        {
+            var service = CreateService();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 0);
+            var method = typeof(ConnectorService).GetMethod("FlattenPosition", BindingFlags.NonPublic | BindingFlags.Instance);
+
+            method.Invoke(service, new object[] { entry, new PendingEntryInfo("long", 10, 2), "t1", "test" });
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void FlattenPosition_Returns_WhenCloseOrderAlreadyTracked()
+        {
+            var service = CreateService();
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
+            var closeOrder = TestDataFactory.Order(name: "Close_t1", side: OrderSide.Sell, state: OrderState.Working);
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackCloseOrder("t1", closeOrder);
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            var method = typeof(ConnectorService).GetMethod("FlattenPosition", BindingFlags.NonPublic | BindingFlags.Instance);
+
+            method.Invoke(service, new object[] { entry, new PendingEntryInfo("long", 10, 2), "t1", "test" });
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void FlattenPosition_LogsError_WhenAccountOrInstrumentMissing()
+        {
+            var service = CreateService();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: null);
+            var method = typeof(ConnectorService).GetMethod("FlattenPosition", BindingFlags.NonPublic | BindingFlags.Instance);
+
+            method.Invoke(service, new object[] { entry, new PendingEntryInfo("long", 10, 2), "t1", "test" });
+
+            _logger.Errors.Should().Contain(e => e.Message.Contains("Cannot flatten t1"));
+            _network.Received(1).SendError("ninjatrader", "flatten_failed", Arg.Any<string>());
+        }
+
+        [Fact]
+        public void FlattenPosition_LogsError_WhenCreateMarketCloseOrderThrows()
+        {
+            var service = CreateService();
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2, instrument: instrument);
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _orderExecutionService.When(x => x.CreateMarketCloseOrder(instrument, account, OrderSide.Sell, 2, "t1"))
+                .Do(x => throw new InvalidOperationException("create failed"));
+            var method = typeof(ConnectorService).GetMethod("FlattenPosition", BindingFlags.NonPublic | BindingFlags.Instance);
+
+            method.Invoke(service, new object[] { entry, new PendingEntryInfo("long", 10, 2), "t1", "test" });
+
+            _logger.Errors.Should().Contain(e => e.Message.Contains("Exception flattening t1"));
+            _network.Received(1).SendError("ninjatrader", "flatten_failed", Arg.Is<string>(s => s.Contains("create failed")));
+        }
+
+        [Fact]
+        public void HasWorkingStopForPosition_ReturnsFalse_ForNonWorkingOrMismatchedOrders()
+        {
+            var service = CreateService();
+            var instrument = TestDataFactory.Instrument();
+            var otherInstrument = TestDataFactory.Instrument(name: "ES 09-25", master: "ES");
+            var position = new BrokerPosition("Sim101", instrument, 2, "long", 20000);
+            var nonWorkingStop = TestDataFactory.Order(name: "Stop", side: OrderSide.Sell, orderType: OrderType.StopMarket, state: OrderState.Filled, instrument: instrument);
+            var wrongInstrumentStop = TestDataFactory.Order(name: "Stop2", side: OrderSide.Sell, orderType: OrderType.StopMarket, state: OrderState.Working, instrument: otherInstrument);
+            var wrongSideStop = TestDataFactory.Order(name: "Stop3", side: OrderSide.Buy, orderType: OrderType.StopMarket, state: OrderState.Working, instrument: instrument);
+            var method = typeof(ConnectorService).GetMethod("HasWorkingStopForPosition", BindingFlags.NonPublic | BindingFlags.Instance);
+
+            method.Invoke(service, new object[] { position, new List<BrokerOrder> { nonWorkingStop, wrongInstrumentStop, wrongSideStop } })
+                .Should().Be(false);
+        }
+
+        [Fact]
+        public void ShouldSkipOrphanFlatten_Skips_WhenRecentlyFlattened()
+        {
+            var service = CreateService();
+            var field = typeof(ConnectorService).GetField("_recentOrphanFlattens", BindingFlags.NonPublic | BindingFlags.Instance);
+            var dict = (System.Collections.Generic.Dictionary<string, DateTime>)field.GetValue(service);
+            dict["Sim101|MNQ"] = DateTime.UtcNow;
+            var method = typeof(ConnectorService).GetMethod("ShouldSkipOrphanFlatten", BindingFlags.NonPublic | BindingFlags.Instance);
+
+            var result = method.Invoke(service, new object[] { "Sim101", "MNQ" });
+
+            result.Should().Be(true);
+        }
+
+        [Fact]
+        public void FlattenAccountPosition_Returns_WhenRecentlyFlattened()
+        {
+            var service = CreateService();
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var field = typeof(ConnectorService).GetField("_recentOrphanFlattens", BindingFlags.NonPublic | BindingFlags.Instance);
+            var dict = (System.Collections.Generic.Dictionary<string, DateTime>)field.GetValue(service);
+            dict[$"{account.Name}|{instrument.MasterInstrumentName}"] = DateTime.UtcNow;
+            var method = typeof(ConnectorService).GetMethod("FlattenAccountPosition", BindingFlags.NonPublic | BindingFlags.Instance);
+
+            method.Invoke(service, new object[] { account, new BrokerPosition(account.Name, instrument, 2, "long", 20000), "test" });
+
+            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(null, null, default, 0, null);
+        }
+
+        [Fact]
+        public void FlattenAccountPosition_LogsError_WhenCreateMarketCloseOrderReturnsNull()
+        {
+            var service = CreateService();
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            _orderExecutionService.CreateMarketCloseOrder(instrument, account, OrderSide.Sell, 2, Arg.Is<string>(s => s.StartsWith("orphan_"))).Returns((BrokerOrder)null);
+            var method = typeof(ConnectorService).GetMethod("FlattenAccountPosition", BindingFlags.NonPublic | BindingFlags.Instance);
+
+            method.Invoke(service, new object[] { account, new BrokerPosition(account.Name, instrument, 2, "long", 20000), "test" });
+
+            _logger.Errors.Should().Contain(e => e.Message.Contains("Could not create orphan flatten order"));
+            _network.Received(1).SendError("ninjatrader", "flatten_failed", Arg.Any<string>());
+        }
+
+        [Fact]
+        public void FlattenAccountPosition_LogsError_WhenCreateMarketCloseOrderThrows()
+        {
+            var service = CreateService();
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            _orderExecutionService.When(x => x.CreateMarketCloseOrder(instrument, account, OrderSide.Sell, 2, Arg.Is<string>(s => s.StartsWith("orphan_"))))
+                .Do(x => throw new InvalidOperationException("create failed"));
+            var method = typeof(ConnectorService).GetMethod("FlattenAccountPosition", BindingFlags.NonPublic | BindingFlags.Instance);
+
+            method.Invoke(service, new object[] { account, new BrokerPosition(account.Name, instrument, 2, "long", 20000), "test" });
+
+            _logger.Errors.Should().Contain(e => e.Message.Contains("Exception flattening orphan position"));
+            _network.Received(1).SendError("ninjatrader", "flatten_failed", Arg.Any<string>());
+        }
+
+        [Fact]
+        public void RunSafetyCheckOnce_HitsTrackedEntryLambda_WhenNoEntryTracked()
+        {
+            var service = CreateService();
+            service.SafetyGuardEnabled = true;
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Working);
+            var closeOrder = TestDataFactory.Order(name: "Close_orphan", side: OrderSide.Sell, state: OrderState.Working);
+
+            _orderTracker.TrackStopLoss("t1", stop);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _orderExecutionService.GetWorkingOrders(account).Returns(new List<BrokerOrder>());
+            _orderExecutionService.GetAccountPositions(account).Returns(new List<BrokerPosition>
+            {
+                new BrokerPosition(account.Name, instrument, 3, "long", 20100)
+            });
+            _orderExecutionService.CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, OrderSide.Sell, 3, Arg.Is<string>(s => s.StartsWith("orphan_"))).Returns(closeOrder);
+
+            service.RunSafetyCheckOnce();
+
+            _orderExecutionService.Received(1).CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, OrderSide.Sell, 3, Arg.Is<string>(s => s.StartsWith("orphan_")));
+            _orderExecutionService.Received(1).SubmitOrder(closeOrder);
+        }
+
+        [Fact]
+        public void ShouldSkipOrphanFlatten_CleansExpiredEntries()
+        {
+            var service = CreateService();
+            var field = typeof(ConnectorService).GetField("_recentOrphanFlattens", BindingFlags.NonPublic | BindingFlags.Instance);
+            var dict = (System.Collections.Generic.Dictionary<string, DateTime>)field.GetValue(service);
+            dict["Sim101|MNQ"] = DateTime.UtcNow;
+            dict["Sim101|ES"] = DateTime.UtcNow.AddSeconds(-60); // expired
+            var method = typeof(ConnectorService).GetMethod("ShouldSkipOrphanFlatten", BindingFlags.NonPublic | BindingFlags.Instance);
+
+            var result = method.Invoke(service, new object[] { "Sim101", "MNQ" });
+
+            result.Should().Be(true);
+            dict.ContainsKey("Sim101|ES").Should().BeFalse();
+        }
+
+        [Fact]
+        public void GetStats_UsesDefaults_WhenStreamingCoordinatorIsNull()
+        {
+            var service = CreateService();
+            var field = typeof(ConnectorService).GetField("_streamingCoordinator", BindingFlags.NonPublic | BindingFlags.Instance);
+            field.SetValue(service, null);
+
+            var stats = service.GetStats();
+
+            stats.Should().Contain("Ticks: 0");
+            stats.Should().Contain("Bars: 0");
+            stats.Should().Contain("Partial: 0");
+        }
+
+        private class ThrowingToStringJObject : JObject
+        {
+            public override string ToString() => throw new InvalidOperationException("ToString fails");
+        }
     }
 }

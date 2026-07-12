@@ -449,5 +449,55 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
                 Arg.Is<double?>(x => x == null),
                 Arg.Is<double?>(x => x.HasValue && Math.Abs(x.Value - 20040) < 0.01));
         }
+
+        [Fact]
+        public void Handle_LiveMode_RemovesPendingModify_WhenStopModifyThrows()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working);
+
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderTracker.TryGetPendingModify("test-1:sl", out Arg.Any<PendingModifyInfo>()).Returns(false);
+            _orderTracker.TryGetStopLoss("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
+            _orderExecutionService.FindOrderByName(account, "Stop_test-1").Returns(stopOrder);
+            _orderExecutionService
+                .When(x => x.ModifyOrder(stopOrder, Arg.Is<double?>(s => s.HasValue && Math.Abs(s.Value - 19980) < 0.01), Arg.Is<double?>(l => l == null)))
+                .Do(x => throw new InvalidOperationException("modify failed"));
+
+            var result = _handler.Handle(TestDataFactory.OrderModifyPayload(stopLoss: 19980));
+
+            result.Should().BeFalse();
+            _orderTracker.Received(1).TrackPendingModify("test-1:sl", Arg.Any<PendingModifyInfo>());
+            _orderTracker.Received(1).RemovePendingModify("test-1:sl");
+            _network.Received(1).SendError("ninjatrader", "order_modify_failed", Arg.Is<string>(s => s.Contains("modify failed")));
+        }
+
+        [Fact]
+        public void Handle_LiveMode_RemovesPendingModify_WhenTargetModifyThrows()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            var targetOrder = TestDataFactory.Order(name: "Target_test-1", side: OrderSide.Sell, state: OrderState.Working);
+
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderTracker.TryGetPendingModify("test-1:tp", out Arg.Any<PendingModifyInfo>()).Returns(false);
+            _orderTracker.TryGetTakeProfit("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
+            _orderExecutionService.FindOrderByName(account, "Target_test-1").Returns(targetOrder);
+            _orderExecutionService
+                .When(x => x.ModifyOrder(targetOrder, Arg.Is<double?>(s => s == null), Arg.Is<double?>(l => l.HasValue && Math.Abs(l.Value - 20040) < 0.01)))
+                .Do(x => throw new InvalidOperationException("modify failed"));
+
+            var result = _handler.Handle(TestDataFactory.OrderModifyPayload(takeProfit: 20040));
+
+            result.Should().BeFalse();
+            _orderTracker.Received(1).TrackPendingModify("test-1:tp", Arg.Any<PendingModifyInfo>());
+            _orderTracker.Received(1).RemovePendingModify("test-1:tp");
+            _network.Received(1).SendError("ninjatrader", "order_modify_failed", Arg.Is<string>(s => s.Contains("modify failed")));
+        }
     }
 }

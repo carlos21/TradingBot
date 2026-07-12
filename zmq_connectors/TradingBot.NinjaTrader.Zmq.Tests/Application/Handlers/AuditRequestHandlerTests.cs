@@ -175,5 +175,36 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
 
             _network.Received(1).SendError("ninjatrader", "audit_failed", Arg.Any<string>());
         }
+        [Fact]
+        public async Task HandleAsync_SendsEmptyAuditResponse_WhenHistoryReturnsNull()
+        {
+            var instrument = TestDataFactory.Instrument();
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _barHistoryService.RequestHistoryAsync(instrument, Arg.Any<DateTime>(), Arg.Any<DateTime>())
+                .Returns(Task.FromResult<IReadOnlyList<Bar>>((IReadOnlyList<Bar>)null));
+
+            _handler.Handle(TestDataFactory.AuditPayload("MNQ 09-25", 60));
+            await Task.Delay(100);
+
+            _network.Received(1).SendAuditResponse("MNQ", Arg.Is<List<JObject>>(list => list.Count == 0));
+        }
+
+        [Fact]
+        public async Task HandleAsync_ConvertsNonUtcBarTime_ToUnixSeconds()
+        {
+            var instrument = TestDataFactory.Instrument();
+            var localTime = new DateTime(2025, 1, 10, 12, 0, 0, DateTimeKind.Local);
+            var bars = new List<Bar> { TestDataFactory.Bar(time: localTime) };
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _barHistoryService.RequestHistoryAsync(instrument, Arg.Any<DateTime>(), Arg.Any<DateTime>())
+                .Returns(Task.FromResult<IReadOnlyList<Bar>>(bars));
+
+            _handler.Handle(TestDataFactory.AuditPayload("MNQ 09-25", 60));
+            await Task.Delay(100);
+
+            var expectedUnix = (localTime.ToUniversalTime() - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalSeconds;
+            _network.Received(1).SendAuditResponse("MNQ", Arg.Is<List<JObject>>(list =>
+                list.Count == 1 && Math.Abs((double)list[0]["time"] - expectedUnix) < 0.001));
+        }
     }
 }

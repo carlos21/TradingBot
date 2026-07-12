@@ -207,5 +207,19 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             _network.Received(1).SendError("ninjatrader", "history_load_failed", Arg.Any<string>(), Arg.Any<string>());
             _logger.Errors.Should().Contain(e => e.Exception.Message == "history failed");
         }
+        [Fact]
+        public async Task HandleAsync_SendsHistoryEnd_WhenHistoryReturnsNull()
+        {
+            var instrument = TestDataFactory.Instrument();
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _barHistoryService.RequestHistoryAsync(instrument, Arg.Any<DateTime>(), Arg.Any<DateTime>())
+                .Returns(Task.FromResult<IReadOnlyList<Bar>>((IReadOnlyList<Bar>)null));
+
+            _handler.Handle(TestDataFactory.RefreshPayload("MNQ 09-25"));
+            await Task.Delay(100);
+
+            _network.Received(1).SendHistoryEnd();
+            _logger.Warnings.Should().Contain(w => w.Contains("No historical bars found"));
+        }
     }
 }

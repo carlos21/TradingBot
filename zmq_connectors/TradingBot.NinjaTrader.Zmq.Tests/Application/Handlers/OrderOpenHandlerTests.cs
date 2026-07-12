@@ -358,6 +358,43 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         }
 
         [Fact]
+        public void Handle_LiveMode_ClampsQtyToOne_WhenCalculatedQtyIsZero()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account(cashValue: 10000);
+            var instrument = TestDataFactory.Instrument(name: "MNQ 09-25", master: "MNQ", pointValue: 2.0);
+            var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderTracker.TryGetPendingEntry("test-1", out Arg.Any<PendingEntryInfo>()).Returns(false);
+            _orderTracker.TryGetEntry("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
+            _orderExecutionService.CreateEntryOrder(instrument, account, OrderSide.Buy, Arg.Any<int>(), "test-1").Returns(entryOrder);
+
+            // risk_usd 10 / slRisk 40 = 0.25 -> Round -> 0 -> clamped to 1
+            _handler.Handle(TestDataFactory.OrderOpenPayload(riskUsd: 10, riskPoints: 20));
+
+            _orderExecutionService.Received(1).CreateEntryOrder(instrument, account, OrderSide.Buy, 1, "test-1");
+        }
+
+        [Fact]
+        public void Handle_LiveMode_SkipsFivePercentGuard_WhenMaxRiskIsZero()
+        {
+            _tradingMode.IsSimulation.Returns(false);
+            var account = TestDataFactory.Account(cashValue: 0);
+            var instrument = TestDataFactory.Instrument(name: "MNQ 09-25", master: "MNQ", pointValue: 2.0);
+            var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy);
+            _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
+            _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
+            _orderTracker.TryGetPendingEntry("test-1", out Arg.Any<PendingEntryInfo>()).Returns(false);
+            _orderTracker.TryGetEntry("test-1", out Arg.Any<BrokerOrder>()).Returns(false);
+            _orderExecutionService.CreateEntryOrder(instrument, account, OrderSide.Buy, Arg.Any<int>(), "test-1").Returns(entryOrder);
+
+            _handler.Handle(TestDataFactory.OrderOpenPayload(riskPct: 1.0, riskPoints: 20));
+
+            _orderExecutionService.Received(1).CreateEntryOrder(instrument, account, OrderSide.Buy, Arg.Any<int>(), "test-1");
+        }
+
+        [Fact]
         public void Handle_LiveMode_CreatesShortEntryOrder()
         {
             _tradingMode.IsSimulation.Returns(false);
