@@ -41,6 +41,17 @@ class TestPerTradeSim:
         assert usd == 4_000.0
         assert outcome == "win"
 
+    def test_sim_contracts_is_none(self):
+        """Sim mode does not use contracts."""
+        trade = make_trade()
+        close = make_close(result=2.0, result_type="TP")
+        result = compute_trade_pnl(
+            trade, close, account=100_000, risk=1_000,
+            mode="sim", nq_pv=2.0, fee_per_rt=1.50, be_threshold=0.1,
+        )
+        assert result["contracts"] is None
+        assert result["outcome"] == "win"
+
     def test_clear_loss(self):
         trade = make_trade()
         close = make_close(result=-1.0, result_type="SL")
@@ -290,6 +301,7 @@ class TestComputeTradePnl:
         )
         # 2 contracts * 4R * 10 pts * $2 - $3 = 157
         assert result["usd"] == pytest.approx(157.0)
+        assert result["contracts"] == 2
 
     def test_uses_stored_pnl(self):
         trade = make_trade(contracts=5)
@@ -349,6 +361,7 @@ class TestComputeTradePnl:
         )
         # 2 contracts * 1R * 100 pts * $2 - $3 = 397
         assert result["usd"] == pytest.approx(397.0)
+        assert result["contracts"] == 2
 
 
     # ---------------------------------------------------------------------------
@@ -372,6 +385,7 @@ class TestComputeTradePnl:
         assert result["usd"] == pytest.approx(130.0)
         assert result["commission"] == pytest.approx(20.0)
         assert result["outcome"] == "win"
+        assert result["contracts"] == 2.5
 
     def test_cfd_uses_stored_pnl_when_available(self):
         """CFD mode with stored_pnl should use it directly."""
@@ -403,6 +417,7 @@ class TestComputeTradePnl:
         assert result["usd"] == pytest.approx(600.0)
         assert result["commission"] == pytest.approx(400.0)
         assert result["outcome"] == "win"
+        assert result["contracts"] == 50.0
 
     def test_cfd_sp_with_fallback(self):
         """CFD SP mode fallback must include spread + commission."""

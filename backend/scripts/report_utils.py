@@ -13,7 +13,7 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
     is_reentry = trade.get("is_reentry", False) if trade else False
 
     if close is None:
-        return {"outcome": "open", "usd": 0.0, "pct": 0.0, "r": 0.0, "is_reentry": is_reentry, "commission": 0.0}
+        return {"outcome": "open", "usd": 0.0, "pct": 0.0, "r": 0.0, "is_reentry": is_reentry, "commission": 0.0, "contracts": None}
 
     result_type = close.get("result_type", None)
     actual_r = close.get("result", 0.0)
@@ -39,24 +39,26 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
         return 0.01 if use_fractional else 1
 
     def _real_mode_pnl(trade, close, risk, nq_pv, fee_per_rt, use_fractional=False):
-        """Calculate PnL for real modes (futures or CFD), handling stored vs fallback."""
+        """Calculate PnL for real modes (futures or CFD), handling stored vs fallback.
+        Returns (usd, fees/commission, contracts)."""
         stored_pnl = close.get("pnl_usd")
         if stored_pnl is not None:
-            return stored_pnl, close.get("fees", 0.0)
+            contracts = trade.get("contracts") if trade else None
+            return stored_pnl, close.get("fees", 0.0), contracts
 
         if trade is None:
-            return 0.0, 0.0
+            return 0.0, 0.0, None
 
         entry = trade.get("entry") or trade.get("entry_price")
         orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
         risk_pts = trade.get("risk")
         if entry is None or orig_sl is None:
-            return 0.0, 0.0
+            return 0.0, 0.0, None
 
         sl_pts_price = round(abs(entry - orig_sl), 4)
         sl_pts = risk_pts if risk_pts is not None else sl_pts_price
         if sl_pts <= 0:
-            return 0.0, 0.0
+            return 0.0, 0.0, None
 
         contracts = _contracts_from_trade_or_compute(trade, risk, sl_pts_price, nq_pv, use_fractional)
 
@@ -65,30 +67,32 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
             commission_cost = contracts * cfd_commission
             total_cost = spread_cost + commission_cost
             usd = contracts * actual_r * sl_pts * nq_pv - total_cost
-            return usd, total_cost
+            return usd, total_cost, contracts
         else:
             fees = contracts * fee_per_rt
             usd = contracts * actual_r * sl_pts * nq_pv - fees
-            return usd, fees
+            return usd, fees, contracts
 
     if result_type == "SP":
         commission = 0.0
+        contracts = None
         if mode == "sim":
             usd = _sim_usd(risk, actual_r, be_threshold)
         else:  # real
-            usd, commission = _real_mode_pnl(trade, close, risk, nq_pv, fee_per_rt,
-                                             use_fractional=(mode == "real_cfd"))
+            usd, commission, contracts = _real_mode_pnl(trade, close, risk, nq_pv, fee_per_rt,
+                                                        use_fractional=(mode == "real_cfd"))
         pct_base = balance if (risk_pct is not None and balance) else account
         pct = usd / pct_base * 100 if pct_base else 0.0
-        return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry, "commission": commission}
+        return {"outcome": "sp", "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry, "commission": commission, "contracts": contracts}
 
     commission = 0.0
+    contracts = None
 
     if mode == "sim":
         usd = _sim_usd(risk, actual_r, be_threshold)
     else:  # real
-        usd, commission = _real_mode_pnl(trade, close, risk, nq_pv, fee_per_rt,
-                                         use_fractional=(mode == "real_cfd"))
+        usd, commission, contracts = _real_mode_pnl(trade, close, risk, nq_pv, fee_per_rt,
+                                                    use_fractional=(mode == "real_cfd"))
 
     pct_base = balance if (risk_pct is not None and balance) else account
     pct = usd / pct_base * 100 if pct_base else 0.0
@@ -100,7 +104,7 @@ def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_t
     else:
         outcome = "loss"
 
-    return {"outcome": outcome, "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry, "commission": commission}
+    return {"outcome": outcome, "usd": usd, "pct": pct, "r": actual_r, "is_reentry": is_reentry, "commission": commission, "contracts": contracts}
 
 
 def calc_max_dd(balances):

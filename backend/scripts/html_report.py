@@ -59,7 +59,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         mode_label = "REAL (MNQ Futures)"
 
     # ── 1. Compute per-scenario / per-trade data ──────────────────────────
-    enriched = []  # list of {name, date, status, trades: [{outcome, usd, pct, r}], net_usd, net_pct}
+    enriched = []  # list of {name, date, status, trades: [{outcome, usd, pct, r, contracts}], net_usd, net_pct}
     running_balance = account
     for r in summary_results:
         date = dtparser.parse(r["date"]).date()
@@ -215,6 +215,16 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
             if not sc["trades"]:
                 badges = '<span class="text-slate-400">--</span>'
 
+            contracts_parts = []
+            for t in sc["trades"]:
+                c = t.get("contracts")
+                if c is not None:
+                    contracts_parts.append(f"{c:g}")
+            if contracts_parts:
+                contracts_str = " / ".join(contracts_parts)
+            else:
+                contracts_str = '<span class="text-slate-400">--</span>'
+
             status_cls = "text-emerald-400 font-semibold" if sc["status"] == "PASS" else "text-rose-500 font-semibold"
             status_label = sc["status"]
 
@@ -229,6 +239,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                     <td class="px-4 py-2.5 border-b border-white/5 font-medium text-slate-100">{_h(sc['name'])}</td>
                     <td class="px-4 py-2.5 border-b border-white/5 w-[60px] text-center"><span class="{status_cls}">{status_label}</span></td>
                     <td class="px-4 py-2.5 border-b border-white/5 w-20">{badges}</td>
+                    <td class="px-4 py-2.5 border-b border-white/5 w-[80px] text-center text-slate-200 tabular-nums text-xs">{contracts_str}</td>
                     <td class="px-4 py-2.5 border-b border-white/5 w-[90px] text-right tabular-nums font-semibold {_pnl_class_tw(sc_pct)}">{fmt_pct(sc_pct)}</td>
                     <td class="px-4 py-2.5 border-b border-white/5 w-[90px] text-right tabular-nums font-semibold {_pnl_class_tw(sc_usd)}">{fmt_usd(sc_usd)}</td>
                     <td class="px-4 py-2.5 border-b border-white/5 w-[90px] text-right tabular-nums font-semibold">{comm_str}</td>
@@ -272,6 +283,7 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
                         <th class="text-left px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Scenario</th>
                         <th class="text-left px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Status</th>
                         <th class="text-left px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Result</th>
+                        <th class="text-center px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15 w-[80px]">Contracts</th>
                         <th class="text-right px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">%</th>
                         <th class="text-right px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">$ PnL</th>
                         <th class="text-right px-4 py-2.5 text-xs uppercase tracking-wider text-slate-400 border-b border-surface-700 bg-black/15">Commission</th>

@@ -967,7 +967,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     "entry_sl_sum": 0.0, "entry_sl_count": 0,
                     "entry_risk_sum": 0.0, "entry_risk_count": 0,
                     "reentry_sl_sum": 0.0, "reentry_sl_count": 0,
-                    "reentry_risk_sum": 0.0, "reentry_risk_count": 0}
+                    "reentry_risk_sum": 0.0, "reentry_risk_count": 0,
+                    "contracts": []}
 
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
@@ -1028,6 +1029,12 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     running_balance += t_usd
                 is_reentry = trade.get("is_reentry", False) if trade else False
 
+                # Track contracts used for this trade
+                trade_contracts = trade.get("contracts") if trade else None
+                if trade_contracts is not None:
+                    for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                        bucket[key]["contracts"].append(trade_contracts)
+
                 if result_type == "SP":
                     for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
                         if t_usd is not None:
@@ -1067,27 +1074,29 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         CHECKMARK = "\u2713"
         CROSSMARK = "\u2717"
 
-        def _print_agg(title, data, show_passed=False, show_velocity=False, show_sl_risk=False):
+        def _print_agg(title, data, show_passed=False, show_velocity=False, show_sl_risk=False, show_contracts=False):
             if not data:
                 return
             has_reentry = any(v["reentry_win"] + v["reentry_loss"] + v["reentry_be"] > 0 for v in data.values())
             has_velocity = show_velocity and any(v.get("velocity") is not None for v in data.values())
             COMM_W = 12
             TRADES_W = 8
+            CONTRACTS_W = 14
             WL_W  = 16
             RE_W  = 12
             PAS_W = 8
             VEL_W = 12
             SL_RISK_W = 20
             lbl_w = max(len(k) for k in data) + 2
-            sep   = "-" * (lbl_w + 3 + WL_W + 54 + 3 + COMM_W + 3 + TRADES_W + (3 + SL_RISK_W if show_sl_risk else 0) + (3 + RE_W if has_reentry else 0) + (3 + PAS_W if show_passed else 0) + (3 + VEL_W if has_velocity else 0))
+            sep   = "-" * (lbl_w + 3 + WL_W + 54 + 3 + COMM_W + 3 + TRADES_W + (3 + CONTRACTS_W if show_contracts else 0) + (3 + SL_RISK_W if show_sl_risk else 0) + (3 + RE_W if has_reentry else 0) + (3 + PAS_W if show_passed else 0) + (3 + VEL_W if has_velocity else 0))
             hdr_re = f" | {'RE-ENTRY':^{RE_W}}" if has_reentry else ""
             hdr_pas = f" | {'PASSED':^{PAS_W}}" if show_passed else ""
             hdr_vel = f" | {'VELOCITY':^{VEL_W}}" if has_velocity else ""
             hdr_trades = f" | {'TRADES':^{TRADES_W}}"
+            hdr_contracts = f" | {'CONTRACTS':^{CONTRACTS_W}}" if show_contracts else ""
             hdr_sl_risk = f" | {'SL/RISK':^{SL_RISK_W}}" if show_sl_risk else ""
             print(f"\n{BOLD}{CYAN}{title}{RST}")
-            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11} | {'COMMISSION':>{COMM_W}}{hdr_trades}{hdr_sl_risk}{hdr_re}{hdr_pas}{hdr_vel}")
+            print(f"  {'PERIOD':<{lbl_w}} | {'W/L':^{WL_W}} | {'%':>9} | {'$ PnL':>10} | {'$ BALANCE':>11} | {'COMMISSION':>{COMM_W}}{hdr_trades}{hdr_contracts}{hdr_sl_risk}{hdr_re}{hdr_pas}{hdr_vel}")
             print(f"  {sep}")
             balance = ACCT
             for key in sorted(data):
@@ -1151,7 +1160,15 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 comm_str = f"${comm_val:>10,.2f}" if comm_val > 0 else f"{'--':>{COMM_W}}"
                 trades_val = v["wins"] + v["losses"] + v["be"] + v["sp"] + v["open"]
                 trades_str = f"{trades_val:^{TRADES_W}}"
-                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str} | {comm_str} | {trades_str}{sl_risk_str}{re_str}{pas_str}{vel_str}")
+                contracts_str = ""
+                if show_contracts:
+                    contracts_list = v.get("contracts", [])
+                    if contracts_list:
+                        contracts_val = " / ".join(f"{c:g}" for c in contracts_list)
+                    else:
+                        contracts_val = f"{GRAY}-{RST}"
+                    contracts_str = f" | {_center(contracts_val, CONTRACTS_W)}"
+                print(f"  {key:<{lbl_w}} | {wl_str} | {pct_str} | {usd_str} | {bal_str} | {comm_str} | {trades_str}{contracts_str}{sl_risk_str}{re_str}{pas_str}{vel_str}")
             total_usd = sum(v["usd"]    for v in data.values())
             total_pct = total_usd / ACCT * 100 if ACCT else 0.0
             total_w   = sum(v["wins"]   for v in data.values())
@@ -1169,6 +1186,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             tot_bal  = _col(total_usd, f"${ACCT + total_usd:>10,.0f}")
             tot_comm = f"${total_comm:>10,.2f}" if total_comm > 0 else f"{'--':>{COMM_W}}"
             tot_trades = f"{total_trades:^{TRADES_W}}"
+            tot_contracts = f" | {'':^{CONTRACTS_W}}" if show_contracts else ""
             tot_parts = []
             if total_w:   tot_parts.append(f"{GREEN}{total_w}W{RST}")
             if total_l:   tot_parts.append(f"{RED}{total_l}L{RST}")
@@ -1192,9 +1210,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     tot_pas = f" | {_center(f'{RED}{failed}{CROSSMARK}{RST}', PAS_W)}"
             tot_sl_risk = f" | {'':^{SL_RISK_W}}" if show_sl_risk else ""
             tot_vel = f" | {'':^{VEL_W}}" if has_velocity else ""
-            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal} | {tot_comm} | {tot_trades}{tot_sl_risk}{tot_re}{tot_pas}{tot_vel}")
+            print(f"  {'TOTAL':<{lbl_w}} | {tot_wl} | {tot_pct} | {tot_usd} | {tot_bal} | {tot_comm} | {tot_trades}{tot_contracts}{tot_sl_risk}{tot_re}{tot_pas}{tot_vel}")
 
-        _print_agg(f"DAILY PnL   — {mode_label}", daily, show_passed=True, show_velocity=True, show_sl_risk=True)
+        _print_agg(f"DAILY PnL   — {mode_label}", daily, show_passed=True, show_velocity=True, show_sl_risk=True, show_contracts=True)
         _print_agg(f"WEEKLY PnL  — {mode_label}", weekly)
         _print_agg(f"MONTHLY PnL — {mode_label}", monthly)
 
