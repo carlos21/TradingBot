@@ -80,6 +80,63 @@ class TestAdminRoutes:
             data = resp.get_json()
             assert data["pair"] == "MNQ"
 
+    def test_admin_stats_requires_pair(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/stats")
+            assert resp.status_code == 400
+
+    def test_admin_trades_invalid_limit(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/trades?pair=MNQ&limit=0")
+            assert resp.status_code == 400
+
+    def test_admin_trades_invalid_offset(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/trades?pair=MNQ&offset=-1")
+            assert resp.status_code == 400
+
+    def test_admin_trade_accounts_requires_pair(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/trade-accounts")
+            assert resp.status_code == 400
+
+    def test_admin_delete_trade_server_error(self, app, monkeypatch):
+        def _raise(_self, _trade_id):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(FakeAdminController, "delete_trade", _raise)
+        with app.test_client() as client:
+            resp = client.delete("/api/admin/trades/T1")
+            assert resp.status_code == 500
+
+    def test_admin_bulk_delete_rejects_non_string_ids(self, app):
+        with app.test_client() as client:
+            resp = client.post(
+                "/api/admin/trades/bulk-delete",
+                json={"trade_ids": ["T1", 123]},
+            )
+            assert resp.status_code == 400
+
+    def test_admin_analytics_requires_pair(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/analytics")
+            assert resp.status_code == 400
+
+    def test_admin_decisions_requires_pair(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/decisions")
+            assert resp.status_code == 400
+
+    def test_admin_recent_logs_invalid_limit(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/logs/recent?pair=MNQ&limit=0")
+            assert resp.status_code == 400
+
+    def test_admin_recent_logs_invalid_offset(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/admin/logs/recent?pair=MNQ&offset=-1")
+            assert resp.status_code == 400
+
     def test_admin_trades(self, app):
         with app.test_client() as client:
             resp = client.get("/api/admin/trades?pair=MNQ")

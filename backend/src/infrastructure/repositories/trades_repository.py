@@ -4,6 +4,7 @@ Provides both the standard repository (per-operation sessions) and
 the Unit of Work compatible implementation.
 """
 
+import logging
 import uuid
 from datetime import datetime, timezone
 from threading import Lock
@@ -26,6 +27,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
     def __init__(self, db: DatabaseProtocol | None = None):
         super().__init__(db)
         self._log_lock = Lock()
+        self.logger = logging.getLogger(__name__)
 
     def _ensure_utc(self, dt: datetime | None) -> datetime | None:
         """Helper to ensure a datetime is UTC-aware."""

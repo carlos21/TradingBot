@@ -136,15 +136,17 @@ class BrokerFillHandler:
             self._logger.info(
                 f"[BrokerFillHandler] ENTRY FILL: {trade['trade_id']} @ {entry_price} "
                 f"qty={trade['contracts']} (was {old_entry}, slippage={entry_price - old_entry:+.2f}) "
-                f"SL={trade['stop_loss']} TP={trade['take_profit']} "
+                f"SL={trade.get('stop_loss')} TP={trade.get('take_profit')} "
                 f"balance={self._account_balance:.2f}"
             )
 
         if self._trade_logger:
+            sl_str = f"{trade.get('stop_loss'):.2f}" if trade.get('stop_loss') is not None else "None"
+            tp_str = f"{trade.get('take_profit'):.2f}" if trade.get('take_profit') is not None else "None"
             self._trade_logger.log(
                 trade['trade_id'], "NT_ENTRY_FILL",
                 f"Filled @ {entry_price:.2f} qty={trade['contracts']} (slippage: {entry_price - old_entry:+.2f}) "
-                f"SL={trade['stop_loss']:.2f} TP={trade['take_profit']:.2f} "
+                f"SL={sl_str} TP={tp_str} "
                 f"balance={self._account_balance:.2f}"
             )
 

@@ -23,4 +23,4 @@ class CSVReplayTickSource(LiveDataSource):
                     delta = (bar['time'] - prev['time'])/self.speed_multiplier
                     time.sleep(delta)
                 callback(bar)
-        threading.Thread(target=_replay, daemon=True).start()
+        threading.Thread(target=_replay, daemon=True, name="csv_replay").start()

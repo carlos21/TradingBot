@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import time
 from collections.abc import Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
@@ -180,7 +180,7 @@ def live_app(
         data_source=data_source,
         repos=repos,
         numbers=_default_numbers(),
-        options=DEFAULT_STRATEGY_OPTIONS,
+        options=replace(DEFAULT_STRATEGY_OPTIONS),
         candle_config=CandleConfig(),
         timeframes=["5m"],
         live_mode=True,
@@ -304,7 +304,7 @@ def live_app_multi(
         data_source=data_source,
         repos=repos,
         numbers=_default_numbers(),
-        options=DEFAULT_STRATEGY_OPTIONS,
+        options=replace(DEFAULT_STRATEGY_OPTIONS),
         candle_config=CandleConfig(),
         timeframes=["5m"],
         live_mode=True,
@@ -446,7 +446,7 @@ def live_app_resilience(
         data_source=data_source,
         repos=repos,
         numbers=_default_numbers(),
-        options=DEFAULT_STRATEGY_OPTIONS,
+        options=replace(DEFAULT_STRATEGY_OPTIONS),
         candle_config=CandleConfig(),
         timeframes=["5m"],
         live_mode=True,

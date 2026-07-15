@@ -11,10 +11,10 @@ from typing import Any
 from src.application.ports import EventPublisher
 from src.financial_calc import FinancialCalc
 from src.services.trade_manager import TradeManager
-from src.strategies.base_liquidity_strategy import StrategyOptions
-from src.strategies.liquidity_strategy_v2 import LiquidityStrategyV2
+from src.strategies.liquidity_v2.base_strategy import StrategyOptions
+from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
+from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
 from src.strategies.protocols import LiquidityStrategy
-from src.strategies.strategy_config import CandleConfig, StrategyNumbers
 from src.utils.app_logger import ILogger
 
 

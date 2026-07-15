@@ -1,7 +1,11 @@
 """Tests for src/strategies/liquidity_m1dual_strategy.py."""
 
+from datetime import datetime, timezone
+
 import pytest
 
+from src.domain.types import Direction
+from src.financial_calc import FinancialCalc
 from src.strategies.liquidity_m1dual.strategy import LiquidityDualM1Strategy
 from tests.fakes import (
     FakeLineRepository,
@@ -194,3 +198,200 @@ class TestLiquidityDualM1StrategyCheckOpenTrades:
         strategy.on_raw_bar(bar3)
         # Trade should be removed from open_trades when closed
         assert len(strategy.open_trades) == 0
+
+
+class TestLiquidityDualM1StrategyExecutionContext:
+
+    def test_execution_context_property(self):
+        strategy = _make_strategy(warmup=True)
+        assert strategy.execution_context.is_warmup() is True
+        assert isinstance(strategy.execution_context, MutableTradingContext)
+
+    def test_is_warmup_property(self):
+        strategy = _make_strategy(warmup=True)
+        assert strategy.is_warmup is True
+
+
+class TestLiquidityDualM1StrategyLineRemoval:
+
+    def test_remove_line_emits_event(self):
+        strategy = _make_strategy()
+        strategy.add_strategy_line("L1", 100.0, "long")
+        strategy.remove_strategy_line("L1")
+        assert any(e[0] == "line_removed" for e in strategy.event_publisher.emitted)
+
+    def test_remove_line_deletes_from_repository(self):
+        strategy = _make_strategy()
+        strategy.line_repository.insert_line("MNQ", 100.0)
+        strategy.add_strategy_line("L1", 100.0, "long")
+        strategy.remove_strategy_line("L1")
+        assert strategy.line_repository.get_line("L1") is None
+
+    def test_remove_nonexistent_line_is_noop(self):
+        strategy = _make_strategy()
+        strategy.remove_strategy_line("MISSING")
+
+
+class TestLiquidityDualM1StrategyTradeDict:
+
+    def test_make_trade_dict_long(self):
+        strategy = _make_strategy()
+        bar = {"pair": "MNQ", "time": 1000}
+        trade = strategy._make_trade_dict(bar, "long", 100.0, 95.0, 120.0, 5.0)
+        assert trade["pair"] == "MNQ"
+        assert trade["type"] == "long"
+        assert trade["entry"] == 100.0
+        assert trade["stop_loss"] == 95.0
+        assert trade["take_profit"] == 120.0
+        assert trade["risk"] == 5.0
+        assert trade["status"] == "open"
+        assert trade["entry_time"] == 1000
+
+    def test_make_trade_dict_short(self):
+        strategy = _make_strategy()
+        bar = {"pair": "MNQ", "time": 1000}
+        trade = strategy._make_trade_dict(bar, "short", 100.0, 105.0, 80.0, 5.0)
+        assert trade["type"] == "short"
+        assert trade["entry"] == 100.0
+
+
+class TestLiquidityDualM1StrategyMinStopLoss:
+
+    def test_long_trade_uses_min_stop_loss_when_bounce_too_small(self):
+        strategy = _make_strategy()
+        strategy.min_stop_loss = 20.0
+        strategy.max_bounce = 100.0
+        strategy.add_strategy_line("L1", 100.0, "long")
+        bar1 = {"open": 105.0, "high": 106.0, "low": 95.0, "close": 95.0, "time": 1000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar1)
+        bar2 = {"open": 98.0, "high": 102.0, "low": 97.0, "close": 101.0, "time": 2000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar2)
+        trade = strategy.open_trades[0]
+        # entry=101, extreme=95, risk=max(6,20)=20; SL stays at extreme
+        assert trade["risk"] == 20.0
+        assert trade["stop_loss"] == 95.0
+
+    def test_short_trade_uses_min_stop_loss_when_bounce_too_small(self):
+        strategy = _make_strategy()
+        strategy.min_stop_loss = 20.0
+        strategy.max_bounce = 100.0
+        strategy.add_strategy_line("L1", 100.0, "short")
+        bar1 = {"open": 95.0, "high": 105.0, "low": 94.0, "close": 105.0, "time": 1000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar1)
+        bar2 = {"open": 102.0, "high": 103.0, "low": 97.0, "close": 99.0, "time": 2000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar2)
+        trade = strategy.open_trades[0]
+        # entry=99, extreme=105, risk=max(6,20)=20; SL stays at extreme
+        assert trade["risk"] == 20.0
+        assert trade["stop_loss"] == 105.0
+
+
+class TestLiquidityDualM1StrategyCheckOpenTradesExtended:
+
+    def test_short_sl_hit_closes(self):
+        strategy = _make_strategy()
+        strategy.add_strategy_line("L1", 100.0, "short")
+        bar1 = {"open": 95.0, "high": 105.0, "low": 94.0, "close": 105.0, "time": 1000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar1)
+        bar2 = {"open": 102.0, "high": 103.0, "low": 97.0, "close": 99.0, "time": 2000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar2)
+        assert len(strategy.open_trades) == 1
+        sl = strategy.open_trades[0]["stop_loss"]
+        bar3 = {"open": sl + 1, "high": sl + 1, "low": sl - 1, "close": sl, "time": 3000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar3)
+        assert len(strategy.open_trades) == 0
+
+    def test_short_tp_hit_closes(self):
+        strategy = _make_strategy()
+        strategy.add_strategy_line("L1", 100.0, "short")
+        bar1 = {"open": 95.0, "high": 105.0, "low": 94.0, "close": 105.0, "time": 1000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar1)
+        bar2 = {"open": 102.0, "high": 103.0, "low": 97.0, "close": 99.0, "time": 2000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar2)
+        assert len(strategy.open_trades) == 1
+        tp = strategy.open_trades[0]["take_profit"]
+        bar3 = {"open": tp + 1, "high": tp + 1, "low": tp - 1, "close": tp, "time": 3000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar3)
+        assert len(strategy.open_trades) == 0
+
+    def test_close_trade_persists_exception_is_logged(self):
+        strategy = _make_strategy()
+        strategy.add_strategy_line("L1", 100.0, "long")
+        bar1 = {"open": 105.0, "high": 106.0, "low": 95.0, "close": 95.0, "time": 1000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar1)
+        bar2 = {"open": 98.0, "high": 102.0, "low": 97.0, "close": 101.0, "time": 2000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar2)
+        assert len(strategy.open_trades) == 1
+
+        # Corrupt repo so close_trade raises
+        strategy.trade_repository.close_trade = lambda **kwargs: (_ for _ in ()).throw(Exception("db fail"))
+        sl = strategy.open_trades[0]["stop_loss"]
+        bar3 = {"open": 102.0, "high": 103.0, "low": sl - 1, "close": sl, "time": 3000, "pair": "MNQ"}
+        strategy.on_raw_bar(bar3)
+        # Trade is removed from open_trades regardless of persistence failure;
+        # event was still emitted.
+        assert len(strategy.open_trades) == 0
+        assert any(e[0] == "trade_close" for e in strategy.event_publisher.emitted)
+
+
+class TestLiquidityDualM1StrategyStoreAndEmitClose:
+
+    def _seed_trade(self, strategy):
+        td = strategy.trade_repository.insert_trade(
+            pair="MNQ",
+            trade_type="long",
+            entry_price=100.0,
+            stop_loss=95.0,
+            take_profit=120.0,
+            risk=5.0,
+            entry_time=datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc),
+        )
+        return {
+            "trade_id": td.trade_id,
+            "pair": "MNQ",
+            "type": "long",
+            "entry": 100.0,
+            "stop_loss": 95.0,
+            "take_profit": 120.0,
+            "risk": 5.0,
+            "result": -1.0,
+            "exit_price": 95.0,
+            "exit_time": 2000,
+        }
+
+    def test_store_and_emit_close_with_result_type(self):
+        strategy = _make_strategy()
+        trade = self._seed_trade(strategy)
+        trade["result_type"] = "SL"
+        strategy._store_and_emit_close(trade)
+        assert len(strategy.trade_repository.closed) == 1
+        assert strategy.trade_repository.closed[0]["result_type"] == "SL"
+        assert any(e[0] == "trade_close" for e in strategy.event_publisher.emitted)
+
+    def test_store_and_emit_close_infers_be(self):
+        strategy = _make_strategy()
+        trade = self._seed_trade(strategy)
+        trade["exit_price"] = 100.0 + FinancialCalc.DEFAULT_BE_THRESHOLD_POINTS - 0.1
+        strategy._store_and_emit_close(trade)
+        assert strategy.trade_repository.closed[0]["result_type"] == "BE"
+
+    def test_store_and_emit_close_infers_sl(self):
+        strategy = _make_strategy()
+        trade = self._seed_trade(strategy)
+        trade["exit_price"] = 95.0
+        strategy._store_and_emit_close(trade)
+        assert strategy.trade_repository.closed[0]["result_type"] == "SL"
+
+    def test_store_and_emit_close_infers_tp(self):
+        strategy = _make_strategy()
+        trade = self._seed_trade(strategy)
+        trade["exit_price"] = 120.0
+        strategy._store_and_emit_close(trade)
+        assert strategy.trade_repository.closed[0]["result_type"] == "TP"
+
+    def test_store_and_emit_close_infers_sp(self):
+        strategy = _make_strategy()
+        trade = self._seed_trade(strategy)
+        trade["exit_price"] = 110.0
+        strategy._store_and_emit_close(trade)
+        assert strategy.trade_repository.closed[0]["result_type"] == "SP"

@@ -305,3 +305,191 @@ class TestAdminControllerRecentLogs:
         assert len(data["logs"]) == 1
         assert "level" in data["logs"][0]
         assert "source" in data["logs"][0]
+
+
+class FakeDecisionLogRepository:
+    """In-memory decision log repository for controller tests."""
+
+    def __init__(self):
+        self._logs = []
+
+    def add_log(self, **kwargs):
+        self._logs.append(kwargs)
+
+    def get_recent(self, pair=None, event=None, line_id=None, limit=500):
+        logs = list(self._logs)
+        if pair:
+            logs = [log for log in logs if log.get("pair") == pair]
+        if event:
+            logs = [log for log in logs if log.get("event") == event]
+        if line_id:
+            logs = [log for log in logs if log.get("line_id") == line_id]
+        return logs[:limit]
+
+
+class TestAdminControllerDeleteTradeEdgeCases:
+
+    def test_delete_trade_not_found(self, controller):
+        ctrl, _, _ = controller
+        from src.dbexception import DBNotFoundException
+        ctrl._analytics.delete_trade = lambda trade_id: (_ for _ in ()).throw(
+            DBNotFoundException("Trade NOTFOUND not found")
+        )
+        with pytest.raises(Exception):
+            ctrl.delete_trade("NOTFOUND")
+
+    def test_delete_trade_generic_error(self, controller):
+        ctrl, _, _ = controller
+        ctrl._analytics.delete_trade = lambda trade_id: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        )
+        with pytest.raises(Exception):
+            ctrl.delete_trade("T1")
+
+    def test_delete_trades_generic_error(self, controller):
+        ctrl, _, _ = controller
+        ctrl._analytics.delete_trades = lambda trade_ids: (_ for _ in ()).throw(
+            RuntimeError("boom")
+        )
+        with pytest.raises(Exception):
+            ctrl.delete_trades(["T1"])
+
+
+class TestAdminControllerDecisionLogsWithRepo:
+
+    def test_get_decision_logs_with_repo(self, app_context):
+        trade_repo = FakeTradeRepository()
+        line_repo = FakeLineRepository()
+        logger = FakeLogger()
+        analytics = AnalyticsService(trade_repo)
+        decision_repo = FakeDecisionLogRepository()
+        decision_repo.add_log(pair="MNQ", event="ENTRY", line_id="L1", bar_time=1000.0)
+        ctrl = AdminController(analytics, line_repo, logger, decision_log_repository=decision_repo)
+
+        resp, status = ctrl.get_decision_logs("MNQ")
+        assert status == 200
+        data = resp.get_json()
+        assert len(data["logs"]) == 1
+        assert data["logs"][0]["event"] == "ENTRY"
+        assert "LATCH" in data["events"]
+
+    def test_get_decision_logs_filtered_by_event(self, app_context):
+        trade_repo = FakeTradeRepository()
+        line_repo = FakeLineRepository()
+        logger = FakeLogger()
+        analytics = AnalyticsService(trade_repo)
+        decision_repo = FakeDecisionLogRepository()
+        decision_repo.add_log(pair="MNQ", event="ENTRY", line_id="L1", bar_time=1000.0)
+        decision_repo.add_log(pair="MNQ", event="LATCH", line_id="L1", bar_time=1001.0)
+        ctrl = AdminController(analytics, line_repo, logger, decision_log_repository=decision_repo)
+
+        resp, status = ctrl.get_decision_logs("MNQ", event="LATCH")
+        data = resp.get_json()
+        assert len(data["logs"]) == 1
+        assert data["logs"][0]["event"] == "LATCH"
+
+
+class TestAdminControllerLogParsingEdgeCases:
+
+    def test_parse_log_line_no_timestamp(self, controller):
+        ctrl, _, _ = controller
+        entry = ctrl._parse_log_line("[INFO] message without timestamp")
+        assert entry is None
+
+    def test_parse_log_line_no_level(self, controller):
+        ctrl, _, _ = controller
+        entry = ctrl._parse_log_line("2024-06-21 10:30:15.123 plain message")
+        assert entry is None
+
+    def test_parse_log_line_invalid_timestamp(self, controller):
+        ctrl, _, _ = controller
+        entry = ctrl._parse_log_line("2024-06-21 10:30 [INFO] message")
+        assert entry is None
+
+    def test_parse_log_line_source_from_message(self, controller):
+        ctrl, _, _ = controller
+        entry = ctrl._parse_log_line(
+            "2024-06-21 10:30:15.123 [INFO] [LiveMode] session ended"
+        )
+        assert entry is not None
+        assert entry["source"] == "LiveMode"
+
+    def test_extract_source_from_prefix(self, controller):
+        ctrl, _, _ = controller
+        assert ctrl._extract_source("worker", "message") == "worker"
+
+    def test_extract_source_from_message(self, controller):
+        ctrl, _, _ = controller
+        assert ctrl._extract_source(None, "[BrokerFill] filled") == "BrokerFill"
+
+    def test_extract_source_defaults_to_server(self, controller):
+        ctrl, _, _ = controller
+        assert ctrl._extract_source(None, "plain message") == "server"
+
+
+class TestAdminControllerRecentLogsEdgeCases:
+
+    def test_get_recent_logs_file_read_error(self, controller):
+        ctrl, _, _ = controller
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "logs"), exist_ok=True)
+            log_file = os.path.join(tmpdir, "logs", f"app_{datetime.now().strftime('%Y-%m-%d')}.log")
+            with open(log_file, "w", encoding="utf-8") as f:
+                f.write("line\n")
+            # Make file unreadable
+            os.chmod(log_file, 0o000)
+            try:
+                ctrl._log_dir = os.path.join(tmpdir, "logs")
+                resp, status = ctrl.get_recent_logs("MNQ")
+                assert status == 200
+                data = resp.get_json()
+                assert data["logs"] == []
+                assert data["sources"] == []
+            finally:
+                os.chmod(log_file, 0o644)
+
+    def test_get_recent_logs_has_more_true(self, controller):
+        ctrl, _, _ = controller
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "logs"), exist_ok=True)
+            log_file = os.path.join(tmpdir, "logs", f"app_{datetime.now().strftime('%Y-%m-%d')}.log")
+            with open(log_file, "w", encoding="utf-8") as f:
+                for i in range(10):
+                    f.write(f"2024-06-21 10:30:{10 + i:02d}.000 [INFO] Message {i}\n")
+            ctrl._log_dir = os.path.join(tmpdir, "logs")
+
+            resp, status = ctrl.get_recent_logs("MNQ", limit=3, offset=0)
+            assert status == 200
+            data = resp.get_json()
+            assert len(data["logs"]) == 3
+            assert data["has_more"] is True
+
+    def test_get_recent_logs_unparsable_lines_skipped(self, controller):
+        ctrl, _, _ = controller
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "logs"), exist_ok=True)
+            log_file = os.path.join(tmpdir, "logs", f"app_{datetime.now().strftime('%Y-%m-%d')}.log")
+            with open(log_file, "w", encoding="utf-8") as f:
+                f.write("2024-06-21 10:30:15.123 [INFO] Valid\n")
+                f.write("not a valid log line\n")
+                f.write("2024-06-21 10:30:16.123 [INFO] Also valid\n")
+            ctrl._log_dir = os.path.join(tmpdir, "logs")
+
+            resp, status = ctrl.get_recent_logs("MNQ")
+            data = resp.get_json()
+            assert len(data["logs"]) == 2
+
+    def test_get_recent_logs_blank_lines_skipped(self, controller):
+        ctrl, _, _ = controller
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.makedirs(os.path.join(tmpdir, "logs"), exist_ok=True)
+            log_file = os.path.join(tmpdir, "logs", f"app_{datetime.now().strftime('%Y-%m-%d')}.log")
+            with open(log_file, "w", encoding="utf-8") as f:
+                f.write("2024-06-21 10:30:15.123 [INFO] First\n")
+                f.write("\n")
+                f.write("2024-06-21 10:30:16.123 [INFO] Second\n")
+            ctrl._log_dir = os.path.join(tmpdir, "logs")
+
+            resp, status = ctrl.get_recent_logs("MNQ")
+            data = resp.get_json()
+            assert len(data["logs"]) == 2

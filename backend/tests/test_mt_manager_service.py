@@ -3,6 +3,8 @@
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from src.services.mt_manager_service import MetaTraderManagerService
 
 
@@ -59,6 +61,21 @@ class TestMetaTraderManagerServiceFindMtTerminal:
                 result = svc.find_mt_terminal()
                 assert result["found"] is True
                 assert "terminal64.exe" in result["path"]
+
+    def test_found_in_wine_path(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(
+            "src.services.mt_manager_service.Path.home",
+            lambda: tmp_path,
+        )
+        wine_exe = tmp_path / ".wine" / "drive_c" / "Program Files" / "MetaTrader 5" / "terminal64.exe"
+        wine_exe.parent.mkdir(parents=True)
+        wine_exe.write_text("exe")
+
+        svc = MetaTraderManagerService()
+        result = svc.find_mt_terminal()
+        assert result["found"] is True
+        assert "terminal64.exe" in result["path"]
+        assert ".wine" in result["path"]
 
 
 class TestMetaTraderManagerServiceIsTerminalRunning:
@@ -148,3 +165,93 @@ class TestMetaTraderManagerServiceLaunchTerminal:
                         result = svc.launch_terminal()
                         assert result["success"] is False
                         assert "Failed to launch" in result["message"]
+
+
+class TestWslPathConversions:
+
+    def test_wsl_to_windows_path_via_wslpath(self):
+        svc = MetaTraderManagerService()
+        with patch(
+            "src.services.mt_manager_service.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout="C:\\foo\\bar\n"),
+        ) as mock_run:
+            result = svc._wsl_to_windows_path(Path("/mnt/c/foo/bar"))
+            assert result == "C:\\foo\\bar"
+            mock_run.assert_called_once_with(
+                ["wslpath", "-w", "/mnt/c/foo/bar"],
+                capture_output=True,
+                text=True,
+            )
+
+    def test_wsl_to_windows_path_manual_mnt_fallback(self):
+        svc = MetaTraderManagerService()
+        with patch(
+            "src.services.mt_manager_service.subprocess.run",
+            return_value=MagicMock(returncode=1, stdout=""),
+        ):
+            result = svc._wsl_to_windows_path(Path("/mnt/c/foo/bar"))
+            assert result == "C:/foo/bar"
+
+    def test_wsl_to_windows_path_manual_non_mnt_fallback(self):
+        svc = MetaTraderManagerService()
+        with patch(
+            "src.services.mt_manager_service.subprocess.run",
+            return_value=MagicMock(returncode=1, stdout=""),
+        ):
+            result = svc._wsl_to_windows_path(Path("/home/user/mt5"))
+            assert result == "/home/user/mt5"
+
+    def test_windows_path_to_wsl_via_wslpath(self):
+        svc = MetaTraderManagerService()
+        with patch(
+            "src.services.mt_manager_service.subprocess.run",
+            return_value=MagicMock(returncode=0, stdout="/mnt/c/foo/bar\n"),
+        ) as mock_run:
+            result = svc._windows_path_to_wsl("C:\\foo\\bar")
+            assert result == "/mnt/c/foo/bar"
+            mock_run.assert_called_once_with(
+                ["wslpath", "-u", "C:\\foo\\bar"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+
+    def test_windows_path_to_wsl_timeout_fallback(self):
+        svc = MetaTraderManagerService()
+        with patch(
+            "src.services.mt_manager_service.subprocess.run",
+            side_effect=OSError("timed out"),
+        ):
+            result = svc._windows_path_to_wsl("C:\\foo\\bar")
+            assert result == "/mnt/c/foo/bar"
+
+    def test_windows_path_to_wsl_unc_path_fallback(self):
+        svc = MetaTraderManagerService()
+        assert svc._windows_path_to_wsl("\\\\server\\share") == "\\\\server\\share"
+
+
+class TestLaunchTerminalProvidedPath:
+
+    def test_provided_windows_path_converted_and_launched(self, tmp_path):
+        svc = MetaTraderManagerService()
+        exe = tmp_path / "terminal64.exe"
+        exe.write_text("exe")
+
+        with patch.object(svc, "is_terminal_running", return_value=False):
+            with patch.object(svc, "_can_run_windows_exe", return_value=True):
+                with patch.object(svc, "_windows_path_to_wsl", return_value=str(exe)):
+                    with patch("subprocess.Popen", return_value=MagicMock()) as mock_popen:
+                        result = svc.launch_terminal(exe_path="C:\\MetaTrader 5\\terminal64.exe")
+                        assert result["success"] is True
+                        assert "launching" in result["message"]
+                        mock_popen.assert_called_once()
+                        assert mock_popen.call_args[0][0][0] == str(exe)
+
+    def test_provided_path_does_not_exist(self):
+        svc = MetaTraderManagerService()
+        with patch.object(svc, "is_terminal_running", return_value=False):
+            with patch.object(svc, "_can_run_windows_exe", return_value=True):
+                with patch.object(svc, "_windows_path_to_wsl", return_value="/nonexistent/terminal64.exe"):
+                    result = svc.launch_terminal(exe_path="C:\\MetaTrader 5\\terminal64.exe")
+                    assert result["success"] is False
+                    assert "does not exist" in result["message"]

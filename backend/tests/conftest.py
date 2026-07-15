@@ -1,3 +1,4 @@
+import dataclasses
 import os
 
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "dummy")
@@ -123,7 +124,7 @@ def make_strategy(
         extra_sl_space=extra_sl_space,
         fixed_stop_loss=fixed_stop_loss,
         timeframes=timeframes or ["5m"],
-        options=options or DEFAULT_STRATEGY_OPTIONS,
+        options=options or dataclasses.replace(DEFAULT_STRATEGY_OPTIONS),
         candle_config=candle_config or CandleConfig(),
         sl_levels=sl_levels,
         sl_level_tolerance=sl_level_tolerance,

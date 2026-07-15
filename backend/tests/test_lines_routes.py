@@ -64,6 +64,84 @@ class TestLinesRoutes:
             resp = client.post("/api/lines", json={"price": 5000.0})
             assert resp.status_code == 400
 
+    def test_list_lines_missing_pair(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/lines")
+            assert resp.status_code == 400
+
+    def test_add_line_missing_price(self, app):
+        with app.test_client() as client:
+            resp = client.post("/api/lines", json={"pair": "MNQ"})
+            assert resp.status_code == 400
+
+    def test_add_line_invalid_price(self, app):
+        with app.test_client() as client:
+            resp = client.post("/api/lines", json={"pair": "MNQ", "price": "abc"})
+            assert resp.status_code == 400
+
+    def test_add_line_non_positive_price(self, app):
+        with app.test_client() as client:
+            resp = client.post("/api/lines", json={"pair": "MNQ", "price": 0})
+            assert resp.status_code == 400
+
+    def test_add_line_invalid_creation_time(self, app):
+        with app.test_client() as client:
+            resp = client.post(
+                "/api/lines",
+                json={"pair": "MNQ", "price": 5000.0, "creation_time": "not-a-number"},
+            )
+            assert resp.status_code == 400
+
+    def test_add_line_with_creation_time(self, app):
+        with app.test_client() as client:
+            resp = client.post(
+                "/api/lines",
+                json={"pair": "MNQ", "price": 5000.0, "creation_time": 1234567890.0},
+            )
+            assert resp.status_code == 201
+
+    def test_get_line_server_error(self, app, monkeypatch):
+        def _raise(_self, _line_id):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(FakeLinesController, "get_line", _raise)
+        with app.test_client() as client:
+            resp = client.get("/api/lines/xyz")
+            assert resp.status_code == 500
+
+    def test_update_line_missing_price(self, app):
+        with app.test_client() as client:
+            resp = client.put("/api/lines/xyz", json={})
+            assert resp.status_code == 400
+
+    def test_update_line_invalid_price(self, app):
+        with app.test_client() as client:
+            resp = client.put("/api/lines/xyz", json={"price": "abc"})
+            assert resp.status_code == 400
+
+    def test_update_line_non_positive_price(self, app):
+        with app.test_client() as client:
+            resp = client.put("/api/lines/xyz", json={"price": -1})
+            assert resp.status_code == 400
+
+    def test_update_line_server_error(self, app, monkeypatch):
+        def _raise(_self, _line_id, _price):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(FakeLinesController, "update_line", _raise)
+        with app.test_client() as client:
+            resp = client.put("/api/lines/xyz", json={"price": 5100.0})
+            assert resp.status_code == 500
+
+    def test_delete_line_server_error(self, app, monkeypatch):
+        def _raise(_self, _line_id):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(FakeLinesController, "delete_line", _raise)
+        with app.test_client() as client:
+            resp = client.delete("/api/lines/xyz")
+            assert resp.status_code == 500
+
     def test_get_line(self, app):
         with app.test_client() as client:
             resp = client.post("/api/lines", json={"pair": "MNQ", "price": 5000.0})

@@ -1,9 +1,9 @@
-"""Tests for src/database/database.py."""
+"""Tests for src/infrastructure/database/database.py."""
 
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import create_engine, inspect, text
 
 from src.infrastructure.database.database import (
     AppCredential,
@@ -164,3 +164,138 @@ class TestDecisionLogModel:
             result = session.query(DecisionLog).filter_by(event="LATCH").first()
             assert result.pair == "MNQ"
             assert result.direction == "long"
+
+
+class TestSetupDatabaseMigrationPaths:
+
+    def test_setup_database_runs_when_table_exists_with_all_columns(self, tmp_path):
+        # Calling setup_database a second time should be safe (idempotent).
+        db_path = f"sqlite:///{tmp_path / 'idempotent.db'}"
+        setup_database(db_url=db_path)
+        setup_database(db_url=db_path)
+
+        with get_db_session() as session:
+            tables = {t[0] for t in session.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).fetchall()}
+            assert "trades" in tables
+            assert "nt_accounts" in tables
+
+    def test_setup_database_adds_missing_logs_column(self, tmp_path):
+        db_path = tmp_path / "migrate_logs.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        setup_database(db_url=f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE trades DROP COLUMN logs"))
+            conn.commit()
+
+        setup_database(db_url=f"sqlite:///{db_path}")
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("trades")}
+        assert "logs" in columns
+
+    def test_setup_database_adds_missing_risk_dollars_and_contracts(self, tmp_path):
+        db_path = tmp_path / "migrate_risk.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        setup_database(db_url=f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE trades DROP COLUMN risk_dollars"))
+            conn.execute(text("ALTER TABLE trades DROP COLUMN risk_pct"))
+            conn.execute(text("ALTER TABLE trades DROP COLUMN contracts"))
+            conn.commit()
+
+        setup_database(db_url=f"sqlite:///{db_path}")
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("trades")}
+        assert {"risk_dollars", "risk_pct", "contracts"} <= columns
+
+    def test_setup_database_adds_missing_account_balance(self, tmp_path):
+        db_path = tmp_path / "migrate_balance.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        setup_database(db_url=f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE trades DROP COLUMN account_balance"))
+            conn.commit()
+
+        setup_database(db_url=f"sqlite:///{db_path}")
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("trades")}
+        assert "account_balance" in columns
+
+    def test_setup_database_adds_missing_fees_and_pnl_usd(self, tmp_path):
+        db_path = tmp_path / "migrate_fees.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        setup_database(db_url=f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE trades DROP COLUMN fees"))
+            conn.execute(text("ALTER TABLE trades DROP COLUMN pnl_usd"))
+            conn.commit()
+
+        setup_database(db_url=f"sqlite:///{db_path}")
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("trades")}
+        assert {"fees", "pnl_usd"} <= columns
+
+    def test_setup_database_adds_missing_source_account_signal_id(self, tmp_path):
+        db_path = tmp_path / "migrate_source.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        setup_database(db_url=f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE trades DROP COLUMN source"))
+            conn.execute(text("ALTER TABLE trades DROP COLUMN account"))
+            conn.execute(text("ALTER TABLE trades DROP COLUMN signal_id"))
+            conn.commit()
+
+        setup_database(db_url=f"sqlite:///{db_path}")
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("trades")}
+        assert {"source", "account", "signal_id"} <= columns
+
+    def test_setup_database_adds_missing_nt_accounts_columns(self, tmp_path):
+        db_path = tmp_path / "migrate_nt.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        setup_database(db_url=f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE nt_accounts DROP COLUMN rr_ratio"))
+            conn.execute(text("ALTER TABLE nt_accounts DROP COLUMN live_enabled"))
+            conn.commit()
+
+        setup_database(db_url=f"sqlite:///{db_path}")
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("nt_accounts")}
+        assert {"rr_ratio", "live_enabled"} <= columns
+
+    def test_setup_database_adds_missing_contracts_via_elif_branch(self, tmp_path):
+        db_path = tmp_path / "migrate_contracts_elif.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        setup_database(db_url=f"sqlite:///{db_path}")
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE trades DROP COLUMN contracts"))
+            conn.commit()
+
+        # At this point risk_dollars exists but contracts is missing,
+        # so setup_database should take the elif branch.
+        setup_database(db_url=f"sqlite:///{db_path}")
+        inspector = inspect(engine)
+        columns = {c["name"] for c in inspector.get_columns("trades")}
+        assert "contracts" in columns
+
+
+class TestGetDbSession:
+
+    def test_get_db_session_uninitialized_raises(self):
+        from src.infrastructure.database import database as db_module
+
+        original_db = db_module.db
+        try:
+            db_module.db = None
+            with pytest.raises(RuntimeError, match="Database not initialized"):
+                with get_db_session() as session:
+                    session.execute("SELECT 1")
+        finally:
+            db_module.db = original_db
+
+    def test_get_db_session_yields_usable_session(self, test_db):
+        with get_db_session() as session:
+            result = session.execute(text("SELECT 1"))
+            assert result.scalar() == 1
