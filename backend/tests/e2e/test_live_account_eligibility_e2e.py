@@ -55,11 +55,11 @@ def live_app_filtered(free_ports, e2e_logger):
     test_db = _setup_in_memory_db()
 
     account_configs = [
-        AccountConfig(name="Sim101", risk_usd=500.0, rr_ratio=3.0, live_enabled=True),
-        AccountConfig(name="Sim102", risk_usd=500.0, rr_ratio=3.0, live_enabled=True),
-        AccountConfig(name="Sim103", risk_usd=500.0, rr_ratio=3.0, live_enabled=False),
-        AccountConfig(name="Sim104", risk_usd=500.0, rr_ratio=3.0, live_enabled=False),
-        AccountConfig(name="Sim105", risk_usd=500.0, rr_ratio=3.0, live_enabled=False),
+        AccountConfig(name="Sim101", risk_usd=500.0, rr_ratio=3.0, live_enabled=True, instrument_symbols=["MNQ"]),
+        AccountConfig(name="Sim102", risk_usd=500.0, rr_ratio=3.0, live_enabled=True, instrument_symbols=["MNQ"]),
+        AccountConfig(name="Sim103", risk_usd=500.0, rr_ratio=3.0, live_enabled=False, instrument_symbols=["MNQ"]),
+        AccountConfig(name="Sim104", risk_usd=500.0, rr_ratio=3.0, live_enabled=False, instrument_symbols=["MNQ"]),
+        AccountConfig(name="Sim105", risk_usd=500.0, rr_ratio=3.0, live_enabled=False, instrument_symbols=["MNQ"]),
     ]
 
     config = GatewayConfig(

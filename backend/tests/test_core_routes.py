@@ -24,6 +24,13 @@ class GoodDataSource(CombinedDataSource):
         pass
 
 
+class FakeSettingsService:
+    def get_instruments(self):
+        return [
+            {"symbol": "MNQ", "full_name": "MNQ 09-26", "point_value": 2.0, "session_start": "08:00", "session_end": "16:58", "daily_trades_limit": 1}
+        ]
+
+
 @pytest.fixture
 def app():
     app = Flask(__name__, static_folder=None)
@@ -40,6 +47,7 @@ def app():
         frontend_dir=frontend_dir,
         platform_type="ninjatrader",
         platform_label="NinjaTrader",
+        settings_service=FakeSettingsService(),
     )
     return app
 
@@ -58,6 +66,9 @@ class TestCoreRoutes:
             assert resp.status_code == 200
             data = resp.get_json()
             assert data["pair"] == "MNQ"
+            assert data["instruments"] == [
+                {"symbol": "MNQ", "full_name": "MNQ 09-26", "point_value": 2.0, "session_start": "08:00", "session_end": "16:58", "daily_trades_limit": 1}
+            ]
             assert data["platform_type"] == "ninjatrader"
             assert data["platform_label"] == "NinjaTrader"
             assert data["is_ninjatrader"] is True

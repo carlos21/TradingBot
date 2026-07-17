@@ -31,7 +31,12 @@ def main():
     loader = CompositeConfigLoader(
         EnvConfigLoader(),
         CliConfigLoader(),
-        DbConfigLoader(db_path=os.environ.get("DB_PATH", "sqlite:///./database.db")),
+        DbConfigLoader(
+            db_path=os.environ.get(
+                "DATABASE_URL",
+                os.environ.get("DB_PATH", "sqlite:///./database.db"),
+            )
+        ),
     )
     config = loader.load()
 

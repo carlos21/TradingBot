@@ -52,7 +52,7 @@ class MetaTraderDataSource(CombinedDataSource):
         if not mt5.initialize(**self.creds):
             raise RuntimeError(f"MT5 init failed: {mt5.last_error()}")
 
-    def load_historical_bars(self, timeframe: str = '1m') -> list[dict]:
+    def load_historical_bars(self, timeframe: str = '1m', start_time: int | None = None, end_time: int | None = None, pair: str | None = None) -> list[dict]:
         tf_const = TF_MAP.get(timeframe)
         if tf_const is None:
             raise ValueError(f"Unsupported timeframe: {timeframe}")

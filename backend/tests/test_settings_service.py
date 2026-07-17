@@ -36,7 +36,13 @@ class TestSettingsServiceGetFullSettings:
         svc = _make_service()
         settings = svc.get_full_settings()
         assert settings["trading"]["pair"] == "MNQ"
-        assert settings["trading"]["instrument"] == ""
+        assert settings["trading"]["instrument"] == "MNQ 09-26"
+        assert settings["trading"]["session_end"] == "16:58"
+        assert settings["trading"]["instruments"] == [{
+            "symbol": "MNQ",
+            "full_name": "MNQ 09-26",
+            "point_value": 2.0,
+        }]
         assert settings["network"]["flask_port"] == "5001"
         assert settings["network"]["zmq_host"] == "127.0.0.1"
         assert settings["accounts"] == []
@@ -83,8 +89,63 @@ class TestSettingsServiceGetFullSettings:
         assert settings["trading"]["pair"] == "ES"
         assert settings["network"]["flask_port"] == "8080"
 
+    def test_instruments_from_registry(self):
+        svc = _make_service()
+        svc.save_full_settings({
+            "trading": {
+                "instruments": [
+                    {"symbol": "ES", "full_name": "ES 06-26", "point_value": 12.5},
+                    {"symbol": "NQ", "full_name": "NQ 09-26"},
+                ],
+                "session_end": "17:00",
+            },
+            "network": {},
+            "accounts": [],
+            "credentials": {},
+        })
+        settings = svc.get_full_settings()
+        assert len(settings["trading"]["instruments"]) == 2
+        assert settings["trading"]["pair"] == "ES"
+        assert settings["trading"]["instrument"] == "ES 06-26"
+        assert settings["trading"]["session_end"] == "17:00"
+
 
 class TestSettingsServiceSaveFullSettings:
+
+    def test_save_instruments(self):
+        svc = _make_service()
+        svc.save_full_settings({
+            "trading": {
+                "instruments": [
+                    {"symbol": "ES", "full_name": "ES 06-26", "point_value": 12.5},
+                ],
+                "session_end": "17:00",
+            },
+            "network": {},
+            "accounts": [],
+            "credentials": {},
+        })
+        instruments = svc.get_instruments()
+        assert len(instruments) == 1
+        assert instruments[0]["symbol"] == "ES"
+        assert instruments[0]["full_name"] == "ES 06-26"
+        assert instruments[0]["point_value"] == 12.5
+        # Legacy settings are kept in sync for backward compatibility.
+        assert svc._settings.get("pair") == "ES"
+        assert svc._settings.get("instrument") == "ES 06-26"
+        assert svc._settings.get("session_end") == "17:00"
+
+    def test_legacy_pair_update_syncs_registry(self):
+        svc = _make_service()
+        svc.save_full_settings({
+            "trading": {"pair": "YM", "instrument": "YM 09-26", "session_end": "17:30"},
+            "network": {},
+            "accounts": [],
+            "credentials": {},
+        })
+        instruments = svc.get_instruments()
+        assert instruments[0]["symbol"] == "YM"
+        assert instruments[0]["full_name"] == "YM 09-26"
 
     def test_save_trading_settings(self):
         svc = _make_service()
@@ -205,7 +266,9 @@ class TestSettingsServiceSaveFullSettings:
             "accounts": [],
             "credentials": {},
         })
-        assert svc._settings.get("pair") == ""
+        # None is ignored; the registry default remains MNQ and is synced to legacy settings.
+        assert svc._settings.get("pair") == "MNQ"
+        assert svc._settings.get("instrument") == "MNQ 09-26"
 
 
 class TestSettingsServiceToAppConfigOverrides:
@@ -213,7 +276,10 @@ class TestSettingsServiceToAppConfigOverrides:
     def test_empty(self):
         svc = _make_service()
         overrides = svc.to_app_config_overrides()
-        assert overrides == {}
+        # The registry always provides at least a default instrument.
+        assert overrides["pair"] == "MNQ"
+        assert overrides["instrument"] == "MNQ 09-26"
+        assert overrides["point_value"] == "2.0"
 
     def test_with_settings(self):
         svc = _make_service()

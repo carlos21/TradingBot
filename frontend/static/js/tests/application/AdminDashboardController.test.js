@@ -115,8 +115,15 @@ function setupAdminDocument() {
       </div>
 
       <div id="settings-tab" class="tab-content hidden">
-        <input id="settings-pair" />
-        <input id="settings-instrument" />
+        <table><tbody id="settings-instruments-tbody"></tbody></table>
+        <div id="settings-instruments-empty"></div>
+        <input id="settings-instrument-symbol" />
+        <input id="settings-instrument-full-name" />
+        <input id="settings-instrument-point-value" />
+        <input id="settings-instrument-session-start" />
+        <input id="settings-instrument-session-end" />
+        <input id="settings-instrument-daily-limit" />
+        <button id="settings-instrument-add"></button>
         <input id="settings-session-end" />
         <input id="settings-history-hours" />
         <input id="settings-flask-port" />
@@ -235,7 +242,13 @@ function buildController(doc, win) {
   http.setResponse('GET', '/api/lines', []);
   http.setResponse('GET', '/api/admin/decisions', { logs: [], events: [] });
   http.setResponse('GET', '/api/settings', {
-    trading: { pair: 'MNQ', instrument: '', session_end: '16:58', history_hours: '' },
+    trading: {
+      instruments: [{ symbol: 'MNQ', full_name: 'MNQ 09-26', point_value: 2.0, session_start: '08:00', session_end: '16:58', daily_trades_limit: 1 }],
+      pair: 'MNQ',
+      instrument: '',
+      session_end: '16:58',
+      history_hours: '',
+    },
     network: { flask_port: '5001', zmq_host: '127.0.0.1', zmq_market_port: '5555', zmq_command_port: '5556', zmq_query_port: '5557', zmq_heartbeat_port: '5558' },
     accounts: [],
     credentials: { stored_usernames: [], username: '', password: '' },

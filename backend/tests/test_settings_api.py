@@ -49,6 +49,7 @@ class TestSettingsApi:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["trading"]["pair"] == "MNQ"
+        assert data["trading"]["instruments"][0]["symbol"] == "MNQ"
         assert data["accounts"] == []
 
     def test_save_and_get_settings(self, client):
@@ -66,8 +67,32 @@ class TestSettingsApi:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["trading"]["pair"] == "ES"
+        assert data["trading"]["instruments"][0]["symbol"] == "ES"
         assert data["accounts"][0]["name"] == "A1"
         assert data["accounts"][0]["live_enabled"] is False
+
+    def test_save_and_get_instruments(self, client):
+        payload = {
+            "trading": {
+                "instruments": [
+                    {"symbol": "ES", "full_name": "ES 06-26", "point_value": 12.5},
+                    {"symbol": "NQ", "full_name": "NQ 09-26"},
+                ],
+                "session_end": "17:00",
+            },
+            "network": {},
+            "accounts": [],
+            "credentials": {},
+        }
+        resp = client.post("/api/settings", json=payload)
+        assert resp.status_code == 200
+
+        resp = client.get("/api/settings")
+        data = resp.get_json()
+        assert len(data["trading"]["instruments"]) == 2
+        assert data["trading"]["pair"] == "ES"
+        assert data["trading"]["instrument"] == "ES 06-26"
+        assert data["trading"]["session_end"] == "17:00"
 
     def test_accounts_crud(self, client):
         resp = client.post("/api/accounts", json={"name": "A1", "risk_usd": 100.0})

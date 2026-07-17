@@ -222,7 +222,9 @@ class SocketIOBridge:
     def _forward_trade_event(self, event_name: str, payload: dict[str, Any]) -> None:
         """Forward a trade-related event to SocketIO."""
         try:
-            self.socketio.emit(event_name, payload)
+            room = payload.get("pair")
+            kwargs = {"room": room} if room else {}
+            self.socketio.emit(event_name, payload, **kwargs)
         except Exception as exc:
             self._logger.error(f"[SocketIOBridge] emit {event_name} failed: {exc}")
 
@@ -244,15 +246,21 @@ class SocketIOBridge:
 
     def _on_line_added(self, event: DomainEvent) -> None:
         """Forward line added event."""
-        self.socketio.emit('line_added', event.payload)
+        room = event.payload.get("pair")
+        kwargs = {"room": room} if room else {}
+        self.socketio.emit('line_added', event.payload, **kwargs)
 
     def _on_line_removed(self, event: DomainEvent) -> None:
         """Forward line removed event."""
-        self.socketio.emit('line_removed', event.payload)
+        room = event.payload.get("pair")
+        kwargs = {"room": room} if room else {}
+        self.socketio.emit('line_removed', event.payload, **kwargs)
 
     def _on_line_updated(self, event: DomainEvent) -> None:
         """Forward line updated event."""
-        self.socketio.emit('line_updated', event.payload)
+        room = event.payload.get("pair")
+        kwargs = {"room": room} if room else {}
+        self.socketio.emit('line_updated', event.payload, **kwargs)
 
     def _on_stream_started(self, _event: DomainEvent) -> None:
         """Forward stream started event."""
@@ -265,11 +273,15 @@ class SocketIOBridge:
     def _on_stream_ended(self, event: DomainEvent) -> None:
         """Forward stream ended event."""
         reason = event.payload.get('reason', 'eof')
-        self.socketio.emit('stream_end', {'reason': reason})
+        room = event.payload.get("pair")
+        kwargs = {"room": room} if room else {}
+        self.socketio.emit('stream_end', {'reason': reason}, **kwargs)
 
     def _on_indicator_update(self, event: DomainEvent) -> None:
         """Forward indicator update event."""
-        self.socketio.emit('indicator_update', event.payload)
+        room = event.payload.get("pair")
+        kwargs = {"room": room} if room else {}
+        self.socketio.emit('indicator_update', event.payload, **kwargs)
 
     def _on_readiness_changed(self, event: DomainEvent) -> None:
         """Forward readiness changed event."""

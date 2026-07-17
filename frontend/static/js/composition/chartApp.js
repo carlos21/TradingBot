@@ -28,7 +28,11 @@ export function createChartApp(opts = {}) {
     socket,
     chartApi,
     storage,
-    options: opts.options,
+    options: {
+      activePair: opts.options?.activePair,
+      activeInstrument: opts.options?.activeInstrument,
+      ...opts.options,
+    },
   });
 
   const socketController = new ChartSocketController(socket, controller, dom);

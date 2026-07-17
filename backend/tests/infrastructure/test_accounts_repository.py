@@ -32,6 +32,10 @@ class _FakeDB(DatabaseProtocol):
     def create_tables(self, Base):
         pass
 
+    @property
+    def dialect(self) -> str:
+        return "sqlite"
+
 
 class TestNtAccountRepositoryGet:
 
@@ -93,6 +97,31 @@ class TestNtAccountRepositoryUpsert:
         assert account.risk_usd == 200.0
         assert account.rr_ratio == 4.0
         assert account.live_enabled is False
+
+    def test_upsert_stores_instrument_symbols(self, repo):
+        repo.upsert(
+            "Main",
+            risk_usd=100.0,
+            rr_ratio=3.0,
+            instrument_symbols=["MNQ", "ES"],
+        )
+        account = repo.get_account("Main")
+        assert account.instrument_symbols == ["MNQ", "ES"]
+
+    def test_get_account_normalizes_instrument_symbols(self, repo):
+        repo.upsert(
+            "Main",
+            risk_usd=100.0,
+            rr_ratio=3.0,
+            instrument_symbols=[" mNq ", "es", ""],
+        )
+        account = repo.get_account("Main")
+        assert account.instrument_symbols == ["MNQ", "ES"]
+
+    def test_upsert_defaults_instrument_symbols_to_empty_list(self, repo):
+        repo.upsert("Main", risk_usd=100.0, rr_ratio=3.0)
+        account = repo.get_account("Main")
+        assert account.instrument_symbols == []
 
     def test_upsert_persists_live_disabled(self, repo):
         repo.upsert("Main", live_enabled=False)

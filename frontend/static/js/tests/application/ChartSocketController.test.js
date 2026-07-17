@@ -17,6 +17,7 @@ function buildController(doc, win) {
   const socket = new FakeSocket();
   const dom = new FakeDomService(doc, win);
   const controller = {
+    pair: 'MNQ',
     historyReady: false,
     queueBar: vi.fn(),
     processBar: vi.fn(),
@@ -94,6 +95,61 @@ describe('ChartSocketController', () => {
     const { socket, controller } = buildController(...Object.values(setupDocument()));
     socket.trigger('line_removed', { id: 7 });
     expect(controller.handleLineRemoved).toHaveBeenCalledWith(7);
+  });
+
+  describe('instrument filtering', () => {
+    it('ignores bar for a different instrument', () => {
+      const { socket, controller } = buildController(...Object.values(setupDocument()));
+      controller.historyReady = true;
+      socket.trigger('bar', { pair: 'ES', time: 1 });
+      expect(controller.processBar).not.toHaveBeenCalled();
+      expect(controller.queueBar).not.toHaveBeenCalled();
+    });
+
+    it('processes bar without a pair for backward compatibility', () => {
+      const { socket, controller } = buildController(...Object.values(setupDocument()));
+      controller.historyReady = true;
+      const bar = { time: 1 };
+      socket.trigger('bar', bar);
+      expect(controller.processBar).toHaveBeenCalledWith(bar);
+    });
+
+    it('ignores indicator_update for a different instrument', () => {
+      const { socket, controller } = buildController(...Object.values(setupDocument()));
+      socket.trigger('indicator_update', { pair: 'ES', time: 1, tsi: 10, signal: 5 });
+      expect(controller.handleIndicatorUpdate).not.toHaveBeenCalled();
+    });
+
+    it('ignores trade events for a different instrument', () => {
+      const { socket, controller } = buildController(...Object.values(setupDocument()));
+      socket.trigger('trade_open', { pair: 'ES', trade_id: 't1' });
+      socket.trigger('trade_close', { pair: 'ES', trade_id: 't1' });
+      socket.trigger('trade_update', { pair: 'ES', trade_id: 't1', stop_loss: 99 });
+      socket.trigger('trade_entry_update', { pair: 'ES', trade_id: 't1', entry_price: 100 });
+      expect(controller.handleTradeOpen).not.toHaveBeenCalled();
+      expect(controller.handleTradeClose).not.toHaveBeenCalled();
+      expect(controller.handleTradeUpdate).not.toHaveBeenCalled();
+      expect(controller.handleTradeEntryUpdate).not.toHaveBeenCalled();
+    });
+
+    it('ignores line_removed for a different instrument', () => {
+      const { socket, controller } = buildController(...Object.values(setupDocument()));
+      socket.trigger('line_removed', { pair: 'ES', id: 7 });
+      expect(controller.handleLineRemoved).not.toHaveBeenCalled();
+    });
+
+    it('processes events for the current instrument', () => {
+      const { socket, controller } = buildController(...Object.values(setupDocument()));
+      controller.historyReady = true;
+      socket.trigger('bar', { pair: 'MNQ', time: 1 });
+      socket.trigger('indicator_update', { pair: 'MNQ', time: 1, tsi: 10, signal: 5 });
+      socket.trigger('trade_open', { pair: 'MNQ', trade_id: 't1' });
+      socket.trigger('line_removed', { pair: 'MNQ', id: 7 });
+      expect(controller.processBar).toHaveBeenCalled();
+      expect(controller.handleIndicatorUpdate).toHaveBeenCalled();
+      expect(controller.handleTradeOpen).toHaveBeenCalled();
+      expect(controller.handleLineRemoved).toHaveBeenCalledWith(7);
+    });
   });
 
   it('sets window __done on stream_end', () => {

@@ -17,6 +17,20 @@ export PAIR="${PAIR:-MNQ}"
 
 cd "$PROJECT_DIR"
 
+# Load .env so we know which database is configured before deciding on cleanup.
+if [ -f "$PROJECT_DIR/.env" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source <(sed '1s/^\xEF\xBB\xBF//' "$PROJECT_DIR/.env")
+    set +a
+fi
+
+EFFECTIVE_DB_URL="${DATABASE_URL:-${DB_PATH:-sqlite:///./database.db}}"
+USING_SQLITE=false
+if [[ "$EFFECTIVE_DB_URL" == sqlite* ]]; then
+    USING_SQLITE=true
+fi
+
 # Kill any existing Liquid process to free ZMQ ports & DB locks
 echo "[liquid] Checking for existing processes..."
 
@@ -42,8 +56,8 @@ if [ -n "$STALE_PIDS" ]; then
     sleep 1
 fi
 
-# 3. Kill any process holding the database lock
-if command -v fuser >/dev/null 2>&1 && [ -f "$DB_FILE" ]; then
+# 3. Kill any process holding the database lock (SQLite only)
+if [ "$USING_SQLITE" = true ] && command -v fuser >/dev/null 2>&1 && [ -f "$DB_FILE" ]; then
     DB_PIDS=$(fuser "$DB_FILE" 2>/dev/null || true)
     if [ -n "$DB_PIDS" ]; then
         echo "[liquid] Killing processes holding database lock: $DB_PIDS"
@@ -52,8 +66,10 @@ if command -v fuser >/dev/null 2>&1 && [ -f "$DB_FILE" ]; then
     fi
 fi
 
-# 4. Clean up stale WAL/SHM files so SQLite can re-open cleanly
-rm -f "${DB_FILE}-shm" "${DB_FILE}-wal" "${DB_FILE}-journal"
+# 4. Clean up stale WAL/SHM files so SQLite can re-open cleanly (SQLite only)
+if [ "$USING_SQLITE" = true ]; then
+    rm -f "${DB_FILE}-shm" "${DB_FILE}-wal" "${DB_FILE}-journal"
+fi
 
 echo "[liquid] Starting live — pair=$PAIR"
 # Write our PID before exec (exec keeps the same PID)

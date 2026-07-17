@@ -264,6 +264,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 creation_ts = line.get('creation_ts', 0)
                 if creation_ts > bar_time:
                     continue
+                if not self._line_matches_bar(line, bar):
+                    continue
 
                 lvl = line['level']
                 if line['direction'] is None:
@@ -358,14 +360,18 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                     self.analytics.capture_signal_event("LINE_REMOVE", {"line_id": sid, "reason": "max_bounce", "level": line['level']})
                     lines_to_remove.add(sid)
 
-            short_lines = [line for line in self.strategy_lines.values() if line['direction'] == 'short']
-            long_lines  = [line for line in self.strategy_lines.values() if line['direction'] == 'long']
+            short_lines = [line for line in self.strategy_lines.values()
+                           if line['direction'] == 'short' and self._line_matches_bar(line, bar)]
+            long_lines  = [line for line in self.strategy_lines.values()
+                           if line['direction'] == 'long' and self._line_matches_bar(line, bar)]
 
             for sid, line in self.strategy_lines.items():
                 if sid in lines_to_remove:
                     continue
                 # Skip lines created after this bar — same guard as main loop
                 if line.get('creation_ts', 0) > bar_time:
+                    continue
+                if not self._line_matches_bar(line, bar):
                     continue
                 # Same guard for cross-line hits during warmup
                 if self.is_warmup and line.get('creation_ts', 0) == 0:
@@ -428,6 +434,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
                 if creation_ts > bar_time:
                     continue
                 if sid in lines_to_remove:
+                    continue
+                if not self._line_matches_bar(line, bar):
                     continue
                 lvl = line['level']
                 if line['direction'] == 'short':
@@ -531,6 +539,8 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
 
             for sid, line in list(self.strategy_lines.items()):
                 if line.get('creation_ts', 0) > bar['time']:
+                    continue
+                if not self._line_matches_bar(line, bar):
                     continue
 
                 opened = False

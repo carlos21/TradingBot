@@ -24,6 +24,14 @@ class LineData:
         )
 
 
+@dataclass
+class Instrument:
+    """A tradeable instrument configuration."""
+
+    symbol: str
+    full_name: str
+    point_value: float = 2.0
+
 
 @dataclass
 class TradeData:

@@ -25,6 +25,10 @@ class _FakeDB(DatabaseProtocol):
     def create_tables(self, Base):
         pass
 
+    @property
+    def dialect(self) -> str:
+        return "sqlite"
+
 
 @pytest.fixture
 def repo(tmp_path):

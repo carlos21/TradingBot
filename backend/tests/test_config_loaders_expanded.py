@@ -368,6 +368,25 @@ class TestDbConfigLoader:
         assert cfg.zmq_host == "0.0.0.0"
         assert cfg.flask_port == 5002
 
+    def test_loads_instruments(self, tmp_path):
+        db_path = f"sqlite:///{tmp_path / 'instruments_loader.db'}"
+        setup_database(db_url=db_path)
+        from src.infrastructure.database.database import get_db_session
+        session = get_db_session().__enter__()
+
+        settings_repo = SettingsRepository()
+        settings_repo.set(
+            "instruments",
+            '[{"symbol": "NQ", "full_name": "NQ 09-26", "point_value": 5.0}]',
+        )
+        session.close()
+
+        loader = DbConfigLoader(db_path=db_path)
+        cfg = loader.load()
+        assert cfg.pair == "NQ"
+        assert cfg.instrument == "NQ 09-26"
+        assert cfg.point_value == 5.0
+
     def test_loads_accounts(self, db_loader):
         cfg = db_loader.load()
         assert len(cfg.nt_accounts) == 1

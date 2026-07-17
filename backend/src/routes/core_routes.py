@@ -1,11 +1,16 @@
 """Core HTTP routes - index page and basic API."""
+from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
 from flask import Flask, jsonify, send_from_directory
 
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.utils.app_logger import ILogger
+
+if TYPE_CHECKING:
+    from src.services.settings_service import SettingsService
 
 
 def register_core_routes(
@@ -16,6 +21,7 @@ def register_core_routes(
     frontend_dir: str,
     platform_type: str,
     platform_label: str,
+    settings_service: "SettingsService" | None = None,
 ):
     """Register core routes on the Flask app.
 
@@ -23,9 +29,11 @@ def register_core_routes(
         app: Flask application instance
         pair: Trading pair (e.g., "MNQ")
         data_source: Data source for historical bars
+        logger: Logger instance
         frontend_dir: Absolute path to the frontend HTML files
         platform_type: Platform identifier (e.g., "ninjatrader")
         platform_label: Human-readable platform label
+        settings_service: Optional settings service for instrument registry data
     """
 
     @app.route('/')
@@ -34,8 +42,10 @@ def register_core_routes(
 
     @app.route('/api/config')
     def get_config():
+        instruments = settings_service.get_instruments() if settings_service else []
         return jsonify({
-            'pair': pair,
+            'instruments': instruments,
+            'pair': instruments[0]["symbol"] if instruments else pair,
             'platform_type': platform_type,
             'platform_label': platform_label,
             'is_ninjatrader': platform_type == 'ninjatrader',

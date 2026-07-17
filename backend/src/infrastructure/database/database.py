@@ -2,7 +2,7 @@ from contextlib import contextmanager
 
 from sqlalchemy import JSON, Column, DateTime, Float, Index, Integer, String, Text, func
 
-from src.infrastructure.database.database_protocol import Base, get_database
+from src.infrastructure.database.database_protocol import Base, DatabaseProtocol, get_database
 
 
 class Line(Base):
@@ -87,13 +87,14 @@ class AppSetting(Base):
 class NtAccount(Base):
     __tablename__ = "nt_accounts"
 
-    id           = Column(Integer, primary_key=True, autoincrement=True)
-    name         = Column(String(100), nullable=False, unique=True)
-    risk_usd     = Column(Float, nullable=True)
-    risk_pct     = Column(Float, nullable=True)
-    rr_ratio     = Column(Float, nullable=True)
-    live_enabled = Column(Integer, default=1)  # 0/1 boolean; None treated as enabled
-    updated_at   = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    id                 = Column(Integer, primary_key=True, autoincrement=True)
+    name               = Column(String(100), nullable=False, unique=True)
+    risk_usd           = Column(Float, nullable=True)
+    risk_pct           = Column(Float, nullable=True)
+    rr_ratio           = Column(Float, nullable=True)
+    live_enabled       = Column(Integer, default=1)  # 0/1 boolean; None treated as enabled
+    instrument_symbols = Column(JSON, nullable=True)  # list[str]; None/empty = no instruments (strict)
+    updated_at         = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
 
 class AppCredential(Base):
@@ -118,73 +119,92 @@ def get_db_session():
     finally:
         db_session.close()
 
-def setup_database(db_url: str = "sqlite:///./database.db"):
-    global db
-    db = get_database(db_url=db_url)
-    db.create_tables(Base)
-    # Auto-migrate: add 'logs' column if missing (added after initial schema)
-    from sqlalchemy import inspect, text
-    insp = inspect(db.get_engine())
-    if 'trades' in insp.get_table_names():
-        columns = [c['name'] for c in insp.get_columns('trades')]
-        if 'logs' not in columns:
-            with db.get_engine().connect() as conn:
-                conn.execute(text("ALTER TABLE trades ADD COLUMN logs JSON"))
-                conn.commit()
-            # logger removed - pass via constructor if needed
-        if 'risk_dollars' not in columns:
-            with db.get_engine().connect() as conn:
-                conn.execute(text("ALTER TABLE trades ADD COLUMN risk_dollars FLOAT"))
-                conn.execute(text("ALTER TABLE trades ADD COLUMN risk_pct FLOAT"))
-                conn.execute(text("ALTER TABLE trades ADD COLUMN contracts FLOAT"))
-                conn.commit()
-            # logger removed - pass via constructor if needed
-        elif 'contracts' not in columns:
-            with db.get_engine().connect() as conn:
-                conn.execute(text("ALTER TABLE trades ADD COLUMN contracts FLOAT"))
-                conn.commit()
-            # logger removed - pass via constructor if needed
-        if 'account_balance' not in columns:
-            with db.get_engine().connect() as conn:
-                conn.execute(text("ALTER TABLE trades ADD COLUMN account_balance FLOAT"))
-                conn.commit()
-            # logger removed - pass via constructor if needed
-        if 'fees' not in columns:
-            with db.get_engine().connect() as conn:
-                conn.execute(text("ALTER TABLE trades ADD COLUMN fees FLOAT"))
-                conn.execute(text("ALTER TABLE trades ADD COLUMN pnl_usd FLOAT"))
-                conn.commit()
-            # logger removed - pass via constructor if needed
-        if 'source' not in columns:
-            with db.get_engine().connect() as conn:
-                conn.execute(text("ALTER TABLE trades ADD COLUMN source VARCHAR(20) DEFAULT 'strategy'"))
-                conn.commit()
-        if 'account' not in columns:
-            with db.get_engine().connect() as conn:
-                conn.execute(text("ALTER TABLE trades ADD COLUMN account VARCHAR(50)"))
-                conn.commit()
-        if 'signal_id' not in columns:
-            with db.get_engine().connect() as conn:
-                conn.execute(text("ALTER TABLE trades ADD COLUMN signal_id VARCHAR(50)"))
-                conn.commit()
+def _column_type_sql(column, dialect) -> str:
+    """Render a SQLAlchemy Column's type clause for a given dialect."""
+    return str(column.type.compile(dialect=dialect))
 
-    # Auto-create new tables for settings/accounts/credentials if missing
-    tables = insp.get_table_names()
+
+def _add_column_if_missing(engine, table_name: str, column, defaults: dict | None = None):
+    """Add ``column`` to ``table_name`` if it does not already exist.
+
+    Works across SQLite, PostgreSQL and MySQL by rendering the column type
+    through SQLAlchemy's dialect compiler and applying any extra clauses
+    supplied in ``defaults`` (e.g. ``{"live_enabled": "DEFAULT 1"}``).
+    """
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+    if table_name not in insp.get_table_names():
+        return
+    existing = {c['name'] for c in insp.get_columns(table_name)}
+    if column.name in existing:
+        return
+
+    type_sql = _column_type_sql(column, engine.dialect)
+    extra = (defaults or {}).get(column.name, "")
+    if extra:
+        extra = " " + extra
+    sql = f"ALTER TABLE {table_name} ADD COLUMN {column.name} {type_sql}{extra}"
+    with engine.connect() as conn:
+        conn.execute(text(sql))
+        conn.commit()
+
+
+def _migrate_schema(engine):
+    """Add missing columns to existing tables across all supported dialects."""
+    from sqlalchemy import inspect, text
+
+    insp = inspect(engine)
+
+    # Ensure helper tables exist (safe no-op if already present).
+    tables = set(insp.get_table_names())
     if 'app_settings' not in tables:
-        AppSetting.__table__.create(db.get_engine(), checkfirst=True)
+        AppSetting.__table__.create(engine, checkfirst=True)
     if 'nt_accounts' not in tables:
-        NtAccount.__table__.create(db.get_engine(), checkfirst=True)
-    else:
-        # Auto-migrate: add rr_ratio column if missing
-        nt_columns = [c['name'] for c in insp.get_columns('nt_accounts')]
-        if 'rr_ratio' not in nt_columns:
-            with db.get_engine().connect() as conn:
-                conn.execute(text("ALTER TABLE nt_accounts ADD COLUMN rr_ratio FLOAT"))
-                conn.commit()
-        if 'live_enabled' not in nt_columns:
-            with db.get_engine().connect() as conn:
-                conn.execute(text("ALTER TABLE nt_accounts ADD COLUMN live_enabled INTEGER DEFAULT 1"))
-                conn.execute(text("UPDATE nt_accounts SET live_enabled = 1"))
-                conn.commit()
+        NtAccount.__table__.create(engine, checkfirst=True)
     if 'app_credentials' not in tables:
-        AppCredential.__table__.create(db.get_engine(), checkfirst=True)
+        AppCredential.__table__.create(engine, checkfirst=True)
+    if 'line_trigger_state' not in tables:
+        LineTriggerState.__table__.create(engine, checkfirst=True)
+    if 'decision_logs' not in tables:
+        DecisionLog.__table__.create(engine, checkfirst=True)
+
+    # Trades table migrations
+    if 'trades' in tables:
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.logs)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.risk_dollars)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.risk_pct)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.contracts)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.account_balance)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.fees)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.pnl_usd)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.source)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.account)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.signal_id)
+
+    # NT accounts migrations
+    if 'nt_accounts' in tables:
+        _add_column_if_missing(engine, 'nt_accounts', NtAccount.__table__.c.rr_ratio)
+        _add_column_if_missing(
+            engine, 'nt_accounts', NtAccount.__table__.c.live_enabled,
+            defaults={"live_enabled": "DEFAULT 1"},
+        )
+        _add_column_if_missing(engine, 'nt_accounts', NtAccount.__table__.c.instrument_symbols)
+
+        # Backfill live_enabled for legacy rows that have a NULL value.
+        with engine.connect() as conn:
+            conn.execute(text("UPDATE nt_accounts SET live_enabled = 1 WHERE live_enabled IS NULL"))
+            conn.commit()
+
+
+def setup_database(database_instance: DatabaseProtocol | None = None, db_url: str = "sqlite:///./database.db"):
+    global db
+    if database_instance is None:
+        db = get_database(db_url=db_url)
+    else:
+        db = database_instance
+    db.create_tables(Base)
+    # Auto-migrate: add missing columns to existing tables for all dialects.
+    # create_all only creates missing tables; it never adds missing columns.
+    _migrate_schema(db.get_engine())
+    return db

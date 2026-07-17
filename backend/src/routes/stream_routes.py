@@ -16,6 +16,7 @@ def register_stream_routes(
     platform_lifecycle: PlatformLifecycleService,
     socketio,
     logger: ILogger,
+    coordinator=None,
 ):
     """Register stream start/stop/status routes.
 
@@ -25,6 +26,7 @@ def register_stream_routes(
         platform_lifecycle: Platform-specific lifecycle service for validation and auto-launch
         socketio: SocketIO instance for emitting events
         logger: Logger instance
+        coordinator: Optional StreamCoordinator for per-instrument streaming
     """
 
     @app.route("/api/stream/status", methods=["GET"])

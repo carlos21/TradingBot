@@ -286,19 +286,22 @@ class UnitOfWorkLineTriggerStateRepository(ILineTriggerStateRepository):
         self._session = session
 
     def save(self, line_id: str, pair: str, state: dict[str, Any]) -> None:
-        from sqlalchemy.dialects.sqlite import insert as sqlite_upsert
-
-        stmt = sqlite_upsert(LineTriggerState).values(
-            line_id=line_id,
-            pair=pair,
-            state_json=state,
-            updated_at=datetime.now(timezone.utc)
-        )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=['line_id'],
-            set_={'state_json': state, 'updated_at': datetime.now(timezone.utc)}
-        )
-        self._session.execute(stmt)
+        row = self._session.query(LineTriggerState).filter(
+            LineTriggerState.line_id == line_id
+        ).one_or_none()
+        if row is None:
+            row = LineTriggerState(
+                line_id=line_id,
+                pair=pair,
+                state_json=state,
+                updated_at=datetime.now(timezone.utc),
+            )
+            self._session.add(row)
+        else:
+            row.pair = pair
+            row.state_json = state
+            row.updated_at = datetime.now(timezone.utc)
+        self._session.flush()
 
     def load(self, line_id: str) -> dict[str, Any] | None:
         row = self._session.query(LineTriggerState).filter(

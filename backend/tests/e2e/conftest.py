@@ -271,8 +271,8 @@ def live_app_multi(
     test_db = _setup_in_memory_db()
 
     account_configs = [
-        AccountConfig(name="Sim101", risk_usd=500.0, rr_ratio=3.0),
-        AccountConfig(name="Sim102", risk_usd=1000.0, rr_ratio=5.0),
+        AccountConfig(name="Sim101", risk_usd=500.0, rr_ratio=3.0, instrument_symbols=["MNQ"]),
+        AccountConfig(name="Sim102", risk_usd=1000.0, rr_ratio=5.0, instrument_symbols=["MNQ"]),
     ]
 
     config = GatewayConfig(

@@ -18,6 +18,8 @@ const DEFAULT_OPTIONS = {
   keepClosedTradeLines: false,
   startTime: null,
   showTSI: true,
+  activePair: null,
+  activeInstrument: null,
 };
 
 /**
@@ -40,7 +42,8 @@ export class ChartController {
     // State
     this.lastTime = -Infinity;
     this.lastPrice = null;
-    this.pair = null;
+    this.pair = this.options.activePair || null;
+    this.activeInstrument = this.options.activeInstrument || null;
     this.currentTF = this.options.timeframe;
     this.isPlaying = false;
     this.liveMode = false;
@@ -70,7 +73,6 @@ export class ChartController {
 
   async _init() {
     try {
-      await this._initPair();
       this._initChart();
       this._applyPriceFormat();
       this._bindInteractions();
@@ -89,12 +91,6 @@ export class ChartController {
   _emitReady() {
     const win = this.dom.getWindow();
     if (win) win.__chartReady = true;
-  }
-
-  async _initPair() {
-    const res = await this.http.get('/api/pair');
-    this.pair = res.pair;
-    return this.pair;
   }
 
   _initChart() {
@@ -529,7 +525,7 @@ export class ChartController {
       this.historicalBars = slice;
       this._recalculateTSI();
       this._updateMarkers();
-      this.socket.emit('seek', { fromTime: this.lastTime });
+      this.socket.emit('seek', { pair: this.pair, fromTime: this.lastTime });
     }
   }
 
@@ -603,7 +599,7 @@ export class ChartController {
       this._displayChart(bars);
       await this._initTrades();
       this._recalculateTSI();
-      this.socket.emit('set_timeframe', { timeframe: tf, fromTime: this.lastTime });
+      this.socket.emit('set_timeframe', { timeframe: tf, pair: this.pair, fromTime: this.lastTime });
       this.chartApi.fitContent(this.chart);
       this._shadeBars(bars);
     } finally {
@@ -630,6 +626,45 @@ export class ChartController {
 
   setPlaying(playing) {
     this.isPlaying = playing;
+  }
+
+  setActiveInstrument(pair, instrument) {
+    this.pair = pair;
+    this.activeInstrument = instrument;
+    this._applyPriceFormat();
+    this.pauseReplay();
+    this._clearInstrumentState();
+    this.initBars().catch(err => {
+      console.error('[ChartController] initBars failed during instrument change:', err);
+    });
+  }
+
+  _clearInstrumentState() {
+    for (const pinned of this.pinnedLines) {
+      if (pinned.line) this.chartApi.removePriceLine(this.priceSeries, pinned.line);
+    }
+    this.pinnedLines = [];
+
+    this.clearAllTradeLines();
+
+    this.historicalBars = [];
+    this.allTrades = [];
+    this.validTimes = new Set();
+    this.pendingBars = [];
+    this._tsiMarkers = [];
+
+    this.lastTime = -Infinity;
+    this.lastPrice = null;
+    this._lastShadedTime = -Infinity;
+    this.historyReady = false;
+
+    this.chartApi.setData(this.priceSeries, []);
+    this.chartApi.setData(this.nySeries, []);
+    if (this.options.showTSI) {
+      this.chartApi.setData(this.tsiSeries, []);
+      this.chartApi.setData(this.sigSeries, []);
+    }
+    this.chartApi.setMarkers(this.priceSeries, []);
   }
 
   async handleHistoryReady() {

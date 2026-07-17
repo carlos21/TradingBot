@@ -17,10 +17,72 @@ function setConnectionStatus(text) {
   if (el) el.textContent = text;
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-  const chartContainer = document.getElementById('chartContainer');
+function getUrlPair() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('pair');
+}
 
-  // Parse URL query params
+function setUrlPair(pair) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('pair', pair);
+  history.replaceState({}, '', url);
+}
+
+function populateSelect(select, instruments, selectedSymbol) {
+  if (!select) return;
+  select.innerHTML = '';
+  for (const inst of instruments) {
+    const opt = document.createElement('option');
+    opt.value = inst.symbol;
+    opt.textContent = `${inst.symbol} — ${inst.full_name}`;
+    select.appendChild(opt);
+  }
+  select.value = selectedSymbol;
+}
+
+function updateStartButtonText(symbol) {
+  const btn = document.getElementById('startStreamingBtn');
+  if (!btn) return;
+  const span = btn.querySelector('span');
+  if (span) span.textContent = `Start Streaming ${symbol || ''}`.trim();
+}
+
+async function loadConfig() {
+  const res = await fetch('/api/config');
+  if (!res.ok) throw new Error('config fetch failed');
+  return res.json();
+}
+
+function resolveActiveInstrument(instruments, urlPair) {
+  if (urlPair) {
+    const found = instruments.find(i => i.symbol === urlPair);
+    if (found) return found;
+  }
+  return instruments[0] || null;
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const chartContainer = document.getElementById('chartContainer');
+  const headerSelect = document.getElementById('instrumentSelector');
+  const overlaySelect = document.getElementById('overlayInstrumentSelector');
+
+  let config;
+  let activeInstrument = null;
+  let activePair = null;
+
+  try {
+    config = await loadConfig();
+    const instruments = Array.isArray(config.instruments) ? config.instruments : [];
+    activeInstrument = resolveActiveInstrument(instruments, getUrlPair());
+    activePair = activeInstrument ? activeInstrument.symbol : (config.pair || null);
+
+    populateSelect(headerSelect, instruments, activePair);
+    populateSelect(overlaySelect, instruments, activePair);
+    updateStartButtonText(activePair);
+  } catch (err) {
+    console.error('[main] Failed to load config:', err);
+  }
+
   const urlParams = new URLSearchParams(window.location.search);
   const startTimeParam = urlParams.get('start_time');
   const startTime = startTimeParam ? parseInt(startTimeParam, 10) : null;
@@ -37,10 +99,46 @@ document.addEventListener('DOMContentLoaded', () => {
       keepClosedTradeLines: keepClosedTrades,
       timeframe: tfParam,
       showTSI,
+      activePair,
+      activeInstrument,
     },
   });
 
   window.chartViewer = controller;
+
+  function joinActiveInstrument() {
+    if (activePair) socket.emit('join_instrument', { pair: activePair });
+  }
+  socket.on('connect', joinActiveInstrument);
+  joinActiveInstrument();
+
+  function onInstrumentChange(symbol) {
+    const instrument = config?.instruments?.find(i => i.symbol === symbol);
+    if (!instrument || !controller) return;
+
+    const oldPair = activePair;
+    activePair = instrument.symbol;
+    activeInstrument = instrument;
+    setUrlPair(activePair);
+
+    if (headerSelect) headerSelect.value = activePair;
+    if (overlaySelect) overlaySelect.value = activePair;
+    updateStartButtonText(activePair);
+
+    if (oldPair && oldPair !== activePair) {
+      socket.emit('leave_instrument', { pair: oldPair });
+    }
+    socket.emit('join_instrument', { pair: activePair });
+
+    controller.setActiveInstrument(activePair, activeInstrument);
+  }
+
+  headerSelect?.addEventListener('change', (e) => onInstrumentChange(e.target.value));
+  overlaySelect?.addEventListener('change', (e) => onInstrumentChange(e.target.value));
+
+  window.addEventListener('beforeunload', () => {
+    if (activePair) socket.emit('leave_instrument', { pair: activePair });
+  });
 
   const accountsDisplay = new NtAccountsDisplay(socket);
   accountsDisplay.init();

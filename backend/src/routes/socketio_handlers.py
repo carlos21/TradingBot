@@ -5,7 +5,8 @@ import re
 import threading
 import time
 
-from flask_socketio import SocketIO, emit
+from flask import request
+from flask_socketio import SocketIO, emit, join_room, leave_room
 
 from src.bars_loader import BarsLoader
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
@@ -63,6 +64,7 @@ def register_socketio_handlers(
     parity_service=None,
     readiness_monitor=None,
     history_loaded_deduper=None,
+    coordinator=None,
 ):
     """Register Socket.IO event handlers.
 
@@ -71,11 +73,36 @@ def register_socketio_handlers(
         loader: Bars loader for stream control
         data_source: Data source for bar history
         live_mode: Whether running in live trading mode
+        coordinator: Optional StreamCoordinator for per-instrument streaming
 
     Returns:
         A cleanup function that stops the background health thread and
         unwraps the logger. Callers should invoke it on shutdown/reload.
     """
+
+    def _resolve_session(symbol: str | None = None):
+        """Return the loader/session for the requested symbol."""
+        if coordinator is not None:
+            return coordinator.require_session(symbol).bars_loader
+        return loader
+
+    def _resolve_pair(payload: dict | None) -> str | None:
+        """Extract pair from payload, falling back to coordinator default."""
+        if payload and isinstance(payload, dict) and payload.get("pair"):
+            return payload["pair"]
+        if coordinator is not None:
+            return coordinator.get_default_symbol()
+        return None
+
+    def _emit_to_pair(event: str, payload: dict, pair: str | None = None) -> None:
+        """Emit to the room for the requested pair, or broadcast when no coordinator."""
+        if coordinator is not None and pair:
+            try:
+                emit(event, payload, room=pair)
+                return
+            except Exception as exc:
+                _logger.error(f"[SocketIO] room emit failed: {exc}")
+        emit(event, payload)
 
     def _emit_error(message: str) -> None:
         """Emit an error event to the client and log it locally."""
@@ -195,6 +222,53 @@ def register_socketio_handlers(
         # platform connected and causes unnecessary load on NinjaTrader.
         # Use the explicit 'request_refresh' event to force a refresh.
 
+    @socketio.on("join_instrument")
+    @_safe_handler
+    def on_join_instrument(payload):
+        if not isinstance(payload, dict) or not payload.get("pair"):
+            _emit_error("join_instrument requires {'pair': ...}")
+            return
+        symbol = payload["pair"]
+        sid = getattr(request, "sid", None)
+        if sid is None:
+            _emit_error("join_instrument: no socket sid available")
+            return
+        join_room(symbol)
+        if coordinator is not None:
+            session = coordinator.join_instrument(symbol, sid)
+            # Emit cached history to the joining room if available.
+            try:
+                cached = data_source.load_historical_bars("1m", pair=symbol)
+                if cached:
+                    sig = _history_loaded_signature(cached)
+                    if history_loaded_deduper is not None:
+                        history_loaded_deduper.emit(socketio, sig)
+                    else:
+                        socketio.emit("history_loaded", {
+                            "readiness_state": sig["readiness_state"],
+                            "readiness_reason": sig["readiness_reason"],
+                            "bar_count": sig["bar_count"],
+                        }, room=symbol)
+            except Exception as exc:
+                _logger.error(f"[SocketIO] failed to load cached bars on join: {exc}")
+                with contextlib.suppress(Exception):
+                    emit("history_load_failed", {"error": str(exc)}, room=symbol)
+        emit("joined_instrument", {"pair": symbol})
+
+    @socketio.on("leave_instrument")
+    @_safe_handler
+    def on_leave_instrument(payload):
+        if not isinstance(payload, dict) or not payload.get("pair"):
+            _emit_error("leave_instrument requires {'pair': ...}")
+            return
+        symbol = payload["pair"]
+        sid = getattr(request, "sid", None)
+        if sid is not None:
+            leave_room(symbol)
+            if coordinator is not None:
+                coordinator.leave_instrument(symbol, sid)
+        emit("left_instrument", {"pair": symbol})
+
     @socketio.on("start_stream")
     @_safe_handler
     def on_start_stream(payload):
@@ -204,19 +278,24 @@ def register_socketio_handlers(
         if stop_at is not None:
             stop_at = _as_int(stop_at, "stopAt")
 
+        symbol = _resolve_pair(payload)
+        session_loader = _resolve_session(symbol)
+
         # Set base time first so set_timeframe uses the right window
-        loader.seek(from_time)
-        loader.set_timeframe(tf)
-        loader.start(from_time, stop_at)
-        emit("stream_status", {"playing": True})
+        session_loader.seek(from_time)
+        session_loader.set_timeframe(tf)
+        session_loader.start(from_time, stop_at)
+        _emit_to_pair("stream_status", {"playing": True}, symbol)
 
     @socketio.on("pause_stream")
     @_safe_handler
-    def on_pause_stream():
+    def on_pause_stream(payload=None):
         if live_mode:
             return
-        loader.pause()
-        emit("stream_status", {"playing": False})
+        symbol = _resolve_pair(payload)
+        session_loader = _resolve_session(symbol)
+        session_loader.pause()
+        _emit_to_pair("stream_status", {"playing": False}, symbol)
 
     @socketio.on("step_stream")
     @_safe_handler
@@ -228,39 +307,52 @@ def register_socketio_handlers(
         # Advance from_time by one full timeframe window so the step lands on
         # the *next* bar, not the current one (which is already displayed).
         window_secs = BarAggregator.parse_timeframe(tf)
-        loader.seek(from_time + window_secs)
-        loader.set_timeframe(tf)
-        loader.step()
-        emit("stream_status", {"playing": True})
+
+        symbol = _resolve_pair(payload)
+        session_loader = _resolve_session(symbol)
+
+        session_loader.seek(from_time + window_secs)
+        session_loader.set_timeframe(tf)
+        session_loader.step()
+        _emit_to_pair("stream_status", {"playing": True}, symbol)
 
     @socketio.on("seek")
     @_safe_handler
     def on_seek(payload):
         if live_mode:
             return
-        loader.seek(_as_int(payload.get("fromTime", 0), "fromTime"))
+        symbol = _resolve_pair(payload)
+        session_loader = _resolve_session(symbol)
+        session_loader.seek(_as_int(payload.get("fromTime", 0), "fromTime"))
 
     @socketio.on("set_timeframe")
     @_safe_handler
     def on_set_timeframe(payload):
         tf = _validate_timeframe(payload.get("timeframe", "1m"))
         from_time = _as_int(payload.get("fromTime", 0), "fromTime")
-        loader.seek(from_time)
-        loader.set_timeframe(tf)
+
+        symbol = _resolve_pair(payload)
+        session_loader = _resolve_session(symbol)
+
+        session_loader.seek(from_time)
+        session_loader.set_timeframe(tf)
 
     @socketio.on("jump_day")
     @_safe_handler
     def on_jump_day(payload):
         if live_mode:
             return
-        # payload: {direction: 1|-1, fast: true|false}
+        # payload: {pair, direction: 1|-1, fast: true|false}
+        symbol = _resolve_pair(payload)
+        session_loader = _resolve_session(symbol)
+
         direction_raw = payload.get("direction", 1)
         direction = _as_int(direction_raw, "direction")
         if direction not in (-1, 1):
             raise ValueError("direction must be 1 or -1")
         fast = bool(payload.get("fast", True))
-        ts = loader.jump_day(direction=direction, fast=fast)
-        emit("jump_result", {"to": ts})
+        ts = session_loader.jump_day(direction=direction, fast=fast)
+        _emit_to_pair("jump_result", {"to": ts}, symbol)
 
     @socketio.on("request_health")
     @_safe_handler
@@ -360,10 +452,16 @@ def register_socketio_handlers(
             _original_logger_methods[level] = orig
 
             def make_wrapper(lvl, original):
-                def wrapper(msg: str):
-                    original(msg)
+                def wrapper(msg: str, *args, **kwargs):
+                    original(msg, *args, **kwargs)
                     if lvl in ("info", "warning", "error"):
-                        _forward_log(lvl.upper(), msg)
+                        # Best-effort formatting so browser logs stay readable
+                        # when callers pass printf-style arguments.
+                        try:
+                            formatted = msg % args if args else msg
+                        except Exception:
+                            formatted = msg
+                        _forward_log(lvl.upper(), formatted)
                 return wrapper
 
             setattr(_logger, level, make_wrapper(level, orig))

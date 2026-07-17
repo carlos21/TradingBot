@@ -16,6 +16,15 @@ cd "$SCRIPT_DIR/.."
 
 PAIR="${PAIR:-MNQ}"
 
+# Load .env to get the same database the app uses.
+if [ -f ".env" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source <(sed '1s/^\xEF\xBB\xBF//' ".env")
+    set +a
+fi
+DB_URL="${DATABASE_URL:-${DB_PATH:-sqlite:///./database.db}}"
+
 echo -e "${BOLD}${CYAN}  Add Strategy Lines  ${GRAY}(${PAIR})${RST}"
 echo -e "${GRAY}  Empty price or 'q' to quit${RST}"
 
@@ -36,19 +45,20 @@ while true; do
   read -p "  Creation time (epoch or Enter for now): " CREATION_TIME
   CREATION_TIME="${CREATION_TIME:-$NOW_EPOCH}"
 
-  poetry run python3 -c "
+  DB_URL="$DB_URL" PAIR="$PAIR" CREATION_TIME="$CREATION_TIME" PRICE="$PRICE" poetry run python3 -c "
+import os
 import sys
 sys.path.insert(0, 'backend')
 from src.infrastructure.database.database_protocol import Base, get_database
 from src.infrastructure.repositories.lines_repository import SQLLineRepository
 from datetime import datetime, timezone
 
-setup_database = lambda db_url: get_database(db_url).create_tables(Base)
-setup_database('sqlite:///./database.db')
+db_url = os.environ['DB_URL']
+get_database(db_url).create_tables(Base)
 repo = SQLLineRepository()
 
-creation_date = datetime.fromtimestamp(float('${CREATION_TIME}'), tz=timezone.utc)
-line = repo.insert_line(pair='${PAIR}', price=float('${PRICE}'), creation_date=creation_date)
+creation_date = datetime.fromtimestamp(float(os.environ['CREATION_TIME']), tz=timezone.utc)
+line = repo.insert_line(pair=os.environ['PAIR'], price=float(os.environ['PRICE']), creation_date=creation_date)
 
 print(f'  ID:    {line.line_id}')
 print(f'  Price: {line.price}')

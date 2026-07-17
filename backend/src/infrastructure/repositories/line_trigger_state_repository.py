@@ -10,8 +10,9 @@ from src.dbexception import DBException
 from src.domain.repositories import (
     LineTriggerStateRepository as ILineTriggerStateRepository,
 )
+from src.infrastructure.database.database import LineTriggerState
 from src.infrastructure.database.database_protocol import DatabaseProtocol
-from src.infrastructure.repositories.base import SQLRepositoryBase
+from src.infrastructure.repositories.base import SQLRepositoryBase, retry_on_sqlite_lock
 
 
 class SQLiteLineTriggerStateRepository(SQLRepositoryBase, ILineTriggerStateRepository):
@@ -20,37 +21,45 @@ class SQLiteLineTriggerStateRepository(SQLRepositoryBase, ILineTriggerStateRepos
     def __init__(self, db: DatabaseProtocol | None = None):
         super().__init__(db)
 
+    @retry_on_sqlite_lock()
     def save(self, line_id: str, pair: str, state: dict[str, Any]) -> None:
-        import json
-
-        from sqlalchemy import text
-
         now = datetime.now(timezone.utc)
         with self._session() as db:
-            # Use INSERT OR REPLACE to avoid SELECT-then-UPDATE race conditions
-            db.execute(
-                text(
-                    """
-                    INSERT INTO line_trigger_state (line_id, pair, state_json, updated_at)
-                    VALUES (:line_id, :pair, :state_json, :updated_at)
-                    ON CONFLICT(line_id) DO UPDATE SET
-                        pair = excluded.pair,
-                        state_json = excluded.state_json,
-                        updated_at = excluded.updated_at
-                    """
-                ),
-                {
-                    "line_id": line_id,
-                    "pair": pair,
-                    "state_json": json.dumps(state),
-                    "updated_at": now.isoformat(),
-                },
-            )
+            # Portable ORM upsert. SQLite has native UPSERT syntax, but it is
+            # not portable to PostgreSQL/MySQL without dialect-specific SQL.
+            row = db.query(LineTriggerState).filter_by(line_id=line_id).first()
+            if row is None:
+                row = LineTriggerState(
+                    line_id=line_id,
+                    pair=pair,
+                    state_json=state,
+                    updated_at=now,
+                )
+                db.add(row)
+            else:
+                row.pair = pair
+                row.state_json = state
+                row.updated_at = now
             try:
                 db.commit()
             except Exception as e:
                 db.rollback()
                 raise DBException(message=str(e)) from e
+
+    def _parse_state(self, raw: Any) -> dict[str, Any]:
+        """Normalize a JSON/state value to a Python dict."""
+        import json
+
+        if raw is None:
+            return {}
+        if isinstance(raw, dict):
+            return dict(raw)
+        if isinstance(raw, str):
+            try:
+                return dict(json.loads(raw))
+            except Exception:
+                return {}
+        return {}
 
     def load(self, line_id: str) -> dict[str, Any] | None:
         """Load state for a single line."""
@@ -58,15 +67,16 @@ class SQLiteLineTriggerStateRepository(SQLRepositoryBase, ILineTriggerStateRepos
         with self._session() as db:
             row = db.query(_ORM).filter_by(line_id=line_id).first()
             if row:
-                return dict(row.state_json or {})
+                return self._parse_state(row.state_json)
             return None
 
     def load_all(self, pair: str) -> dict[str, dict[str, Any]]:
         from src.infrastructure.database.database import LineTriggerState as _ORM
         with self._session() as db:
             rows = db.query(_ORM).filter_by(pair=pair).all()
-            return {row.line_id: dict(row.state_json or {}) for row in rows}
+            return {row.line_id: self._parse_state(row.state_json) for row in rows}
 
+    @retry_on_sqlite_lock()
     def delete(self, line_id: str) -> None:
         from src.infrastructure.database.database import LineTriggerState as _ORM
         with self._session() as db:

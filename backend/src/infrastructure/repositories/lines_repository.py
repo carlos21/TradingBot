@@ -12,7 +12,7 @@ from src.domain.models import LineData
 from src.domain.repositories import LineRepository as ILineRepository
 from src.infrastructure.database.database import Line
 from src.infrastructure.database.database_protocol import DatabaseProtocol
-from src.infrastructure.repositories.base import SQLRepositoryBase
+from src.infrastructure.repositories.base import SQLRepositoryBase, retry_on_sqlite_lock
 
 
 class SQLLineRepository(SQLRepositoryBase, ILineRepository):
@@ -40,6 +40,7 @@ class SQLLineRepository(SQLRepositoryBase, ILineRepository):
             creation_date=self._ensure_utc_aware(line.creation_date),
         )
 
+    @retry_on_sqlite_lock()
     def insert_line(self, pair: str, price: float, creation_date: datetime | None = None) -> LineData:
         with self._session() as db:
             c_date = creation_date if creation_date else datetime.now(timezone.utc)
@@ -79,6 +80,7 @@ class SQLLineRepository(SQLRepositoryBase, ILineRepository):
             )
             return [self._make_line_data(row) for row in rows]
 
+    @retry_on_sqlite_lock()
     def update_line(self, line_id: str, price: float) -> LineData:
         with self._session() as db:
             row = db.query(Line).filter(Line.line_id == line_id).one_or_none()
@@ -97,6 +99,7 @@ class SQLLineRepository(SQLRepositoryBase, ILineRepository):
 
             return self._make_line_data(row)
 
+    @retry_on_sqlite_lock()
     def delete_line(self, line_id: str) -> None:
         with self._session() as db:
             db.query(Line) \

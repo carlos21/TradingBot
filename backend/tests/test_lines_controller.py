@@ -13,8 +13,8 @@ class FakeStrategy:
         self.updated = []
         self.removed = []
 
-    def add_strategy_line(self, line_id, price, creation_timestamp=None):
-        self.lines[line_id] = price
+    def add_strategy_line(self, line_id, price, creation_timestamp=None, pair=None):
+        self.lines[line_id] = {"price": price, "pair": pair}
 
     def update_strategy_line(self, line_id, price):
         self.updated.append((line_id, price))

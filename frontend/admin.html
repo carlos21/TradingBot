@@ -560,24 +560,19 @@
               <h3 class="text-lg font-semibold">Trading</h3>
             </div>
             <div class="space-y-4">
-              <div>
-                <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Pair</label>
-                <input type="text" id="settings-pair" class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2.5 text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors" />
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Session End (HH:MM)</label>
+                  <input type="text" id="settings-session-end" placeholder="16:58" class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2.5 text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors" />
+                  <p class="text-xs text-slate-500 mt-1">Open trades are closed at this time to avoid overnight exposure.</p>
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">History Hours</label>
+                  <input type="number" id="settings-history-hours" placeholder="720" class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2.5 text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors" />
+                  <p class="text-xs text-slate-500 mt-1">Number of hours of historical bars to load on connect.</p>
+                </div>
               </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Instrument</label>
-                <input type="text" id="settings-instrument" class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2.5 text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors" />
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Session End (HH:MM)</label>
-                <input type="text" id="settings-session-end" placeholder="16:58" class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2.5 text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors" />
-                <p class="text-xs text-slate-500 mt-1">Open trades are closed at this time to avoid overnight exposure.</p>
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">History Hours</label>
-                <input type="number" id="settings-history-hours" placeholder="720" class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2.5 text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors" />
-                <p class="text-xs text-slate-500 mt-1">Number of hours of historical bars to load on connect.</p>
-              </div>
+
               <div class="bg-surface-700/40 rounded-lg p-3 text-sm text-slate-400">
                 <p class="mb-1">💡 <span class="text-slate-100 font-medium">Risk & RR Ratio</span> are configured per NT Account below.</p>
               </div>
@@ -688,6 +683,13 @@
                   Add Account
                 </button>
               </div>
+              <div class="mt-3">
+                <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Instruments</label>
+                <select id="settings-account-instruments" multiple class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors">
+                  <!-- Populated by JS -->
+                </select>
+                <p class="text-xs text-slate-500 mt-1">Hold Ctrl/Cmd to select multiple. No selection means the account will not trade.</p>
+              </div>
             </div>
 
             <!-- Accounts Table -->
@@ -699,6 +701,7 @@
                     <th class="px-4 py-3">Risk ($)</th>
                     <th class="px-4 py-3">Risk (%)</th>
                     <th class="px-4 py-3">RR Ratio</th>
+                    <th class="px-4 py-3">Instruments</th>
                     <th class="px-4 py-3">Live</th>
                     <th class="px-4 py-3 text-right">Actions</th>
                   </tr>
@@ -708,6 +711,65 @@
                 </tbody>
               </table>
               <div id="settings-accounts-empty" class="px-4 py-8 text-center text-slate-500 text-sm">No accounts configured. Add one above.</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Instruments -->
+        <div class="mt-6 bg-surface-800 border border-surface-700 rounded-xl shadow-lg overflow-hidden">
+          <div class="p-6 border-b border-surface-700 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-xl">📊</span>
+              <h3 class="text-lg font-semibold">Instruments</h3>
+            </div>
+            <span class="text-xs font-medium bg-surface-700 text-slate-100 px-2.5 py-1 rounded-full">Streaming</span>
+          </div>
+
+          <div class="p-6 space-y-4">
+            <!-- Add instrument form -->
+            <div class="bg-surface-700/40 rounded-lg p-4">
+              <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+                <div>
+                  <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Symbol</label>
+                  <input type="text" id="settings-instrument-symbol" placeholder="MNQ" class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors" />
+                </div>
+                <div class="md:col-span-2">
+                  <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Full Name</label>
+                  <input type="text" id="settings-instrument-full-name" placeholder="MNQ 09-26" class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors" />
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Point Value</label>
+                  <input type="number" id="settings-instrument-point-value" step="0.01" placeholder="2.0" class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-slate-100 placeholder-slate-500 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors" />
+                </div>
+                <div>
+                  <button id="settings-instrument-add" class="w-full bg-accent-600 hover:bg-accent-500 text-slate-100 font-medium px-4 py-2 rounded-lg transition-colors h-fit flex items-center justify-center gap-2">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                    Add Instrument
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Instruments table -->
+            <div>
+              <div class="overflow-x-auto border border-surface-700 rounded-lg">
+                <table class="w-full text-left text-sm">
+                  <thead class="bg-surface-700/50 text-slate-400 uppercase text-xs">
+                    <tr>
+                      <th class="px-3 py-2">Symbol</th>
+                      <th class="px-3 py-2">Full Name</th>
+                      <th class="px-3 py-2">Point Value</th>
+                      <th class="px-3 py-2 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody id="settings-instruments-tbody" class="divide-y divide-surface-700">
+                    <!-- Populated by JS -->
+                  </tbody>
+                </table>
+              </div>
+              <div id="settings-instruments-empty" class="hidden px-4 py-6 text-center text-slate-500 text-sm border border-surface-700 rounded-lg mt-2">
+                No instruments configured.
+              </div>
             </div>
           </div>
         </div>

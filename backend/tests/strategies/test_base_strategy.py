@@ -155,25 +155,33 @@ class TestReset:
 
 class TestAccountAndRiskHelpers:
 
-    def test_filter_live_accounts_non_live_returns_all(self):
+    def test_filter_eligible_accounts_non_live_requires_instrument(self):
         s = _make_base(live_mode=False)
-        accounts = [{"name": "A1"}, {"name": "A2"}]
-        assert s._filter_live_accounts(accounts) == accounts
+        matched = AccountConfig(name="A1", instrument_symbols=["MNQ"])
+        unmatched = AccountConfig(name="A2", instrument_symbols=["ES"])
+        no_symbols = AccountConfig(name="A3")
+        accounts = [matched, unmatched, no_symbols]
+        assert s._filter_eligible_accounts(accounts) == [matched]
 
-    def test_filter_live_accounts_live_returns_enabled(self):
+    def test_filter_eligible_accounts_live_returns_enabled_and_matched(self):
         s = _make_base(live_mode=True)
-        enabled = AccountConfig(name="A1", live_enabled=True)
-        disabled = AccountConfig(name="A2", live_enabled=False)
-        assert s._filter_live_accounts([enabled, disabled]) == [enabled]
+        enabled_matched = AccountConfig(name="A1", live_enabled=True, instrument_symbols=["MNQ"])
+        enabled_unmatched = AccountConfig(name="A2", live_enabled=True, instrument_symbols=["ES"])
+        disabled_matched = AccountConfig(name="A3", live_enabled=False, instrument_symbols=["MNQ"])
+        no_symbols = AccountConfig(name="A4", live_enabled=True)
+        accounts = [enabled_matched, enabled_unmatched, disabled_matched, no_symbols]
+        assert s._filter_eligible_accounts(accounts) == [enabled_matched]
 
-    def test_filter_live_accounts_empty(self):
+    def test_filter_eligible_accounts_empty(self):
         s = _make_base()
-        assert s._filter_live_accounts(None) == []
-        assert s._filter_live_accounts([]) == []
+        assert s._filter_eligible_accounts(None) == []
+        assert s._filter_eligible_accounts([]) == []
 
     def test_get_current_account_configs_from_repo(self):
         repo = MagicMock()
-        repo.list_accounts.return_value = [AccountConfig(name="A1", risk_usd=100, risk_pct=1)]
+        repo.list_accounts.return_value = [
+            AccountConfig(name="A1", risk_usd=100, risk_pct=1, instrument_symbols=["MNQ"])
+        ]
         s = _make_base(accounts_repo=repo, live_mode=False)
         configs = s._get_current_account_configs()
         assert configs[0].name == "A1"
@@ -183,14 +191,16 @@ class TestAccountAndRiskHelpers:
         repo.list_accounts.side_effect = Exception("db fail")
         s = _make_base(
             accounts_repo=repo,
-            account_configs=[AccountConfig(name="A2")],
+            account_configs=[AccountConfig(name="A2", instrument_symbols=["MNQ"])],
         )
         configs = s._get_current_account_configs()
         assert configs[0].name == "A2"
 
     def test_get_current_risk_from_accounts(self):
         repo = MagicMock()
-        repo.list_accounts.return_value = [AccountConfig(name="A1", risk_usd=200, risk_pct=2)]
+        repo.list_accounts.return_value = [
+            AccountConfig(name="A1", risk_usd=200, risk_pct=2, instrument_symbols=["MNQ"])
+        ]
         s = _make_base(accounts_repo=repo)
         risk_usd, risk_pct = s._get_current_risk()
         assert risk_usd == 200
@@ -690,8 +700,8 @@ class TestStoreAndEmit:
         sio = DummySocketIO()
         tm = _make_trade_manager(event_publisher=sio)
         accounts = [
-            AccountConfig(name="A1", risk_usd=None, risk_pct=None),
-            AccountConfig(name="A2", risk_usd=None, risk_pct=None),
+            AccountConfig(name="A1", risk_usd=None, risk_pct=None, instrument_symbols=["MNQ"]),
+            AccountConfig(name="A2", risk_usd=None, risk_pct=None, instrument_symbols=["MNQ"]),
         ]
         s = _make_base(
             event_publisher=sio,

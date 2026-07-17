@@ -9,12 +9,14 @@ class CombinedDataSource(ABC):
         timeframe: str = '1m',
         start_time: int | None = None,
         end_time: int | None = None,
+        pair: str | None = None,
     ) -> list[dict]:
         """
         Return a list of bar‐dicts:
           { time, open, high, low, close, volume, pair }
 
         Optional ``start_time`` and ``end_time`` filter the returned bars by epoch.
+        Optional ``pair`` selects the instrument cache for multi-instrument sources.
         """
         ...
 

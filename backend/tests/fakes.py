@@ -393,7 +393,7 @@ class FakeDataSource(CombinedDataSource):
         self._callbacks = []
         self._paused = False
 
-    def load_historical_bars(self, timeframe="1m") -> list[dict]:
+    def load_historical_bars(self, timeframe="1m", **kwargs) -> list[dict]:
         return self._bars
 
     def subscribe(self, callback, from_time=0):
@@ -463,17 +463,20 @@ class FakeNtAccountRepository(AccountRepository):
         return None
 
     def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None,
-               rr_ratio: float | None = None, live_enabled: bool = True) -> None:
+               rr_ratio: float | None = None, live_enabled: bool = True,
+               instrument_symbols: list[str] | None = None) -> None:
         for i, acct in enumerate(self._accounts):
             if acct.name == name:
                 self._accounts[i] = AccountConfig(
                     name=name, risk_usd=risk_usd, risk_pct=risk_pct,
                     rr_ratio=rr_ratio, live_enabled=live_enabled,
+                    instrument_symbols=instrument_symbols or [],
                 )
                 return
         self._accounts.append(AccountConfig(
             name=name, risk_usd=risk_usd, risk_pct=risk_pct,
             rr_ratio=rr_ratio, live_enabled=live_enabled,
+            instrument_symbols=instrument_symbols or [],
         ))
 
     def delete(self, name: str) -> None:

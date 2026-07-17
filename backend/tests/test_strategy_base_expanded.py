@@ -119,9 +119,10 @@ class TestMultiAccountExpansion:
             account_balance=100000.0,
             logger=FakeLogger(),
         )
+        from src.config.models import AccountConfig
         strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS,
             event_publisher=sio, trade_repo=tr, trade_manager=tm,
-            account_configs=[{"name": "A1"}],
+            account_configs=[AccountConfig(name="A1", instrument_symbols=["MNQ"])],
         )
         trade = {
             "pair": "MNQ", "type": "long", "entry": 100,

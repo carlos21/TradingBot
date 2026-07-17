@@ -203,25 +203,25 @@ class BaseLiquidityStrategy:
     def _get_current_account_configs(self) -> list:
         """Return fresh account configs from DB if available, else cached fallback.
 
-        In live mode only accounts explicitly marked ``live_enabled`` are used
-        for new trades so the admin can control which accounts actually trade.
+        Accounts are filtered by live_enabled (in live mode) and by the
+        instrument_symbols assigned to the account.  An account with no
+        assigned instruments never enters trades (strict default).
         """
         if self._accounts_repo is not None:
             try:
                 accounts = self._accounts_repo.list_accounts()
                 if accounts:
-                    return self._filter_live_accounts(accounts)
+                    return self._filter_eligible_accounts(accounts)
             except Exception:
                 pass
-        return self._filter_live_accounts(self._account_configs)
+        return self._filter_eligible_accounts(self._account_configs)
 
-    def _filter_live_accounts(self, accounts: list | None) -> list:
-        """Keep all accounts in non-live mode; only live-enabled ones in live mode."""
-        if not accounts:
-            return []
-        if not self._live_mode:
-            return list(accounts)
-        return [a for a in accounts if getattr(a, "live_enabled", True)]
+    def _filter_eligible_accounts(self, accounts: list | None) -> list:
+        """Keep accounts that are live-enabled (in live mode) and assigned to this pair."""
+        from src.domain.account_eligibility import filter_eligible_accounts
+
+        pair = getattr(self.trade_manager, "pair", None) or ""
+        return filter_eligible_accounts(accounts or [], pair, self._live_mode)
 
     def _get_current_risk(self) -> tuple[float | None, float | None]:
         """Return (risk_per_trade, risk_pct_per_trade) from DB if available, else fallbacks."""
@@ -252,18 +252,21 @@ class BaseLiquidityStrategy:
 
     # ----- Line management -----
 
-    def add_strategy_line(self, id: Any, level: float, creation_timestamp: float = 0.0): # <--- CHANGED
+    def add_strategy_line(self, id: Any, level: float, creation_timestamp: float = 0.0, pair: str | None = None):
         """
         direction: 'long' | 'short'
         creation_timestamp: Epoch seconds when this line became valid
+        pair: instrument symbol this line belongs to (defaults to trade_manager.pair)
         """
-        self.logger.info(f"[Strategy] add_strategy_line id={id} level={level} ts={creation_timestamp}")
+        line_pair = pair or getattr(self.trade_manager, "pair", None) or ""
+        self.logger.info(f"[Strategy] add_strategy_line id={id} level={level} ts={creation_timestamp} pair={line_pair}")
         with self.lock:
             state = {
                 "level":       float(level),
                 "direction":   None,
                 "extreme":     0.0,
                 "creation_ts": float(creation_timestamp),
+                "pair":        line_pair,
             }
             self.strategy_lines[id] = state
             # Only persist fresh state if no persisted state exists for this line.
@@ -291,6 +294,12 @@ class BaseLiquidityStrategy:
                 self.strategy_lines[id]["level"] = float(level)
                 self.logger.info(f"[Strategy] update_strategy_line id={id} new_level={level}")
         self.event_publisher.emit("line_updated", {"id": id, "level": level})
+
+    @staticmethod
+    def _line_matches_bar(line: dict[str, Any], bar: dict[str, Any]) -> bool:
+        """Return False if the line is explicitly tagged for another instrument."""
+        line_pair = line.get("pair")
+        return line_pair is None or line_pair == bar.get("pair")
 
     def _persist_all_line_states(self):
         """Write current trigger state for every active line to the repo."""

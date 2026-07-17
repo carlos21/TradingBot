@@ -74,6 +74,55 @@ class FakeBarsLoader:
         return self._from_time + direction * 86400
 
 
+class FakeCoordinator:
+    def __init__(self, default_symbol="MNQ"):
+        self.default_symbol = default_symbol
+        self._sessions: dict[str, FakeSession] = {}
+        self._join_calls: list[tuple[str, str]] = []
+        self._leave_calls: list[tuple[str, str]] = []
+
+    def get_default_symbol(self) -> str:
+        return self.default_symbol
+
+    def require_session(self, symbol):
+        if not symbol:
+            symbol = self.default_symbol
+        if symbol not in self._sessions:
+            self._sessions[symbol] = FakeSession(symbol)
+        return self._sessions[symbol]
+
+    def join_instrument(self, symbol: str, sid: str):
+        self._join_calls.append((symbol, sid))
+        session = self.require_session(symbol)
+        session.join_client(sid)
+        if not session._started:
+            session.start()
+        return session
+
+    def leave_instrument(self, symbol: str, sid: str):
+        self._leave_calls.append((symbol, sid))
+
+    def route_bar(self, bar):
+        pass
+
+
+class FakeSession:
+    def __init__(self, symbol: str):
+        self.symbol = symbol
+        self.bars_loader = FakeBarsLoader()
+        self._clients: set[str] = set()
+        self._started = False
+
+    def join_client(self, sid: str):
+        self._clients.add(sid)
+
+    def leave_client(self, sid: str):
+        self._clients.discard(sid)
+
+    def start(self):
+        self._started = True
+
+
 class FakeGateway:
     def __init__(self, running=False, connected=False):
         self.is_running = running
@@ -811,3 +860,174 @@ class TestConnectEdgeCases:
         emitted_events = [call[0][0] for call in mock_emit.call_args_list]
         assert "history_load_failed" in emitted_events
         assert any("cache unreachable" in e for e in errors)
+
+
+class TestJoinLeaveInstrument:
+    def test_join_instrument_creates_session(self, socketio, loader, logger):
+        from unittest.mock import patch
+        coordinator = FakeCoordinator()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+        handler = socketio.handlers["join_instrument"]
+        with patch("src.routes.socketio_handlers.join_room") as mock_join_room, \
+             patch("src.routes.socketio_handlers.request", new=MagicMock()) as mock_request:
+            mock_request.sid = "sid-1"
+            handler({"pair": "ES"})
+
+        assert coordinator._join_calls == [("ES", "sid-1")]
+        assert "ES" in coordinator._sessions
+        assert coordinator._sessions["ES"]._started is True
+
+    def test_leave_instrument_removes_client(self, socketio, loader, logger):
+        from unittest.mock import patch
+        coordinator = FakeCoordinator()
+        coordinator.join_instrument("ES", "sid-1")
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+        handler = socketio.handlers["leave_instrument"]
+        with patch("src.routes.socketio_handlers.leave_room") as mock_leave_room, \
+             patch("src.routes.socketio_handlers.request", new=MagicMock()) as mock_request:
+            mock_request.sid = "sid-1"
+            handler({"pair": "ES"})
+
+        assert coordinator._leave_calls == [("ES", "sid-1")]
+
+
+class TestPerInstrumentCommands:
+    @patch("src.routes.socketio_handlers.emit")
+    def test_start_stream_targets_session(self, mock_emit, socketio, loader, logger):
+        coordinator = FakeCoordinator()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+        handler = socketio.handlers["start_stream"]
+        handler({"pair": "ES", "timeframe": "5m", "fromTime": 1000, "stopAt": 2000})
+
+        session = coordinator.require_session("ES")
+        assert session.bars_loader._seek_calls == [1000]
+        assert session.bars_loader._set_tf_calls == ["5m"]
+        assert session.bars_loader._start_calls == [(1000, 2000)]
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_pause_stream_targets_session(self, mock_emit, socketio, loader, logger):
+        coordinator = FakeCoordinator()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+        handler = socketio.handlers["pause_stream"]
+        handler({"pair": "ES"})
+
+        session = coordinator.require_session("ES")
+        assert len(session.bars_loader._pause_calls) == 1
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_step_stream_targets_session(self, mock_emit, socketio, loader, logger):
+        coordinator = FakeCoordinator()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+        handler = socketio.handlers["step_stream"]
+        handler({"pair": "ES", "timeframe": "5m", "fromTime": 1000})
+
+        session = coordinator.require_session("ES")
+        expected_time = 1000 + 5 * 60
+        assert session.bars_loader._seek_calls == [expected_time]
+        assert session.bars_loader._set_tf_calls == ["5m"]
+        assert len(session.bars_loader._step_calls) == 1
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_seek_targets_session(self, mock_emit, socketio, loader, logger):
+        coordinator = FakeCoordinator()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+        handler = socketio.handlers["seek"]
+        handler({"pair": "ES", "fromTime": 5000})
+
+        session = coordinator.require_session("ES")
+        assert session.bars_loader._seek_calls == [5000]
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_set_timeframe_targets_session(self, mock_emit, socketio, loader, logger):
+        coordinator = FakeCoordinator()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+        handler = socketio.handlers["set_timeframe"]
+        handler({"pair": "ES", "timeframe": "15m", "fromTime": 2000})
+
+        session = coordinator.require_session("ES")
+        assert session.bars_loader._seek_calls == [2000]
+        assert session.bars_loader._set_tf_calls == ["15m"]
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_jump_day_targets_session(self, mock_emit, socketio, loader, logger):
+        coordinator = FakeCoordinator()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+        handler = socketio.handlers["jump_day"]
+        handler({"pair": "ES", "direction": 1, "fast": True})
+
+        session = coordinator.require_session("ES")
+        assert session.bars_loader._jump_calls == [(1, True)]
+
+
+class TestBackwardCompatWithoutCoordinator:
+    @patch("src.routes.socketio_handlers.emit")
+    def test_start_stream_without_pair_uses_default_loader(self, mock_emit, socketio, loader, logger):
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=FakeDataSource(),
+            live_mode=False,
+            _logger=logger,
+        )
+        handler = socketio.handlers["start_stream"]
+        handler({"timeframe": "5m", "fromTime": 1000})
+
+        assert loader._seek_calls == [1000]
+        assert loader._set_tf_calls == ["5m"]
+        assert loader._start_calls == [(1000, None)]

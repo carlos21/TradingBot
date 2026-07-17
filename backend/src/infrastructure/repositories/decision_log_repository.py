@@ -6,7 +6,7 @@ from threading import Lock
 from src.domain.repositories import DecisionLogRepository as IDecisionLogRepository
 from src.infrastructure.database.database import DecisionLog
 from src.infrastructure.database.database_protocol import DatabaseProtocol
-from src.infrastructure.repositories.base import SQLRepositoryBase
+from src.infrastructure.repositories.base import SQLRepositoryBase, retry_on_sqlite_lock
 
 
 class DecisionLogRepository(SQLRepositoryBase, IDecisionLogRepository):
@@ -20,6 +20,7 @@ class DecisionLogRepository(SQLRepositoryBase, IDecisionLogRepository):
         super().__init__(db)
         self._lock = Lock()
 
+    @retry_on_sqlite_lock()
     def add_log(
         self,
         *,
@@ -85,6 +86,7 @@ class DecisionLogRepository(SQLRepositoryBase, IDecisionLogRepository):
             )
             return [self._to_dict(r) for r in rows]
 
+    @retry_on_sqlite_lock()
     def cleanup_old(self, days: int = 30) -> int:
         """Delete logs older than N days. Returns number of rows deleted."""
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)

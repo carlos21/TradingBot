@@ -180,7 +180,7 @@ class CSVDataSource(CombinedDataSource):
                     continue
         return bars
 
-    def load_historical_bars(self, timeframe='1m', start_time=None, end_time=None):
+    def load_historical_bars(self, timeframe='1m', start_time=None, end_time=None, pair=None):
         t_logger.info(
             f"[CSV_DS] load_historical_bars → tf={timeframe!r}, start_time={start_time!r}, "
             f"end_time={end_time!r}, _played_bars_len={len(self._played_bars)}"

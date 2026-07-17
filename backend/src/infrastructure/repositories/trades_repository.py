@@ -14,7 +14,7 @@ from src.domain.models import TradeData
 from src.domain.repositories import TradeRepository as ITradeRepository
 from src.infrastructure.database.database import Trade
 from src.infrastructure.database.database_protocol import DatabaseProtocol
-from src.infrastructure.repositories.base import SQLRepositoryBase
+from src.infrastructure.repositories.base import SQLRepositoryBase, retry_on_sqlite_lock
 
 
 class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
@@ -66,6 +66,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
             created_at=self._ensure_utc(t.created_at),
         )
 
+    @retry_on_sqlite_lock()
     def insert_trade(
         self,
         pair: str,
@@ -125,6 +126,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
             db.close()
             return result
 
+    @retry_on_sqlite_lock()
     def update_stop_loss(self, trade_id: str, new_stop_loss: float) -> TradeData:
         with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
@@ -143,6 +145,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
 
         return self._make_trade_data(t)
 
+    @retry_on_sqlite_lock()
     def update_take_profit(self, trade_id: str, new_take_profit: float) -> TradeData:
         with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
@@ -161,6 +164,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
 
         return self._make_trade_data(t)
 
+    @retry_on_sqlite_lock()
     def update_entry_price(self, trade_id: str, new_entry_price: float) -> TradeData:
         with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
@@ -179,6 +183,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
 
         return self._make_trade_data(t)
 
+    @retry_on_sqlite_lock()
     def update_risk_fields(self, trade_id: str, risk: float, risk_dollars: float, risk_pct: float) -> TradeData:
         with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
@@ -199,6 +204,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
 
         return self._make_trade_data(t)
 
+    @retry_on_sqlite_lock()
     def update_contracts(self, trade_id: str, contracts: float) -> TradeData:
         with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
@@ -217,6 +223,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
 
         return self._make_trade_data(t)
 
+    @retry_on_sqlite_lock()
     def update_account_balance(self, trade_id: str, account_balance: float) -> TradeData:
         with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
@@ -235,6 +242,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
 
         return self._make_trade_data(t)
 
+    @retry_on_sqlite_lock()
     def close_trade(
         self,
         trade_id: str,
@@ -267,6 +275,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
 
         return self._make_trade_data(t)
 
+    @retry_on_sqlite_lock()
     def append_trade_log(self, trade_id: str, event: str, message: str) -> None:
         """Append a log entry to the trade's logs column.
 
@@ -274,39 +283,39 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
         """
         import json
 
-        from sqlalchemy import text
-
         log_entry = {
             "ts": datetime.now(tz=timezone.utc).isoformat(),
             "event": event,
             "msg": message,
         }
-        log_json = json.dumps(log_entry)
 
-        # Fast path: direct SQL JSON append using SQLite JSON1 extension
-        try:
-            with self._engine().connect() as conn:
-                # First try: use json_insert to append to array
-                result = conn.execute(
-                    text("""
-                        UPDATE trades
-                        SET logs = CASE
-                            WHEN logs IS NULL OR json_type(logs) IS NULL
-                            THEN json_array(json(:log_entry))
-                            ELSE json_insert(logs, '$[#]', json(:log_entry))
-                        END
-                        WHERE trade_id = :trade_id
-                    """),
-                    {"log_entry": log_json, "trade_id": trade_id}
-                )
-                conn.commit()
-                if result.rowcount > 0:
-                    return
-        except Exception as sql_ex:
-            self.logger.warning(f"Fast-path trade log append failed for {trade_id}: {sql_ex}")
-            # Fall through to ORM method
+        # Fast path: SQLite JSON1 direct append. This is SQLite-specific and
+        # avoids a read-modify-write cycle on the ORM object.
+        if self._db is not None and self._db.is_sqlite:
+            try:
+                from sqlalchemy import text
+                log_json = json.dumps(log_entry)
+                with self._engine().connect() as conn:
+                    result = conn.execute(
+                        text("""
+                            UPDATE trades
+                            SET logs = CASE
+                                WHEN logs IS NULL OR json_type(logs) IS NULL
+                                THEN json_array(json(:log_entry))
+                                ELSE json_insert(logs, '$[#]', json(:log_entry))
+                            END
+                            WHERE trade_id = :trade_id
+                        """),
+                        {"log_entry": log_json, "trade_id": trade_id}
+                    )
+                    conn.commit()
+                    if result.rowcount > 0:
+                        return
+            except Exception as sql_ex:
+                self.logger.warning(f"Fast-path trade log append failed for {trade_id}: {sql_ex}")
+                # Fall through to ORM method
 
-        # Fallback: use ORM approach with minimal lock time
+        # Fallback: portable ORM approach that works on SQLite, PostgreSQL, MySQL.
         with self._log_lock, self._session() as db_session:
             t = db_session.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
             if not t:
@@ -340,6 +349,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
     def get_all_trades(self, pair: str) -> list[TradeData]:
         return self.list_trades(pair)
 
+    @retry_on_sqlite_lock()
     def clear(self):
         """Delete all trades. Used by scenario runner to reset between runs."""
         with self._session() as db:
@@ -352,6 +362,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
             finally:
                 db.close()
 
+    @retry_on_sqlite_lock()
     def delete_trade(self, trade_id: str) -> None:
         """Delete a trade and any child trades linked via signal_id."""
         with self._session() as db:
@@ -373,6 +384,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
             finally:
                 db.close()
 
+    @retry_on_sqlite_lock()
     def delete_trades(self, trade_ids: list[str]) -> None:
         """Delete multiple trades and any child trades linked via signal_id atomically."""
         if not trade_ids:

@@ -185,25 +185,25 @@ class BaseStrategy:
     def _get_current_account_configs(self) -> list:
         """Return fresh account configs from DB if available, else cached fallback.
 
-        In live mode only accounts explicitly marked ``live_enabled`` are used
-        for new trades so the admin can control which accounts actually trade.
+        Accounts are filtered by live_enabled (in live mode) and by the
+        instrument_symbols assigned to the account.  An account with no
+        assigned instruments never enters trades (strict default).
         """
         if self._accounts_repo is not None:
             try:
                 accounts = self._accounts_repo.list_accounts()
                 if accounts:
-                    return self._filter_live_accounts(accounts)
+                    return self._filter_eligible_accounts(accounts)
             except Exception:
                 pass
-        return self._filter_live_accounts(self._account_configs)
+        return self._filter_eligible_accounts(self._account_configs)
 
-    def _filter_live_accounts(self, accounts: list | None) -> list:
-        """Keep all accounts in non-live mode; only live-enabled ones in live mode."""
-        if not accounts:
-            return []
-        if not self._live_mode:
-            return list(accounts)
-        return [a for a in accounts if getattr(a, "live_enabled", True)]
+    def _filter_eligible_accounts(self, accounts: list | None) -> list:
+        """Keep accounts that are live-enabled (in live mode) and assigned to this pair."""
+        from src.domain.account_eligibility import filter_eligible_accounts
+
+        pair = getattr(self.trade_manager, "pair", None) or ""
+        return filter_eligible_accounts(accounts or [], pair, self._live_mode)
 
     def _get_current_risk(self) -> tuple[float | None, float | None]:
         """Return (risk_per_trade, risk_pct_per_trade) from DB if available, else fallbacks."""

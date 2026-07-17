@@ -29,12 +29,16 @@ class LinesController:
 
     def add_line(self, pair: str, price: float, creation_timestamp: float = None):
         ds = self.bars_loader.data_source
-        if pair != ds.pair:
+        # Backward compatibility: only enforce the single-pair restriction when
+        # the data source still carries a hardcoded pair attribute.
+        if hasattr(ds, 'pair') and pair != ds.pair:
+            from flask import abort
             abort(400, f"Only pair '{ds.pair}' is supported")
 
         try:
             price = LineInputValidator.validate_price(price)
         except ValueError as e:
+            from flask import abort
             abort(400, str(e))
 
         # 1. Resolve the Date
@@ -68,7 +72,8 @@ class LinesController:
         self.liquidity_strategy.add_strategy_line(
             line.line_id,
             line.price,
-            creation_timestamp=strat_date.timestamp()
+            creation_timestamp=strat_date.timestamp(),
+            pair=pair,
         )
 
         return jsonify({

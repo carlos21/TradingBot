@@ -20,6 +20,7 @@ class AccountConfig:
     risk_pct: float | None = None
     rr_ratio: float | None = None
     live_enabled: bool = True
+    instrument_symbols: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -191,9 +192,19 @@ class AppConfig:
     # ------------------------------------------------------------------
     # Multi-instance isolation
     # ------------------------------------------------------------------
+    database_url: str | None = None
+    """SQLAlchemy database URL. Overrides ``db_path`` when set.
+
+    Examples:
+      - ``sqlite:///./database.db`` (default fallback)
+      - ``postgresql://user:pass@host/db``
+      - ``mysql+pymysql://user:pass@host/db``
+      - ``mariadb+pymysql://user:pass@host/db``
+    """
+
     db_path: str = "sqlite:///./database.db"
-    """SQLite database file path. Use a different path per instance to avoid
-    mixed trades/lines when running multiple platforms simultaneously."""
+    """SQLite database file path. Kept for backward compatibility.
+    Use ``database_url`` for PostgreSQL/MySQL/MariaDB."""
 
     log_dir: str = "logs"
     """Directory for log files. Use a different directory per instance to
@@ -313,3 +324,8 @@ class AppConfig:
                 raise ValueError("account risk_pct cannot be negative")
             if acct.rr_ratio is not None and acct.rr_ratio <= 0:
                 raise ValueError("account rr_ratio must be positive")
+            if not isinstance(acct.instrument_symbols, list):
+                raise ValueError("account instrument_symbols must be a list")
+            for sym in acct.instrument_symbols:
+                if not isinstance(sym, str) or not sym.strip():
+                    raise ValueError("each account instrument_symbol must be a non-empty string")

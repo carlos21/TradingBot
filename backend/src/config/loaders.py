@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import json
 import os
 import sys
 from typing import Protocol
@@ -103,6 +104,7 @@ class EnvConfigLoader:
         "ZMQ_QUERY_PORT": ("zmq_query_port", int),
         "ZMQ_HEARTBEAT_PORT": ("zmq_heartbeat_port", int),
         "DB_PATH": ("db_path", str),
+        "DATABASE_URL": ("database_url", lambda _v: _v or None),
         "LOG_DIR": ("log_dir", str),
         "FLASK_PORT": ("flask_port", int),
         "INSTANCE_NAME": ("instance_name", str),
@@ -187,6 +189,7 @@ class CliConfigLoader:
         _add("--zmq-query-port", dest="zmq_query_port", type=int, help="ZMQ query port")
         _add("--zmq-heartbeat-port", dest="zmq_heartbeat_port", type=int, help="ZMQ heartbeat port")
         _add("--db-path", dest="db_path", help="SQLite database path (e.g. sqlite:///./ninja.db)")
+        _add("--database-url", dest="database_url", help="SQLAlchemy database URL (postgresql://..., mysql+pymysql://..., mariadb+pymysql://...)")
         _add("--log-dir", dest="log_dir", help="Log directory (e.g. logs/ninja)")
         _add("--flask-port", dest="flask_port", type=int, help="Flask server port")
         _add("--instance-name", dest="instance_name", help="Instance identifier for logs")
@@ -287,6 +290,10 @@ class DbConfigLoader:
                 with contextlib.suppress(ValueError):
                     cfg.history_hours = int(settings_dict["history_days"]) * 24
 
+            # Multi-instrument registry: derive global pair/instrument values from the first instrument.
+            if "instruments" in settings_dict:
+                self._apply_first_instrument(cfg, settings_dict["instruments"])
+
             accounts = session.query(NtAccount).all()
             if accounts:
                 cfg.nt_accounts = [
@@ -294,6 +301,7 @@ class DbConfigLoader:
                         name=a.name, risk_usd=a.risk_usd, risk_pct=a.risk_pct,
                         rr_ratio=a.rr_ratio,
                         live_enabled=bool(a.live_enabled) if a.live_enabled is not None else True,
+                        instrument_symbols=a.instrument_symbols if a.instrument_symbols else [],
                     )
                     for a in accounts
                 ]
@@ -313,6 +321,26 @@ class DbConfigLoader:
             import logging
             logging.getLogger(__name__).warning(f"DB config load failed: {e}. Falling back to env/CLI defaults.")
         return cfg
+
+    @staticmethod
+    def _apply_first_instrument(cfg: AppConfig, raw_instruments: str) -> None:
+        """Override AppConfig pair/instrument fields from the first registered instrument."""
+        try:
+            instruments = json.loads(raw_instruments)
+            if not isinstance(instruments, list) or not instruments:
+                return
+            first = instruments[0]
+            if not isinstance(first, dict):
+                return
+            if "symbol" in first and first["symbol"]:
+                cfg.pair = first["symbol"]
+            if "full_name" in first and first["full_name"]:
+                cfg.instrument = first["full_name"]
+            if "point_value" in first and first["point_value"] not in (None, ""):
+                with contextlib.suppress(ValueError, TypeError):
+                    cfg.point_value = float(first["point_value"])
+        except json.JSONDecodeError:
+            return
 
     @staticmethod
     def _key_to_attr(key: str) -> str | None:

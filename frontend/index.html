@@ -136,11 +136,6 @@
         </select>
         <span id="pairDisplay" class="text-sm text-slate-400 hidden">Loading...</span>
       </div>
-      <!-- Chart page: show read-only pair label -->
-      <div class="mt-2 flex items-center space-x-2">
-        <label class="text-sm text-slate-400">Pair:</label>
-        <span id="chartPairDisplay" class="text-sm text-slate-100 font-medium"></span>
-      </div>
     </div>
 
     <!-- Navigation -->
@@ -226,7 +221,14 @@
             </svg>
           </div>
           <h2 class="text-2xl font-bold text-slate-100 mb-2">Ready to Trade</h2>
-          <p class="text-slate-400 text-sm">Start streaming to connect with <span id="platform-label" data-config-key="platform_label">Platform</span> and load live market data.</p>
+          <p class="text-slate-400 text-sm mb-4">Start streaming to connect with <span id="platform-label" data-config-key="platform_label">Platform</span> and load live market data.</p>
+
+          <div class="text-left">
+            <label for="overlayInstrumentSelector" class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Instrument</label>
+            <select id="overlayInstrumentSelector" class="w-full bg-surface-700 text-slate-100 text-sm rounded-lg px-3 py-2.5 border border-surface-600 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none">
+              <!-- Populated from /api/config -->
+            </select>
+          </div>
         </div>
 
         <button
@@ -256,8 +258,16 @@
     <!-- Header with timeframe buttons and replay controls -->
     <header class="p-4 bg-surface-800 text-slate-100">
       <div class="flex justify-between items-center">
-        <!-- Left group: timeframes -->
+        <!-- Left group: timeframes + instrument -->
         <div class="flex items-center space-x-4">
+          <!-- Instrument selector -->
+          <div class="flex items-center space-x-2">
+            <label for="instrumentSelector" class="text-sm text-slate-400">Instrument:</label>
+            <select id="instrumentSelector" class="bg-surface-700 text-slate-100 text-sm rounded px-2 py-1 border border-surface-600 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none">
+              <!-- Populated from /api/config -->
+            </select>
+          </div>
+
           <!-- Timeframe buttons -->
           <div class="flex space-x-2">
             <button data-timeframe="1m"  class="px-2 py-1 rounded bg-surface-900 text-slate-100">1m</button>
@@ -484,15 +494,5 @@
   <!-- Socket.IO & Main JS -->
   <script src="https://cdn.socket.io/4.6.0/socket.io.min.js"></script>
   <script type="module" src="/static/js/main.js"></script>
-  <script>
-    // Populate chart pair display
-    fetch('/api/config')
-      .then(r => r.json())
-      .then(data => {
-        const el = document.getElementById('chartPairDisplay');
-        if (el) el.textContent = data.pair || '--';
-      })
-      .catch(() => {});
-  </script>
 </body>
 </html>

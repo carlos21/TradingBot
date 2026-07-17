@@ -15,8 +15,9 @@ All repository interfaces live in the domain layer so that:
 
 from abc import ABC, abstractmethod
 from datetime import datetime
+from typing import Protocol
 
-from src.domain.models import LineData, TradeData
+from src.domain.models import Instrument, LineData, TradeData
 
 # =============================================================================
 # Line Repository Interfaces
@@ -193,12 +194,13 @@ class AccountConfig:
 
     def __init__(self, name: str, risk_usd: float | None = None,
                  risk_pct: float | None = None, rr_ratio: float | None = None,
-                 live_enabled: bool = True):
+                 live_enabled: bool = True, instrument_symbols: list[str] | None = None):
         self.name = name
         self.risk_usd = risk_usd
         self.risk_pct = risk_pct
         self.rr_ratio = rr_ratio
         self.live_enabled = live_enabled
+        self.instrument_symbols = list(instrument_symbols) if instrument_symbols else []
 
 
 class AccountReader(ABC):
@@ -219,7 +221,8 @@ class AccountWriter(ABC):
     @abstractmethod
     def upsert(self, name: str, risk_usd: float | None = None,
                risk_pct: float | None = None, rr_ratio: float | None = None,
-               live_enabled: bool = True) -> None:
+               live_enabled: bool = True,
+               instrument_symbols: list[str] | None = None) -> None:
         """Save or update an account configuration."""
 
     @abstractmethod
@@ -302,6 +305,20 @@ class DecisionLogWriter(ABC):
 
 class DecisionLogRepository(DecisionLogReader, DecisionLogWriter):
     """Full decision log repository interface."""
+
+
+# =============================================================================
+# Instrument Registry Interface
+# =============================================================================
+
+class IInstrumentRegistry(Protocol):
+    """Protocol for loading and persisting the instrument registry."""
+
+    def get_all(self) -> list[Instrument]:
+        """Return the registered instruments, defaulting to one if empty."""
+
+    def save(self, instruments: list[Instrument]) -> None:
+        """Persist the instrument registry."""
 
 
 # =============================================================================

@@ -6,8 +6,14 @@ need to copy-paste the same ``_session()`` context manager.
 
 from __future__ import annotations
 
-from collections.abc import Generator
+import functools
+import random
+import time
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from typing import Any, TypeVar
+
+from sqlalchemy.exc import OperationalError
 
 from src.infrastructure.database.database import get_db_session
 from src.infrastructure.database.database_protocol import DatabaseProtocol
@@ -45,3 +51,58 @@ class SQLRepositoryBase:
         if global_db is None:
             raise RuntimeError("Database not initialized.")
         return global_db.get_engine()
+
+    def _is_sqlite_busy(self, exc: Exception) -> bool:
+        """Return True if ``exc`` is a SQLite 'database is locked' error."""
+        if not isinstance(exc, OperationalError):
+            return False
+        # SQLAlchemy wraps the DBAPI exception; the original is available
+        # via __cause__ or the first arg string.
+        msg = str(exc).lower()
+        cause = getattr(exc, "__cause__", None)
+        if cause is not None:
+            msg += " " + str(cause).lower()
+        return "database is locked" in msg
+
+
+T = TypeVar("T")
+
+
+def retry_on_sqlite_lock(
+    max_retries: int = 3,
+    base_delay: float = 0.05,
+    max_delay: float = 1.0,
+) -> Callable[[Callable[..., T]], Callable[..., T]]:
+    """Decorator that retries a function on transient SQLite 'database is locked'.
+
+    The retry uses capped exponential backoff with a small jitter to avoid
+    thundering-herd collisions between concurrent writers.
+    """
+
+    def decorator(fn: Callable[..., T]) -> Callable[..., T]:
+        @functools.wraps(fn)
+        def wrapper(*args: Any, **kwargs: Any) -> T:
+            last_exc: Exception | None = None
+            for attempt in range(max_retries + 1):
+                try:
+                    return fn(*args, **kwargs)
+                except OperationalError as exc:
+                    last_exc = exc
+                    # Only retry SQLite lock errors; re-raise anything else immediately.
+                    is_busy = "database is locked" in str(exc).lower()
+                    cause = getattr(exc, "__cause__", None)
+                    if cause is not None:
+                        is_busy = is_busy or "database is locked" in str(cause).lower()
+                    if not is_busy or attempt == max_retries:
+                        raise
+                    delay = min(base_delay * (2 ** attempt), max_delay)
+                    delay += random.uniform(0, 0.02)
+                    time.sleep(delay)
+            # Defensive fallback; should never be reached.
+            if last_exc is not None:
+                raise last_exc
+            raise RuntimeError("retry loop exited without result")
+
+        return wrapper
+
+    return decorator

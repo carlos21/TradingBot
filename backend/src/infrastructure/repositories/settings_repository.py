@@ -4,7 +4,7 @@ from __future__ import annotations
 from src.domain.repositories import SettingsRepository as ISettingsRepository
 from src.infrastructure.database.database import AppSetting
 from src.infrastructure.database.database_protocol import DatabaseProtocol
-from src.infrastructure.repositories.base import SQLRepositoryBase
+from src.infrastructure.repositories.base import SQLRepositoryBase, retry_on_sqlite_lock
 
 
 class SettingsRepository(SQLRepositoryBase, ISettingsRepository):
@@ -18,6 +18,7 @@ class SettingsRepository(SQLRepositoryBase, ISettingsRepository):
             row = session.query(AppSetting).filter_by(key=key).first()
             return row.value if row else None
 
+    @retry_on_sqlite_lock()
     def set(self, key: str, value: str, is_sensitive: bool = False) -> None:
         with self._session() as session:
             try:
@@ -38,6 +39,7 @@ class SettingsRepository(SQLRepositoryBase, ISettingsRepository):
             rows = session.query(AppSetting).all()
             return {r.key: r.value for r in rows}
 
+    @retry_on_sqlite_lock()
     def delete(self, key: str) -> None:
         with self._session() as session:
             try:

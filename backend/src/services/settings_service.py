@@ -2,11 +2,15 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import asdict
 from typing import Protocol
 
 from cryptography.fernet import Fernet
 
 from src.config.models import DEFAULT_HISTORY_HOURS, AccountConfig
+from src.domain.models import Instrument
+from src.domain.repositories import IInstrumentRegistry
+from src.services.instrument_registry import InstrumentRegistry
 
 
 class ISettingsRepository(Protocol):
@@ -19,7 +23,8 @@ class ISettingsRepository(Protocol):
 class INtAccountRepository(Protocol):
     def list_accounts(self) -> list[AccountConfig]: ...
     def upsert(self, name: str, risk_usd: float | None = None, risk_pct: float | None = None,
-               rr_ratio: float | None = None, live_enabled: bool = True) -> None: ...
+               rr_ratio: float | None = None, live_enabled: bool = True,
+               instrument_symbols: list[str] | None = None) -> None: ...
     def delete(self, name: str) -> None: ...
     def clear_all(self) -> None: ...
 
@@ -40,12 +45,18 @@ class SettingsService:
         accounts_repo: INtAccountRepository,
         creds_repo: ICredentialRepository,
         secret_key: str | None = None,
+        instrument_registry: IInstrumentRegistry | None = None,
     ):
         self._settings = settings_repo
         self._accounts = accounts_repo
         self._creds = creds_repo
         self._fernet = self._make_fernet(secret_key)
         self._secret_key = secret_key
+        self._instruments = instrument_registry or self._default_registry(settings_repo)
+
+    @staticmethod
+    def _default_registry(settings_repo: ISettingsRepository) -> IInstrumentRegistry:
+        return InstrumentRegistry(settings_repo)
 
     @staticmethod
     def _make_fernet(secret_key: str | None) -> Fernet | None:
@@ -78,11 +89,14 @@ class SettingsService:
         accounts = self._accounts.list_accounts()
         cred = self._creds.get_credential(self._SERVICE_KEY)
         all_creds = self._creds.list_all()
+        instruments = self._instruments.get_all()
+        first = instruments[0] if instruments else InstrumentRegistry.default_instrument()
 
         return {
             "trading": {
-                "pair": all_settings.get("pair", "MNQ"),
-                "instrument": all_settings.get("instrument", ""),
+                "instruments": [asdict(inst) for inst in instruments],
+                "pair": first.symbol,
+                "instrument": first.full_name,
                 "session_end": all_settings.get("session_end", "16:58"),
                 "history_hours": all_settings.get(
                     "history_hours",
@@ -106,6 +120,7 @@ class SettingsService:
                     "risk_pct": a.risk_pct,
                     "rr_ratio": a.rr_ratio,
                     "live_enabled": a.live_enabled if a.live_enabled is not None else True,
+                    "instrument_symbols": list(a.instrument_symbols) if a.instrument_symbols else [],
                 }
                 for a in accounts
             ],
@@ -124,7 +139,12 @@ class SettingsService:
         accounts = payload.get("accounts", [])
         credentials = payload.get("credentials", {})
 
+        self._save_instruments(trading)
+        self._sync_legacy_instrument_settings()
+
         for key, value in trading.items():
+            if key in ("instruments", "pair", "instrument"):
+                continue
             self._settings.set(key, str(value) if value is not None else "")
         for key, value in network.items():
             self._settings.set(key, str(value) if value is not None else "")
@@ -137,6 +157,7 @@ class SettingsService:
                 risk_pct=acct.get("risk_pct") or None,
                 rr_ratio=acct.get("rr_ratio") or None,
                 live_enabled=bool(acct.get("live_enabled", True)),
+                instrument_symbols=acct.get("instrument_symbols") or [],
             )
 
         username = credentials.get("username", "")
@@ -151,6 +172,50 @@ class SettingsService:
         mt_terminal_path = payload.get("mt_terminal_path", "")
         if mt_terminal_path:
             self._settings.set("mt_terminal_path", mt_terminal_path)
+
+    def _save_instruments(self, trading: dict) -> None:
+        """Persist ``trading.instruments`` or update the first instrument from legacy fields."""
+        instruments_payload = trading.get("instruments")
+        if instruments_payload is not None:
+            instruments = [self._deserialize_instrument(item) for item in instruments_payload]
+            self._instruments.save(instruments)
+            return
+
+        instruments = self._instruments.get_all()
+        first = instruments[0] if instruments else InstrumentRegistry.default_instrument()
+        updated = False
+        if "pair" in trading and trading["pair"]:
+            first.symbol = trading["pair"]
+            updated = True
+        if "instrument" in trading and trading["instrument"]:
+            first.full_name = trading["instrument"]
+            updated = True
+        if updated:
+            if instruments:
+                instruments[0] = first
+            else:
+                instruments = [first]
+            self._instruments.save(instruments)
+
+    @staticmethod
+    def _deserialize_instrument(item: dict) -> Instrument:
+        """Build an Instrument from a payload dict, ignoring unknown fields."""
+        from dataclasses import fields
+
+        known = {f.name for f in fields(Instrument)}
+        cleaned = {k: v for k, v in item.items() if k in known}
+        if "point_value" in cleaned:
+            cleaned["point_value"] = float(cleaned["point_value"])
+        return Instrument(**cleaned)
+
+    def _sync_legacy_instrument_settings(self) -> None:
+        """Keep legacy ``pair`` / ``instrument`` settings in sync."""
+        instruments = self._instruments.get_all()
+        if not instruments:
+            return
+        first = instruments[0]
+        self._settings.set("pair", first.symbol)
+        self._settings.set("instrument", first.full_name)
 
     def save_account(self, payload: dict) -> None:
         """Persist a single account after validating numeric fields."""
@@ -179,11 +244,16 @@ class SettingsService:
             risk_pct=_as_positive_float(payload.get("risk_pct"), "risk_pct"),
             rr_ratio=_as_positive_float(payload.get("rr_ratio"), "rr_ratio"),
             live_enabled=bool(live_enabled),
+            instrument_symbols=payload.get("instrument_symbols") or [],
         )
 
     def delete_account(self, name: str) -> None:
         """Delete an account by name."""
         self._accounts.delete(name)
+
+    def get_instruments(self) -> list[dict]:
+        """Return the current instrument registry as plain dictionaries."""
+        return [asdict(inst) for inst in self._instruments.get_all()]
 
     def to_app_config_overrides(self) -> dict:
         """Return a flat dict suitable for DbConfigLoader."""
@@ -192,7 +262,16 @@ class SettingsService:
 
         overrides = {}
         for key, value in all_settings.items():
+            if key == "instruments":
+                continue
             overrides[key] = value
+
+        instruments = self._instruments.get_all()
+        if instruments:
+            first = instruments[0]
+            overrides["pair"] = first.symbol
+            overrides["instrument"] = first.full_name
+            overrides["point_value"] = str(first.point_value)
 
         if accounts:
             overrides["nt_accounts"] = accounts

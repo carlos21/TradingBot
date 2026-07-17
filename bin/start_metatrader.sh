@@ -18,8 +18,21 @@ export INSTANCE_NAME="${INSTANCE_NAME:-meta}"
 export PLATFORM_TYPE="${PLATFORM_TYPE:-metatrader}"
 export PAIR="${PAIR:-NAS100}"
 
-# Isolation: separate DB, logs, and Flask port
-export DB_PATH="${DB_PATH:-sqlite:///./meta.db}"
+# Load .env so DATABASE_URL is available before Python starts.
+# Python's load_dotenv() will not override already-exported env vars,
+# so we must read the DB URL here to avoid the shell default hiding it.
+if [ -f "$PROJECT_DIR/.env" ]; then
+    set -a
+    # shellcheck source=/dev/null
+    source <(sed '1s/^\xEF\xBB\xBF//' "$PROJECT_DIR/.env")
+    set +a
+fi
+
+# Prefer PostgreSQL DATABASE_URL; only fall back to SQLite DB_PATH when unset.
+if [ -z "${DATABASE_URL:-}" ]; then
+    export DB_PATH="${DB_PATH:-sqlite:///./meta.db}"
+fi
+
 export LOG_DIR="${LOG_DIR:-logs/meta}"
 export FLASK_PORT="${FLASK_PORT:-5002}"
 
@@ -89,8 +102,20 @@ else
     fi
 fi
 
+mask_db_url() {
+    local url="$1"
+    # Mask password in URLs like postgresql://user:pass@host/db
+    echo "$url" | sed -E 's#(:)[^:@]+(@)#:***@#'
+}
+
+if [ -n "${DATABASE_URL:-}" ]; then
+    DB_DISPLAY="$(mask_db_url "$DATABASE_URL")"
+else
+    DB_DISPLAY="${DB_PATH:-sqlite:///./meta.db}"
+fi
+
 echo "[${INSTANCE_NAME}] Starting live — pair=$PAIR"
-echo "[${INSTANCE_NAME}] DB: $DB_PATH | Logs: $LOG_DIR | Flask port: $FLASK_PORT"
+echo "[${INSTANCE_NAME}] DB: $DB_DISPLAY | Logs: $LOG_DIR | Flask port: $FLASK_PORT"
 echo "[${INSTANCE_NAME}] ZMQ: Python binds 0.0.0.0:$ZMQ_MARKET_PORT/$ZMQ_COMMAND_PORT/$ZMQ_QUERY_PORT/$ZMQ_HEARTBEAT_PORT"
 echo "[${INSTANCE_NAME}] ZMQ: EA connects 127.0.0.1:$ZMQ_MARKET_PORT/$ZMQ_COMMAND_PORT/$ZMQ_QUERY_PORT/$ZMQ_HEARTBEAT_PORT"
 

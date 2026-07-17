@@ -18,7 +18,7 @@ from src.config.models import AppConfig
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.infrastructure.data_sources.csv_datasource import CSVDataSource
 from src.infrastructure.database import database
-from src.infrastructure.database.database_protocol import SQLiteDatabase
+from src.infrastructure.database.database_protocol import get_database
 from src.infrastructure.gateway import (
     create_live_components,
     create_multi_account_live_components,
@@ -88,9 +88,9 @@ class AppBuilder:
         from app_factory import Repositories, create_app
 
         cfg = self.config
-        db = SQLiteDatabase(db_url=cfg.db_path)
+        db = get_database(db_url=cfg.database_url or cfg.db_path)
         database.db = db
-        database.setup_database(db_url=cfg.db_path)
+        database.setup_database(database_instance=db)
         repos = Repositories(
             lines=SQLLineRepository(db=db),
             trades=SQLTradeRepository(db=db),
@@ -161,9 +161,9 @@ class AppBuilder:
         from app_factory import Repositories, create_app
 
         cfg = self.config
-        db = SQLiteDatabase(db_url=cfg.db_path)
+        db = get_database(db_url=cfg.database_url or cfg.db_path)
         database.db = db
-        database.setup_database(db_url=cfg.db_path)
+        database.setup_database(database_instance=db)
         repos = Repositories(
             lines=SQLLineRepository(db=db),
             trades=SQLTradeRepository(db=db),

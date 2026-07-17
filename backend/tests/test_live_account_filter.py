@@ -26,6 +26,7 @@ def _make_trade_manager(*, live_mode: bool = False, accounts=None) -> TradeManag
             risk_pct=acct.risk_pct,
             rr_ratio=acct.rr_ratio,
             live_enabled=acct.live_enabled,
+            instrument_symbols=acct.instrument_symbols,
         )
     return TradeManager(
         trade_repository=FakeTradeRepository(),
@@ -40,11 +41,11 @@ def _make_trade_manager(*, live_mode: bool = False, accounts=None) -> TradeManag
 
 def _five_accounts() -> list[AccountConfig]:
     return [
-        AccountConfig(name="Sim101", risk_usd=100.0, live_enabled=True),
-        AccountConfig(name="Sim102", risk_usd=100.0, live_enabled=True),
-        AccountConfig(name="Sim103", risk_usd=100.0, live_enabled=False),
-        AccountConfig(name="Sim104", risk_usd=100.0, live_enabled=False),
-        AccountConfig(name="Sim105", risk_usd=100.0, live_enabled=False),
+        AccountConfig(name="Sim101", risk_usd=100.0, live_enabled=True, instrument_symbols=["MNQ"]),
+        AccountConfig(name="Sim102", risk_usd=100.0, live_enabled=True, instrument_symbols=["MNQ"]),
+        AccountConfig(name="Sim103", risk_usd=100.0, live_enabled=False, instrument_symbols=["MNQ"]),
+        AccountConfig(name="Sim104", risk_usd=100.0, live_enabled=False, instrument_symbols=["MNQ"]),
+        AccountConfig(name="Sim105", risk_usd=100.0, live_enabled=False, instrument_symbols=["MNQ"]),
     ]
 
 
@@ -148,7 +149,8 @@ class TestStrategyTradeServiceLiveFiltering:
         accounts_repo = FakeNtAccountRepository()
         for acct in accounts:
             accounts_repo.upsert(
-                acct.name, risk_usd=acct.risk_usd, live_enabled=acct.live_enabled
+                acct.name, risk_usd=acct.risk_usd, live_enabled=acct.live_enabled,
+                instrument_symbols=acct.instrument_symbols,
             )
 
         service = StrategyTradeService(
@@ -188,7 +190,8 @@ class TestStrategyTradeServiceLiveFiltering:
         accounts_repo = FakeNtAccountRepository()
         for acct in accounts:
             accounts_repo.upsert(
-                acct.name, risk_usd=acct.risk_usd, live_enabled=acct.live_enabled
+                acct.name, risk_usd=acct.risk_usd, live_enabled=acct.live_enabled,
+                instrument_symbols=acct.instrument_symbols,
             )
 
         service = StrategyTradeService(

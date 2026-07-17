@@ -31,7 +31,6 @@ function makeBars(count = 20) {
 
 function buildController(doc, win, options = {}) {
   const http = new FakeHttpClient();
-  http.setResponse('GET', '/api/pair', { pair: 'MNQ' });
   http.setResponse('GET', '/api/bars', makeBars());
   http.setResponse('GET', '/api/trades', []);
   http.setResponse('GET', '/api/lines', []);
@@ -47,7 +46,7 @@ function buildController(doc, win, options = {}) {
     chartApi,
     storage,
     domService: dom,
-    options: { showTSI: false, ...options },
+    options: { showTSI: false, activePair: 'MNQ', ...options },
   });
 
   return { controller, http, socket, chartApi, storage, dom };
@@ -63,34 +62,42 @@ describe('ChartController', () => {
   });
 
   describe('initialization', () => {
-    it('initializes pair, chart, and loads bars', async () => {
+    it('initializes pair from options, chart, and loads bars', async () => {
       const { doc, win } = setupDocument();
       const { controller, chartApi } = buildController(doc, win);
 
       await flushPromises();
 
       expect(controller.pair).toBe('MNQ');
+      expect(controller.activeInstrument).toBeNull();
       expect(chartApi.calls.some(c => c.method === 'createChart')).toBe(true);
       expect(chartApi.calls.some(c => c.method === 'addCandlestickSeries')).toBe(true);
       expect(chartApi.calls.some(c => c.method === 'setData')).toBe(true);
       expect(controller.historyReady).toBe(true);
     });
 
-    it('logs init error when pair fetch fails', async () => {
+    it('sets active instrument from options', async () => {
       const { doc, win } = setupDocument();
-      const http = new FakeHttpClient();
-      http.setResponse('GET', '/api/pair', () => {
-        throw new Error('pair error');
-      });
+      const instrument = { symbol: 'MNQ', full_name: 'MNQ 09-26' };
+      const { controller } = buildController(doc, win, { activePair: 'MNQ', activeInstrument: instrument });
+
+      await flushPromises();
+
+      expect(controller.pair).toBe('MNQ');
+      expect(controller.activeInstrument).toEqual(instrument);
+    });
+
+    it('logs init error when chart creation fails', async () => {
+      const { doc, win } = setupDocument();
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
 
       new ChartController({
-        httpClient: http,
+        httpClient: new FakeHttpClient(),
         socket: new FakeSocket(),
-        chartApi: new FakeChartApi(),
+        chartApi: { createChart: () => { throw new Error('chart error'); } },
         storage: new FakeStorage(),
         domService: new FakeDomService(doc, win),
-        options: { showTSI: false },
+        options: { showTSI: false, activePair: 'MNQ' },
       });
 
       await flushPromises();
@@ -177,7 +184,7 @@ describe('ChartController', () => {
       expect(controller.currentTF).toBe('5m');
       expect(socket.emissions).toContainEqual({
         event: 'set_timeframe',
-        payload: { timeframe: '5m', fromTime: expect.any(Number) },
+        payload: { timeframe: '5m', pair: 'MNQ', fromTime: expect.any(Number) },
       });
     });
 
@@ -624,7 +631,7 @@ describe('ChartController', () => {
 
       expect(socket.emissions).toContainEqual({
         event: 'seek',
-        payload: { fromTime: expect.any(Number) },
+        payload: { pair: 'MNQ', fromTime: expect.any(Number) },
       });
       expect(controller.historicalBars.at(-1).time).toBeLessThanOrEqual(1005);
     });
@@ -640,7 +647,7 @@ describe('ChartController', () => {
 
       expect(socket.emissions).toContainEqual({
         event: 'seek',
-        payload: { fromTime: expect.any(Number) },
+        payload: { pair: 'MNQ', fromTime: expect.any(Number) },
       });
       expect(controller.historicalBars.at(-1).time).toBeLessThanOrEqual(1001.5);
     });
@@ -687,6 +694,43 @@ describe('ChartController', () => {
 
       controller.setPlaying(true);
       expect(controller.isPlaying).toBe(true);
+    });
+
+    it('setActiveInstrument updates pair and instrument', async () => {
+      const { doc, win } = setupDocument();
+      const { controller } = buildController(doc, win);
+      await flushPromises();
+
+      const instrument = { symbol: 'ES', full_name: 'ES 09-26' };
+      await controller.setActiveInstrument('ES', instrument);
+
+      expect(controller.pair).toBe('ES');
+      expect(controller.activeInstrument).toEqual(instrument);
+    });
+
+    it('setActiveInstrument clears cached bars, trades, and lines for the old instrument', async () => {
+      const { doc, win } = setupDocument();
+      const { controller, chartApi } = buildController(doc, win);
+      await flushPromises();
+
+      controller.handleTradeOpen({
+        trade_id: 't1',
+        type: 'long',
+        entry: 100,
+        stop_loss: 99,
+        take_profit: 102,
+      });
+      controller.pinnedLines.push({ id: 1, line: { id: 'line1' } });
+
+      chartApi.calls.length = 0;
+      await controller.setActiveInstrument('ES', { symbol: 'ES', full_name: 'ES 09-26' });
+      await flushPromises();
+
+      expect(controller.allTrades).toHaveLength(0);
+      expect(controller.pinnedLines).toHaveLength(0);
+      expect(controller.allTradeLines).toHaveLength(0);
+      expect(controller.historicalBars.length).toBeGreaterThan(0);
+      expect(chartApi.calls.some(c => c.method === 'setData' && c.args[0] === controller.priceSeries)).toBe(true);
     });
 
     it('handles history ready after timeout', async () => {

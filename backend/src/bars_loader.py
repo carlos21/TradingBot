@@ -17,7 +17,8 @@ class BarsLoader:
         logger: ILogger,
         bar_callback: Callable[[dict], None] = None,
         stream_end_callback: Callable[[float, float], None] = None,
-        bars_per_second: float = 10.0
+        bars_per_second: float = 10.0,
+        room: str | None = None,
     ):
         self.data_source     = data_source
         self.socketio        = socketio
@@ -26,6 +27,7 @@ class BarsLoader:
         self.stream_end_callback = stream_end_callback
         self.bars_per_second = bars_per_second if bars_per_second > 0 else 1.0
         self._emit_delay     = 1.0 / self.bars_per_second
+        self._room = room
 
         self._from_time    = 0
         self.streaming     = False
@@ -48,6 +50,13 @@ class BarsLoader:
 
         # Gap detection for live chart stream
         self._last_processed_bar_time: int = 0
+
+    def _emit(self, event: str, payload: dict) -> None:
+        """Emit to a specific Socket.IO room if configured, otherwise broadcast."""
+        kwargs = {}
+        if self._room:
+            kwargs["room"] = self._room
+        self.socketio.emit(event, payload, **kwargs)
 
     def reset(self):
         self._last_played_ts = 0
@@ -166,8 +175,8 @@ class BarsLoader:
                 self.stream_end_callback(self._last_bar_close, self._last_played_ts)
             else:
                 self.logger.info(f"[BarsLoader] NOT calling callback: callback={self.stream_end_callback is not None}, last_ts={self._last_played_ts}")
-            self.socketio.emit('stream_status', {'playing': False})
-            self.socketio.emit('stream_end', {'ok': True})
+            self._emit('stream_status', {'playing': False})
+            self._emit('stream_end', {'ok': True})
             return
 
         if not self.live_mode and self._stop_event.is_set():
@@ -193,7 +202,7 @@ class BarsLoader:
                     from src.utils.bar_aggregator import BarAggregator
                     bar_for_emit = BarAggregator.merge_partial(bar_for_emit, self._1m_buffer, window_start)
 
-            self.socketio.emit('bar', bar_for_emit)
+            self._emit('bar', bar_for_emit)
             return
 
         if self.bar_callback:
@@ -222,15 +231,15 @@ class BarsLoader:
                 self.stream_end_callback(close_price, msg['time'])
             else:
                 self.logger.info("[BarsLoader] NO callback set, trades will remain open")
-            self.socketio.emit('stream_status', {'playing': False})
-            self.socketio.emit('stream_end', {'reason': 'day_end', 'stop_at': self._stop_at})
+            self._emit('stream_status', {'playing': False})
+            self._emit('stream_end', {'reason': 'day_end', 'stop_at': self._stop_at})
             return
 
     def _stop_after_step(self):
         self._step_mode = False
         self._stop_event.set()
         self.streaming = False
-        self.socketio.emit('stream_status', {'playing': False})
+        self._emit('stream_status', {'playing': False})
 
     def _is_historical_bar(self, bar: dict) -> bool:
         """In live mode, bars older than a few minutes are historical warm-up bars
@@ -261,7 +270,7 @@ class BarsLoader:
         is_historical = self._is_historical_bar(bar)
 
         if self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1:
-            self.socketio.emit('bar', bar)
+            self._emit('bar', bar)
             if not self.live_mode and not is_historical:
                 time.sleep(self._emit_delay)
             if self._step_mode:
@@ -281,7 +290,7 @@ class BarsLoader:
         else:
             if self._1m_buffer:
                 agg = self._aggregate_time_window(self._1m_buffer, self._current_group_start, window_secs)
-                self.socketio.emit('bar', agg)
+                self._emit('bar', agg)
                 if not self.live_mode and not is_historical:
                     time.sleep(self._emit_delay)
                 if self._step_mode:
@@ -290,7 +299,7 @@ class BarsLoader:
             self._current_group_start = window_start
 
     def _process_tick(self, tick: dict):
-        self.socketio.emit('tick', tick)
+        self._emit('tick', tick)
 
     @staticmethod
     def _aggregate_time_window(bars: list[dict], window_start: int, window_secs: int) -> dict:
@@ -309,7 +318,7 @@ class BarsLoader:
                     if not (self.current_tf.endswith('m') and int(self.current_tf[:-1]) == 1) and self._1m_buffer:
                             window_secs = self.group_size * 60
                             agg = self._aggregate_time_window(self._1m_buffer, self._current_group_start, window_secs)
-                            self.socketio.emit('bar', agg)
+                            self._emit('bar', agg)
                             if not self._is_historical_bar(agg):
                                 time.sleep(self._emit_delay)
                 except Exception as e:
@@ -317,7 +326,7 @@ class BarsLoader:
 
             self.streaming = False
             reason = 'paused' if (self._stop_event.is_set() and not self._reached_stop_at) else 'eof'
-            self.socketio.emit('stream_end', {'reason': reason})
+            self._emit('stream_end', {'reason': reason})
 
             if self._fast_jump_mode:
                 self._emit_delay = self._default_emit_delay

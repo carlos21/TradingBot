@@ -13,6 +13,7 @@ export class ChartSocketController {
     this.socket.on('connect', () => console.log('[ChartSocketController] socket connected'));
 
     this.socket.on('bar', bar => {
+      if (!this._matchesCurrentPair(bar)) return;
       if (!this.controller.historyReady) {
         this.controller.queueBar(bar);
         return;
@@ -20,13 +21,31 @@ export class ChartSocketController {
       this.controller.processBar(bar);
     });
 
-    this.socket.on('indicator_update', data => this.controller.handleIndicatorUpdate(data));
-    this.socket.on('trade_open', trade => this.controller.handleTradeOpen(trade));
-    this.socket.on('trade_close', trade => this.controller.handleTradeClose(trade));
-    this.socket.on('trade_update', update => this.controller.handleTradeUpdate(update));
-    this.socket.on('trade_entry_update', update => this.controller.handleTradeEntryUpdate(update));
+    this.socket.on('indicator_update', data => {
+      if (!this._matchesCurrentPair(data)) return;
+      this.controller.handleIndicatorUpdate(data);
+    });
+    this.socket.on('trade_open', trade => {
+      if (!this._matchesCurrentPair(trade)) return;
+      this.controller.handleTradeOpen(trade);
+    });
+    this.socket.on('trade_close', trade => {
+      if (!this._matchesCurrentPair(trade)) return;
+      this.controller.handleTradeClose(trade);
+    });
+    this.socket.on('trade_update', update => {
+      if (!this._matchesCurrentPair(update)) return;
+      this.controller.handleTradeUpdate(update);
+    });
+    this.socket.on('trade_entry_update', update => {
+      if (!this._matchesCurrentPair(update)) return;
+      this.controller.handleTradeEntryUpdate(update);
+    });
 
-    this.socket.on('line_removed', ({ id }) => this.controller.handleLineRemoved(id));
+    this.socket.on('line_removed', data => {
+      if (!this._matchesCurrentPair(data)) return;
+      this.controller.handleLineRemoved(data.id);
+    });
 
     this.socket.on('stream_end', () => {
       const win = this.dom.getWindow();
@@ -98,6 +117,11 @@ export class ChartSocketController {
     if (!overlay) return;
     if (visible) overlay.classList.remove('hidden');
     else overlay.classList.add('hidden');
+  }
+
+  _matchesCurrentPair(data) {
+    if (!data || !data.pair) return true;
+    return data.pair === this.controller.pair;
   }
 
   _setConnectionStatus(text) {

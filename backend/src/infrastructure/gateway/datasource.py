@@ -76,6 +76,7 @@ class ZMQDataSource(CombinedDataSource):
         history_hours: int = DEFAULT_HISTORY_HOURS,
         notifier: Notifier | None = None,
         market_filter: IMarketClosureFilter | None = None,
+        instrument_registry=None,
     ):
         """
         Initialize the ZMQ data source.
@@ -87,6 +88,7 @@ class ZMQDataSource(CombinedDataSource):
             pair: Trading pair symbol
             history_hours: Number of hours of historical bars to load on connect
             market_filter: Optional filter that classifies gaps as scheduled market closures
+            instrument_registry: Optional registry of instruments for multi-pair streaming
         """
         self.logger = logger
         self.pair = pair
@@ -95,13 +97,19 @@ class ZMQDataSource(CombinedDataSource):
         self._gateway_config = gateway_config or GatewayConfig()
         self._owns_gateway = gateway is None
         self._market_filter = market_filter
+        self._instrument_registry = instrument_registry
+        self._coordinator = None
 
         # Track the first connect so we always refresh history on startup.
         # After that, only refresh if the disconnect lasted long enough to be "real".
         self._first_platform_connect: bool = True
 
-        # Data storage
+        # Data storage.  ``_historical_bars`` is the legacy cache for the default
+        # pair; ``_per_pair_bars`` caches bars for every instrument in multi-pair
+        # mode.
         self._historical_bars: list[dict] = []
+        self._per_pair_bars: dict[str, list[dict]] = {}
+        self._per_pair_locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
         self._bars_lock = threading.RLock()
         self._state = DataSourceState.DISCONNECTED
         self._last_history_time: int = 0
@@ -179,10 +187,16 @@ class ZMQDataSource(CombinedDataSource):
     # CombinedDataSource Interface
     # -------------------------------------------------------------------------
 
+    def set_coordinator(self, coordinator) -> None:
+        """Wire the data source to a ``StreamCoordinator`` for multi-pair routing."""
+        self._coordinator = coordinator
+
     def load_historical_bars(
         self,
         timeframe: str = "1m",
         start_time: int = None,
+        end_time: int = None,
+        pair: str | None = None,
     ) -> list[dict]:
         """
         Load historical bars (synchronous - returns current cache).
@@ -190,11 +204,18 @@ class ZMQDataSource(CombinedDataSource):
         In live mode, historical bars are pushed from the platform
         via the HISTORY_BATCH message.
         """
-        with self._bars_lock:
-            bars = list(self._historical_bars)
+        target_pair = pair or self.pair
+        if target_pair == self.pair:
+            with self._bars_lock:
+                bars = list(self._historical_bars)
+        else:
+            with self._per_pair_locks[target_pair]:
+                bars = list(self._per_pair_bars.get(target_pair, []))
 
         if start_time is not None:
             bars = [b for b in bars if b["time"] >= start_time]
+        if end_time is not None:
+            bars = [b for b in bars if b["time"] <= end_time]
 
         # Deduplicate by time (keep first occurrence) and ensure sorted order
         seen = set()
@@ -367,6 +388,8 @@ class ZMQDataSource(CombinedDataSource):
                             self.on_heartbeat_stale(elapsed)
                         except Exception as e:
                             self.logger.error(f"[Heartbeat] on_heartbeat_stale error: {e}")
+                    elif self._coordinator is not None:
+                        self._coordinator.route_heartbeat_stale(elapsed, self.pair)
             else:
                 # Reset alert flag once bars resume
                 if self._heartbeat_alert_sent:
@@ -387,6 +410,7 @@ class ZMQDataSource(CombinedDataSource):
         tick_time = int(payload["time"])
         price = float(payload["price"])
         volume = int(payload.get("volume", 0))
+        tick_pair = payload.get("pair", self.pair)
 
         bar_time = (tick_time // 60) * 60
 
@@ -402,7 +426,7 @@ class ZMQDataSource(CombinedDataSource):
                 "low": price,
                 "close": price,
                 "volume": volume,
-                "pair": payload.get("pair", self.pair),
+                "pair": tick_pair,
             }
         else:
             self._current_bar["high"] = max(self._current_bar["high"], price)
@@ -424,12 +448,16 @@ class ZMQDataSource(CombinedDataSource):
                 return  # Suppress partial bars before history is ready
             partial = dict(self._current_bar)
             partial["partial"] = True
-            if self.on_live_bar:
+            if self._coordinator is not None:
+                self._coordinator.route_partial_bar(partial)
+            elif self.on_live_bar:
                 self.on_live_bar(partial)
 
     def _on_bar(self, payload: dict) -> None:
         """Handle completed bar from platform."""
         self._stats["bars_received"] += 1
+
+        bar_pair = payload.get("pair", self.pair)
 
         # DEBUG: Log every bar for the first 100 streaming bars, then every 50th
         is_streaming = self._state == DataSourceState.STREAMING
@@ -438,7 +466,7 @@ class ZMQDataSource(CombinedDataSource):
         ):
             self.logger.info(
                     f"[LIVE BAR #{self._stats['bars_received']}] "
-                    f"time={payload.get('time')} close={payload.get('close')} pair={payload.get('pair', self.pair)}"
+                    f"time={payload.get('time')} close={payload.get('close')} pair={bar_pair}"
                 )
 
         if is_streaming:
@@ -446,7 +474,7 @@ class ZMQDataSource(CombinedDataSource):
             # Reset alert flag when a bar arrives
             if self._heartbeat_alert_sent:
                 self._heartbeat_alert_sent = False
-                self.logger.info(f"[Heartbeat] Completed-bar stream resumed for {self.pair}")
+                self.logger.info(f"[Heartbeat] Completed-bar stream resumed for {bar_pair}")
             # Reset market-open flag when a bar arrives (stale-bar fallback recovery)
             if not self._market_is_open:
                 self._market_is_open = True
@@ -459,12 +487,25 @@ class ZMQDataSource(CombinedDataSource):
             "low": float(payload["low"]),
             "close": float(payload["close"]),
             "volume": int(payload.get("volume", 0)),
-            "pair": payload.get("pair", self.pair),
+            "pair": bar_pair,
         }
 
+        # Multi-pair mode: route to the coordinator.  For the default pair we
+        # still run the legacy insert/gap-detection path so that tests and
+        # single-pair consumers keep working.
+        if self._coordinator is not None:
+            if bar_pair != self.pair:
+                self._store_bar_for_pair(bar, bar_pair)
+                self._coordinator.route_bar(bar)
+                return
+            # Fall through for default pair to keep legacy cache/gap behavior.
+
+        # Legacy single-pair path below.
         if self._state in (DataSourceState.CONNECTED, DataSourceState.REFRESHING):
             with self._bars_lock:
                 self._refresh_buffer.append(bar)
+            if self._coordinator is not None:
+                self._coordinator.route_bar(bar)
             return  # Buffer live bars before history is ready
 
         inserted_idx = -1
@@ -509,28 +550,72 @@ class ZMQDataSource(CombinedDataSource):
                     bar["time"],
                     context,
                 )
-                if gap and self._state == DataSourceState.STREAMING and self.on_gap_detected:
-                    self.on_gap_detected(gap, context)
+                if gap and self._state == DataSourceState.STREAMING:
+                    if self.on_gap_detected:
+                        self.on_gap_detected(gap, context)
+                    elif self._coordinator is not None:
+                        self._coordinator.route_gap_detected(gap, context, bar.get("pair"))
             if inserted_idx < len(self._historical_bars) - 1:
                 gap = self._detect_gap(
                     bar["time"],
                     self._historical_bars[inserted_idx + 1]["time"],
                     context,
                 )
-                if gap and self._state == DataSourceState.STREAMING and self.on_gap_detected:
-                    self.on_gap_detected(gap, context)
+                if gap and self._state == DataSourceState.STREAMING:
+                    if self.on_gap_detected:
+                        self.on_gap_detected(gap, context)
+                    elif self._coordinator is not None:
+                        self._coordinator.route_gap_detected(gap, context, bar.get("pair"))
 
         if self.on_live_bar:
             self.on_live_bar(bar)
+
+        if self._coordinator is not None:
+            self._coordinator.route_bar(bar)
+
+    def _store_bar_for_pair(self, bar: dict, pair: str) -> None:
+        """Insert a completed bar into the per-pair cache (multi-pair mode)."""
+        lock = self._per_pair_locks[pair]
+        with lock:
+            bars = self._per_pair_bars.setdefault(pair, [])
+            if not bars or bar["time"] > bars[-1]["time"]:
+                bars.append(bar)
+            else:
+                times = [b["time"] for b in bars]
+                idx = bisect.bisect_left(times, bar["time"])
+                if idx < len(times) and times[idx] == bar["time"]:
+                    existing = bars[idx]
+                    for f in ("open", "high", "low", "close", "volume"):
+                        if existing.get(f) != bar.get(f):
+                            existing[f] = bar[f]
+                else:
+                    bars.insert(idx, bar)
+        # Keep the legacy default-pair cache in sync for backward compatibility.
+        if pair == self.pair:
+            with self._bars_lock:
+                if not self._historical_bars or bar["time"] > self._historical_bars[-1]["time"]:
+                    self._historical_bars.append(bar)
+                else:
+                    times = [b["time"] for b in self._historical_bars]
+                    idx = bisect.bisect_left(times, bar["time"])
+                    if idx < len(times) and times[idx] == bar["time"]:
+                        existing = self._historical_bars[idx]
+                        for f in ("open", "high", "low", "close", "volume"):
+                            if existing.get(f) != bar.get(f):
+                                existing[f] = bar[f]
+                    else:
+                        self._historical_bars.insert(idx, bar)
 
     def _on_partial_bar(self, payload: dict) -> None:
         """Handle partial bar from platform."""
         if self._state in (DataSourceState.CONNECTED, DataSourceState.REFRESHING):
             return  # Suppress partial bars before history is ready
         self._last_native_partial_time = time.monotonic()
-        if self.on_live_bar:
-            partial = dict(payload)
-            partial["partial"] = True
+        partial = dict(payload)
+        partial["partial"] = True
+        if self._coordinator is not None:
+            self._coordinator.route_partial_bar(partial)
+        elif self.on_live_bar:
             self.on_live_bar(partial)
 
     def _on_history_batch(self, payload: dict) -> None:
@@ -550,10 +635,34 @@ class ZMQDataSource(CombinedDataSource):
                 "low": float(raw["low"]),
                 "close": float(raw["close"]),
                 "volume": int(raw.get("volume", 0)),
-                "pair": raw.get("pair", self.pair),
+                "pair": raw.get("pair", pair),
             }
             new_bars.append(bar)
 
+        if self._coordinator is not None:
+            # Multi-pair mode: maintain per-pair caches and let the coordinator
+            # forward the batch to the right session on HISTORY_END.
+            if pair != self.pair:
+                lock = self._per_pair_locks[pair]
+                with lock:
+                    cache = self._per_pair_bars.setdefault(pair, [])
+                    existing_times = {b["time"] for b in cache}
+                    added = 0
+                    for bar in new_bars:
+                        if bar["time"] not in existing_times:
+                            cache.append(bar)
+                            existing_times.add(bar["time"])
+                            added += 1
+                    if added > 0 and len(cache) > 1:
+                        cache.sort(key=lambda b: b["time"])
+                self.logger.info(
+                    f"RECV: history_batch | pair={pair} | bars={len(new_bars)} | "
+                    f"unique_added={added} | total_cached={len(cache)}"
+                )
+                return
+            # Fall through for default pair to keep legacy gap-scan behavior.
+
+        # Legacy single-pair path.
         with self._bars_lock:
             existing_times = {b["time"] for b in self._historical_bars}
             added = 0
@@ -568,11 +677,14 @@ class ZMQDataSource(CombinedDataSource):
         self.logger.info(f"RECV: history_batch | pair={pair} | bars={len(new_bars)} | unique_added={added} | total_cached={len(self._historical_bars)}")
 
         # Notify readiness monitor if gap-fill arrives after we're already streaming
-        if self._state == DataSourceState.STREAMING and added > 0 and self.on_late_history_batch:
-            try:
-                self.on_late_history_batch(added)
-            except Exception as e:
-                self.logger.error(f"Error in on_late_history_batch: {e}")
+        if self._state == DataSourceState.STREAMING and added > 0:
+            if self.on_late_history_batch:
+                try:
+                    self.on_late_history_batch(added)
+                except Exception as e:
+                    self.logger.error(f"Error in on_late_history_batch: {e}")
+            elif self._coordinator is not None:
+                self._coordinator.route_late_history_batch(added, pair)
 
     def _detect_gap(self, prev_time: int, curr_time: int, context: str) -> int:
         """Log a warning if there is a gap between two bar timestamps.
@@ -610,11 +722,29 @@ class ZMQDataSource(CombinedDataSource):
             self.logger.warning(f"🕳️  GAP DETECTED [{context}]: ... and {gap_count - 5} more gap(s)")
         return gap_count
 
-    def _on_history_end(self, _payload: dict = None) -> None:
+    def _on_history_end(self, payload: dict | None = None) -> None:
         """Handle end of historical data."""
         # History is complete; the pending delayed refresh is no longer needed.
         self._cancel_pending_refresh_timer()
 
+        pair = payload.get("pair", self.pair) if payload else self.pair
+
+        if self._coordinator is not None:
+            # Multi-pair mode: the matching session receives the completed batch.
+            if pair != self.pair:
+                with self._per_pair_locks[pair]:
+                    bars_copy = list(self._per_pair_bars.get(pair, []))
+                self._state = DataSourceState.STREAMING
+                self._last_completed_bar_time = time.monotonic()
+                self.logger.info(
+                    f"History complete for {pair}: {len(bars_copy)} bars cached, "
+                    f"switching to STREAMING mode"
+                )
+                self._coordinator.route_history_loaded(bars_copy)
+                return
+            # Fall through for default pair to keep legacy behavior and routing.
+
+        # Legacy single-pair path.
         with self._bars_lock:
             if self._historical_bars:
                 self._last_history_time = self._historical_bars[-1]["time"]
@@ -671,14 +801,41 @@ class ZMQDataSource(CombinedDataSource):
             for buffered_bar in buffered:
                 self._on_bar(buffered_bar)
 
-    def _on_refresh_start(self, _payload: dict = None) -> None:
+        if self._coordinator is not None:
+            self._coordinator.route_history_loaded(bars_copy)
+
+    def _on_refresh_start(self, payload: dict | None = None) -> None:
         """Handle refresh start - clear recent data."""
         if self._state == DataSourceState.REFRESHING:
             self.logger.info("Refresh start ignored: already refreshing")
             return
 
-        self.logger.info("Refresh start - clearing recent data")
+        pair = payload.get("pair", self.pair) if payload else self.pair
 
+        self.logger.info(f"Refresh start for {pair} - clearing recent data")
+
+        if self._coordinator is not None:
+            # Multi-pair mode: reset the matching session and clear its per-pair cache.
+            self._coordinator.route_before_refresh(pair)
+            self._coordinator.route_refresh_start(pair)
+            if pair != self.pair:
+                cutoff = int(time.time()) - 86400
+                lock = self._per_pair_locks[pair]
+                with lock:
+                    preserved = [b for b in self._per_pair_bars.get(pair, []) if b["time"] < cutoff]
+                    self._per_pair_bars[pair] = preserved
+                    removed = len(self._per_pair_bars.get(pair, [])) - len(preserved)
+                previous_state = self._state
+                self._state = DataSourceState.REFRESHING
+                self._current_bar = None
+                if previous_state != DataSourceState.CONNECTED:
+                    with self._bars_lock:
+                        self._refresh_buffer.clear()
+                self.logger.info(f"Refresh start for {pair}: preserved {len(preserved)} historical bars, removed {removed} recent bars")
+                return
+            # Fall through for default pair to keep legacy cache behavior.
+
+        # Legacy single-pair path.
         if self.on_before_refresh:
             try:
                 self.on_before_refresh()
@@ -790,13 +947,21 @@ class ZMQDataSource(CombinedDataSource):
         self._state = DataSourceState.CONNECTED
 
         gateway = self._ensure_gateway()
-        instrument = gateway.instrument
-        if not instrument:
+        default_instrument = gateway.instrument
+        if not default_instrument:
             self.logger.error(
                 "Instrument is not configured in Admin → Settings. "
                 "Live data will not start and the chart will not load."
             )
             return
+
+        # Determine the list of instruments to subscribe to.
+        if self._instrument_registry is not None:
+            instruments = [i.full_name for i in self._instrument_registry.get_all() if i.full_name]
+            if not instruments:
+                instruments = [default_instrument]
+        else:
+            instruments = [default_instrument]
 
         should_refresh = (
             self._first_platform_connect
@@ -822,6 +987,8 @@ class ZMQDataSource(CombinedDataSource):
                         self.on_history_complete(bars_copy)
                     except Exception as e:
                         self.logger.error(f"Error re-notifying history complete: {e}")
+                elif self._coordinator is not None:
+                    self._coordinator.route_history_loaded(bars_copy)
                 return
             else:
                 self.logger.info(
@@ -829,11 +996,15 @@ class ZMQDataSource(CombinedDataSource):
                 )
                 should_refresh = True
 
-        # Tell NinjaTrader which instrument to use before requesting history/live bars.
-        gateway.send_subscribe(instrument)
+        # Tell NinjaTrader which instrument(s) to use before requesting history/live bars.
+        for instrument in instruments:
+            try:
+                gateway.send_subscribe(instrument)
+            except Exception as e:
+                self.logger.error(f"Failed to subscribe to {instrument}: {e}")
 
         delay = self._history_request_delay_sec
-        self.logger.info(f"Platform connected, instrument={instrument}, requesting historical data refresh in {delay}s")
+        self.logger.info(f"Platform connected, instruments={instruments}, requesting historical data refresh in {delay}s")
         self._cancel_pending_refresh_timer()
         self._pending_refresh_timer = threading.Timer(delay, self._do_delayed_refresh)
         self._pending_refresh_timer.start()
