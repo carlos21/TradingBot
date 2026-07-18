@@ -31,6 +31,13 @@ class FakeSettingsService:
         ]
 
 
+class BrokenSettingsService:
+    """Simulates a settings store that is unavailable (e.g. no DB)."""
+
+    def get_instruments(self):
+        raise RuntimeError("Database not initialized. Call setup_database() first.")
+
+
 @pytest.fixture
 def app():
     app = Flask(__name__, static_folder=None)
@@ -79,6 +86,29 @@ class TestCoreRoutes:
             resp = client.get("/api/pair")
             assert resp.status_code == 200
             data = resp.get_json()
+            assert data["pair"] == "MNQ"
+
+    def test_get_config_falls_back_when_settings_unavailable(self):
+        # The in-memory scenario server runs without a DB; /api/config must
+        # still respond so the frontend can resolve its pair and join the
+        # instrument room (otherwise stream_end never arrives).
+        app = Flask(__name__, static_folder=None)
+        app.config["TESTING"] = True
+        register_core_routes(
+            app,
+            pair="MNQ",
+            data_source=GoodDataSource(),
+            logger=FakeLogger(),
+            frontend_dir="",
+            platform_type="ninjatrader",
+            platform_label="NinjaTrader",
+            settings_service=BrokenSettingsService(),
+        )
+        with app.test_client() as client:
+            resp = client.get("/api/config")
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data["instruments"] == []
             assert data["pair"] == "MNQ"
 
     def test_get_bars(self, app):

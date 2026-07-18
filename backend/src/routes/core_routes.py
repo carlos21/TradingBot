@@ -42,7 +42,14 @@ def register_core_routes(
 
     @app.route('/api/config')
     def get_config():
-        instruments = settings_service.get_instruments() if settings_service else []
+        instruments = []
+        if settings_service is not None:
+            try:
+                instruments = settings_service.get_instruments()
+            except Exception as exc:
+                # No-DB setups (e.g. the in-memory scenario server) have no
+                # settings store; fall back to the configured pair.
+                logger.error(f"[API /config] failed to load instruments: {exc}")
         return jsonify({
             'instruments': instruments,
             'pair': instruments[0]["symbol"] if instruments else pair,

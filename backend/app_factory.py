@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import time
+import traceback
 from dataclasses import dataclass
 from typing import Any, List, Optional
 
@@ -625,7 +626,7 @@ def create_app(
     @app.errorhandler(500)
     def handle_500(error):
         original = getattr(error, "original_exception", error)
-        logger.error("Unhandled server error: %s", original, exc_info=True)
+        logger.error(f"Unhandled server error: {original}\n{traceback.format_exc()}")
         notifier.send(f"[Flask] Unhandled server error: {original}")
         return jsonify({"error": "Internal server error"}), 500
 
