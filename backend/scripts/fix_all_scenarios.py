@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """
 Batch-fix all scenarios: runs every scenario in one server session,
-then updates tf + expect in src/strategies/liquidity_v2/scenarios/ny.yaml so all tests pass.
+then updates tf + expect in src/strategies/liquidity_v2/scenarios/<group>.yaml
+(--group, default ny) so all tests pass.
 """
 
+import argparse
 import json
 import os
 import subprocess
@@ -16,15 +18,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scenario_management import (
     PROJECT_ROOT,
     REPO_ROOT,
-    SCENARIOS_YAML,
     FileScenarioRepository,
     ScenarioYamlFormatter,
     SOURCE_CSV,
+    resolve_group_yaml_or_exit,
 )
 
 # Paths relative to backend/ so subprocess cwd=PROJECT_ROOT resolves them correctly.
 SOURCE_CSV_REL = Path(os.path.relpath(SOURCE_CSV, PROJECT_ROOT))
-SCENARIOS_YAML_REL = SCENARIOS_YAML.relative_to(PROJECT_ROOT)
 OUTDIR_REL = Path(os.path.relpath(REPO_ROOT / "scenarios_out", PROJECT_ROOT))
 
 
@@ -87,9 +88,20 @@ def _expect_changed(old: dict, new: dict) -> bool:
 
 
 def main():
-    extra_args = [arg for arg in sys.argv[1:] if not arg.startswith("--fix")]
+    ap = argparse.ArgumentParser(description="Batch-fix all scenarios in a group")
+    ap.add_argument(
+        "--group",
+        default="ny",
+        help="Scenario group to fix (default: ny)",
+    )
+    args, extras = ap.parse_known_args()
+    # Forward unknown args to the runner; keep the legacy --fix* filter.
+    extra_args = [a for a in extras if not a.startswith("--fix")]
+    extra_args += ["--group", args.group]
 
-    repo = FileScenarioRepository(SCENARIOS_YAML)
+    yaml_path = resolve_group_yaml_or_exit(args.group)
+
+    repo = FileScenarioRepository(yaml_path)
     yaml_doc = repo.load()
     scenarios = yaml_doc.get("scenarios", [])
     if not scenarios:

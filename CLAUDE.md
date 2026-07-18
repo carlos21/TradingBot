@@ -38,7 +38,7 @@ poetry install
 ./bin/run_test_scenario.sh
 ```
 
-Both scripts invoke `scripts/run_scenarios.py` with Playwright browser automation against a scenario group yaml (full suite, default `src/strategies/liquidity_v2/scenarios/ny.yaml`) or `src/strategies/liquidity_v2/test_scenario.yaml` (single case). Output is written to `scenarios_out/`.
+Both scripts invoke `scripts/run_scenarios.py` with Playwright browser automation against a scenario group yaml (full suite, default `src/strategies/liquidity_v2/scenarios/ny.yaml`) or `src/strategies/liquidity_v2/test_scenario.yaml` (single case). Output is written to `scenarios_out/`; snapshots land in `scenarios_out/<pair>/<group>/<date>/` (group derived from the yaml path, or passed explicitly via `--group`; `test_scenario.yaml` runs stay flat at `scenarios_out/<pair>/<date>/`).
 
 Scenario suites are grouped by session under `src/strategies/liquidity_v2/scenarios/` (e.g. `ny.yaml`, `london.yaml`). Select a group with `--group`: `./bin/run_scenarios.sh --group london`. `compare_configs.sh` and `compare_modes.sh` accept the same flag. To add a new group, drop a `<group>.yaml` into that directory.
 
@@ -126,4 +126,4 @@ In live mode, a C# NinjaTrader AddOn (`ninjatrader/TradingBotConnector.cs`) acts
 
 Tests are YAML-based (grouped under `src/strategies/liquidity_v2/scenarios/`, e.g. `ny.yaml`, `london.yaml`). Each scenario defines: pair, timeframe, date range, support/resistance lines to draw, and expected trade outcomes (entry price, SL, TP, with tolerance). `scripts/run_scenarios.py` starts the Flask app as a subprocess, drives the UI via Playwright, then validates actual trades against expectations.
 
-To add a new scenario, add an entry to the group's yaml (e.g. `src/strategies/liquidity_v2/scenarios/ny.yaml`) following the existing format.
+To add a new scenario, run `./bin/add_scenario.sh --group <group>` (default `ny`) — it asks for the session date (the session window comes from the group's defaults, e.g. London 00:00–16:00), a shared lines date (default: session date — pick the day before when lines are drawn ahead of the session), and the lines, then discovers the expected trade by running the scenario. Alternatively, add an entry to the group's yaml (e.g. `src/strategies/liquidity_v2/scenarios/ny.yaml`) following the existing format. `fix_scenario.sh`, `fix_all_scenarios.sh`, and `scripts/tune_tsi.py` accept the same `--group` flag.

@@ -643,7 +643,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 
                 pair_name_val = sc.get("pair", "unknown")
                 date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
-                sdir = Path(args.outdir) / pair_name_val / date_label
+                sdir = Path(args.outdir) / pair_name_val
+                if getattr(args, "group", None):
+                    sdir = sdir / args.group
+                sdir = sdir / date_label
                 sdir.mkdir(parents=True, exist_ok=True)
                 if args.snapshot:
                     # Clean up previous snapshots for this scenario
@@ -1406,6 +1409,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--yaml", required=True)
+    ap.add_argument("--group", default=None,
+                    help="Scenario group (e.g. ny, london). Snapshots go to <outdir>/<pair>/<group>/<date>/. "
+                         "Default: derived from the yaml path when it lives in a scenarios/ directory")
     ap.add_argument("--source-csv", required=True)
     ap.add_argument("--outdir", required=True)
     ap.add_argument("--bars-per-second", type=int, default=5000)
@@ -1453,6 +1459,11 @@ def main():
     ap.add_argument("--session-tz", type=str, default="America/New_York",
                     help="Timezone for session end time (default: America/New_York)")
     args = ap.parse_args()
+
+    # Snapshots are grouped per session: explicit --group, or derived from the
+    # yaml path (…/scenarios/<group>.yaml). No group → flat <pair>/<date> layout.
+    if args.group is None and Path(args.yaml).parent.name == "scenarios":
+        args.group = Path(args.yaml).stem
 
     yaml_path = Path(args.yaml)
     if not yaml_path.exists():

@@ -10,6 +10,7 @@ Each variant patches prod_config.py, runs ./bin/run_scenarios.sh, captures outpu
 then restores the original. Results are ranked at the end.
 """
 
+import argparse
 import subprocess
 import re
 import sys
@@ -17,6 +18,10 @@ import shutil
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Optional
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from scenario_management import resolve_group_yaml_or_exit
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PROD_CONFIG  = PROJECT_ROOT / "src" / "prod_config.py"
@@ -172,9 +177,9 @@ class RunResult:
     error: str = ""
 
 
-def run_scenarios() -> str:
+def run_scenarios(group: str) -> str:
     proc = subprocess.run(
-        ["bash", "bin/run_scenarios.sh", "--mode", "sim"],
+        ["bash", "bin/run_scenarios.sh", "--group", group, "--mode", "sim"],
         cwd=PROJECT_ROOT,
         capture_output=True,
         text=True,
@@ -219,9 +224,19 @@ def parse_output(raw: str, variant_name: str) -> RunResult:
 # ---------------------------------------------------------------------------
 
 def main():
+    ap = argparse.ArgumentParser(description="Tune TSI variants against a scenario group")
+    ap.add_argument(
+        "--group",
+        default="ny",
+        help="Scenario group to test against (default: ny)",
+    )
+    args = ap.parse_args()
+
+    yaml_path = resolve_group_yaml_or_exit(args.group)
+
     shutil.copy2(PROD_CONFIG, BACKUP)
     print(f"✅ Backed up prod_config.py → {BACKUP.name}")
-    print(f"🧪 Testing {len(VARIANTS)} configurations against src/strategies/liquidity_v2/scenarios/ny.yaml\n")
+    print(f"🧪 Testing {len(VARIANTS)} configurations against {yaml_path.relative_to(PROJECT_ROOT)}\n")
 
     results: List[RunResult] = []
 
@@ -230,7 +245,7 @@ def main():
             print(f"[{i:2}/{len(VARIANTS)}] {variant.name}")
             patch_prod_config(variant)
             try:
-                raw = run_scenarios()
+                raw = run_scenarios(args.group)
             except subprocess.TimeoutExpired:
                 print("        ⏱  Timed out — skipping\n")
                 results.append(RunResult(variant_name=variant.name, trades=0,

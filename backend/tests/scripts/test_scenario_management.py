@@ -2,15 +2,24 @@
 
 from pathlib import Path
 
+import pytest
 import yaml
 
+from scripts import scenario_management as sm
 from scripts.scenario_management import (
+    DEFAULT_SESSION_WINDOW,
     DiscoveryResultParser,
     FileScenarioRepository,
     ScenarioDiffService,
     ScenarioYamlFormatter,
+    available_groups,
     derive_name,
     find_insert_position,
+    is_valid_date,
+    resolve_group_yaml_or_exit,
+    scenarios_yaml_for_group,
+    session_window_for_group,
+    snap_dir_for_group,
 )
 
 
@@ -148,3 +157,49 @@ class TestFileScenarioRepository:
         path.write_text("scenarios:\n")
         repo = FileScenarioRepository(path)
         assert repo.replace("missing", {"name": "missing"}) is False
+
+
+class TestGroupHelpers:
+    def test_session_window_known_groups(self):
+        assert session_window_for_group("ny") == ("06:00", "16:00")
+        assert session_window_for_group("london") == ("00:00", "16:00")
+
+    def test_session_window_unknown_group_falls_back(self):
+        assert session_window_for_group("asia") == DEFAULT_SESSION_WINDOW
+
+    def test_scenarios_yaml_for_group(self, tmp_path: Path, monkeypatch):
+        (tmp_path / "ny.yaml").write_text("scenarios: []\n")
+        (tmp_path / "london.yaml").write_text("scenarios: []\n")
+        monkeypatch.setattr(sm, "SCENARIOS_DIR", tmp_path)
+        assert scenarios_yaml_for_group("london") == tmp_path / "london.yaml"
+        assert scenarios_yaml_for_group("asia") is None
+
+    def test_available_groups(self, tmp_path: Path, monkeypatch):
+        (tmp_path / "ny.yaml").write_text("")
+        (tmp_path / "london.yaml").write_text("")
+        monkeypatch.setattr(sm, "SCENARIOS_DIR", tmp_path)
+        assert available_groups() == ["london", "ny"]
+
+    def test_available_groups_missing_dir(self, tmp_path: Path, monkeypatch):
+        monkeypatch.setattr(sm, "SCENARIOS_DIR", tmp_path / "nope")
+        assert available_groups() == []
+
+    def test_is_valid_date(self):
+        assert is_valid_date("2024-08-01") is True
+        assert is_valid_date(" 2024-08-01 ") is True
+        assert is_valid_date("2024-13-01") is False
+        assert is_valid_date("garbage") is False
+
+    def test_snap_dir_for_group(self):
+        assert snap_dir_for_group("london").parts[-3:] == (
+            "scenarios_out",
+            "MNQ",
+            "london",
+        )
+
+    def test_resolve_group_yaml_or_exit(self, tmp_path: Path, monkeypatch):
+        (tmp_path / "ny.yaml").write_text("scenarios: []\n")
+        monkeypatch.setattr(sm, "SCENARIOS_DIR", tmp_path)
+        assert resolve_group_yaml_or_exit("ny") == tmp_path / "ny.yaml"
+        with pytest.raises(SystemExit):
+            resolve_group_yaml_or_exit("asia")

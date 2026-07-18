@@ -3,9 +3,11 @@
 Interactive script to fix an existing scenario:
   - Re-runs it to discover the actual trade (entry/sl/tp/tf)
   - Shows what changed
-  - Updates src/strategies/liquidity_v2/scenarios/ny.yaml and test_scenario.yaml
+  - Updates src/strategies/liquidity_v2/scenarios/<group>.yaml (--group, default ny)
+    and test_scenario.yaml
 """
 
+import argparse
 import json
 import os
 import sys
@@ -16,9 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from scenario_management import (
     PROJECT_ROOT,
-    SCENARIOS_YAML,
     TEST_SCENARIO_YAML,
-    SNAP_BASE_DIR,
     ConsolePrompter,
     DiscoveryResultParser,
     FileScenarioRepository,
@@ -27,23 +27,38 @@ from scenario_management import (
     ScenarioDiffService,
     SubprocessDiscoveryRunner,
     expect_summary,
+    resolve_group_yaml_or_exit,
+    snap_dir_for_group,
     ts_date,
 )
 
 
 def main():
+    ap = argparse.ArgumentParser(description="Fix an existing scenario")
+    ap.add_argument(
+        "--group",
+        default="ny",
+        help="Scenario group to fix scenarios in (default: ny)",
+    )
+    args = ap.parse_args()
+
+    yaml_path = resolve_group_yaml_or_exit(args.group)
+    yaml_rel = yaml_path.relative_to(PROJECT_ROOT)
+
     # Dependencies
-    repo = FileScenarioRepository(SCENARIOS_YAML)
+    repo = FileScenarioRepository(yaml_path)
     writer = FileTestScenarioWriter(TEST_SCENARIO_YAML)
-    runner = SubprocessDiscoveryRunner(PROJECT_ROOT, TEST_SCENARIO_YAML)
-    cleaner = FileSnapshotCleaner(SNAP_BASE_DIR)
+    runner = SubprocessDiscoveryRunner(
+        PROJECT_ROOT, TEST_SCENARIO_YAML, extra_cmd_args=["--group", args.group]
+    )
+    cleaner = FileSnapshotCleaner(snap_dir_for_group(args.group))
     prompter = ConsolePrompter()
 
     yaml_doc = repo.load()
     scenarios = yaml_doc.get("scenarios", [])
 
     if not scenarios:
-        print("No scenarios found in src/strategies/liquidity_v2/scenarios/ny.yaml.")
+        print(f"No scenarios found in {yaml_rel}.")
         return
 
     # Show list
@@ -160,7 +175,7 @@ def main():
     updated_sc = {**sc, "tf": new_tf, "expect": new_expect}
 
     if not repo.replace(sc["name"], updated_sc):
-        print(f"  ❌ Could not find '{sc['name']}' in src/strategies/liquidity_v2/scenarios/ny.yaml")
+        print(f"  ❌ Could not find '{sc['name']}' in {yaml_rel}")
         return
 
     # Re-run with correct tf to get proper snapshot
@@ -190,7 +205,7 @@ def main():
     writer.write(updated_sc)
 
     print(f"\n✅ Done! '{sc['name']}' updated.")
-    print("   src/strategies/liquidity_v2/scenarios/ny.yaml — updated")
+    print(f"   {yaml_rel} — updated")
     print("   test_scenario.yaml — updated")
 
 

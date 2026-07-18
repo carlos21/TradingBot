@@ -7,6 +7,7 @@ Organised by Clean Architecture layers: Domain -> Application -> Infrastructure.
 import os
 import re
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -19,10 +20,60 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = PROJECT_ROOT.parent
-SCENARIOS_YAML = PROJECT_ROOT / "src" / "strategies" / "liquidity_v2" / "scenarios" / "ny.yaml"
+SCENARIOS_DIR = PROJECT_ROOT / "src" / "strategies" / "liquidity_v2" / "scenarios"
 TEST_SCENARIO_YAML = PROJECT_ROOT / "src" / "strategies" / "liquidity_v2" / "test_scenario.yaml"
 SOURCE_CSV = REPO_ROOT / "csvs" / "NQ_live.csv"
-SNAP_BASE_DIR = PROJECT_ROOT / "scenarios_out" / "MNQ"
+
+# Default session window (start, end) per scenario group.
+GROUP_SESSION_WINDOWS = {
+    "ny": ("06:00", "16:00"),
+    "london": ("00:00", "16:00"),
+}
+DEFAULT_SESSION_WINDOW = ("06:00", "16:00")
+
+
+def available_groups() -> list[str]:
+    """Scenario group names derived from the yamls in SCENARIOS_DIR."""
+    if not SCENARIOS_DIR.exists():
+        return []
+    return sorted(p.stem for p in SCENARIOS_DIR.glob("*.yaml"))
+
+
+def scenarios_yaml_for_group(group: str) -> Path | None:
+    """Yaml path for a scenario group, or None if the group is unknown."""
+    path = SCENARIOS_DIR / f"{group}.yaml"
+    return path if path.exists() else None
+
+
+def resolve_group_yaml_or_exit(group: str) -> Path:
+    """Group yaml path or exit(1) with an error listing available groups."""
+    path = scenarios_yaml_for_group(group)
+    if path is None:
+        groups = ", ".join(available_groups()) or "(none)"
+        print(f"❌ Unknown scenario group: {group}\nAvailable groups: {groups}")
+        sys.exit(1)
+    return path
+
+
+def session_window_for_group(group: str) -> tuple[str, str]:
+    """Default (start, end) session times for a scenario group."""
+    return GROUP_SESSION_WINDOWS.get(group, DEFAULT_SESSION_WINDOW)
+
+
+def snap_dir_for_group(group: str) -> Path:
+    """Snapshot output dir for a scenario group (per-session folders)."""
+    return REPO_ROOT / "scenarios_out" / "MNQ" / group
+
+
+def is_valid_date(s: str) -> bool:
+    """True if s is a YYYY-MM-DD date."""
+    from datetime import datetime
+
+    try:
+        datetime.strptime(s.strip(), "%Y-%m-%d")
+        return True
+    except ValueError:
+        return False
 
 
 # ---------------------------------------------------------------------------

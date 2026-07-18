@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Interactive script to add a new test scenario to
-src/strategies/liquidity_v2/scenarios/ny.yaml and test_scenario.yaml
-by running the scenario and extracting real results.
+Interactive script to add a new test scenario to a scenario group yaml
+(src/strategies/liquidity_v2/scenarios/<group>.yaml, see --group) and
+test_scenario.yaml by running the scenario and extracting real results.
 """
 
 import argparse
@@ -14,9 +14,7 @@ from pathlib import Path
 
 from scenario_management import (
     PROJECT_ROOT,
-    SCENARIOS_YAML,
     TEST_SCENARIO_YAML,
-    SNAP_BASE_DIR,
     ConsolePrompter,
     DiscoveryResultParser,
     FileScenarioRepository,
@@ -25,7 +23,11 @@ from scenario_management import (
     SubprocessDiscoveryRunner,
     derive_name,
     find_insert_position,
+    is_valid_date,
     parse_ts_with_date,
+    resolve_group_yaml_or_exit,
+    session_window_for_group,
+    snap_dir_for_group,
     ts_date,
 )
 
@@ -38,15 +40,25 @@ def main():
         default=4.0,
         help="Risk:Reward ratio for TP calculation (default: 4.0)",
     )
+    ap.add_argument(
+        "--group",
+        default="ny",
+        help="Scenario group to add to (default: ny)",
+    )
     args = ap.parse_args()
+
+    yaml_path = resolve_group_yaml_or_exit(args.group)
+    yaml_rel = yaml_path.relative_to(PROJECT_ROOT)
 
     print("=== Add New Trading Scenario ===\n")
 
     # Dependencies
-    repo = FileScenarioRepository(SCENARIOS_YAML)
+    repo = FileScenarioRepository(yaml_path)
     writer = FileTestScenarioWriter(TEST_SCENARIO_YAML)
-    runner = SubprocessDiscoveryRunner(PROJECT_ROOT, TEST_SCENARIO_YAML)
-    cleaner = FileSnapshotCleaner(SNAP_BASE_DIR)
+    runner = SubprocessDiscoveryRunner(
+        PROJECT_ROOT, TEST_SCENARIO_YAML, extra_cmd_args=["--group", args.group]
+    )
+    cleaner = FileSnapshotCleaner(snap_dir_for_group(args.group))
     prompter = ConsolePrompter()
 
     yaml_doc = repo.load()
@@ -56,11 +68,20 @@ def main():
     # Session date
     while True:
         session_date = prompter.ask("Session date (YYYY-MM-DD)").strip()
-        if (
-            len(session_date) == 10
-            and session_date[4] == "-"
-            and session_date[7] == "-"
-        ):
+        if is_valid_date(session_date):
+            break
+        print("  Expected format: YYYY-MM-DD")
+
+    # Session window (fixed per-group defaults)
+    def_start, def_end = session_window_for_group(args.group)
+    start_ts = f"{parse_ts_with_date(def_start, session_date)}Z"
+    end_ts = f"{parse_ts_with_date(def_end, session_date)}Z"
+
+    # Lines date (defaults to the session date; pick the day before when
+    # lines are drawn ahead of the session, e.g. London)
+    while True:
+        lines_date = prompter.ask("Lines date (YYYY-MM-DD)", default=session_date)
+        if is_valid_date(lines_date):
             break
         print("  Expected format: YYYY-MM-DD")
 
@@ -70,7 +91,7 @@ def main():
         "\nEnter support/resistance lines (press Enter with no price to stop):"
     )
     print(
-        f"  'at' time: type HH:MM to use {session_date}, "
+        f"  'at' time: type HH:MM to use {lines_date}, "
         f"or full YYYY-MM-DD HH:MM to override."
     )
     while True:
@@ -89,16 +110,12 @@ def main():
         while True:
             at_str = prompter.ask(f"  'at' time for {price}")
             try:
-                at_ts = parse_ts_with_date(at_str, session_date)
+                at_ts = parse_ts_with_date(at_str, lines_date)
                 break
             except ValueError as e:
                 print(f"  {e}")
 
         lines.append({"price": price, "at": at_ts})
-
-    # Start / end (fixed defaults)
-    start_ts = f"{session_date} 06:00:00Z"
-    end_ts = f"{session_date} 16:00:00Z"
 
     # Derive name
     name = derive_name(start_ts, existing_names)
@@ -188,11 +205,11 @@ def main():
         finally:
             Path(results_json2).unlink(missing_ok=True)
 
-    # Insert into src/strategies/liquidity_v2/scenarios/ny.yaml
+    # Insert into the group's scenarios yaml
     insert_idx = find_insert_position(scenarios, start_ts)
     print(
         f"\nInserting at position {insert_idx + 1} "
-        f"of {len(scenarios) + 1} in src/strategies/liquidity_v2/scenarios/ny.yaml..."
+        f"of {len(scenarios) + 1} in {yaml_rel}..."
     )
     repo.insert(sc, insert_idx, scenarios)
 
@@ -200,7 +217,7 @@ def main():
     writer.write(sc)
 
     print(f"\n✅ Done! Scenario '{name}' added.")
-    print("   src/strategies/liquidity_v2/scenarios/ny.yaml — updated")
+    print(f"   {yaml_rel} — updated")
     print("   test_scenario.yaml — updated")
     print("\nRun './bin/run_test_scenario.sh' to validate.")
 
