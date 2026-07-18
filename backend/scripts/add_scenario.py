@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Interactive script to add a new test scenario to
-src/strategies/liquidity_v2/scenarios.yaml and test_scenario.yaml
+src/strategies/liquidity_v2/scenarios/ny.yaml and test_scenario.yaml
 by running the scenario and extracting real results.
 """
 
@@ -188,11 +188,11 @@ def main():
         finally:
             Path(results_json2).unlink(missing_ok=True)
 
-    # Insert into src/strategies/liquidity_v2/scenarios.yaml
+    # Insert into src/strategies/liquidity_v2/scenarios/ny.yaml
     insert_idx = find_insert_position(scenarios, start_ts)
     print(
         f"\nInserting at position {insert_idx + 1} "
-        f"of {len(scenarios) + 1} in src/strategies/liquidity_v2/scenarios.yaml..."
+        f"of {len(scenarios) + 1} in src/strategies/liquidity_v2/scenarios/ny.yaml..."
     )
     repo.insert(sc, insert_idx, scenarios)
 
@@ -200,7 +200,7 @@ def main():
     writer.write(sc)
 
     print(f"\n✅ Done! Scenario '{name}' added.")
-    print("   src/strategies/liquidity_v2/scenarios.yaml — updated")
+    print("   src/strategies/liquidity_v2/scenarios/ny.yaml — updated")
     print("   test_scenario.yaml — updated")
     print("\nRun './bin/run_test_scenario.sh' to validate.")
 

@@ -221,7 +221,7 @@ def parse_output(raw: str, variant_name: str) -> RunResult:
 def main():
     shutil.copy2(PROD_CONFIG, BACKUP)
     print(f"✅ Backed up prod_config.py → {BACKUP.name}")
-    print(f"🧪 Testing {len(VARIANTS)} configurations against src/strategies/liquidity_v2/scenarios.yaml\n")
+    print(f"🧪 Testing {len(VARIANTS)} configurations against src/strategies/liquidity_v2/scenarios/ny.yaml\n")
 
     results: List[RunResult] = []
 

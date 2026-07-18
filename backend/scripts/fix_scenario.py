@@ -3,7 +3,7 @@
 Interactive script to fix an existing scenario:
   - Re-runs it to discover the actual trade (entry/sl/tp/tf)
   - Shows what changed
-  - Updates src/strategies/liquidity_v2/scenarios.yaml and test_scenario.yaml
+  - Updates src/strategies/liquidity_v2/scenarios/ny.yaml and test_scenario.yaml
 """
 
 import json
@@ -43,7 +43,7 @@ def main():
     scenarios = yaml_doc.get("scenarios", [])
 
     if not scenarios:
-        print("No scenarios found in src/strategies/liquidity_v2/scenarios.yaml.")
+        print("No scenarios found in src/strategies/liquidity_v2/scenarios/ny.yaml.")
         return
 
     # Show list
@@ -160,7 +160,7 @@ def main():
     updated_sc = {**sc, "tf": new_tf, "expect": new_expect}
 
     if not repo.replace(sc["name"], updated_sc):
-        print(f"  ❌ Could not find '{sc['name']}' in src/strategies/liquidity_v2/scenarios.yaml")
+        print(f"  ❌ Could not find '{sc['name']}' in src/strategies/liquidity_v2/scenarios/ny.yaml")
         return
 
     # Re-run with correct tf to get proper snapshot
@@ -190,7 +190,7 @@ def main():
     writer.write(updated_sc)
 
     print(f"\n✅ Done! '{sc['name']}' updated.")
-    print("   src/strategies/liquidity_v2/scenarios.yaml — updated")
+    print("   src/strategies/liquidity_v2/scenarios/ny.yaml — updated")
     print("   test_scenario.yaml — updated")
 
 

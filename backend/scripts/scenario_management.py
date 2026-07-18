@@ -19,7 +19,7 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = PROJECT_ROOT.parent
-SCENARIOS_YAML = PROJECT_ROOT / "src" / "strategies" / "liquidity_v2" / "scenarios.yaml"
+SCENARIOS_YAML = PROJECT_ROOT / "src" / "strategies" / "liquidity_v2" / "scenarios" / "ny.yaml"
 TEST_SCENARIO_YAML = PROJECT_ROOT / "src" / "strategies" / "liquidity_v2" / "test_scenario.yaml"
 SOURCE_CSV = REPO_ROOT / "csvs" / "NQ_live.csv"
 SNAP_BASE_DIR = PROJECT_ROOT / "scenarios_out" / "MNQ"

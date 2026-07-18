@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Batch-fix all scenarios: runs every scenario in one server session,
-then updates tf + expect in src/strategies/liquidity_v2/scenarios.yaml so all tests pass.
+then updates tf + expect in src/strategies/liquidity_v2/scenarios/ny.yaml so all tests pass.
 """
 
 import json
