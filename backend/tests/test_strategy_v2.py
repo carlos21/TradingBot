@@ -608,6 +608,67 @@ class TestPhantomAndReentryGuards:
         assert len(strat._reentry_opportunities) == 0
         assert any(t.get("is_reentry") for t in strat.open_trades)
 
+    def test_reentry_respects_trading_windows_outside_window(self):
+        """Reentry should be blocked by trading_windows_filter outside all windows."""
+        from src.strategies.entry_context import (
+            TradingWindow,
+            trading_windows_filter,
+        )
+        sio, lr, tr, tm = _deps()
+        options = dataclasses.replace(DEFAULT_STRATEGY_OPTIONS,
+            reentry_after_sl=True,
+            reentry_threshold=60.0,
+            entry_filters=[trading_windows_filter([TradingWindow("08:00", "11:00")])],
+        )
+        strat = make_strategy(sio, lr, tr, tm, options=options)
+        strat.execution_context.warmup = False
+        strat._reentry_opportunities.append({
+            "level": 100.0, "direction": "long", "pair": "MNQ",
+            "extreme_excursion": 95.0, "sl_bar_time": 500,
+        })
+        # Bar at 12:00 NY (outside the window) with bullish close above line
+        dt = datetime(2025, 6, 15, 12, 0, tzinfo=ZoneInfo("America/New_York"))
+        bar = make_bar(time=int(dt.timestamp()), open_=96, close=101, high=102, low=96, pair="MNQ")
+        strat._check_reentry_opportunities(bar)
+        # Opportunity should still be there (blocked by filter, not consumed)
+        assert len(strat._reentry_opportunities) == 1
+
+    def test_reentry_bypasses_trading_windows_trade_count(self):
+        """Reentry fires even though the window already contains its initial trade."""
+        from src.strategies.entry_context import (
+            TradingWindow,
+            trading_windows_filter,
+        )
+        sio, lr, tr, tm = _deps()
+        options = dataclasses.replace(DEFAULT_STRATEGY_OPTIONS,
+            reentry_after_sl=True,
+            reentry_threshold=60.0,
+            entry_filters=[
+                trading_windows_filter([TradingWindow("08:00", "15:30", max_trades=1)]),
+            ],
+        )
+        strat = make_strategy(sio, lr, tr, tm, options=options)
+        strat.execution_context.warmup = False
+        # Seed the initial trade (09:00 NY, inside the window) so max_trades is reached
+        tr.inserted.append({
+            "trade_id": "T1", "pair": "MNQ", "type": "long",
+            "entry": 100, "stop_loss": 90, "take_profit": 130,
+            "risk": 10, "status": "closed", "result_type": "SL",
+            "entry_time": datetime(2025, 6, 15, 9, 0, tzinfo=ZoneInfo("America/New_York")),
+            "source": "strategy",
+        })
+        strat._reentry_opportunities.append({
+            "level": 100.0, "direction": "long", "pair": "MNQ",
+            "extreme_excursion": 95.0, "sl_bar_time": 500,
+        })
+        # Bar at 10:00 NY with bullish close above line
+        dt = datetime(2025, 6, 15, 10, 0, tzinfo=ZoneInfo("America/New_York"))
+        bar = make_bar(time=int(dt.timestamp()), open_=96, close=101, high=102, low=96, pair="MNQ")
+        strat._check_reentry_opportunities(bar)
+        # Reentry should have fired (per-window count bypassed via is_reentry)
+        assert len(strat._reentry_opportunities) == 0
+        assert any(t.get("is_reentry") for t in strat.open_trades)
+
     def test_reentry_chains_up_to_max_attempts(self):
         """With max_reentry_attempts=2, reentry SL should create a second opportunity."""
         sio, lr, tr, tm = _deps()

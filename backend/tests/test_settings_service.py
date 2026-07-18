@@ -38,11 +38,10 @@ class TestSettingsServiceGetFullSettings:
         assert settings["trading"]["pair"] == "MNQ"
         assert settings["trading"]["instrument"] == "MNQ 09-26"
         assert settings["trading"]["session_end"] == "16:58"
-        assert settings["trading"]["instruments"] == [{
-            "symbol": "MNQ",
-            "full_name": "MNQ 09-26",
-            "point_value": 2.0,
-        }]
+        assert settings["trading"]["instruments"] == [
+            {"symbol": "MNQ", "full_name": "MNQ 09-26", "point_value": 2.0},
+            {"symbol": "MES", "full_name": "MES 09-26", "point_value": 5.0},
+        ]
         assert settings["network"]["flask_port"] == "5001"
         assert settings["network"]["zmq_host"] == "127.0.0.1"
         assert settings["accounts"] == []
@@ -86,7 +85,9 @@ class TestSettingsServiceGetFullSettings:
         svc._settings.set("pair", "ES")
         svc._settings.set("flask_port", "8080")
         settings = svc.get_full_settings()
-        assert settings["trading"]["pair"] == "ES"
+        # Instruments are hardcoded in the catalog; the legacy pair key no
+        # longer drives the reported pair.
+        assert settings["trading"]["pair"] == "MNQ"
         assert settings["network"]["flask_port"] == "8080"
 
     def test_instruments_from_registry(self):
@@ -94,8 +95,8 @@ class TestSettingsServiceGetFullSettings:
         svc.save_full_settings({
             "trading": {
                 "instruments": [
-                    {"symbol": "ES", "full_name": "ES 06-26", "point_value": 12.5},
-                    {"symbol": "NQ", "full_name": "NQ 09-26"},
+                    {"symbol": "MNQ", "full_name": "MNQ 12-26"},
+                    {"symbol": "MES", "full_name": "MES 12-26"},
                 ],
                 "session_end": "17:00",
             },
@@ -104,9 +105,12 @@ class TestSettingsServiceGetFullSettings:
             "credentials": {},
         })
         settings = svc.get_full_settings()
-        assert len(settings["trading"]["instruments"]) == 2
-        assert settings["trading"]["pair"] == "ES"
-        assert settings["trading"]["instrument"] == "ES 06-26"
+        assert settings["trading"]["instruments"] == [
+            {"symbol": "MNQ", "full_name": "MNQ 12-26", "point_value": 2.0},
+            {"symbol": "MES", "full_name": "MES 12-26", "point_value": 5.0},
+        ]
+        assert settings["trading"]["pair"] == "MNQ"
+        assert settings["trading"]["instrument"] == "MNQ 12-26"
         assert settings["trading"]["session_end"] == "17:00"
 
 
@@ -117,7 +121,7 @@ class TestSettingsServiceSaveFullSettings:
         svc.save_full_settings({
             "trading": {
                 "instruments": [
-                    {"symbol": "ES", "full_name": "ES 06-26", "point_value": 12.5},
+                    {"symbol": "MNQ", "full_name": "MNQ 12-26"},
                 ],
                 "session_end": "17:00",
             },
@@ -126,26 +130,43 @@ class TestSettingsServiceSaveFullSettings:
             "credentials": {},
         })
         instruments = svc.get_instruments()
-        assert len(instruments) == 1
-        assert instruments[0]["symbol"] == "ES"
-        assert instruments[0]["full_name"] == "ES 06-26"
-        assert instruments[0]["point_value"] == 12.5
+        assert instruments[0]["symbol"] == "MNQ"
+        assert instruments[0]["full_name"] == "MNQ 12-26"
+        # point_value always comes from the catalog.
+        assert instruments[0]["point_value"] == 2.0
         # Legacy settings are kept in sync for backward compatibility.
-        assert svc._settings.get("pair") == "ES"
-        assert svc._settings.get("instrument") == "ES 06-26"
+        assert svc._settings.get("pair") == "MNQ"
+        assert svc._settings.get("instrument") == "MNQ 12-26"
         assert svc._settings.get("session_end") == "17:00"
 
-    def test_legacy_pair_update_syncs_registry(self):
+    def test_save_instruments_ignores_unknown_symbols(self):
         svc = _make_service()
         svc.save_full_settings({
-            "trading": {"pair": "YM", "instrument": "YM 09-26", "session_end": "17:30"},
+            "trading": {
+                "instruments": [
+                    {"symbol": "ES", "full_name": "ES 06-26", "point_value": 12.5},
+                ],
+            },
             "network": {},
             "accounts": [],
             "credentials": {},
         })
         instruments = svc.get_instruments()
-        assert instruments[0]["symbol"] == "YM"
-        assert instruments[0]["full_name"] == "YM 09-26"
+        assert [i["symbol"] for i in instruments] == ["MNQ", "MES"]
+        assert instruments[0]["full_name"] == "MNQ 09-26"
+
+    def test_legacy_instrument_update_sets_full_name_only(self):
+        svc = _make_service()
+        svc.save_full_settings({
+            "trading": {"pair": "YM", "instrument": "MNQ 12-26", "session_end": "17:30"},
+            "network": {},
+            "accounts": [],
+            "credentials": {},
+        })
+        instruments = svc.get_instruments()
+        # Symbols are hardcoded; only the full name of the default instrument changes.
+        assert instruments[0]["symbol"] == "MNQ"
+        assert instruments[0]["full_name"] == "MNQ 12-26"
 
     def test_save_trading_settings(self):
         svc = _make_service()
@@ -155,7 +176,8 @@ class TestSettingsServiceSaveFullSettings:
             "accounts": [],
             "credentials": {},
         })
-        assert svc._settings.get("pair") == "ES"
+        # The legacy pair key is synced from the catalog's default instrument.
+        assert svc._settings.get("pair") == "MNQ"
         assert svc._settings.get("instrument") == "ES 06-26"
 
     def test_save_network_settings(self):
@@ -286,7 +308,8 @@ class TestSettingsServiceToAppConfigOverrides:
         svc._settings.set("pair", "ES")
         svc._settings.set("flask_port", "8080")
         overrides = svc.to_app_config_overrides()
-        assert overrides["pair"] == "ES"
+        # Pair comes from the instrument catalog, not the legacy pair key.
+        assert overrides["pair"] == "MNQ"
         assert overrides["flask_port"] == "8080"
 
     def test_with_accounts(self):

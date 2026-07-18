@@ -42,6 +42,8 @@ class TradeManager:
                  broker_mode: str = 'futures', broker_spread: float = 0.0,
                  use_fractional_lots: bool = False,
                  fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
+                 be_threshold_points: float = 2.0,
+                 sl_tp_tolerance: float = 0.5,
                  trade_executor: TradeExecutor = None,
                  trade_logger=None,
                  notifier: Notifier = None,
@@ -66,6 +68,8 @@ class TradeManager:
         self.risk_per_trade   = risk_per_trade
         self.risk_pct_per_trade = risk_pct_per_trade
         self.fee_per_rt       = fee_per_rt
+        self.be_threshold_points = be_threshold_points
+        self.sl_tp_tolerance  = sl_tp_tolerance
         self._accounts_repo   = accounts_repo
         self._live_mode       = live_mode
         self._lock = RLock()
@@ -107,6 +111,8 @@ class TradeManager:
             point_value=point_value,
             fee_per_rt=fee_per_rt,
             broker_spread=broker_spread,
+            be_threshold_points=be_threshold_points,
+            sl_tp_tolerance=sl_tp_tolerance,
         )
         self._broker_handler = BrokerFillHandler(
             trade_repository=trade_repository,
@@ -384,6 +390,8 @@ class TradeManager:
                     contracts=trade.get('contracts') or 1,
                     point_value=self.point_value,
                     fee_per_rt=self.fee_per_rt,
+                    be_threshold_points=self.be_threshold_points,
+                    sl_tp_tolerance=self.sl_tp_tolerance,
                 )[0]
             )
 
@@ -650,6 +658,8 @@ class TradeManager:
                     contracts=trade.get('contracts') or 1,
                     point_value=self.point_value,
                     fee_per_rt=self.fee_per_rt,
+                    be_threshold_points=self.be_threshold_points,
+                    sl_tp_tolerance=self.sl_tp_tolerance,
                 )[0]
             )
 

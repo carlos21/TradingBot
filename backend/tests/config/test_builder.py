@@ -4,8 +4,15 @@ from unittest.mock import MagicMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
-from src.config.builder import AppBuilder, _build_analytics, _build_notifier, _parse_input_to_epoch
+from src.config.builder import (
+    AppBuilder,
+    _build_analytics,
+    _build_database,
+    _build_notifier,
+    _parse_input_to_epoch,
+)
 from src.config.models import AccountConfig, AppConfig
 
 
@@ -60,6 +67,50 @@ class TestBuildNotifier:
         cfg = AppConfig()
         notifier = _build_notifier(cfg)
         assert notifier.__class__.__name__ == "NoOpNotifier"
+
+
+class TestBuildDatabase:
+    def _operational_error(self):
+        return OperationalError("SELECT 1", {}, Exception("connection refused"))
+
+    def test_uses_database_url_when_reachable(self):
+        primary_db = MagicMock()
+        with patch("src.config.builder.get_database", return_value=primary_db) as mock_get, \
+             patch("src.config.builder.database.setup_database"):
+            cfg = AppConfig(database_url="postgresql://u:p@localhost/db")
+            db = _build_database(cfg)
+        assert db is primary_db
+        mock_get.assert_called_once_with(db_url="postgresql://u:p@localhost/db")
+
+    def test_falls_back_to_sqlite_when_database_url_unreachable(self):
+        primary_db, fallback_db = MagicMock(), MagicMock()
+        with patch("src.config.builder.get_database") as mock_get, \
+             patch("src.config.builder.database.setup_database") as mock_setup:
+            mock_get.side_effect = [primary_db, fallback_db]
+            mock_setup.side_effect = [self._operational_error(), None]
+            cfg = AppConfig(
+                database_url="postgresql://u:p@localhost/db",
+                db_path="sqlite:///./fallback.db",
+            )
+            db = _build_database(cfg)
+        assert db is fallback_db
+        assert mock_get.call_args_list[1].kwargs["db_url"] == "sqlite:///./fallback.db"
+
+    def test_no_fallback_without_database_url(self):
+        with patch("src.config.builder.get_database", return_value=MagicMock()), \
+             patch("src.config.builder.database.setup_database") as mock_setup:
+            mock_setup.side_effect = self._operational_error()
+            cfg = AppConfig(db_path="sqlite:///./only.db")
+            with pytest.raises(OperationalError):
+                _build_database(cfg)
+
+    def test_no_fallback_when_database_url_equals_db_path(self):
+        with patch("src.config.builder.get_database", return_value=MagicMock()), \
+             patch("src.config.builder.database.setup_database") as mock_setup:
+            mock_setup.side_effect = self._operational_error()
+            cfg = AppConfig(database_url="sqlite:///./same.db", db_path="sqlite:///./same.db")
+            with pytest.raises(OperationalError):
+                _build_database(cfg)
 
 
 @pytest.fixture

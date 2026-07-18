@@ -7,12 +7,6 @@ function setupDom() {
   document.body.innerHTML = `
     <table><tbody id="settings-instruments-tbody"></tbody></table>
     <div id="settings-instruments-empty" class="hidden"></div>
-    <input id="settings-instrument-symbol" />
-    <input id="settings-instrument-full-name" />
-    <input id="settings-instrument-point-value" />
-    <div id="settings-instrument-add-wrapper">
-      <button id="settings-instrument-add">Add Instrument</button>
-    </div>
     <input id="settings-session-end" />
     <input id="settings-history-hours" />
     <input id="settings-flask-port" />
@@ -135,7 +129,7 @@ describe('SettingsManager', () => {
     expect(document.getElementById('settings-instruments-empty').classList.contains('hidden')).toBe(false);
   });
 
-  it('renderInstruments renders rows with remove buttons', () => {
+  it('renderInstruments renders read-only symbol/point value and editable full name', () => {
     const { api } = buildApi();
     const manager = new SettingsManager(api);
     bindManager(manager);
@@ -145,116 +139,28 @@ describe('SettingsManager', () => {
     const rows = document.getElementById('settings-instruments-tbody').querySelectorAll('tr');
     expect(rows.length).toBe(2);
     expect(rows[0].textContent).toContain('MNQ');
-    expect(rows[0].textContent).toContain('MNQ 09-26');
+    expect(rows[0].textContent).toContain('2');
+    const input = rows[0].querySelector('.instrument-full-name-input');
+    expect(input).not.toBeNull();
+    expect(input.value).toBe('MNQ 09-26');
+    expect(input.dataset.symbol).toBe('MNQ');
+    expect(rows[0].querySelectorAll('button').length).toBe(0);
     expect(document.getElementById('settings-instruments-empty').classList.contains('hidden')).toBe(true);
   });
 
-  it('addInstrument creates new instrument', () => {
-    const { api } = buildApi();
-    const manager = new SettingsManager(api);
-    bindManager(manager);
-    manager.instruments = [];
-
-    document.getElementById('settings-instrument-symbol').value = 'MNQ';
-    document.getElementById('settings-instrument-full-name').value = 'MNQ 09-26';
-    document.getElementById('settings-instrument-point-value').value = '2.0';
-
-    manager.addInstrument();
-
-    expect(manager.instruments.length).toBe(1);
-    expect(manager.instruments[0]).toEqual({
-      symbol: 'MNQ',
-      full_name: 'MNQ 09-26',
-      point_value: 2.0,
-    });
-  });
-
-  it('addInstrument requires symbol and full name', () => {
-    const { api } = buildApi();
-    const manager = new SettingsManager(api);
-    bindManager(manager);
-
-    document.getElementById('settings-instrument-symbol').value = '';
-    document.getElementById('settings-instrument-full-name').value = 'MNQ 09-26';
-    manager.addInstrument();
-    expect(document.getElementById('settings-save-status').textContent).toBe('Instrument symbol is required');
-
-    document.getElementById('settings-instrument-symbol').value = 'MNQ';
-    document.getElementById('settings-instrument-full-name').value = '';
-    manager.addInstrument();
-    expect(document.getElementById('settings-save-status').textContent).toBe('Instrument full name is required');
-  });
-
-  it('editInstrument updates existing instrument', () => {
-    const { api } = buildApi();
-    const manager = new SettingsManager(api);
-    bindManager(manager);
-    manager.instruments = [{ symbol: 'MNQ', full_name: 'Old', point_value: 1 }];
-
-    manager.editInstrument('MNQ');
-    document.getElementById('settings-instrument-full-name').value = 'MNQ 09-26';
-    document.getElementById('settings-instrument-point-value').value = '2.5';
-
-    manager.addInstrument();
-
-    expect(manager.instruments[0].full_name).toBe('MNQ 09-26');
-    expect(manager.instruments[0].point_value).toBe(2.5);
-  });
-
-  it('removeInstrument filters instrument', () => {
-    const { api } = buildApi();
-    const manager = new SettingsManager(api);
-    bindManager(manager);
-    manager.instruments = sampleInstruments();
-
-    manager.removeInstrument('MNQ');
-
-    expect(manager.instruments.length).toBe(1);
-    expect(manager.instruments[0].symbol).toBe('ES');
-  });
-
-  it('editInstrument populates form and changes button', () => {
+  it('full name input edits update instruments state', () => {
     const { api } = buildApi();
     const manager = new SettingsManager(api);
     bindManager(manager);
     manager.instruments = sampleInstruments();
     manager.renderInstruments();
 
-    manager.editInstrument('MNQ');
+    const input = document.querySelector('.instrument-full-name-input[data-symbol="MNQ"]');
+    input.value = 'MNQ 12-26';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
 
-    expect(document.getElementById('settings-instrument-symbol').value).toBe('MNQ');
-    expect(document.getElementById('settings-instrument-add').textContent).toContain('Update Instrument');
-    expect(document.getElementById('settings-instrument-cancel')).not.toBeNull();
-  });
-
-  it('cancelEditInstrument clears form', () => {
-    const { api } = buildApi();
-    const manager = new SettingsManager(api);
-    bindManager(manager);
-    manager.instruments = sampleInstruments();
-    manager.renderInstruments();
-    manager.editInstrument('MNQ');
-
-    document.getElementById('settings-instrument-cancel').click();
-
-    expect(document.getElementById('settings-instrument-symbol').value).toBe('');
-    expect(document.getElementById('settings-instrument-add').textContent).toContain('Add Instrument');
-  });
-
-  it('addInstrument blocks duplicate symbols', () => {
-    const { api } = buildApi();
-    const manager = new SettingsManager(api);
-    bindManager(manager);
-    manager.instruments = sampleInstruments();
-
-    document.getElementById('settings-instrument-symbol').value = 'MNQ';
-    document.getElementById('settings-instrument-full-name').value = 'Duplicate';
-    document.getElementById('settings-instrument-point-value').value = '1.0';
-
-    manager.addInstrument();
-
-    expect(manager.instruments.length).toBe(2);
-    expect(document.getElementById('settings-save-status').textContent).toBe('Instrument symbol already exists');
+    expect(manager.instruments[0].full_name).toBe('MNQ 12-26');
+    expect(manager.instruments[0].point_value).toBe(2.0);
   });
 
   it('renderAccounts shows empty state', () => {
@@ -414,16 +320,20 @@ describe('SettingsManager', () => {
     manager.init();
     await new Promise(r => setTimeout(r, 50));
 
-    const newInstruments = [{ symbol: 'ES', full_name: 'ES 09-26', point_value: 50 }];
-    manager.instruments = newInstruments;
+    const input = document.querySelector('.instrument-full-name-input[data-symbol="MNQ"]');
+    input.value = 'MNQ 12-26';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
     document.getElementById('settings-save-btn').click();
 
     await new Promise(r => setTimeout(r, 50));
 
     const post = http.requests.find(r => r.method === 'POST' && r.url === '/api/settings');
-    expect(post.data.trading.instruments).toEqual(newInstruments);
-    expect(post.data.trading.pair).toBe('ES');
-    expect(post.data.trading.instrument).toBe('ES 09-26');
+    expect(post.data.trading.instruments).toEqual([
+      { symbol: 'MNQ', full_name: 'MNQ 12-26' },
+      { symbol: 'ES', full_name: 'ES 09-26' },
+    ]);
+    expect(post.data.trading.pair).toBe('MNQ');
+    expect(post.data.trading.instrument).toBe('MNQ 12-26');
     expect(document.getElementById('settings-save-status').textContent).toBe('Settings saved successfully');
   });
 

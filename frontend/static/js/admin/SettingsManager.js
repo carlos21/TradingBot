@@ -8,7 +8,6 @@ export class SettingsManager {
     this.accounts = [];
     this.instruments = [];
     this.editingAccountName = null;
-    this.editingInstrumentSymbol = null;
   }
 
   init() {
@@ -21,11 +20,6 @@ export class SettingsManager {
     this.el = {
       instrumentsTbody: document.getElementById('settings-instruments-tbody'),
       instrumentsEmpty: document.getElementById('settings-instruments-empty'),
-      instrumentSymbol: document.getElementById('settings-instrument-symbol'),
-      instrumentFullName: document.getElementById('settings-instrument-full-name'),
-      instrumentPointValue: document.getElementById('settings-instrument-point-value'),
-      addInstrumentBtn: document.getElementById('settings-instrument-add'),
-      addInstrumentBtnWrapper: document.getElementById('settings-instrument-add').parentElement,
       sessionEnd: document.getElementById('settings-session-end'),
       historyHours: document.getElementById('settings-history-hours'),
       // Global risk/rr removed — now per-account
@@ -60,7 +54,6 @@ export class SettingsManager {
   bindEvents() {
     this.el.saveBtn.addEventListener('click', () => this.saveSettings());
     this.el.addAccountBtn.addEventListener('click', () => this.addAccount());
-    this.el.addInstrumentBtn.addEventListener('click', () => this.addInstrument());
     this.el.ntTogglePass.addEventListener('click', () => this.togglePassword());
   }
 
@@ -118,20 +111,16 @@ export class SettingsManager {
       tr.className = 'hover:bg-accent-500/10 transition-colors';
       tr.innerHTML = `
         <td class="px-3 py-2 font-medium text-slate-100">${this.escapeHtml(inst.symbol)}</td>
-        <td class="px-3 py-2 text-slate-300">${this.escapeHtml(inst.full_name || '')}</td>
-        <td class="px-3 py-2 text-slate-300">${inst.point_value ?? '-'}</td>
-        <td class="px-3 py-2 text-right">
-          <button class="action-btn hover:text-accent-400 mr-1" title="Edit instrument">
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-          </button>
-          <button class="action-btn hover:text-rose-500" title="Remove instrument">
-            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-          </button>
+        <td class="px-3 py-2">
+          <input type="text" class="instrument-full-name-input w-full bg-surface-700 border border-surface-600 rounded-lg px-2 py-1 text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors" data-symbol="${this.escapeHtml(inst.symbol)}" />
         </td>
+        <td class="px-3 py-2 text-slate-300">${inst.point_value ?? '-'}</td>
       `;
-      const buttons = tr.querySelectorAll('button');
-      buttons[0].addEventListener('click', () => this.editInstrument(inst.symbol));
-      buttons[1].addEventListener('click', () => this.removeInstrument(inst.symbol));
+      const input = tr.querySelector('.instrument-full-name-input');
+      input.value = inst.full_name || '';
+      input.addEventListener('input', () => {
+        inst.full_name = input.value;
+      });
       this.el.instrumentsTbody.appendChild(tr);
     }
   }
@@ -184,106 +173,6 @@ export class SettingsManager {
     return Array.from(chips)
       .filter(chip => chip.classList.contains('bg-accent-600/20'))
       .map(chip => chip.dataset.symbol);
-  }
-
-  addInstrument() {
-    const symbol = this.el.instrumentSymbol.value.trim().toUpperCase();
-    const fullName = this.el.instrumentFullName.value.trim();
-    const pointValue = parseFloat(this.el.instrumentPointValue.value);
-
-    if (!symbol) {
-      this.showStatus('Instrument symbol is required', 'error');
-      return;
-    }
-    if (!fullName) {
-      this.showStatus('Instrument full name is required', 'error');
-      return;
-    }
-
-    const duplicate = this.instruments.findIndex(i => i.symbol === symbol);
-    const instrument = {
-      symbol,
-      full_name: fullName,
-      point_value: Number.isFinite(pointValue) ? pointValue : 0,
-    };
-
-    if (this.editingInstrumentSymbol) {
-      const existing = this.instruments.findIndex(i => i.symbol === this.editingInstrumentSymbol);
-      if (existing >= 0) {
-        if (duplicate >= 0 && duplicate !== existing) {
-          this.showStatus('Instrument symbol already exists', 'error');
-          return;
-        }
-        this.instruments[existing] = instrument;
-        this.showStatus('Instrument updated', 'success');
-      }
-    } else {
-      if (duplicate >= 0) {
-        this.showStatus('Instrument symbol already exists', 'error');
-        return;
-      }
-      this.instruments.push(instrument);
-      this.showStatus('Instrument added', 'success');
-    }
-    this.renderInstruments();
-    this.clearInstrumentForm();
-  }
-
-  clearInstrumentForm() {
-    this.el.instrumentSymbol.value = '';
-    this.el.instrumentFullName.value = '';
-    this.el.instrumentPointValue.value = '';
-    this.editingInstrumentSymbol = null;
-    this.resetAddInstrumentBtn();
-  }
-
-  resetAddInstrumentBtn() {
-    this.el.addInstrumentBtn.innerHTML = `
-      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-      Add Instrument
-    `;
-    this.el.addInstrumentBtn.className = 'w-full bg-accent-600 hover:bg-accent-500 text-slate-100 font-medium px-4 py-2 rounded-lg transition-colors h-fit flex items-center justify-center gap-2';
-    const cancelBtn = this.el.addInstrumentBtnWrapper.querySelector('#settings-instrument-cancel');
-    if (cancelBtn) cancelBtn.remove();
-  }
-
-  setEditInstrumentBtn() {
-    this.el.addInstrumentBtn.innerHTML = `
-      <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-      Update Instrument
-    `;
-    this.el.addInstrumentBtn.className = 'w-full bg-amber-600 hover:bg-amber-500 text-slate-100 font-medium px-4 py-2 rounded-lg transition-colors h-fit flex items-center justify-center gap-2';
-    if (!this.el.addInstrumentBtnWrapper.querySelector('#settings-instrument-cancel')) {
-      const cancelBtn = document.createElement('button');
-      cancelBtn.id = 'settings-instrument-cancel';
-      cancelBtn.type = 'button';
-      cancelBtn.className = 'mt-2 w-full px-3 py-1.5 text-xs text-slate-400 hover:text-slate-100 hover:bg-surface-600 rounded transition-colors';
-      cancelBtn.textContent = 'Cancel';
-      cancelBtn.addEventListener('click', () => this.cancelEditInstrument());
-      this.el.addInstrumentBtnWrapper.appendChild(cancelBtn);
-    }
-  }
-
-  editInstrument(symbol) {
-    const inst = this.instruments.find(i => i.symbol === symbol);
-    if (!inst) return;
-    this.editingInstrumentSymbol = symbol;
-    this.el.instrumentSymbol.value = inst.symbol;
-    this.el.instrumentFullName.value = inst.full_name || '';
-    this.el.instrumentPointValue.value = inst.point_value ?? '';
-    this.setEditInstrumentBtn();
-  }
-
-  cancelEditInstrument() {
-    this.clearInstrumentForm();
-  }
-
-  removeInstrument(symbol) {
-    this.instruments = this.instruments.filter(i => i.symbol !== symbol);
-    if (this.editingInstrumentSymbol === symbol) {
-      this.clearInstrumentForm();
-    }
-    this.renderInstruments();
   }
 
   renderAccounts() {
@@ -430,7 +319,7 @@ export class SettingsManager {
       const primaryInstrument = this.instruments[0] || {};
       const payload = {
         trading: {
-          instruments: this.instruments,
+          instruments: this.instruments.map(i => ({ symbol: i.symbol, full_name: i.full_name })),
           pair: primaryInstrument.symbol || '',
           instrument: primaryInstrument.full_name || '',
           session_end: this.el.sessionEnd.value,

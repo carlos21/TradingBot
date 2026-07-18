@@ -54,7 +54,7 @@ class TestSettingsApi:
 
     def test_save_and_get_settings(self, client):
         payload = {
-            "trading": {"pair": "ES", "instrument": "ES 06-26", "risk_per_trade": "200", "risk_pct_per_trade": "", "rr_ratio": "4.0"},
+            "trading": {"pair": "ES", "instrument": "MNQ 12-26", "risk_per_trade": "200", "risk_pct_per_trade": "", "rr_ratio": "4.0"},
             "network": {"flask_port": "5002", "zmq_host": "0.0.0.0", "zmq_market_port": "5555", "zmq_command_port": "5556", "zmq_query_port": "5557", "zmq_heartbeat_port": "5558"},
             "accounts": [{"name": "A1", "risk_usd": 150.0, "risk_pct": None, "live_enabled": False}],
             "credentials": {"username": "ntuser", "password": "ntpass"},
@@ -66,8 +66,10 @@ class TestSettingsApi:
         resp = client.get("/api/settings")
         assert resp.status_code == 200
         data = resp.get_json()
-        assert data["trading"]["pair"] == "ES"
-        assert data["trading"]["instruments"][0]["symbol"] == "ES"
+        # Symbols are hardcoded in the catalog; only the full name is editable.
+        assert data["trading"]["pair"] == "MNQ"
+        assert data["trading"]["instruments"][0]["symbol"] == "MNQ"
+        assert data["trading"]["instruments"][0]["full_name"] == "MNQ 12-26"
         assert data["accounts"][0]["name"] == "A1"
         assert data["accounts"][0]["live_enabled"] is False
 
@@ -75,8 +77,8 @@ class TestSettingsApi:
         payload = {
             "trading": {
                 "instruments": [
-                    {"symbol": "ES", "full_name": "ES 06-26", "point_value": 12.5},
-                    {"symbol": "NQ", "full_name": "NQ 09-26"},
+                    {"symbol": "MNQ", "full_name": "MNQ 12-26"},
+                    {"symbol": "MES", "full_name": "MES 12-26"},
                 ],
                 "session_end": "17:00",
             },
@@ -89,9 +91,12 @@ class TestSettingsApi:
 
         resp = client.get("/api/settings")
         data = resp.get_json()
-        assert len(data["trading"]["instruments"]) == 2
-        assert data["trading"]["pair"] == "ES"
-        assert data["trading"]["instrument"] == "ES 06-26"
+        assert data["trading"]["instruments"] == [
+            {"symbol": "MNQ", "full_name": "MNQ 12-26", "point_value": 2.0},
+            {"symbol": "MES", "full_name": "MES 12-26", "point_value": 5.0},
+        ]
+        assert data["trading"]["pair"] == "MNQ"
+        assert data["trading"]["instrument"] == "MNQ 12-26"
         assert data["trading"]["session_end"] == "17:00"
 
     def test_accounts_crud(self, client):

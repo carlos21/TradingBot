@@ -6,9 +6,12 @@ containing *only* the "how do I assemble the app?" logic.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
+
+from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
     from app_factory import AppWiring
@@ -28,9 +31,14 @@ from src.infrastructure.repositories.line_trigger_state_repository import (
     SQLiteLineTriggerStateRepository,
 )
 from src.infrastructure.repositories.lines_repository import SQLLineRepository
+from src.infrastructure.repositories.settings_repository import SettingsRepository
 from src.infrastructure.repositories.trades_repository import SQLTradeRepository
 from src.notifier import NoOpNotifier, Notifier, TelegramNotifier
+from src.services.instrument_registry import InstrumentRegistry
+from src.strategies.liquidity_v2.config import StrategyNumbers
+from src.strategies.liquidity_v2.base_strategy import StrategyOptions
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
+from src.strategies.liquidity_v2.instrument_params import HardcodedInstrumentCatalog
 from src.strategies.liquidity_v2.prod_config import (
     get_prod_candle_config,
     get_prod_strategy_numbers,
@@ -67,6 +75,27 @@ def _build_notifier(config: AppConfig) -> Notifier:
     return NoOpNotifier()
 
 
+def _build_database(cfg: AppConfig):
+    """Create and set up the app database, falling back to SQLite.
+
+    When ``database_url`` points at a server that cannot be reached
+    (e.g. PostgreSQL is not running on this machine), fall back to the
+    local SQLite ``db_path`` instead of aborting startup.
+    """
+    try:
+        db = get_database(db_url=cfg.database_url or cfg.db_path)
+        database.setup_database(database_instance=db)
+        return db
+    except OperationalError:
+        if not cfg.database_url or cfg.database_url == cfg.db_path:
+            raise
+        print(f"{log_timestamp()} [App] Database unreachable at {cfg.database_url}; "
+              f"falling back to SQLite: {cfg.db_path}")
+        db = get_database(db_url=cfg.db_path)
+        database.setup_database(database_instance=db)
+        return db
+
+
 class AppBuilder:
     """Assemble the application from a configuration object."""
 
@@ -82,15 +111,53 @@ class AppBuilder:
         return self._build_backtest(), None
 
     # ------------------------------------------------------------------
+    # Instrument stack (composition root for per-instrument parameters)
+    # ------------------------------------------------------------------
+    def _build_instrument_stack(
+        self, db
+    ) -> tuple[InstrumentRegistry, Callable[[str], tuple[StrategyNumbers, StrategyOptions]]]:
+        """Build the instrument registry and the per-symbol params provider.
+
+        Every instrument session gets its own catalog-driven ``StrategyNumbers``
+        / ``StrategyOptions`` (point-denominated values differ per instrument).
+        """
+        cfg = self.config
+        registry = InstrumentRegistry(SettingsRepository(db=db), HardcodedInstrumentCatalog())
+
+        def session_params(symbol: str) -> tuple[StrategyNumbers, StrategyOptions]:
+            numbers = get_prod_strategy_numbers(
+                rr_ratio=cfg.rr_ratio,
+                risk_per_trade=cfg.risk_per_trade,
+                risk_pct_per_trade=cfg.risk_pct_per_trade,
+                account_configs=cfg.nt_accounts,
+                symbol=symbol,
+            )
+            options = get_prod_strategy_options(
+                max_bounce=numbers.max_bounce,
+                min_cross_depth=numbers.min_cross_depth,
+                skip_rollover_days=cfg.skip_rollover_days,
+                reentry_only=cfg.reentry_only,
+                line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
+                max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
+                symbol=symbol,
+            )
+            if cfg.no_breakeven:
+                options.breakeven = None
+            if cfg.no_reentry_breakeven:
+                options.reentry_breakeven = None
+            return numbers, options
+
+        return registry, session_params
+
+    # ------------------------------------------------------------------
     # Backtest
     # ------------------------------------------------------------------
     def _build_backtest(self) -> AppWiring:
         from app_factory import Repositories, create_app
 
         cfg = self.config
-        db = get_database(db_url=cfg.database_url or cfg.db_path)
-        database.db = db
-        database.setup_database(database_instance=db)
+        db = _build_database(cfg)
+        registry, session_params = self._build_instrument_stack(db)
         repos = Repositories(
             lines=SQLLineRepository(db=db),
             trades=SQLTradeRepository(db=db),
@@ -116,25 +183,8 @@ class AppBuilder:
             tz=cfg.file_tz,
         )
 
-        numbers = get_prod_strategy_numbers(
-            rr_ratio=cfg.rr_ratio,
-            risk_per_trade=cfg.risk_per_trade,
-            risk_pct_per_trade=cfg.risk_pct_per_trade,
-            account_configs=cfg.nt_accounts,
-        )
+        numbers, options = session_params(cfg.pair)
         candle_config = get_prod_candle_config()
-        options = get_prod_strategy_options(
-            max_bounce=numbers.max_bounce,
-            min_cross_depth=numbers.min_cross_depth,
-            skip_rollover_days=cfg.skip_rollover_days,
-            reentry_only=cfg.reentry_only,
-            line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
-            max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
-        )
-        if cfg.no_breakeven:
-            options.breakeven = None
-        if cfg.no_reentry_breakeven:
-            options.reentry_breakeven = None
 
         return create_app(
             pair=cfg.pair,
@@ -151,6 +201,8 @@ class AppBuilder:
             app_config=cfg,
             db=db,
             accounts_repo=accounts_repo,
+            instrument_registry=registry,
+            session_params_provider=session_params,
             session_end_time=cfg.session_end,
         )
 
@@ -161,9 +213,8 @@ class AppBuilder:
         from app_factory import Repositories, create_app
 
         cfg = self.config
-        db = get_database(db_url=cfg.database_url or cfg.db_path)
-        database.db = db
-        database.setup_database(database_instance=db)
+        db = _build_database(cfg)
+        registry, session_params = self._build_instrument_stack(db)
         repos = Repositories(
             lines=SQLLineRepository(db=db),
             trades=SQLTradeRepository(db=db),
@@ -200,6 +251,7 @@ class AppBuilder:
                 history_hours=cfg.history_hours,
                 notifier=notifier,
                 instrument=cfg.instrument,
+                instrument_registry=registry,
             )
         else:
             ds, executor = create_live_components(
@@ -216,27 +268,11 @@ class AppBuilder:
                 history_hours=cfg.history_hours,
                 notifier=notifier,
                 instrument=cfg.instrument,
+                instrument_registry=registry,
             )
 
-        numbers = get_prod_strategy_numbers(
-            rr_ratio=cfg.rr_ratio,
-            risk_per_trade=cfg.risk_per_trade,
-            risk_pct_per_trade=cfg.risk_pct_per_trade,
-            account_configs=cfg.nt_accounts,
-        )
+        numbers, options = session_params(cfg.pair)
         candle_config = get_prod_candle_config()
-        options = get_prod_strategy_options(
-            max_bounce=numbers.max_bounce,
-            min_cross_depth=numbers.min_cross_depth,
-            skip_rollover_days=cfg.skip_rollover_days,
-            reentry_only=cfg.reentry_only,
-            line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
-            max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
-        )
-        if cfg.no_breakeven:
-            options.breakeven = None
-        if cfg.no_reentry_breakeven:
-            options.reentry_breakeven = None
 
         wiring = create_app(
             pair=cfg.pair,
@@ -256,6 +292,8 @@ class AppBuilder:
             app_config=cfg,
             db=db,
             accounts_repo=accounts_repo,
+            instrument_registry=registry,
+            session_params_provider=session_params,
             session_end_time=cfg.session_end,
         )
         return wiring, ds

@@ -5,7 +5,10 @@ import os
 import time
 import traceback
 from dataclasses import dataclass
-from typing import Any, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, List, Optional
+
+if TYPE_CHECKING:
+    from src.strategies.liquidity_v2.base_strategy import StrategyOptions
 
 from flask import Flask, jsonify
 from flask_cors import CORS
@@ -270,11 +273,19 @@ def _setup_live_mode_callbacks(
 class _SessionFactory:
     """Creates ``StreamingSession`` instances for the ``StreamCoordinator``."""
 
-    def __init__(self, **kwargs: Any):
+    def __init__(self, session_params_provider=None, **kwargs: Any):
+        # Optional callable ``(symbol) -> (StrategyNumbers, StrategyOptions)``
+        # providing per-instrument parameters; absent it, all sessions share
+        # the ``numbers``/``options`` passed in ``kwargs`` (legacy behavior).
+        self._params_provider = session_params_provider
         self._kwargs = kwargs
 
     def create_session(self, instrument: Instrument) -> StreamingSession:
-        return StreamingSession(instrument=instrument, **self._kwargs)
+        kwargs = self._kwargs
+        if self._params_provider is not None:
+            numbers, options = self._params_provider(instrument.symbol)
+            kwargs = {**kwargs, "numbers": numbers, "options": options}
+        return StreamingSession(instrument=instrument, **kwargs)
 
 
 class _SingleInstrumentRegistry:
@@ -315,6 +326,7 @@ def create_app(
     accounts_repo=None,
     app_config=None,
     instrument_registry=None,
+    session_params_provider: "Callable[[str], tuple[StrategyNumbers, StrategyOptions]] | None" = None,
     session_end_time: str | None = None,
     session_tz: str = "America/New_York",
 ) -> AppWiring:
@@ -399,6 +411,7 @@ def create_app(
 
     # Factory that builds per-instrument sessions with the same dependencies.
     session_factory = _SessionFactory(
+        session_params_provider=session_params_provider,
         socketio=socketio,
         data_source=data_source,
         repos=repos,
@@ -562,7 +575,13 @@ def create_app(
     settings_repo = SettingsRepository(db=db)
     nt_accounts_repo = NtAccountRepository(db=db)
     creds_repo = CredentialRepository(db=db)
-    settings_service = SettingsService(settings_repo, nt_accounts_repo, creds_repo, secret_key=secret_key)
+    settings_service = SettingsService(
+        settings_repo,
+        nt_accounts_repo,
+        creds_repo,
+        secret_key=secret_key,
+        instrument_registry=registry,
+    )
     settings_controller = SettingsController(settings_service)
     nt_service = NtManagerService(logger=logger)
     deploy_service = PlatformDeployService()

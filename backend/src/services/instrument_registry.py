@@ -1,64 +1,107 @@
-"""Service for loading and persisting the instrument registry."""
+"""Service for loading and persisting the instrument registry.
+
+The set of supported instruments comes from an injected ``InstrumentCatalog``
+(hardcoded in ``src.strategies.liquidity_v2.instrument_params``) — adding an
+instrument requires tuned point parameters, so it is a code change, not a
+settings operation.  Only each instrument's ``full_name`` (which changes at
+every contract rollover) is user-editable; this registry persists those
+full-name overrides in ``AppSetting`` under the ``instruments`` key.
+"""
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, fields
+import logging
+from dataclasses import asdict
 
 from src.domain.models import Instrument
-from src.domain.repositories import IInstrumentRegistry, SettingsRepository as ISettingsRepository
+from src.domain.repositories import (
+    IInstrumentRegistry,
+    InstrumentCatalog,
+    SettingsRepository as ISettingsRepository,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class InstrumentRegistry(IInstrumentRegistry):
-    """JSON-backed registry of instruments stored in AppSetting under ``instruments``."""
+    """Catalog-driven instrument registry with DB-backed full-name overrides."""
 
     _KEY = "instruments"
-    _DEFAULT_SYMBOL = "MNQ"
-    _DEFAULT_FULL_NAME = "MNQ 09-26"
 
-    def __init__(self, settings_repo: ISettingsRepository):
+    def __init__(self, settings_repo: ISettingsRepository, catalog: InstrumentCatalog):
         self._settings = settings_repo
-
-    @classmethod
-    def default_instrument(cls) -> Instrument:
-        return Instrument(
-            symbol=cls._DEFAULT_SYMBOL,
-            full_name=cls._DEFAULT_FULL_NAME,
-        )
+        self._catalog = catalog
 
     def get_all(self) -> list[Instrument]:
-        """Return registered instruments, deriving from legacy settings if missing."""
-        raw = self._settings.get(self._KEY)
-        if raw:
-            try:
-                data = json.loads(raw)
-                if isinstance(data, list) and data:
-                    return [self._deserialize(item) for item in data]
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        # Backward compatibility: build a single instrument from legacy settings.
-        pair = self._settings.get("pair")
-        instrument = self._settings.get("instrument")
-        if pair is None and instrument is None:
-            return [self.default_instrument()]
-        symbol = pair or self._DEFAULT_SYMBOL
-        full_name = instrument or symbol
-        return [Instrument(symbol=symbol, full_name=full_name)]
+        """Return every catalog instrument with its full-name overrides applied."""
+        overrides = self._load_overrides()
+        return [
+            Instrument(
+                symbol=inst.symbol,
+                full_name=overrides.get(inst.symbol, inst.full_name),
+                point_value=inst.point_value,
+            )
+            for inst in self._catalog.get_defaults()
+        ]
 
     def save(self, instruments: list[Instrument]) -> None:
-        """Persist the registry as a JSON list."""
-        data = [asdict(inst) for inst in instruments]
-        self._settings.set(self._KEY, json.dumps(data))
+        """Persist full-name overrides for known instruments.
+
+        Unknown symbols and attempts to change anything other than
+        ``full_name`` are ignored (the catalog is the source of truth).
+        """
+        defaults = {inst.symbol: inst.full_name for inst in self._catalog.get_defaults()}
+        overrides: dict[str, str] = {}
+        for inst in instruments:
+            if inst.symbol not in defaults:
+                logger.warning("Ignoring unknown instrument symbol %r on save", inst.symbol)
+                continue
+            if inst.full_name and inst.full_name != defaults[inst.symbol]:
+                overrides[inst.symbol] = inst.full_name
+        self._settings.set(self._KEY, json.dumps(overrides))
 
     def get_instruments(self) -> list[dict]:
         """Return instruments as plain dictionaries for API responses."""
         return [asdict(inst) for inst in self.get_all()]
 
-    @staticmethod
-    def _deserialize(item: dict) -> Instrument:
-        """Build an Instrument from a dictionary, ignoring unknown fields."""
-        known = {f.name for f in fields(Instrument)}
-        cleaned = {k: v for k, v in item.items() if k in known}
-        if "point_value" in cleaned:
-            cleaned["point_value"] = float(cleaned["point_value"])
-        return Instrument(**cleaned)
+    def _load_overrides(self) -> dict[str, str]:
+        """Read persisted full-name overrides, migrating legacy formats."""
+        raw = self._settings.get(self._KEY)
+        if raw:
+            try:
+                data = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                data = None
+            if isinstance(data, dict):
+                # Current format: {symbol: full_name}
+                return self._known_overrides(data)
+            if isinstance(data, list):
+                # Legacy format: [{symbol, full_name, point_value}, ...]
+                dropped = [item.get("symbol") for item in data
+                           if isinstance(item, dict) and not self._is_known(item.get("symbol"))]
+                if dropped:
+                    logger.warning(
+                        "Dropping unsupported instruments from stored registry: %s", dropped)
+                return self._known_overrides(
+                    {item.get("symbol"): item.get("full_name")
+                     for item in data if isinstance(item, dict)}
+                )
+
+        # Backward compatibility: legacy pair/instrument settings keys.
+        instrument = self._settings.get("instrument")
+        if instrument:
+            pair = self._settings.get("pair")
+            symbol = pair if self._is_known(pair) else self._catalog.default_symbol()
+            return {symbol: instrument}
+        return {}
+
+    def _known_overrides(self, mapping: dict) -> dict[str, str]:
+        """Keep only overrides for catalog symbols with a non-empty full_name."""
+        return {
+            symbol: full_name
+            for symbol, full_name in mapping.items()
+            if self._is_known(symbol) and full_name
+        }
+
+    def _is_known(self, symbol: object) -> bool:
+        return any(inst.symbol == symbol for inst in self._catalog.get_defaults())

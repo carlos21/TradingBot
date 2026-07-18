@@ -50,6 +50,10 @@ class DefaultResultTypeClassifier:
        - fallback -> CLOSE
     """
 
+    def __init__(self, be_threshold_points: float = 2.0, sl_tp_tolerance: float = 0.5):
+        self.be_threshold_points = be_threshold_points
+        self.sl_tp_tolerance = sl_tp_tolerance
+
     def classify(self, ctx: ClassificationContext) -> ResultType:
         # 1. Broker label takes precedence — platforms like NinjaTrader send
         #    explicit result_type values.
@@ -73,6 +77,8 @@ class DefaultResultTypeClassifier:
             entry_price=ctx.entry_price,
             stop_loss=ctx.stop_loss,
             take_profit=ctx.take_profit,
+            be_threshold_points=self.be_threshold_points,
+            sl_tp_tolerance=self.sl_tp_tolerance,
         )
         if detected == "BE":
             return ResultType.BREAKEVEN

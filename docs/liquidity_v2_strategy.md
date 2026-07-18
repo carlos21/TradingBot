@@ -320,17 +320,11 @@ This context is then passed through the entry filter pipeline.
 
 ## 7. Entry Filters
 
-All filters must pass for a trade to open. The production filter chain is defined in `src/strategies/liquidity_v2/prod_config.py`:
+All filters must pass for a trade to open. The production filter chain is defined in `src/strategies/liquidity_v2/prod_config.py`.
 
-### 7.1 Open Trades Limit
+**Order matters:** `min_cross_depth` is a *hold* filter (it keeps the line alive when it blocks), so it runs before the hard-block `trading_windows` filter. Otherwise a pre-session trigger with shallow depth would remove the line instead of holding it for later re-entry into the session.
 
-```python
-open_trades_limit_filter(1)
-```
-
-Blocks if 1 or more trades are already open. Only one open trade is allowed at a time.
-
-### 7.2 Min Cross Depth
+### 7.1 Min Cross Depth
 
 ```python
 min_cross_depth_filter(min_cross_depth=5.0)
@@ -338,7 +332,7 @@ min_cross_depth_filter(min_cross_depth=5.0)
 
 Requires the price to have crossed the line by at least 5.0 pts. If not, the filter blocks but **holds the line alive** (`_hold_on_block = True`) so it can re-trigger if depth later becomes sufficient.
 
-### 7.3 Max Bounce
+### 7.2 Max Bounce
 
 ```python
 max_bounce_filter(max_bounce=90.0)
@@ -346,23 +340,29 @@ max_bounce_filter(max_bounce=90.0)
 
 Blocks if the cross depth exceeds 90.0 pts. This prevents entering after an oversized liquidity sweep that has already moved too far.
 
-### 7.4 Time Range
+### 7.3 Trading Windows
 
 ```python
-time_range_filter("08:00", "15:30")
+trading_windows_filter([TradingWindow("08:00", "15:30", max_open_trades=1, max_trades=1)])
 ```
 
-Only allows entries between 08:00 and 15:30 in the instrument's local timezone (America/New_York for MNQ/ES/etc.).
+Only allows entries inside the configured time windows (instrument's local timezone — America/New_York for MNQ/ES/etc.). Each window carries its own limits:
 
-### 7.5 Daily Trades Limit
+- `max_open_trades` — maximum concurrent open trades while inside the window.
+- `max_trades` — maximum number of **initial** entries inside the window. Manual, test, and re-entry trades are excluded from the count, so every initial trade keeps its own re-entry chain (e.g. two windows with `max_trades=1` and `max_reentry_attempts=1` allow up to 4 trades: 2 initial + 2 re-entries).
+
+Multiple windows with different limits can be passed via the `trading_windows` parameter of `get_prod_strategy_options`:
 
 ```python
-daily_trades_limit_filter(max_trades_per_day=1)
+trading_windows=[
+    TradingWindow("08:00", "11:00", max_open_trades=1, max_trades=2),
+    TradingWindow("13:30", "15:30", max_open_trades=1, max_trades=1),
+]
 ```
 
-Allows only one strategy trade per calendar day. Manual, test, and broker-sync trades are excluded from the count.
+Overnight windows such as `"22:00"`-`"02:00"` are supported; entries after midnight count toward the window instance that started the previous day. This filter replaces the former `open_trades_limit_filter` / `time_range_filter` / `daily_trades_limit_filter` trio in the production chain.
 
-### 7.6 Rollover Filter
+### 7.4 Rollover Filter
 
 ```python
 rollover_filter(enabled=False)
@@ -477,8 +477,7 @@ On subsequent 1m bars, the strategy watches for price to return through the line
 
 Re-entries bypass most filters and only check:
 
-- `time_range_filter`
-- `open_trades_limit_filter`
+- `trading_windows_filter` (window hours and `max_open_trades` still apply; the per-window `max_trades` count is skipped so re-entries never consume window slots)
 - `rollover_filter`
 
 **Max re-entry attempts:** 1.

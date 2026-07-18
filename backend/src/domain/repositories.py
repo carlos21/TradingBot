@@ -311,6 +311,21 @@ class DecisionLogRepository(DecisionLogReader, DecisionLogWriter):
 # Instrument Registry Interface
 # =============================================================================
 
+class InstrumentCatalog(Protocol):
+    """The supported instruments and their factory defaults.
+
+    Implemented by the hardcoded catalog in the strategies layer; injected
+    into the registry so the supported set is a composition decision, not a
+    global.
+    """
+
+    def get_defaults(self) -> list[Instrument]:
+        """Return every supported instrument with its default values."""
+
+    def default_symbol(self) -> str:
+        """Symbol of the default (first) instrument."""
+
+
 class IInstrumentRegistry(Protocol):
     """Protocol for loading and persisting the instrument registry."""
 

@@ -21,6 +21,7 @@ Usage:
 
 
 from src.config.models import DEFAULT_HISTORY_HOURS
+from src.domain.repositories import IInstrumentRegistry
 from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.notifier import Notifier
 from src.utils.app_logger import ILogger
@@ -45,6 +46,7 @@ def create_live_components(
     history_hours: int = DEFAULT_HISTORY_HOURS,
     notifier: Notifier | None = None,
     instrument: str | None = None,
+    instrument_registry: IInstrumentRegistry | None = None,
 ) -> tuple[ZMQDataSource, ZMQTradeExecutor]:
     """
     Create ZeroMQ-based data source and trade executor for live trading.
@@ -90,6 +92,7 @@ def create_live_components(
         history_hours=history_hours,
         notifier=notifier,
         market_filter=MarketClosureFilter(instrument=pair),
+        instrument_registry=instrument_registry,
     )
 
     # Create trade executor that uses the same gateway (logger is required)
@@ -125,6 +128,7 @@ def create_multi_account_live_components(
     history_hours: int = DEFAULT_HISTORY_HOURS,
     notifier: Notifier | None = None,
     instrument: str | None = None,
+    instrument_registry: IInstrumentRegistry | None = None,
 ) -> tuple[ZMQDataSource, MultiAccountExecutor]:
     """
     Create ZeroMQ components for multi-account live trading.
@@ -163,6 +167,7 @@ def create_multi_account_live_components(
         heartbeat_port=heartbeat_port,
         history_hours=history_hours,
         instrument=instrument,
+        instrument_registry=instrument_registry,
     )
 
     # MultiAccountExecutor will be wired with TradeManager inside app_factory

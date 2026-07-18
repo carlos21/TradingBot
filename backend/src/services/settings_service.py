@@ -8,7 +8,6 @@ from typing import Protocol
 from cryptography.fernet import Fernet
 
 from src.config.models import DEFAULT_HISTORY_HOURS, AccountConfig
-from src.domain.models import Instrument
 from src.domain.repositories import IInstrumentRegistry
 from src.services.instrument_registry import InstrumentRegistry
 
@@ -56,7 +55,12 @@ class SettingsService:
 
     @staticmethod
     def _default_registry(settings_repo: ISettingsRepository) -> IInstrumentRegistry:
-        return InstrumentRegistry(settings_repo)
+        # Composition convenience for callers that do not inject a registry
+        # (tests, ad-hoc constructions). The app composition root
+        # (builder/app_factory) always injects the shared instance instead.
+        from src.strategies.liquidity_v2.instrument_params import HardcodedInstrumentCatalog
+
+        return InstrumentRegistry(settings_repo, HardcodedInstrumentCatalog())
 
     @staticmethod
     def _make_fernet(secret_key: str | None) -> Fernet | None:
@@ -90,7 +94,7 @@ class SettingsService:
         cred = self._creds.get_credential(self._SERVICE_KEY)
         all_creds = self._creds.list_all()
         instruments = self._instruments.get_all()
-        first = instruments[0] if instruments else InstrumentRegistry.default_instrument()
+        first = instruments[0]
 
         return {
             "trading": {
@@ -174,39 +178,30 @@ class SettingsService:
             self._settings.set("mt_terminal_path", mt_terminal_path)
 
     def _save_instruments(self, trading: dict) -> None:
-        """Persist ``trading.instruments`` or update the first instrument from legacy fields."""
+        """Persist full-name changes for catalog instruments.
+
+        Instruments are hardcoded in the catalog — only ``full_name`` is
+        editable (contract rollovers). Unknown symbols, symbol changes and
+        point_value mutations are ignored.
+        """
         instruments_payload = trading.get("instruments")
+        current = {inst.symbol: inst for inst in self._instruments.get_all()}
         if instruments_payload is not None:
-            instruments = [self._deserialize_instrument(item) for item in instruments_payload]
-            self._instruments.save(instruments)
+            for item in instruments_payload:
+                if not isinstance(item, dict):
+                    continue
+                inst = current.get(item.get("symbol"))
+                full_name = item.get("full_name")
+                if inst is not None and full_name:
+                    inst.full_name = full_name
+            self._instruments.save(list(current.values()))
             return
 
-        instruments = self._instruments.get_all()
-        first = instruments[0] if instruments else InstrumentRegistry.default_instrument()
-        updated = False
-        if "pair" in trading and trading["pair"]:
-            first.symbol = trading["pair"]
-            updated = True
+        # Legacy fields: ``instrument`` updates the default instrument's full name.
+        first = next(iter(current.values()))
         if "instrument" in trading and trading["instrument"]:
             first.full_name = trading["instrument"]
-            updated = True
-        if updated:
-            if instruments:
-                instruments[0] = first
-            else:
-                instruments = [first]
-            self._instruments.save(instruments)
-
-    @staticmethod
-    def _deserialize_instrument(item: dict) -> Instrument:
-        """Build an Instrument from a payload dict, ignoring unknown fields."""
-        from dataclasses import fields
-
-        known = {f.name for f in fields(Instrument)}
-        cleaned = {k: v for k, v in item.items() if k in known}
-        if "point_value" in cleaned:
-            cleaned["point_value"] = float(cleaned["point_value"])
-        return Instrument(**cleaned)
+            self._instruments.save(list(current.values()))
 
     def _sync_legacy_instrument_settings(self) -> None:
         """Keep legacy ``pair`` / ``instrument`` settings in sync."""

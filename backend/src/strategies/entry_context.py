@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
 from zoneinfo import ZoneInfo
 
@@ -40,6 +40,7 @@ class EntryContext:
     high: float
     extreme: float            # lowest (long) / highest (short) seen during cross
     cross_depth: float        # bounce depth used by filters like max_bounce
+    is_reentry: bool = False  # True when the context evaluates a re-entry after SL
 
     @property
     def is_long(self) -> bool:
@@ -228,4 +229,111 @@ def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str | None 
 
         return False, f"Daily limit reached: {daily_count} >= {max_trades_per_day}"
     _f.__name__ = "daily_trades_limit"
+    return _f
+
+
+@dataclass(frozen=True)
+class TradingWindow:
+    """A trading session window with its own entry limits.
+
+    ``max_trades`` counts only INITIAL entries whose entry time falls inside this
+    window; re-entry trades never consume window slots (each initial trade keeps
+    its own re-entry chain, bounded by the strategy's max_reentry_attempts).
+    """
+    start: str                # "HH:MM", local time
+    end: str                  # "HH:MM"; overnight ("22:00"->"02:00") supported
+    max_open_trades: int = 1  # concurrent open trades allowed while inside this window
+    max_trades: int = 1       # max INITIAL entries inside this window (re-entries excluded)
+
+
+def trading_windows_filter(windows: list[TradingWindow], timezone_str: str | None = None) -> EntryFilter:
+    """
+    Blocks entries outside all trading windows, and enforces per-window limits.
+
+    For the window containing the current bar:
+    - blocks when concurrent open trades >= window.max_open_trades (applies to
+      initial entries and re-entries alike);
+    - blocks INITIAL entries when the number of initial strategy entries already
+      inside this window instance >= window.max_trades. Re-entry evaluations
+      (``ctx.is_reentry``) skip this check, and re-entry trades are excluded from
+      the count, so every initial trade keeps its own re-entry chain.
+
+    Supports overnight windows such as "22:00"-"02:00"; the window instance is
+    resolved as an absolute interval so post-midnight entries count toward the
+    same instance that started the previous day.
+
+    If ``timezone_str`` is None, the timezone is resolved from ``PAIR_TIMEZONES``
+    using the bar's pair.
+    """
+    parsed = [
+        (w, datetime.strptime(w.start, "%H:%M").time(), datetime.strptime(w.end, "%H:%M").time())
+        for w in windows
+    ]
+
+    def _window_instances(w, t_start, t_end, day, tz):
+        """Absolute [start_dt, end_dt] intervals of `w` that may contain a bar on `day`."""
+        start_dt = datetime.combine(day, t_start, tzinfo=tz)
+        if t_start <= t_end:
+            return [(start_dt, datetime.combine(day, t_end, tzinfo=tz))]
+        # Overnight: instance starting today ends tomorrow; also the one started yesterday.
+        return [
+            (start_dt, datetime.combine(day + timedelta(days=1), t_end, tzinfo=tz)),
+            (start_dt - timedelta(days=1), datetime.combine(day, t_end, tzinfo=tz)),
+        ]
+
+    def _f(ctx: EntryContext) -> tuple[bool, str]:
+        # 1. Resolve timezone
+        tz_name = timezone_str
+        if not tz_name:
+            pair = ctx.bar.get('pair', '')
+            tz_name = PAIR_TIMEZONES.get(pair, "UTC")
+        tz = ZoneInfo(tz_name)
+
+        # 2. Current bar in local time
+        bar_dt = datetime.fromtimestamp(ctx.bar['time'], tz=tz)
+
+        # 3. Find the window instance containing this bar
+        matched = None
+        for w, t_start, t_end in parsed:
+            for start_dt, end_dt in _window_instances(w, t_start, t_end, bar_dt.date(), tz):
+                if start_dt <= bar_dt <= end_dt:
+                    matched = (w, start_dt, end_dt)
+                    break
+            if matched:
+                break
+
+        if not matched:
+            return False, f"Time {bar_dt.time()} ({tz_name}) outside all trading windows"
+
+        window, win_start, win_end = matched
+
+        # 4. Open trades limit (applies to initial entries and re-entries alike)
+        open_count = sum(1 for t in ctx.strategy.open_trades if t.get('status') == 'open')
+        if open_count >= window.max_open_trades:
+            return False, f"open-trades {open_count} >= limit {window.max_open_trades}"
+
+        # 5. Per-window initial-entry limit (re-entries bypass and are excluded)
+        if ctx.is_reentry:
+            return True, "re-entry: window ok, trade count not applied"
+
+        all_trades = ctx.strategy.trade_repository.list_trades(ctx.bar['pair'])
+        count = 0
+        for t in all_trades:
+            trade_source = str(t.source or "strategy").lower()
+            if trade_source in ("manual", "test"):
+                continue
+            params = t.params or {}
+            if params.get("is_reentry") or params.get("reentry_attempt", 0) > 0:
+                continue
+            entry_time = t.entry_time
+            if entry_time.tzinfo is None:
+                entry_time = entry_time.replace(tzinfo=timezone.utc)
+            if win_start <= entry_time.astimezone(tz) <= win_end:
+                count += 1
+
+        if count >= window.max_trades:
+            return False, (f"Window {window.start}-{window.end} limit reached: "
+                           f"{count} >= {window.max_trades}")
+        return True, f"window {window.start}-{window.end}: {count} < {window.max_trades}"
+    _f.__name__ = "trading_windows"
     return _f

@@ -75,12 +75,19 @@ class TradeCloseService:
         point_value: float = 5.0,
         fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
         result_type_classifier: ResultTypeClassifier | None = None,
+        be_threshold_points: float = 2.0,
+        sl_tp_tolerance: float = 0.5,
     ):
         self.trade_repository = trade_repository
         self.event_publisher = event_publisher or NoOpTradeEventPublisher()
         self.point_value = point_value
         self.fee_per_rt = fee_per_rt
-        self._classifier = result_type_classifier or DefaultResultTypeClassifier()
+        self.be_threshold_points = be_threshold_points
+        self.sl_tp_tolerance = sl_tp_tolerance
+        self._classifier = result_type_classifier or DefaultResultTypeClassifier(
+            be_threshold_points=be_threshold_points,
+            sl_tp_tolerance=sl_tp_tolerance,
+        )
 
     def close_trade(
         self,
@@ -121,6 +128,8 @@ class TradeCloseService:
             contracts=contracts,
             point_value=self.point_value,
             fee_per_rt=self.fee_per_rt,
+            be_threshold_points=self.be_threshold_points,
+            sl_tp_tolerance=self.sl_tp_tolerance,
         )
 
         result_type = self._classifier.classify(

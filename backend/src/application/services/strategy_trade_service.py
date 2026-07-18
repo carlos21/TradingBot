@@ -41,6 +41,8 @@ class StrategyTradeService:
         fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
         broker_spread: float = 0.0,
         result_type_classifier: ResultTypeClassifier | None = None,
+        be_threshold_points: float = 2.0,
+        sl_tp_tolerance: float = 0.5,
         account_balance: float = 0.0,
         risk_per_trade: float | None = None,
         risk_pct_per_trade: float | None = None,
@@ -57,7 +59,12 @@ class StrategyTradeService:
         self._point_value = point_value
         self._fee_per_rt = fee_per_rt
         self._broker_spread = broker_spread
-        self._classifier = result_type_classifier or DefaultResultTypeClassifier()
+        self._be_threshold_points = be_threshold_points
+        self._sl_tp_tolerance = sl_tp_tolerance
+        self._classifier = result_type_classifier or DefaultResultTypeClassifier(
+            be_threshold_points=be_threshold_points,
+            sl_tp_tolerance=sl_tp_tolerance,
+        )
         self._open_use_case = None
         self._account_balance = account_balance
         self._risk_per_trade = risk_per_trade
@@ -210,6 +217,8 @@ class StrategyTradeService:
             contracts=contracts,
             point_value=self._point_value,
             fee_per_rt=self._fee_per_rt,
+            be_threshold_points=self._be_threshold_points,
+            sl_tp_tolerance=self._sl_tp_tolerance,
         )
         trade["result"] = result_r
         if self._broker_spread > 0:

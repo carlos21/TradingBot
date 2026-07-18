@@ -105,12 +105,12 @@ class TestCSVScenarioReplay:
             data_source.check_history_completeness = lambda bars=None: (True, "test")
 
         # Time-shifted timestamps may fall outside trading hours; disable the
-        # time_range filter so the strategy can evaluate signals naturally.
+        # time_range/trading_windows filter so the strategy can evaluate
+        # signals naturally.
         strategy = app.strategy
         for i, f in enumerate(strategy.entry_filters):
-            if getattr(f, "__name__", "") == "time_range":
+            if getattr(f, "__name__", "") in ("time_range", "trading_windows"):
                 strategy.entry_filters[i] = lambda ctx: (True, "ok")
-                break
 
         pair = test_scenario["pair"]
         start_ts = _to_epoch(test_scenario["start"])

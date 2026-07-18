@@ -1,12 +1,12 @@
 from src.strategies.base_strategy import BreakevenConfig
 from src.strategies.entry_context import (
-    daily_trades_limit_filter,
+    TradingWindow,
     max_bounce_filter,
     min_cross_depth_filter,
-    open_trades_limit_filter,
     rollover_filter,
-    time_range_filter,
+    trading_windows_filter,
 )
+from src.strategies.liquidity_v2.instrument_params import get_instrument_params
 from src.strategies.liquidity_v2.base_strategy import (
     LineRemovalMode,
     StrategyOptions,
@@ -22,9 +22,14 @@ from src.strategies.liquidity_v2.triggers import (
 def get_prod_strategy_numbers(rr_ratio: float,
                               risk_per_trade: float = None,
                               risk_pct_per_trade: float = None,
-                              account_configs=None) -> StrategyNumbers:
+                              account_configs=None,
+                              symbol: str = "MNQ") -> StrategyNumbers:
     """
     Numeric parameters that control risk, stop-loss tiers, and entry distance.
+
+    Point-denominated values come from the per-instrument catalog
+    (``instrument_params.INSTRUMENT_PARAMS``); ``symbol`` selects which
+    instrument's tuned values to use.
 
     Example – how the tiered SL system works:
         sl_levels = [15, 20, 30, 40]
@@ -32,6 +37,7 @@ def get_prod_strategy_numbers(rr_ratio: float,
         level >= 18).  If the dip was 45 pts, it falls back to the largest
         level (40.0) because 45 exceeds every tier.
     """
+    params = get_instrument_params(symbol)
     return StrategyNumbers(
         # ------------------------------------------------------------------
         # STOP-LOSS TIERING
@@ -39,31 +45,31 @@ def get_prod_strategy_numbers(rr_ratio: float,
         # Minimum hard stop in points.  Even if the wick is tiny, the SL
         # will never be tighter than this.
         # Example: min_stop_loss=10.0  ->  smallest possible SL is 10 pts.
-        min_stop_loss=10.0,
+        min_stop_loss=params.min_stop_loss,
 
         # Maximum distance (pts) the price can bounce away from the line
         # AFTER a touch before the line is removed as invalid.
         # Example: line at 100, touch at 100, price rockets to 200 ->
         #          bounce = 100 pts.  100 > max_bounce(90) -> line removed.
-        max_bounce=90.0,
+        max_bounce=params.max_bounce,
 
         # Extra padding added to the calculated stop-loss distance.
         # Useful for spreads or to give a little breathing room.
         # Example: calculated SL = 20 pts, extra_sl_space=2.0 -> final SL = 22 pts.
-        extra_sl_space=0.0,
+        extra_sl_space=params.extra_sl_space,
 
         # Tiered stop-loss levels (sorted ascending).  The system auto-picks
         # the smallest level >= distance-to-extreme.  If the extreme is larger
         # than all tiers, it falls back to the largest tier.
         # Example: dip = 25 pts  ->  picks 30.0 (smallest tier >= 25).
         #          dip = 50 pts  ->  falls back to 40.0 (largest tier).
-        sl_levels=[15.0, 20.0, 30.0, 40.0],
+        sl_levels=list(params.sl_levels),
 
         # How many points ABOVE the chosen SL tier the price can go before
         # the next larger tier is selected.  Prevents flickering between tiers.
         # Example: dip = 30.1 pts, tolerance=3  ->  still uses 30.0 tier
         #          (would need >= 33.1 to jump to 40.0).
-        sl_level_tolerance=3,
+        sl_level_tolerance=params.sl_level_tolerance,
 
         # ------------------------------------------------------------------
         # ENTRY DISTANCE LIMIT
@@ -74,7 +80,7 @@ def get_prod_strategy_numbers(rr_ratio: float,
         # crosses after a big initial move.
         # Example: line=100, max_entry_distance=80.0 -> entry allowed up to 180.
         #          With the old default (max(sl_levels)=40) entry would die at 140.
-        max_entry_distance=50.0,
+        max_entry_distance=params.max_entry_distance,
 
         # ------------------------------------------------------------------
         # CROSS DEPTH
@@ -83,7 +89,7 @@ def get_prod_strategy_numbers(rr_ratio: float,
         # valid.  Prevents entering on phantom touches with no real liquidity.
         # Example: line=100, wick low=99.5 -> depth=0.5.  If min_cross_depth=5.0,
         #          this touch is ignored (not enough liquidity taken).
-        min_cross_depth=5.0,
+        min_cross_depth=params.min_cross_depth,
 
         # ------------------------------------------------------------------
         # RISK / REWARD & ACCOUNT
@@ -95,7 +101,7 @@ def get_prod_strategy_numbers(rr_ratio: float,
 
         # Dollar value per point.  MNQ = $2 per point.
         # Used for position-size and PnL calculations.
-        point_value=2.0,
+        point_value=params.point_value,
 
         # Starting account balance in dollars.  Used when calculating risk-%
         # based position sizing.
@@ -111,6 +117,10 @@ def get_prod_strategy_numbers(rr_ratio: float,
 
         # NinjaTrader account configurations for multi-account execution.
         account_configs=account_configs or [],
+
+        # Trade-close classification tolerances (points, per instrument).
+        be_threshold_points=params.be_threshold_points,
+        sl_tp_tolerance=params.sl_tp_tolerance,
     )
 
 
@@ -124,10 +134,21 @@ def get_prod_strategy_options(max_bounce: float,
                                 skip_rollover_days: bool,
                                 reentry_only: bool,
                                 line_removal_mode: LineRemovalMode,
-                                max_reentry_attempts: int) -> StrategyOptions:
+                                max_reentry_attempts: int,
+                                trading_windows: list[TradingWindow] | None = None,
+                                symbol: str = "MNQ") -> StrategyOptions:
     """
     High-level strategy behaviour: filters, triggers, breakeven, re-entry.
+
+    :param trading_windows: session windows, each with its own open-trades limit
+        and max number of INITIAL entries (re-entries never consume window slots;
+        each initial trade keeps its own re-entry chain). Defaults to the
+        instrument's catalog windows (``instrument_params``).
+    :param symbol: instrument whose point-denominated trigger/re-entry values
+        (velocity thresholds, post-cross distance, re-entry threshold) to use.
     """
+    params = get_instrument_params(symbol)
+    windows = trading_windows or list(params.trading_windows)
     return StrategyOptions(
         # When to remove a line from active tracking.
         # ON_EVALUATE = remove after processing a bar (default).
@@ -136,22 +157,23 @@ def get_prod_strategy_options(max_bounce: float,
         # ------------------------------------------------------------------
         # ENTRY FILTERS  (all must pass for a trade to be considered)
         # ------------------------------------------------------------------
+        # ORDER MATTERS: min_cross_depth is a "hold" filter — when it blocks,
+        # the line stays alive so depth can accumulate and the trigger can
+        # re-fire later.  It must run BEFORE the hard-block trading-windows
+        # filter, otherwise a pre-session trigger with shallow depth would
+        # kill the line instead of holding it (legacy behavior: time_range
+        # ran after min_cross_depth for the same reason).
         entry_filters=[
-            # Allow only 1 open trade at a time per line direction.
-            open_trades_limit_filter(1),
-
             # Enforce min_cross_depth (see StrategyNumbers above).
             min_cross_depth_filter(min_cross_depth),
 
             # Enforce max_bounce (see StrategyNumbers above).
             max_bounce_filter(max_bounce),
 
-            # Only trade between 08:00 and 15:30 America/New_York.
+            # Only trade inside the configured windows; each window caps
+            # concurrent open trades and initial entries (re-entries excluded).
             # (Auto-detects timezone from pair, e.g. MNQ -> NY).
-            time_range_filter("08:00", "15:30"),
-
-            # Hard cap: max 1 trade per day.
-            daily_trades_limit_filter(max_trades_per_day=1),
+            trading_windows_filter(windows),
 
             # Skip days near futures rollover (if enabled).
             rollover_filter(enabled=skip_rollover_days),
@@ -171,10 +193,10 @@ def get_prod_strategy_options(max_bounce: float,
             #   - Sum of max(high)-min(low) per chunk, divided by 30
             #   - Result = avg bar-range per minute (pts/min)
             #
-            # Regime thresholds:
-            #   abs_vel > fast_threshold(28.0)     -> FAST
-            #   abs_vel > slow_threshold(15.0)     -> MODERATE
-            #   abs_vel <= slow_threshold(15.0)    -> SLOW
+            # Regime thresholds (per-instrument, pts/min):
+            #   abs_vel > fast_threshold -> FAST
+            #   abs_vel > slow_threshold -> MODERATE
+            #   abs_vel <= slow_threshold -> SLOW
             #
             # Regime requirements:
             #   FAST     -> need 2 TSI crosses on 5m  (double confirmation)
@@ -185,15 +207,15 @@ def get_prod_strategy_options(max_bounce: float,
             # re-evaluated, so the same requirement applies for the entire
             # lifetime of the line.
             make_velocity_adaptive_tsi_trigger(VelocityTriggerConfig(
-                fast_threshold=28.0,    # pts/min.  Above this = FAST regime.
-                slow_threshold=15.0,    # pts/min.  Between 15-28 = MODERATE.
+                fast_threshold=params.fast_threshold,    # pts/min. Above this = FAST regime.
+                slow_threshold=params.slow_threshold,    # pts/min. Between slow-fast = MODERATE.
                 lookback=30,            # number of 1m bars for volatility calc
                 fast=    [TsiCrossCondition("5m", 2)],   # 2x 5m crosses
                 moderate=[TsiCrossCondition("1m", 1), TsiCrossCondition("3m", 1)],   # 1x 1m cross
                 slow=    [TsiCrossCondition("1m", 1)],   # 1x 1m cross
-                # For double-cross setups: if price moves >80 pts from the
-                # line AFTER the first cross, invalidate the line entirely.
-                post_cross1_max_dist=80.0,
+                # For double-cross setups: if price moves more than this many
+                # points from the line AFTER the first cross, invalidate the line.
+                post_cross1_max_dist=params.post_cross1_max_dist,
             )),
 
             # ----------------------------------------------------------------
@@ -236,10 +258,10 @@ def get_prod_strategy_options(max_bounce: float,
         reentry_after_sl=True,
 
         # Cancel re-entry opportunity if price moves this many points PAST
-        # the line (in the trade direction) after the SL.
+        # the line (in the trade direction) after the SL.  Per instrument.
         # Example: line=100, long SL at 80.  Price drops to 5 ->
         #          95 pts past line.  95 > reentry_threshold(90) -> no re-entry.
-        reentry_threshold=90.0,
+        reentry_threshold=params.reentry_threshold,
 
         # If True, skip the FIRST touch/trigger entirely and ONLY trade
         # re-entries after a stop-loss.

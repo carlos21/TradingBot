@@ -70,6 +70,8 @@ class TradeCloseUseCase:
         fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
         broker_spread: float = 0.0,
         result_type_classifier: ResultTypeClassifier | None = None,
+        be_threshold_points: float = 2.0,
+        sl_tp_tolerance: float = 0.5,
     ):
         self._repo = trade_repository
         self._executor = trade_executor
@@ -79,7 +81,12 @@ class TradeCloseUseCase:
         self._point_value = point_value
         self._fee_per_rt = fee_per_rt
         self._broker_spread = broker_spread
-        self._classifier = result_type_classifier or DefaultResultTypeClassifier()
+        self._be_threshold_points = be_threshold_points
+        self._sl_tp_tolerance = sl_tp_tolerance
+        self._classifier = result_type_classifier or DefaultResultTypeClassifier(
+            be_threshold_points=be_threshold_points,
+            sl_tp_tolerance=sl_tp_tolerance,
+        )
 
     def execute(
         self,
@@ -137,6 +144,8 @@ class TradeCloseUseCase:
                 contracts=contracts,
                 point_value=self._point_value,
                 fee_per_rt=self._fee_per_rt,
+                be_threshold_points=self._be_threshold_points,
+                sl_tp_tolerance=self._sl_tp_tolerance,
             )
 
         # Spread adjustment (only when Python is calculating; broker value already includes it)

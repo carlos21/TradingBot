@@ -96,6 +96,8 @@ class BaseLiquidityStrategy:
         use_fractional_lots: bool = False,
         fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT,
         broker_spread: float = 0.0,
+        be_threshold_points: float = 2.0,
+        sl_tp_tolerance: float = 0.5,
         trade_logger=None,
         analytics: AnalyticsReporter = None,
         trigger_state_repo: LineTriggerStateRepository = None,
@@ -115,6 +117,8 @@ class BaseLiquidityStrategy:
         self.use_fractional_lots = use_fractional_lots
         self.fee_per_rt = fee_per_rt
         self.broker_spread = broker_spread
+        self.be_threshold_points = be_threshold_points
+        self.sl_tp_tolerance = sl_tp_tolerance
         self.point_value = float(point_value)
         self.account_balance = float(account_balance)
         self.risk_per_trade = risk_per_trade
@@ -145,6 +149,8 @@ class BaseLiquidityStrategy:
             point_value=point_value,
             fee_per_rt=fee_per_rt,
             broker_spread=broker_spread,
+            be_threshold_points=be_threshold_points,
+            sl_tp_tolerance=sl_tp_tolerance,
             account_balance=account_balance,
             risk_per_trade=risk_per_trade,
             risk_pct_per_trade=risk_pct_per_trade,
@@ -528,7 +534,7 @@ class BaseLiquidityStrategy:
                         ctx = EntryContext(
                             strategy=self, line_id=None, direction=Direction.LONG, level=level,
                             bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
-                            extreme=opp["extreme_excursion"], cross_depth=0.0,
+                            extreme=opp["extreme_excursion"], cross_depth=0.0, is_reentry=True,
                         )
                         allow, reason, _ = self._filters_allow_reentry(ctx)
                         if not allow:
@@ -561,7 +567,7 @@ class BaseLiquidityStrategy:
                         ctx = EntryContext(
                             strategy=self, line_id=None, direction=Direction.SHORT, level=level,
                             bar=bar, close=bar["close"], low=bar["low"], high=bar["high"],
-                            extreme=opp["extreme_excursion"], cross_depth=0.0,
+                            extreme=opp["extreme_excursion"], cross_depth=0.0, is_reentry=True,
                         )
                         allow, reason, _ = self._filters_allow_reentry(ctx)
                         if not allow:
@@ -684,9 +690,11 @@ class BaseLiquidityStrategy:
         - time_range_filter (don't enter outside trading hours)
         - open_trades_limit_filter (don't enter if max open trades reached)
         - rollover_filter (don't enter during rollover)
+        - trading_windows_filter (window hours + open-trades limit still apply;
+          the per-window trade count is skipped via ctx.is_reentry)
         Filters like daily_trades_limit, min_cross_depth, and max_bounce
         are bypassed because they don't apply to re-entry context."""
-        reentry_filter_names = {"time_range", "open_trades_limit", "rollover"}
+        reentry_filter_names = {"time_range", "open_trades_limit", "rollover", "trading_windows"}
         for f in self.entry_filters:
             if f.__name__ not in reentry_filter_names:
                 continue
@@ -858,6 +866,8 @@ class BaseLiquidityStrategy:
                         contracts=contracts,
                         point_value=self.point_value,
                         fee_per_rt=self.fee_per_rt,
+                        be_threshold_points=self.be_threshold_points,
+                        sl_tp_tolerance=self.sl_tp_tolerance,
                     )
                     if self.broker_spread > 0:
                         spread_cost = contracts * self.broker_spread * self.point_value

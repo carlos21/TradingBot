@@ -49,7 +49,7 @@ class TestStrategyNumbers:
 
     def test_field_count(self):
         # Guard against silently added fields
-        assert len(fields(StrategyNumbers)) == 15
+        assert len(fields(StrategyNumbers)) == 17
 
 
 class TestCandleConfig:

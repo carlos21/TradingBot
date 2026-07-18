@@ -30,6 +30,8 @@ class StrategyNumbers:
     risk_pct_per_trade: float | None = None  # % of account to risk per trade
     max_entry_distance: float | None = None  # max pts from line for entry (defaults to max sl_levels)
     account_configs: list = field(default_factory=list)  # list[AccountConfig]
+    be_threshold_points: float = 2.0  # exit within this many pts of entry is BE
+    sl_tp_tolerance: float = 0.5      # pts tolerance for SL/TP hit detection
 
 @dataclass
 class CandleConfig:

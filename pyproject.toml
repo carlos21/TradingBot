@@ -26,12 +26,12 @@ sentry-sdk = {version = "^2.0", extras = ["flask"]}
 pyzmq = "^26.0"
 eventlet = "^0.39"
 cryptography = "^47.0.0"
-psycopg = {version = "^3.2.0", optional = true}
+psycopg = "^3.2.0"
 pymysql = {version = "^1.1.0", optional = true}
 
 
 [tool.poetry.extras]
-database = ["psycopg", "pymysql"]
+database = ["pymysql"]
 
 
 [tool.poetry.group.dev.dependencies]
