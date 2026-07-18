@@ -8,15 +8,20 @@ export class TradeCalendar {
     this.trades = [];
     this.months = [];
     this.currentMonthIndex = 0;
+    this.selectedPair = null;
     this.selectedAccount = '';
     this.onTradeClick = null;
+  }
+
+  setPair(pair) {
+    this.selectedPair = pair;
   }
 
   async load() {
     try {
       console.log('[TradeCalendar] Loading trades...');
       // Load all trades (no pagination for calendar view), filtered by account
-      const result = await this.api.getTrades(10000, 0, this.selectedAccount);
+      const result = await this.api.getTrades(this.selectedPair, 10000, 0, this.selectedAccount);
       this.trades = result.trades || [];
       console.log(`[TradeCalendar] Loaded ${this.trades.length} trades`);
 

@@ -9,15 +9,21 @@ export class TradeHistory {
     this.total = 0;
     this.limit = 50;
     this.offset = 0;
+    this.selectedPair = null;
     this.selectedAccount = '';
     this.selectedTradeIds = new Set();
     this.onTradeClick = null;
   }
 
+  setPair(pair) {
+    this.selectedPair = pair;
+    this.offset = 0;
+  }
+
   async load() {
     try {
       console.log('[TradeHistory] Loading trades...');
-      const result = await this.api.getTrades(this.limit, this.offset, this.selectedAccount);
+      const result = await this.api.getTrades(this.selectedPair, this.limit, this.offset, this.selectedAccount);
       console.log('[TradeHistory] Got result:', result);
       this.trades = result.trades || [];
       this.total = result.total || 0;
@@ -37,7 +43,7 @@ export class TradeHistory {
 
   async loadAccounts() {
     try {
-      const result = await this.api.getTradeAccounts();
+      const result = await this.api.getTradeAccounts(this.selectedPair);
       const accounts = result.accounts || [];
       const select = document.getElementById('trades-account-filter');
       if (!select) return;

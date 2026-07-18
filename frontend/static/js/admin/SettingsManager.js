@@ -71,7 +71,7 @@ export class SettingsManager {
       const n = data.network || {};
       this.instruments = Array.isArray(t.instruments) ? t.instruments : [];
       this.renderInstruments();
-      this.populateAccountInstrumentOptions();
+      this.renderAccountInstrumentChips();
       this.el.sessionEnd.value = t.session_end || '16:58';
       this.el.historyHours.value = t.history_hours || '';
       // Risk/RR are now per-account only
@@ -136,20 +136,54 @@ export class SettingsManager {
     }
   }
 
-  populateAccountInstrumentOptions() {
-    const select = this.el.accountInstruments;
-    if (!select) return;
-    const current = Array.from(select.selectedOptions).map(o => o.value);
-    select.innerHTML = '';
+  renderAccountInstrumentChips(selectedSymbols = []) {
+    const container = this.el.accountInstruments;
+    if (!container) return;
+    container.innerHTML = '';
+    const selectedSet = new Set(selectedSymbols);
+
     for (const inst of this.instruments) {
-      const opt = document.createElement('option');
-      opt.value = inst.symbol;
-      opt.textContent = `${inst.symbol}${inst.full_name ? ` — ${inst.full_name}` : ''}`;
-      if (current.includes(inst.symbol)) {
-        opt.selected = true;
-      }
-      select.appendChild(opt);
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.dataset.symbol = inst.symbol;
+      const isSelected = selectedSet.has(inst.symbol);
+      chip.className = this._instrumentChipClass(isSelected);
+      chip.innerHTML = `
+        <span>${this.escapeHtml(inst.symbol)}</span>
+        ${isSelected ? '<svg class="h-3.5 w-3.5 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
+      `;
+      chip.addEventListener('click', () => this._toggleInstrumentChip(chip));
+      container.appendChild(chip);
     }
+
+    if (this.instruments.length === 0) {
+      container.innerHTML = '<span class="text-xs text-slate-500">No instruments configured. Add instruments below.</span>';
+    }
+  }
+
+  _instrumentChipClass(selected) {
+    const base = 'inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium transition-colors cursor-pointer select-none border';
+    return selected
+      ? `${base} bg-accent-600/20 border-accent-500 text-accent-300 ring-1 ring-accent-500/50`
+      : `${base} bg-surface-700 border-surface-600 text-slate-300 hover:bg-surface-600 hover:border-surface-500`;
+  }
+
+  _toggleInstrumentChip(chip) {
+    const selected = chip.classList.contains('bg-accent-600/20');
+    chip.className = this._instrumentChipClass(!selected);
+    chip.innerHTML = `
+      <span>${chip.querySelector('span').textContent}</span>
+      ${!selected ? '<svg class="h-3.5 w-3.5 ml-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>' : ''}
+    `;
+  }
+
+  getSelectedInstrumentSymbols() {
+    const container = this.el.accountInstruments;
+    if (!container) return [];
+    const chips = container.querySelectorAll('[data-symbol]');
+    return Array.from(chips)
+      .filter(chip => chip.classList.contains('bg-accent-600/20'))
+      .map(chip => chip.dataset.symbol);
   }
 
   addInstrument() {
@@ -304,7 +338,7 @@ export class SettingsManager {
     const riskPct = parseFloat(this.el.accountRiskPct.value) || null;
     const rr = parseFloat(this.el.accountRr.value) || null;
     const liveEnabled = this.el.accountLive.checked;
-    const instrumentSymbols = Array.from(this.el.accountInstruments.selectedOptions).map(o => o.value);
+    const instrumentSymbols = this.getSelectedInstrumentSymbols();
     if (!name) {
       this.showStatus('Account name is required', 'error');
       return;
@@ -328,9 +362,7 @@ export class SettingsManager {
     this.el.accountRiskPct.value = '';
     this.el.accountRr.value = '';
     this.el.accountLive.checked = false;
-    if (this.el.accountInstruments) {
-      Array.from(this.el.accountInstruments.options).forEach(o => o.selected = false);
-    }
+    this.renderAccountInstrumentChips([]);
     this.editingAccountName = null;
     this.resetAddAccountBtn();
   }
@@ -371,11 +403,8 @@ export class SettingsManager {
     this.el.accountRiskPct.value = acct.risk_pct ?? '';
     this.el.accountRr.value = acct.rr_ratio ?? '';
     this.el.accountLive.checked = acct.live_enabled === true;
-    this.populateAccountInstrumentOptions();
     const selected = Array.isArray(acct.instrument_symbols) ? acct.instrument_symbols : [];
-    Array.from(this.el.accountInstruments.options).forEach(o => {
-      o.selected = selected.includes(o.value);
-    });
+    this.renderAccountInstrumentChips(selected);
     this.setEditAccountBtn();
   }
 

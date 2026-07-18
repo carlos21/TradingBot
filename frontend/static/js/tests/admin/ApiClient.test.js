@@ -9,23 +9,24 @@ describe('ApiClient', () => {
   beforeEach(() => {
     http = new FakeHttpClient();
     api = new ApiClient({ httpClient: http });
-    api.setPair('MNQ');
   });
 
   describe('init', () => {
-    it('fetches pair and stores it', async () => {
-      http.setResponse('GET', '/api/pair', { pair: 'ES' });
+    it('fetches config and stores default pair and instruments', async () => {
+      http.setResponse('GET', '/api/config', {
+        pair: 'ES',
+        instruments: [{ symbol: 'ES' }, { symbol: 'MNQ' }],
+      });
       const pair = await api.init();
       expect(pair).toBe('ES');
-      expect(api.pair).toBe('ES');
       expect(api.defaultPair).toBe('ES');
+      expect(api.instruments.map(i => i.symbol)).toEqual(['ES', 'MNQ']);
     });
-  });
 
-  describe('setPair', () => {
-    it('updates the active pair', () => {
-      api.setPair('NQ');
-      expect(api.pair).toBe('NQ');
+    it('defaults to an empty instrument list when config has none', async () => {
+      http.setResponse('GET', '/api/config', { pair: 'MNQ' });
+      await api.init();
+      expect(api.instruments).toEqual([]);
     });
   });
 
@@ -145,25 +146,25 @@ describe('ApiClient', () => {
   describe('admin stats and trades', () => {
     it('getStats includes pair query', async () => {
       http.setResponse('GET', '/api/admin/stats?pair=MNQ', { stats: {} });
-      const result = await api.getStats();
+      const result = await api.getStats('MNQ');
       expect(result).toEqual({ stats: {} });
     });
 
     it('getTrades builds query with defaults', async () => {
       http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=50&offset=0', { trades: [], total: 0 });
-      const result = await api.getTrades();
+      const result = await api.getTrades('MNQ');
       expect(result).toEqual({ trades: [], total: 0 });
     });
 
     it('getTrades builds query with account filter', async () => {
       http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=10&offset=20&account=foo%20bar', { trades: [], total: 0 });
-      const result = await api.getTrades(10, 20, 'foo bar');
+      const result = await api.getTrades('MNQ', 10, 20, 'foo bar');
       expect(result).toEqual({ trades: [], total: 0 });
     });
 
     it('getTradeAccounts includes pair query', async () => {
       http.setResponse('GET', '/api/admin/trade-accounts?pair=MNQ', { accounts: [] });
-      const result = await api.getTradeAccounts();
+      const result = await api.getTradeAccounts('MNQ');
       expect(result).toEqual({ accounts: [] });
     });
 
@@ -181,7 +182,7 @@ describe('ApiClient', () => {
 
     it('getAnalytics includes pair query', async () => {
       http.setResponse('GET', '/api/admin/analytics?pair=MNQ', { data: [] });
-      const result = await api.getAnalytics();
+      const result = await api.getAnalytics('MNQ');
       expect(result).toEqual({ data: [] });
     });
   });
@@ -189,13 +190,13 @@ describe('ApiClient', () => {
   describe('lines', () => {
     it('getLines includes pair query', async () => {
       http.setResponse('GET', '/api/lines?pair=MNQ', []);
-      const result = await api.getLines();
+      const result = await api.getLines('MNQ');
       expect(result).toEqual([]);
     });
 
     it('addLine posts pair and price', async () => {
       http.setResponse('POST', '/api/lines', { id: 1 });
-      const result = await api.addLine(4500);
+      const result = await api.addLine('MNQ', 4500);
       expect(result).toEqual({ id: 1 });
       expect(http.requests).toContainEqual({
         method: 'POST',
@@ -221,7 +222,7 @@ describe('ApiClient', () => {
   describe('decisions', () => {
     it('getDecisionLogs builds query with filters', async () => {
       http.setResponse('GET', '/api/admin/decisions?pair=MNQ&limit=100&event=ENTRY&line_id=abc', { logs: [] });
-      const result = await api.getDecisionLogs('ENTRY', 'abc', 100);
+      const result = await api.getDecisionLogs('MNQ', 'ENTRY', 'abc', 100);
       expect(result).toEqual({ logs: [] });
     });
 
@@ -235,7 +236,7 @@ describe('ApiClient', () => {
   describe('logs', () => {
     it('getRecentLogs builds query', async () => {
       http.setResponse('GET', '/api/admin/logs/recent?pair=MNQ&limit=100&offset=10', { logs: [] });
-      const result = await api.getRecentLogs(100, 10);
+      const result = await api.getRecentLogs('MNQ', 100, 10);
       expect(result).toEqual({ logs: [] });
     });
   });

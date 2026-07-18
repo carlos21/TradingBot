@@ -6,6 +6,7 @@ export class LineManager {
   constructor(apiClient) {
     this.api = apiClient;
     this.lines = [];
+    this.selectedPair = null;
     this.modal = document.getElementById('line-modal');
     this.form = document.getElementById('line-form');
     this.modalTitle = document.getElementById('line-modal-title');
@@ -13,6 +14,10 @@ export class LineManager {
     this.priceInput = document.getElementById('line-price');
 
     this.setupEventListeners();
+  }
+
+  setPair(pair) {
+    this.selectedPair = pair;
   }
 
   setupEventListeners() {
@@ -40,7 +45,7 @@ export class LineManager {
 
   async load() {
     try {
-      this.lines = await this.api.getLines();
+      this.lines = await this.api.getLines(this.selectedPair);
       this.render();
     } catch (error) {
       console.error('Failed to load lines:', error);
@@ -111,7 +116,7 @@ export class LineManager {
         await this.api.updateLine(lineId, price);
       } else {
         // Create new
-        await this.api.addLine(price);
+        await this.api.addLine(this.selectedPair, price);
       }
       this.closeModal();
       await this.load();

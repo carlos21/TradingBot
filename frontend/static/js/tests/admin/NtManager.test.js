@@ -27,7 +27,6 @@ function buildApi() {
     credentials: { username: '', password: '', stored_usernames: [] },
   });
   const api = new ApiClient({ httpClient: http });
-  api.setPair('MNQ');
   return { http, api };
 }
 

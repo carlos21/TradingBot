@@ -29,7 +29,7 @@ function setupDom() {
     <input id="settings-account-riskpct" />
     <input id="settings-account-rr" />
     <input id="settings-account-live" type="checkbox" />
-    <select id="settings-account-instruments" multiple></select>
+    <div id="settings-account-instruments"></div>
     <input id="settings-nt-user" list="settings-nt-user-list" />
     <datalist id="settings-nt-user-list"></datalist>
     <input id="settings-nt-pass" type="password" />
@@ -82,13 +82,23 @@ function sampleSettings() {
 function buildApi() {
   const http = new FakeHttpClient();
   const api = new ApiClient({ httpClient: http });
-  api.setPair('MNQ');
   return { http, api };
 }
 
 function bindManager(manager) {
   manager.bindElements();
   manager.bindEvents();
+}
+
+function selectInstrumentChip(symbol) {
+  const chip = document.querySelector(`#settings-account-instruments [data-symbol="${symbol}"]`);
+  if (chip) chip.click();
+}
+
+function getSelectedInstrumentChips() {
+  return Array.from(document.querySelectorAll('#settings-account-instruments [data-symbol]'))
+    .filter(chip => chip.classList.contains('bg-accent-600/20'))
+    .map(chip => chip.dataset.symbol);
 }
 
 describe('SettingsManager', () => {
@@ -262,7 +272,7 @@ describe('SettingsManager', () => {
     const manager = new SettingsManager(api);
     bindManager(manager);
     manager.instruments = sampleInstruments();
-    manager.populateAccountInstrumentOptions();
+    manager.renderAccountInstrumentChips();
     manager.accounts = [];
 
     document.getElementById('settings-account-name').value = 'acc1';
@@ -271,8 +281,8 @@ describe('SettingsManager', () => {
     document.getElementById('settings-account-rr').value = '2';
     document.getElementById('settings-account-live').checked = true;
 
-    const select = document.getElementById('settings-account-instruments');
-    Array.from(select.options).forEach(o => { o.selected = o.value === 'MNQ' || o.value === 'ES'; });
+    selectInstrumentChip('MNQ');
+    selectInstrumentChip('ES');
 
     manager.addAccount();
 
@@ -303,15 +313,14 @@ describe('SettingsManager', () => {
     const manager = new SettingsManager(api);
     bindManager(manager);
     manager.instruments = sampleInstruments();
-    manager.populateAccountInstrumentOptions();
+    manager.renderAccountInstrumentChips();
     manager.accounts = [{ name: 'acc1', risk_usd: 50, risk_pct: 0.5, rr_ratio: 1, live_enabled: false, instrument_symbols: [] }];
 
     document.getElementById('settings-account-name').value = 'acc1';
     document.getElementById('settings-account-risk').value = '100';
     document.getElementById('settings-account-live').checked = true;
 
-    const select = document.getElementById('settings-account-instruments');
-    Array.from(select.options).forEach(o => { o.selected = o.value === 'ES'; });
+    selectInstrumentChip('ES');
 
     manager.addAccount();
 
@@ -331,11 +340,28 @@ describe('SettingsManager', () => {
     manager.editAccount('acc1');
 
     expect(document.getElementById('settings-account-name').value).toBe('acc1');
-    const select = document.getElementById('settings-account-instruments');
-    const selected = Array.from(select.selectedOptions).map(o => o.value);
-    expect(selected).toEqual(['MNQ']);
+    expect(getSelectedInstrumentChips()).toEqual(['MNQ']);
     expect(document.getElementById('settings-account-add').textContent).toContain('Update Account');
     expect(document.getElementById('settings-account-cancel')).not.toBeNull();
+  });
+
+  it('editAccount allows unassigning an instrument', () => {
+    const { api } = buildApi();
+    const manager = new SettingsManager(api);
+    bindManager(manager);
+    manager.instruments = sampleInstruments();
+    manager.accounts = [{ name: 'acc1', risk_usd: 100, risk_pct: 1, rr_ratio: 2, live_enabled: true, instrument_symbols: ['MNQ', 'ES'] }];
+    manager.renderAccounts();
+
+    manager.editAccount('acc1');
+    expect(getSelectedInstrumentChips()).toEqual(['MNQ', 'ES']);
+
+    selectInstrumentChip('MNQ');
+    expect(getSelectedInstrumentChips()).toEqual(['ES']);
+
+    manager.addAccount();
+
+    expect(manager.accounts[0].instrument_symbols).toEqual(['ES']);
   });
 
   it('cancelEditAccount clears form', () => {

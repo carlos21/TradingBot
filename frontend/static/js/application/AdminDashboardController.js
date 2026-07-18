@@ -8,6 +8,7 @@ import { SettingsManager } from '../admin/SettingsManager.js';
 import { NtManager } from '../admin/NtManager.js';
 import { MtManager } from '../admin/MtManager.js';
 import { LogPanel } from '../admin/LogPanel.js';
+import { PairSelector } from '../admin/PairSelector.js';
 
 const CARD = 'bg-surface-800 border border-surface-700 rounded-xl p-5 shadow-lg';
 const TEXT_MUTED = 'text-slate-400';
@@ -40,7 +41,9 @@ export class AdminDashboardController {
     this.logPanel = null;
 
     this.currentTab = 'overview';
-    this.analyticsData = null;
+    this.pairSelectors = {};
+    this.overviewAnalytics = null;
+    this.analyticsCache = null; // { pair, data } for the analytics tab
     this.statsData = null;
     this.currentTradeView = 'table'; // 'table' or 'calendar'
   }
@@ -51,13 +54,17 @@ export class AdminDashboardController {
       const debugEl = this.dom.getElementById('js-debug');
       if (debugEl) debugEl.textContent = 'JS Loaded ✓';
 
-      // Initialize API and get pair
+      // Initialize API and get the server default pair
       console.log('[AdminDashboardController] Starting init...');
-      const pair = await this.api.init();
-      console.log(`[AdminDashboardController] Got pair: ${pair}`);
+      const defaultPair = await this.api.init();
+      console.log(`[AdminDashboardController] Got pair: ${defaultPair}`);
 
-      // Set up pair selector
-      this.setupPairSelector();
+      // Set up per-tab pair selectors and propagate the default pair
+      this.setupPairSelectors(defaultPair);
+      this.tradeHistory.setPair(defaultPair);
+      this.tradeCalendar.setPair(defaultPair);
+      this.lineManager.setPair(defaultPair);
+      this.decisionLogs.setPair(defaultPair);
 
       // Set up navigation
       this.setupNavigation();
@@ -91,7 +98,7 @@ export class AdminDashboardController {
 
       // Initialize log panel (needs socket and api)
       if (this.dom.getElementById('logs-tab') && this.socket) {
-        this.logPanel = new LogPanel(this.socket, this.api);
+        this.logPanel = new LogPanel(this.socket, this.api, this.getTabPair('logs'));
       }
 
       // Determine initial tab from URL path or legacy server-rendered attribute
@@ -119,23 +126,60 @@ export class AdminDashboardController {
     }
   }
 
-  setupPairSelector() {
-    const selector = this.dom.getElementById('pairSelector');
-    if (!selector) return;
+  setupPairSelectors(defaultPair) {
+    // Each pair-consuming tab gets its own selector; changing one only
+    // affects its own tab. Options come from the configured instruments.
+    const pairs = (this.api.instruments || []).map(i => i.symbol);
+    const definitions = {
+      overview: {
+        elementId: 'overview-pair-selector',
+        onChange: () => this.loadOverviewData(),
+      },
+      trades: {
+        elementId: 'trades-pair-selector',
+        onChange: (pair) => {
+          this.tradeHistory.setPair(pair);
+          this.tradeCalendar.setPair(pair);
+          this.resetAccountFilter();
+          this.loadTradeAccounts();
+          this.loadTradeData();
+        },
+      },
+      lines: {
+        elementId: 'lines-pair-selector',
+        onChange: (pair) => {
+          this.lineManager.setPair(pair);
+          this.lineManager.load();
+        },
+      },
+      analytics: {
+        elementId: 'analytics-pair-selector',
+        onChange: () => this.loadAnalyticsData(true),
+      },
+      decisions: {
+        elementId: 'decisions-pair-selector',
+        onChange: (pair) => {
+          this.decisionLogs.setPair(pair);
+          this.decisionLogs.load();
+        },
+      },
+      logs: {
+        elementId: 'logs-pair-selector',
+        onChange: (pair) => {
+          if (this.logPanel) this.logPanel.setPair(pair);
+        },
+      },
+    };
 
-    // Set current pair
-    selector.value = this.api.pair;
-
-    this.dom.addEventListener(selector, 'change', (e) => {
-      const newPair = e.target.value;
-      console.log(`[AdminDashboardController] Pair changed to: ${newPair}`);
-      this.api.setPair(newPair);
-      // Reset account filter for the new pair
-      this.resetAccountFilter();
-      this.loadTradeAccounts();
-      // Reload current tab data
-      this.switchTab(this.currentTab);
+    Object.entries(definitions).forEach(([tab, { elementId, onChange }]) => {
+      const element = this.dom.getElementById(elementId);
+      if (!element) return;
+      this.pairSelectors[tab] = new PairSelector({ element, pairs, selected: defaultPair, onChange });
     });
+  }
+
+  getTabPair(tab) {
+    return this.pairSelectors[tab]?.value || this.api.defaultPair;
   }
 
   setupNavigation() {
@@ -280,17 +324,18 @@ export class AdminDashboardController {
 
   async loadOverviewData() {
     try {
+      const pair = this.getTabPair('overview');
       console.log('[AdminDashboardController] Loading overview data...');
       // Load stats
-      const stats = await this.api.getStats();
+      const stats = await this.api.getStats(pair);
       console.log('[AdminDashboardController] Got stats:', stats);
       this.statsData = stats;
       this.renderStats(stats);
 
       // Load analytics for charts
-      const analytics = await this.api.getAnalytics();
+      const analytics = await this.api.getAnalytics(pair);
       console.log('[AdminDashboardController] Got analytics:', analytics);
-      this.analyticsData = analytics;
+      this.overviewAnalytics = analytics;
 
       // Render overview charts
       this.charts.renderEquityCurve('overview-equity-chart', analytics.equity_curve);
@@ -301,13 +346,14 @@ export class AdminDashboardController {
     }
   }
 
-  async loadAnalyticsData() {
+  async loadAnalyticsData(force = false) {
     try {
-      if (!this.analyticsData) {
-        this.analyticsData = await this.api.getAnalytics();
+      const pair = this.getTabPair('analytics');
+      if (force || !this.analyticsCache || this.analyticsCache.pair !== pair) {
+        this.analyticsCache = { pair, data: await this.api.getAnalytics(pair) };
       }
 
-      const data = this.analyticsData;
+      const data = this.analyticsCache.data;
 
       this.charts.renderTradesByHour('analytics-hour-chart', data.trades_by_hour);
       this.charts.renderTradesByDay('analytics-day-chart', data.trades_by_day);

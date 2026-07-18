@@ -22,7 +22,6 @@ function setupDom() {
 function buildApi() {
   const http = new FakeHttpClient();
   const api = new ApiClient({ httpClient: http });
-  api.setPair('MNQ');
   return { http, api };
 }
 
@@ -48,6 +47,7 @@ describe('LineManager', () => {
     ]);
 
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
     await manager.load();
 
     const tbody = document.getElementById('lines-tbody');
@@ -59,6 +59,7 @@ describe('LineManager', () => {
     http.setResponse('GET', '/api/lines?pair=MNQ', []);
 
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
     await manager.load();
 
     expect(document.getElementById('lines-tbody').children.length).toBe(0);
@@ -67,6 +68,7 @@ describe('LineManager', () => {
   it('add line button opens modal', () => {
     const { api } = buildApi();
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
 
     document.getElementById('add-line-btn').click();
 
@@ -76,6 +78,7 @@ describe('LineManager', () => {
   it('cancel button closes modal', () => {
     const { api } = buildApi();
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
     manager.openModal();
 
     document.getElementById('cancel-line-modal').click();
@@ -86,6 +89,7 @@ describe('LineManager', () => {
   it('backdrop click closes modal', () => {
     const { api } = buildApi();
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
     manager.openModal();
 
     manager.modal.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -99,6 +103,7 @@ describe('LineManager', () => {
     http.setResponse('POST', '/api/lines', { id: 'L1' });
 
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
     manager.openModal();
     document.getElementById('line-price').value = '4500';
 
@@ -121,6 +126,7 @@ describe('LineManager', () => {
     http.setResponse('PUT', '/api/lines/L1', { updated: true });
 
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
     manager.openModal('L1', '4500');
 
     document.getElementById('line-form').dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
@@ -132,6 +138,7 @@ describe('LineManager', () => {
   it('saveLine alerts on invalid price', async () => {
     const { api } = buildApi();
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
     manager.openModal();
     document.getElementById('line-price').value = 'abc';
 
@@ -148,6 +155,7 @@ describe('LineManager', () => {
     http.setResponse('DELETE', '/api/lines/L1', { deleted: true });
 
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
     await manager.load();
 
     document.querySelector('.delete-line-btn').click();
@@ -164,6 +172,7 @@ describe('LineManager', () => {
     ]);
 
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
     await manager.load();
 
     document.querySelector('.delete-line-btn').click();
@@ -178,6 +187,7 @@ describe('LineManager', () => {
     ]);
 
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
     await manager.load();
 
     document.querySelector('.edit-line-btn').click();
@@ -190,6 +200,7 @@ describe('LineManager', () => {
   it('formatDate returns formatted date or dash', () => {
     const { api } = buildApi();
     const manager = new LineManager(api);
+    manager.setPair('MNQ');
     expect(manager.formatDate(null)).toBe('-');
     expect(manager.formatDate('2024-06-15T12:30:00Z')).toContain('Jun');
   });

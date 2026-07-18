@@ -17,7 +17,6 @@ function setupDom() {
 function buildApi() {
   const http = new FakeHttpClient();
   const api = new ApiClient({ httpClient: http });
-  api.setPair('MNQ');
   return { http, api };
 }
 

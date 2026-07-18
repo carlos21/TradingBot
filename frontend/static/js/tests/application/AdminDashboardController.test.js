@@ -27,10 +27,12 @@ function setupAdminDocument() {
   document.body.innerHTML = `
     <div id="admin-root" data-active-tab="overview">
       <span id="js-debug"></span>
-      <select id="pairSelector">
-        <option value="MNQ">MNQ</option>
-        <option value="MES">MES</option>
-      </select>
+      <select id="overview-pair-selector"></select>
+      <select id="trades-pair-selector"></select>
+      <select id="lines-pair-selector"></select>
+      <select id="analytics-pair-selector"></select>
+      <select id="decisions-pair-selector"></select>
+      <select id="logs-pair-selector"></select>
 
       <aside>
         <nav>
@@ -202,7 +204,10 @@ function setupAdminDocument() {
 
 function buildController(doc, win) {
   const http = new FakeHttpClient();
-  http.setResponse('GET', '/api/pair', { pair: 'MNQ' });
+  http.setResponse('GET', '/api/config', {
+    pair: 'MNQ',
+    instruments: [{ symbol: 'MNQ' }, { symbol: 'ES' }],
+  });
   http.setResponse('GET', '/api/admin/stats', {
     total_trades: 10,
     open_trades: 2,
@@ -262,7 +267,6 @@ function buildController(doc, win) {
   http.setResponse('POST', '/api/mt/deploy', { success: true, message: 'Deployed', copied: [], errors: [] });
 
   const api = new ApiClient({ httpClient: http });
-  api.setPair('MNQ');
 
   const socket = new FakeSocket();
   const dom = new FakeDomService(doc, win);
@@ -314,7 +318,9 @@ describe('AdminDashboardController', () => {
     expect(controller.logPanel).toBeNull();
 
     expect(controller.currentTab).toBe('overview');
-    expect(controller.analyticsData).toBeNull();
+    expect(controller.pairSelectors).toEqual({});
+    expect(controller.overviewAnalytics).toBeNull();
+    expect(controller.analyticsCache).toBeNull();
     expect(controller.statsData).toBeNull();
     expect(controller.currentTradeView).toBe('table');
   });
@@ -328,7 +334,15 @@ describe('AdminDashboardController', () => {
     await flushPromises();
 
     expect(doc.getElementById('js-debug').textContent).toBe('JS Loaded ✓');
-    expect(doc.getElementById('pairSelector').value).toBe('MNQ');
+    expect(doc.getElementById('overview-pair-selector').value).toBe('MNQ');
+    // Options come from the configured instruments, not a hardcoded list
+    const overviewOptions = Array.from(doc.getElementById('overview-pair-selector').querySelectorAll('option')).map(o => o.value);
+    expect(overviewOptions).toEqual(['MNQ', 'ES']);
+    expect(doc.getElementById('trades-pair-selector').value).toBe('MNQ');
+    expect(controller.tradeHistory.selectedPair).toBe('MNQ');
+    expect(controller.tradeCalendar.selectedPair).toBe('MNQ');
+    expect(controller.lineManager.selectedPair).toBe('MNQ');
+    expect(controller.decisionLogs.selectedPair).toBe('MNQ');
     expect(controller.currentTab).toBe('overview');
     expect(controller.logPanel).not.toBeNull();
 
@@ -351,7 +365,7 @@ describe('AdminDashboardController', () => {
     expect(notification.alerts).toContain('Failed to initialize admin dashboard. Check console for details.');
   });
 
-  it('setupPairSelector change event updates pair and reloads tab', async () => {
+  it('trades pair selector change updates trades pair and reloads trades data', async () => {
     const { doc, win } = setupAdminDocument();
     const { controller, http } = buildController(doc, win);
 
@@ -359,14 +373,108 @@ describe('AdminDashboardController', () => {
     await flushPromises();
     http.requests.length = 0;
 
-    const selector = doc.getElementById('pairSelector');
-    selector.value = 'MES';
+    const selector = doc.getElementById('trades-pair-selector');
+    selector.value = 'ES';
     selector.dispatchEvent(new Event('change', { bubbles: true }));
     await flushPromises();
 
-    expect(controller.api.pair).toBe('MES');
+    expect(controller.tradeHistory.selectedPair).toBe('ES');
+    expect(controller.tradeCalendar.selectedPair).toBe('ES');
     expect(doc.getElementById('trades-account-filter').value).toBe('');
-    expect(http.requests.some(r => r.method === 'GET' && r.url.includes('/api/admin/trade-accounts'))).toBe(true);
+    expect(http.requests.some(r => r.method === 'GET' && r.url.includes('/api/admin/trade-accounts?pair=ES'))).toBe(true);
+    expect(http.requests.some(r => r.method === 'GET' && r.url.includes('/api/admin/trades?pair=ES'))).toBe(true);
+  });
+
+  it('overview pair selector change reloads only overview data', async () => {
+    const { doc, win } = setupAdminDocument();
+    const { controller, http } = buildController(doc, win);
+
+    await controller.init();
+    await flushPromises();
+    http.requests.length = 0;
+
+    const selector = doc.getElementById('overview-pair-selector');
+    selector.value = 'ES';
+    selector.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushPromises();
+
+    expect(http.requests.some(r => r.method === 'GET' && r.url.includes('/api/admin/stats?pair=ES'))).toBe(true);
+    expect(http.requests.some(r => r.method === 'GET' && r.url.includes('/api/admin/analytics?pair=ES'))).toBe(true);
+    // Other tabs are unaffected
+    expect(controller.tradeHistory.selectedPair).toBe('MNQ');
+    expect(http.requests.some(r => r.method === 'GET' && r.url.includes('/api/admin/trades'))).toBe(false);
+  });
+
+  it('lines pair selector change reloads lines for that pair only', async () => {
+    const { doc, win } = setupAdminDocument();
+    const { controller, http } = buildController(doc, win);
+
+    await controller.init();
+    await flushPromises();
+    http.requests.length = 0;
+
+    const selector = doc.getElementById('lines-pair-selector');
+    selector.value = 'ES';
+    selector.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushPromises();
+
+    expect(controller.lineManager.selectedPair).toBe('ES');
+    expect(http.requests.some(r => r.method === 'GET' && r.url.includes('/api/lines?pair=ES'))).toBe(true);
+  });
+
+  it('decisions pair selector change reloads decision logs for that pair only', async () => {
+    const { doc, win } = setupAdminDocument();
+    const { controller, http } = buildController(doc, win);
+
+    await controller.init();
+    await flushPromises();
+    http.requests.length = 0;
+
+    const selector = doc.getElementById('decisions-pair-selector');
+    selector.value = 'ES';
+    selector.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushPromises();
+
+    expect(controller.decisionLogs.selectedPair).toBe('ES');
+    expect(http.requests.some(r => r.method === 'GET' && r.url.includes('/api/admin/decisions?pair=ES'))).toBe(true);
+  });
+
+  it('analytics pair selector change busts the cache and refetches', async () => {
+    const { doc, win } = setupAdminDocument();
+    const { controller, http } = buildController(doc, win);
+
+    await controller.init();
+    await flushPromises();
+
+    controller.switchTab('analytics', false);
+    await flushPromises();
+    expect(controller.analyticsCache.pair).toBe('MNQ');
+    http.requests.length = 0;
+
+    const selector = doc.getElementById('analytics-pair-selector');
+    selector.value = 'ES';
+    selector.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushPromises();
+
+    expect(controller.analyticsCache.pair).toBe('ES');
+    expect(http.requests.some(r => r.method === 'GET' && r.url.includes('/api/admin/analytics?pair=ES'))).toBe(true);
+  });
+
+  it('logs pair selector change refetches logs for that pair', async () => {
+    const { doc, win } = setupAdminDocument();
+    const { controller, http } = buildController(doc, win);
+
+    await controller.init();
+    await flushPromises();
+    http.requests.length = 0;
+
+    const selector = doc.getElementById('logs-pair-selector');
+    selector.value = 'ES';
+    selector.dispatchEvent(new Event('change', { bubbles: true }));
+    await flushPromises();
+
+    expect(controller.logPanel.selectedPair).toBe('ES');
+    expect(http.requests.some(r => r.method === 'GET' && r.url.includes('/api/admin/logs/recent?pair=ES'))).toBe(true);
   });
 
   it('setupNavigation click events switch tabs with pushState', async () => {
@@ -573,7 +681,7 @@ describe('AdminDashboardController', () => {
     await flushPromises();
 
     expect(controller.statsData).not.toBeNull();
-    expect(controller.analyticsData).not.toBeNull();
+    expect(controller.overviewAnalytics).not.toBeNull();
     expect(http.requests.filter(r => r.method === 'GET' && r.url.startsWith('/api/admin/stats')).length).toBe(1);
     expect(http.requests.filter(r => r.method === 'GET' && r.url.startsWith('/api/admin/analytics')).length).toBe(1);
   });
@@ -590,16 +698,20 @@ describe('AdminDashboardController', () => {
     expect(notification.alerts.some(a => a.includes('Failed to load overview data'))).toBe(true);
   });
 
-  it('loadAnalyticsData uses cached analytics when present', async () => {
+  it('loadAnalyticsData uses cached analytics when pair matches', async () => {
     const { doc, win } = setupAdminDocument();
     const { controller, http } = buildController(doc, win);
 
-    controller.analyticsData = {
-      trades_by_hour: { labels: [], data: [] },
-      trades_by_day: { labels: [], data: [] },
-      monthly_pnl: { labels: [], data: [] },
-      pnl_distribution: { labels: [], data: [] },
-      account_stats: [],
+    controller.pairSelectors.analytics = { value: 'MNQ' };
+    controller.analyticsCache = {
+      pair: 'MNQ',
+      data: {
+        trades_by_hour: { labels: [], data: [] },
+        trades_by_day: { labels: [], data: [] },
+        monthly_pnl: { labels: [], data: [] },
+        pnl_distribution: { labels: [], data: [] },
+        account_stats: [],
+      },
     };
 
     await controller.loadAnalyticsData();
@@ -779,7 +891,7 @@ describe('AdminDashboardController', () => {
     const { doc, win } = setupAdminDocument();
     const { controller, notification } = buildController(doc, win);
 
-    controller.analyticsData = null;
+    controller.analyticsCache = null;
     controller.api.getAnalytics = async () => { throw new Error('analytics fail'); };
 
     await controller.loadAnalyticsData();

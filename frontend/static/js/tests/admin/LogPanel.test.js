@@ -29,7 +29,6 @@ function buildApi() {
     has_more: false,
   });
   const api = new ApiClient({ httpClient: http });
-  api.setPair('MNQ');
   return { http, api };
 }
 
@@ -51,7 +50,7 @@ describe('LogPanel', () => {
     });
 
     const socket = new FakeSocket();
-    new LogPanel(socket, api);
+    new LogPanel(socket, api, 'MNQ');
 
     await new Promise(r => setTimeout(r, 50));
 
@@ -62,7 +61,7 @@ describe('LogPanel', () => {
   it('socket connect/disconnect updates status', () => {
     const { api } = buildApi();
     const socket = new FakeSocket();
-    new LogPanel(socket, api);
+    new LogPanel(socket, api, 'MNQ');
 
     socket.trigger('connect');
     expect(document.getElementById('log-connection-status').textContent).toBe('Connected');
@@ -80,7 +79,7 @@ describe('LogPanel', () => {
     });
 
     const socket = new FakeSocket();
-    const panel = new LogPanel(socket, api);
+    const panel = new LogPanel(socket, api, 'MNQ');
     await new Promise(r => setTimeout(r, 50));
 
     panel.clear();
@@ -92,7 +91,7 @@ describe('LogPanel', () => {
     http.setResponse('GET', '/api/admin/logs/recent?pair=MNQ&limit=200&offset=0', { logs: [], sources: [], has_more: false });
 
     const socket = new FakeSocket();
-    const panel = new LogPanel(socket, api);
+    const panel = new LogPanel(socket, api, 'MNQ');
     const btn = document.getElementById('log-pause-btn');
 
     expect(panel.paused).toBe(false);
@@ -118,7 +117,7 @@ describe('LogPanel', () => {
     });
 
     const socket = new FakeSocket();
-    const panel = new LogPanel(socket, api);
+    const panel = new LogPanel(socket, api, 'MNQ');
     await new Promise(r => setTimeout(r, 50));
 
     document.getElementById('log-load-more-btn').click();
@@ -139,7 +138,7 @@ describe('LogPanel', () => {
     });
 
     const socket = new FakeSocket();
-    new LogPanel(socket, api);
+    new LogPanel(socket, api, 'MNQ');
     await new Promise(r => setTimeout(r, 50));
 
     const search = document.getElementById('log-search-filter');
@@ -155,7 +154,7 @@ describe('LogPanel', () => {
     http.setResponse('GET', '/api/admin/logs/recent?pair=MNQ&limit=200&offset=0', { logs: [], sources: [], has_more: false });
 
     const socket = new FakeSocket();
-    new LogPanel(socket, api);
+    new LogPanel(socket, api, 'MNQ');
     await new Promise(r => setTimeout(r, 50));
 
     socket.trigger('system_log', { message: 'live' });
@@ -168,7 +167,7 @@ describe('LogPanel', () => {
     http.setResponse('GET', '/api/admin/logs/recent?pair=MNQ&limit=200&offset=0', { logs: [], sources: [], has_more: false });
 
     const socket = new FakeSocket();
-    const panel = new LogPanel(socket, api);
+    const panel = new LogPanel(socket, api, 'MNQ');
     await new Promise(r => setTimeout(r, 50));
 
     panel.togglePause();
@@ -182,7 +181,7 @@ describe('LogPanel', () => {
     http.setResponse('GET', '/api/admin/logs/recent?pair=MNQ&limit=200&offset=0', { logs: [], sources: [], has_more: false });
 
     const socket = new FakeSocket();
-    new LogPanel(socket, api);
+    new LogPanel(socket, api, 'MNQ');
     await new Promise(r => setTimeout(r, 50));
 
     document.getElementById('log-level-filter').value = 'INFO';
@@ -200,7 +199,7 @@ describe('LogPanel', () => {
     });
 
     const socket = new FakeSocket();
-    new LogPanel(socket, api);
+    new LogPanel(socket, api, 'MNQ');
     await new Promise(r => setTimeout(r, 50));
 
     const options = Array.from(document.getElementById('log-source-filter').options).map(o => o.value);
@@ -209,7 +208,7 @@ describe('LogPanel', () => {
 
   it('level color helpers return expected classes', () => {
     const { api } = buildApi();
-    const panel = new LogPanel(new FakeSocket(), api);
+    const panel = new LogPanel(new FakeSocket(), api, 'MNQ');
     expect(panel._levelColor('ERROR')).toContain('rose');
     expect(panel._levelColor('WARN')).toContain('amber');
     expect(panel._levelColor('INFO')).toContain('accent');

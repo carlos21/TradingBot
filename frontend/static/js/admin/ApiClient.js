@@ -6,23 +6,18 @@ export class ApiClient {
   constructor({ httpClient }) {
     this.http = httpClient;
     this.baseUrl = '';
-    this.pair = null;
+    this.defaultPair = null;
+    this.instruments = [];
   }
 
   async init() {
-    // Get the pair from the API
-    console.log('[ApiClient] Initializing, fetching pair...');
-    const response = await this.get('/api/pair');
-    console.log('[ApiClient] Got pair response:', response);
-    this.pair = response.pair;
-    // Also store the default pair
+    // Get server config: default pair + configured instruments
+    console.log('[ApiClient] Initializing, fetching config...');
+    const response = await this.get('/api/config');
+    console.log('[ApiClient] Got config response:', response);
     this.defaultPair = response.pair;
-    return this.pair;
-  }
-
-  setPair(pair) {
-    console.log(`[ApiClient] Setting pair to: ${pair}`);
-    this.pair = pair;
+    this.instruments = Array.isArray(response.instruments) ? response.instruments : [];
+    return this.defaultPair;
   }
 
   async get(url) {
@@ -86,18 +81,18 @@ export class ApiClient {
   }
 
   // Admin API Methods
-  async getStats() {
-    return this.get(`/api/admin/stats?pair=${this.pair}`);
+  async getStats(pair) {
+    return this.get(`/api/admin/stats?pair=${pair}`);
   }
 
-  async getTrades(limit = 50, offset = 0, account = '') {
-    let url = `/api/admin/trades?pair=${this.pair}&limit=${limit}&offset=${offset}`;
+  async getTrades(pair, limit = 50, offset = 0, account = '') {
+    let url = `/api/admin/trades?pair=${pair}&limit=${limit}&offset=${offset}`;
     if (account) url += `&account=${encodeURIComponent(account)}`;
     return this.get(url);
   }
 
-  async getTradeAccounts() {
-    return this.get(`/api/admin/trade-accounts?pair=${this.pair}`);
+  async getTradeAccounts(pair) {
+    return this.get(`/api/admin/trade-accounts?pair=${pair}`);
   }
 
   async getTradeDetail(tradeId) {
@@ -112,16 +107,16 @@ export class ApiClient {
     return this.post('/api/admin/trades/bulk-delete', { trade_ids: tradeIds });
   }
 
-  async getAnalytics() {
-    return this.get(`/api/admin/analytics?pair=${this.pair}`);
+  async getAnalytics(pair) {
+    return this.get(`/api/admin/analytics?pair=${pair}`);
   }
 
-  async getLines() {
-    return this.get(`/api/lines?pair=${this.pair}`);
+  async getLines(pair) {
+    return this.get(`/api/lines?pair=${pair}`);
   }
 
-  async getDecisionLogs(event = '', lineId = '', limit = 500) {
-    let url = `/api/admin/decisions?pair=${this.pair}&limit=${limit}`;
+  async getDecisionLogs(pair, event = '', lineId = '', limit = 500) {
+    let url = `/api/admin/decisions?pair=${pair}&limit=${limit}`;
     if (event) url += `&event=${encodeURIComponent(event)}`;
     if (lineId) url += `&line_id=${encodeURIComponent(lineId)}`;
     return this.get(url);
@@ -131,12 +126,12 @@ export class ApiClient {
     return this.get('/api/admin/decisions/events');
   }
 
-  async getRecentLogs(limit = 200, offset = 0) {
-    return this.get(`/api/admin/logs/recent?pair=${this.pair}&limit=${limit}&offset=${offset}`);
+  async getRecentLogs(pair, limit = 200, offset = 0) {
+    return this.get(`/api/admin/logs/recent?pair=${pair}&limit=${limit}&offset=${offset}`);
   }
 
-  async addLine(price) {
-    return this.post('/api/lines', { pair: this.pair, price });
+  async addLine(pair, price) {
+    return this.post('/api/lines', { pair, price });
   }
 
   async updateLine(lineId, price) {

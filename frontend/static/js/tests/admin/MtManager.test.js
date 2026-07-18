@@ -20,7 +20,6 @@ function buildApi() {
   const http = new FakeHttpClient();
   http.setResponse('GET', '/api/settings', { mt_terminal_path: '' });
   const api = new ApiClient({ httpClient: http });
-  api.setPair('MNQ');
   return { http, api };
 }
 

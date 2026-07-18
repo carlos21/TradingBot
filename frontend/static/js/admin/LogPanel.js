@@ -3,9 +3,10 @@
  * Loads historical logs from the server and streams real-time logs via Socket.IO
  */
 export class LogPanel {
-  constructor(socket, api) {
+  constructor(socket, api, pair = null) {
     this.socket = socket;
     this.api = api;
+    this.selectedPair = pair;
     this.entries = [];
     this.sources = new Set();
     this.paused = false;
@@ -49,6 +50,14 @@ export class LogPanel {
     }
   }
 
+  setPair(pair) {
+    this.selectedPair = pair;
+    this.offset = 0;
+    this.hasMore = false;
+    this.entries = [];
+    this._fetchPage(0);
+  }
+
   async _loadInitial() {
     await this._fetchPage(0);
   }
@@ -59,7 +68,7 @@ export class LogPanel {
     this.loadMoreBtn?.classList.add('opacity-50', 'cursor-not-allowed');
 
     try {
-      const data = await this.api.getRecentLogs(this.limit, offset);
+      const data = await this.api.getRecentLogs(this.selectedPair, this.limit, offset);
       const logs = data.logs || [];
       const sources = data.sources || [];
       this.hasMore = data.has_more || false;

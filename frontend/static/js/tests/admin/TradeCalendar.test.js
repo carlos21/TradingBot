@@ -20,7 +20,6 @@ function setupDom() {
 function buildApi() {
   const http = new FakeHttpClient();
   const api = new ApiClient({ httpClient: http });
-  api.setPair('MNQ');
   return { http, api };
 }
 
@@ -50,6 +49,7 @@ describe('TradeCalendar', () => {
     http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=10000&offset=0', { trades: [], total: 0 });
 
     const calendar = new TradeCalendar(api);
+    calendar.setPair('MNQ');
     await calendar.load();
 
     expect(document.getElementById('calendar-container').textContent).toContain('No trades found');
@@ -64,6 +64,7 @@ describe('TradeCalendar', () => {
     });
 
     const calendar = new TradeCalendar(api);
+    calendar.setPair('MNQ');
     await calendar.load();
 
     expect(document.getElementById('cal-month-pills').querySelectorAll('button').length).toBe(1);
@@ -81,6 +82,7 @@ describe('TradeCalendar', () => {
     });
 
     const calendar = new TradeCalendar(api);
+    calendar.setPair('MNQ');
     await calendar.load();
 
     const pills = document.getElementById('cal-month-pills').querySelectorAll('button');
@@ -95,6 +97,7 @@ describe('TradeCalendar', () => {
     http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=10000&offset=0&account=acc2', { trades: [], total: 0 });
 
     const calendar = new TradeCalendar(api);
+    calendar.setPair('MNQ');
     await calendar.setAccount('acc2');
 
     expect(calendar.selectedAccount).toBe('acc2');
@@ -111,6 +114,7 @@ describe('TradeCalendar', () => {
     });
 
     const calendar = new TradeCalendar(api);
+    calendar.setPair('MNQ');
     await calendar.load();
 
     document.getElementById('cal-prev-btn').click();
@@ -128,6 +132,7 @@ describe('TradeCalendar', () => {
     });
 
     const calendar = new TradeCalendar(api);
+    calendar.setPair('MNQ');
     const handler = vi.fn();
     calendar.onTradeClick = handler;
     await calendar.load();
@@ -141,6 +146,7 @@ describe('TradeCalendar', () => {
     http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=10000&offset=0', { trades: [], total: 0 });
 
     const calendar = new TradeCalendar(api);
+    calendar.setPair('MNQ');
     calendar.show();
 
     expect(document.getElementById('trades-calendar-view').classList.contains('hidden')).toBe(false);
@@ -150,6 +156,7 @@ describe('TradeCalendar', () => {
   it('hide toggles views', () => {
     const { api } = buildApi();
     const calendar = new TradeCalendar(api);
+    calendar.setPair('MNQ');
     calendar.hide();
 
     expect(document.getElementById('trades-calendar-view').classList.contains('hidden')).toBe(true);
@@ -169,6 +176,7 @@ describe('TradeCalendar', () => {
     });
 
     const calendar = new TradeCalendar(api);
+    calendar.setPair('MNQ');
     await calendar.load();
 
     const month = calendar.months[0];

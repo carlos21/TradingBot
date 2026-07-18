@@ -16,6 +16,11 @@ export class DecisionLogs {
     this.api = apiClient;
     this.logs = [];
     this.events = [];
+    this.selectedPair = null;
+  }
+
+  setPair(pair) {
+    this.selectedPair = pair;
   }
 
   async load() {
@@ -25,7 +30,7 @@ export class DecisionLogs {
       const lineIdFilter = document.getElementById('decisions-line-id-filter')?.value || '';
       const limitFilter = document.getElementById('decisions-limit-filter')?.value || 500;
 
-      const result = await this.api.getDecisionLogs(eventFilter, lineIdFilter, limitFilter);
+      const result = await this.api.getDecisionLogs(this.selectedPair, eventFilter, lineIdFilter, limitFilter);
       console.log('[DecisionLogs] Got result:', result);
       this.logs = result.logs || [];
       this.events = result.events || [];

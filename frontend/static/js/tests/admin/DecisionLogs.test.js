@@ -23,7 +23,6 @@ function setupDom() {
 function buildApi() {
   const http = new FakeHttpClient();
   const api = new ApiClient({ httpClient: http });
-  api.setPair('MNQ');
   return { http, api };
 }
 
@@ -55,6 +54,7 @@ describe('DecisionLogs', () => {
     });
 
     const logs = new DecisionLogs(api);
+    logs.setPair('MNQ');
     await logs.load();
 
     const tbody = document.getElementById('decisions-tbody');
@@ -67,6 +67,7 @@ describe('DecisionLogs', () => {
     http.setResponse('GET', '/api/admin/decisions?pair=MNQ&limit=500', { logs: [], events: [] });
 
     const logs = new DecisionLogs(api);
+    logs.setPair('MNQ');
     await logs.load();
 
     expect(document.getElementById('decisions-empty').classList.contains('hidden')).toBe(false);
@@ -84,6 +85,7 @@ describe('DecisionLogs', () => {
     document.getElementById('decisions-limit-filter').value = '100';
 
     const logs = new DecisionLogs(api);
+    logs.setPair('MNQ');
     await logs.load();
 
     expect(http.requests.some(r =>
@@ -101,6 +103,7 @@ describe('DecisionLogs', () => {
     document.getElementById('decisions-event-filter').value = 'ENTRY';
 
     const logs = new DecisionLogs(api);
+    logs.setPair('MNQ');
     await logs.load();
 
     const select = document.getElementById('decisions-event-filter');
@@ -114,6 +117,7 @@ describe('DecisionLogs', () => {
     http.setResponse('GET', '/api/admin/decisions?pair=MNQ&limit=500&event=ENTRY', { logs: [], events: [] });
 
     const logs = new DecisionLogs(api);
+    logs.setPair('MNQ');
     logs.bindFilters();
 
     document.getElementById('decisions-event-filter').value = 'ENTRY';
@@ -131,6 +135,7 @@ describe('DecisionLogs', () => {
     http.setResponse('GET', '/api/admin/decisions?pair=MNQ&limit=500&line_id=L1', { logs: [], events: [] });
 
     const logs = new DecisionLogs(api);
+    logs.setPair('MNQ');
     logs.bindFilters();
 
     const input = document.getElementById('decisions-line-id-filter');
@@ -147,6 +152,7 @@ describe('DecisionLogs', () => {
     http.setResponse('GET', '/api/admin/decisions?pair=MNQ&limit=500', { logs: [], events: [] });
 
     const logs = new DecisionLogs(api);
+    logs.setPair('MNQ');
     logs.bindFilters();
 
     document.getElementById('refresh-decisions-btn').click();
@@ -159,6 +165,7 @@ describe('DecisionLogs', () => {
   it('getEventBadgeClass returns expected classes', () => {
     const { api } = buildApi();
     const logs = new DecisionLogs(api);
+    logs.setPair('MNQ');
 
     expect(logs.getEventBadgeClass('ENTRY')).toContain('emerald');
     expect(logs.getEventBadgeClass('FILTER_BLOCK')).toContain('rose');
@@ -171,6 +178,7 @@ describe('DecisionLogs', () => {
   it('escapeHtml returns a string representation', () => {
     const { api } = buildApi();
     const logs = new DecisionLogs(api);
+    logs.setPair('MNQ');
     const result = logs.escapeHtml('<script>');
     expect(typeof result).toBe('string');
     expect(result.length).toBeGreaterThan(0);

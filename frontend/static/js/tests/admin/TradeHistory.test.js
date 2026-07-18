@@ -20,7 +20,6 @@ function setupDom() {
 function buildApi() {
   const http = new FakeHttpClient();
   const api = new ApiClient({ httpClient: http });
-  api.setPair('MNQ');
   return { http, api };
 }
 
@@ -60,6 +59,7 @@ describe('TradeHistory', () => {
     const { http, api } = buildApi();
     http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=50&offset=0', { trades: [], total: 0 });
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     const tbody = document.getElementById('trades-tbody');
@@ -74,6 +74,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     const tbody = document.getElementById('trades-tbody');
@@ -86,6 +87,7 @@ describe('TradeHistory', () => {
     http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=50&offset=0', () => { throw new Error('boom'); });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     expect(alertSpy).toHaveBeenCalledWith('Failed to load trades: boom');
@@ -97,6 +99,7 @@ describe('TradeHistory', () => {
     http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=50&offset=0&account=acc2', { trades: [], total: 0 });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     history.offset = 50;
     await history.setAccount('acc2');
 
@@ -109,6 +112,7 @@ describe('TradeHistory', () => {
     http.setResponse('GET', '/api/admin/trade-accounts?pair=MNQ', { accounts: ['acc1', 'acc2'] });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     history.selectedAccount = 'acc2';
     await history.loadAccounts();
 
@@ -122,6 +126,7 @@ describe('TradeHistory', () => {
     http.setResponse('GET', '/api/admin/trade-accounts?pair=MNQ', { accounts: ['acc1'] });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     history.selectedAccount = 'acc2';
     await history.loadAccounts();
 
@@ -137,6 +142,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     const clickHandler = vi.fn();
     history.onTradeClick = clickHandler;
     await history.load();
@@ -155,6 +161,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     const clickHandler = vi.fn();
     history.onTradeClick = clickHandler;
     await history.load();
@@ -174,6 +181,7 @@ describe('TradeHistory', () => {
     http.setResponse('DELETE', '/api/admin/trades/T1', { deleted: true });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     const btn = document.querySelector('.delete-trade-btn');
@@ -192,6 +200,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     document.querySelector('.delete-trade-btn').click();
@@ -211,6 +220,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     document.getElementById('trades-next-btn').click();
@@ -229,6 +239,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     history.offset = 50;
     await history.load();
 
@@ -241,6 +252,7 @@ describe('TradeHistory', () => {
     http.setResponse('GET', '/api/admin/trades?pair=MNQ&limit=50&offset=0', { trades: [], total: 0 });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     history.show();
 
     expect(document.getElementById('trades-table-view').classList.contains('hidden')).toBe(false);
@@ -249,6 +261,7 @@ describe('TradeHistory', () => {
   it('hide toggles classes', () => {
     const { api } = buildApi();
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     history.hide();
 
     expect(document.getElementById('trades-table-view').classList.contains('hidden')).toBe(true);
@@ -257,6 +270,7 @@ describe('TradeHistory', () => {
   it('result labels and badge classes handle variants', () => {
     const { api } = buildApi();
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
 
     expect(history.getResultLabel({ result_type: 'TP', status: 'closed' })).toBe('TP');
     expect(history.getResultLabel({ status: 'open' })).toBe('Open');
@@ -272,6 +286,7 @@ describe('TradeHistory', () => {
   it('formatTime returns formatted date or dash', () => {
     const { api } = buildApi();
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     expect(history.formatTime(null)).toBe('-');
     expect(history.formatTime(1700000000)).toContain('Nov');
   });
@@ -284,6 +299,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     const tbody = document.getElementById('trades-tbody');
@@ -298,6 +314,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     const tbody = document.getElementById('trades-tbody');
@@ -312,6 +329,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     const tbody = document.getElementById('trades-tbody');
@@ -326,6 +344,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     expect(document.querySelectorAll('.trade-select-checkbox').length).toBe(1);
@@ -339,6 +358,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     const checkbox = document.querySelector('.trade-select-checkbox');
@@ -358,6 +378,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     document.getElementById('select-all-trades').click();
@@ -379,6 +400,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     document.querySelectorAll('.trade-select-checkbox').forEach(cb => cb.click());
@@ -406,6 +428,7 @@ describe('TradeHistory', () => {
     });
 
     const history = new TradeHistory(api);
+    history.setPair('MNQ');
     await history.load();
 
     document.querySelectorAll('.trade-select-checkbox').forEach(cb => cb.click());

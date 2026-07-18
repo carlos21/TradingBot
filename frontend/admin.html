@@ -127,15 +127,6 @@
     <!-- Header -->
     <div class="p-6 border-b border-surface-700">
       <h1 class="text-xl font-bold text-accent-400 tracking-tight">Liquid</h1>
-      <div id="pairSelectorContainer"
-           class="mt-2 flex items-center space-x-2">
-        <label class="text-sm text-slate-400">Pair:</label>
-        <select id="pairSelector" class="bg-surface-700 text-slate-100 text-sm rounded px-2 py-1 border border-surface-600 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none">
-          <option value="MNQ">MNQ</option>
-          <option value="ES">ES</option>
-        </select>
-        <span id="pairDisplay" class="text-sm text-slate-400 hidden">Loading...</span>
-      </div>
     </div>
 
     <!-- Navigation -->
@@ -212,7 +203,13 @@
 
       <!-- Overview Tab -->
       <div id="overview-tab" class="tab-content hidden">
-        <h2 class="text-2xl font-bold mb-6">Dashboard Overview</h2>
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold">Dashboard Overview</h2>
+          <div class="flex items-center space-x-2">
+            <label for="overview-pair-selector" class="text-sm text-slate-400">Pair:</label>
+            <select id="overview-pair-selector" class="bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none"></select>
+          </div>
+        </div>
 
         <!-- Stats Cards -->
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -302,6 +299,11 @@
               <button id="view-table-btn" class="px-3.5 py-1.5 rounded-md text-sm font-medium bg-accent-600 text-slate-100 transition-colors">Table</button>
               <button id="view-calendar-btn" class="px-3.5 py-1.5 rounded-md text-sm font-medium text-slate-400 hover:text-slate-100 transition-colors">Calendar</button>
             </div>
+            <!-- Pair Filter -->
+            <div class="flex items-center space-x-2">
+              <label for="trades-pair-selector" class="text-sm text-slate-400">Pair:</label>
+              <select id="trades-pair-selector" class="bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none"></select>
+            </div>
             <!-- Account Filter -->
             <div class="flex items-center space-x-2">
               <label for="trades-account-filter" class="text-sm text-slate-400">Account:</label>
@@ -368,9 +370,15 @@
       <div id="lines-tab" class="tab-content hidden">
         <div class="flex justify-between items-center mb-6">
           <h2 class="text-2xl font-bold">Strategy Lines</h2>
-          <button id="add-line-btn" class="bg-accent-600 hover:bg-accent-500 text-slate-100 font-medium px-4 py-2 rounded-lg transition-colors">
-            + Add Line
-          </button>
+          <div class="flex items-center space-x-4">
+            <div class="flex items-center space-x-2">
+              <label for="lines-pair-selector" class="text-sm text-slate-400">Pair:</label>
+              <select id="lines-pair-selector" class="bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none"></select>
+            </div>
+            <button id="add-line-btn" class="bg-accent-600 hover:bg-accent-500 text-slate-100 font-medium px-4 py-2 rounded-lg transition-colors">
+              + Add Line
+            </button>
+          </div>
         </div>
 
         <!-- Lines Table -->
@@ -401,6 +409,10 @@
 
         <!-- Filters -->
         <div class="bg-surface-800 border border-surface-700 rounded-xl p-4 shadow-lg mb-6 flex flex-wrap gap-4 items-end">
+          <div>
+            <label class="block text-sm text-slate-400 mb-1">Pair</label>
+            <select id="decisions-pair-selector" class="bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none"></select>
+          </div>
           <div>
             <label class="block text-sm text-slate-400 mb-1">Event Type</label>
             <select id="decisions-event-filter" class="bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none">
@@ -465,6 +477,10 @@
         <!-- Log Filters -->
         <div class="bg-surface-800 border border-surface-700 rounded-xl p-4 shadow-lg mb-4 flex flex-wrap gap-3 items-end">
           <div>
+            <label class="block text-sm text-slate-400 mb-1">Pair</label>
+            <select id="logs-pair-selector" class="bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none"></select>
+          </div>
+          <div>
             <label class="block text-sm text-slate-400 mb-1">Level</label>
             <select id="log-level-filter" class="bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none">
               <option value="">All</option>
@@ -501,7 +517,13 @@
 
       <!-- Analytics Tab -->
       <div id="analytics-tab" class="tab-content hidden">
-        <h2 class="text-2xl font-bold mb-6">Detailed Analytics</h2>
+        <div class="flex justify-between items-center mb-6">
+          <h2 class="text-2xl font-bold">Detailed Analytics</h2>
+          <div class="flex items-center space-x-2">
+            <label for="analytics-pair-selector" class="text-sm text-slate-400">Pair:</label>
+            <select id="analytics-pair-selector" class="bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none"></select>
+          </div>
+        </div>
 
         <!-- Per-Account Stats -->
         <div id="account-stats-section" class="mb-8">
@@ -685,10 +707,10 @@
               </div>
               <div class="mt-3">
                 <label class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Instruments</label>
-                <select id="settings-account-instruments" multiple class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none transition-colors">
+                <div id="settings-account-instruments" class="flex flex-wrap gap-2">
                   <!-- Populated by JS -->
-                </select>
-                <p class="text-xs text-slate-500 mt-1">Hold Ctrl/Cmd to select multiple. No selection means the account will not trade.</p>
+                </div>
+                <p class="text-xs text-slate-500 mt-1">Click instruments to assign or unassign. An account with no instruments will not trade.</p>
               </div>
             </div>
 
