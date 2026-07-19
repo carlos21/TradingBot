@@ -27,6 +27,7 @@ from src.application.parity_service import ParityCheckService
 from src.application.stream_coordinator import StreamCoordinator
 from src.application.streaming_session import StreamingSession
 from src.bars_loader import BarsLoader
+from src.config.models import AppConfig
 from src.controllers.admin_controller import AdminController
 from src.controllers.trades_controller import TradesController
 from src.domain.models import Instrument
@@ -75,6 +76,7 @@ from src.routes import (
     register_stream_routes,
     register_trades_routes,
 )
+from src.routes.socketio_handlers import SocketIOLogForwarder, make_system_log_forwarder
 from src.services.analytics_service import AnalyticsService
 from src.services.instrument_registry import InstrumentRegistry
 from src.services.trade_executor import TradeExecutor
@@ -257,7 +259,7 @@ def _setup_live_mode_callbacks(
         data_source.on_gap_detected = monitor.on_gap_detected
         data_source.on_heartbeat_stale = monitor.on_heartbeat_stale
         data_source.on_late_history_batch = monitor.on_late_history_batch
-        data_source._readiness_monitor = monitor
+        data_source.set_readiness_monitor(monitor)
 
         if data_source.gateway is not None:
             def _on_gateway_connection_change(connected: bool):
@@ -324,7 +326,7 @@ def create_app(
     logger: Optional[ILogger] = None,
     db: DatabaseProtocol | None = None,
     accounts_repo=None,
-    app_config=None,
+    app_config: AppConfig | None = None,
     instrument_registry=None,
     session_params_provider: "Callable[[str], tuple[StrategyNumbers, StrategyOptions]] | None" = None,
     session_end_time: str | None = None,
@@ -349,7 +351,7 @@ def create_app(
     socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
     # Resolve platform info once so it can be exposed via /api/config.
-    _platform_type = getattr(app_config, "platform_type", "ninjatrader") if app_config else "ninjatrader"
+    _platform_type = app_config.platform_type if app_config else "ninjatrader"
     _platform_label = "NinjaTrader" if _platform_type == "ninjatrader" else "MetaTrader"
 
     # Wire domain event bus → SocketIO bridge for decoupled notifications
@@ -366,9 +368,9 @@ def create_app(
     _setup_logging(app)
 
     # Determine the log directory from the supplied logger or app_config.
-    _log_dir = getattr(logger, "log_dir", None)
+    _log_dir = logger.log_dir if isinstance(logger, FileAndConsoleLogger) else None
     if _log_dir is None and app_config is not None:
-        _log_dir = getattr(app_config, "log_dir", None)
+        _log_dir = app_config.log_dir
     if not _log_dir:
         _log_dir = "logs"
 
@@ -378,6 +380,12 @@ def create_app(
             logger = FileAndConsoleLogger(log_dir=_log_dir)
         else:
             logger = ConsoleLogger()
+
+    # Decorate the shared logger eagerly so every component wired below
+    # (sessions, controllers, routes) forwards info/warning/error logs to
+    # connected browsers. register_socketio_handlers keeps this idempotent.
+    if not isinstance(logger, SocketIOLogForwarder):
+        logger = SocketIOLogForwarder(logger, make_system_log_forwarder(socketio))
 
     if notifier is None:
         notifier = NoOpNotifier()
@@ -390,7 +398,7 @@ def create_app(
     if accounts_repo is None and db is not None:
         accounts_repo = NtAccountRepository(db=db)
 
-    _resolved_session_end = session_end_time or (getattr(app_config, "session_end", None) if app_config else None) or "16:58"
+    _resolved_session_end = session_end_time or (app_config.session_end if app_config else None) or "16:58"
 
     # Resolve the instrument registry.  For backward compatibility, fall back to a
     # single-instrument registry built from the configured pair.
@@ -455,7 +463,7 @@ def create_app(
     # Backward compatibility: expose the default session's readiness monitor on
     # the data source so legacy tests and callers can introspect it.
     if isinstance(data_source, ZMQDataSource):
-        data_source._readiness_monitor = default_session.readiness_monitor
+        data_source.set_readiness_monitor(default_session.readiness_monitor)
 
     # Convenience references for the legacy single-instrument API surface.
     trade_manager = default_session.trade_manager
@@ -474,13 +482,10 @@ def create_app(
     if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
         def _on_gateway_connection_change(connected: bool):
             for session in coordinator.get_active_sessions():
-                sm = getattr(session.readiness_monitor, "_state_machine", None)
-                if sm is None:
+                monitor = session.readiness_monitor
+                if monitor is None:
                     continue
-                if connected:
-                    sm.connect()
-                else:
-                    sm.disconnect()
+                monitor.on_connection_change(connected)
         data_source.gateway.on_connection_change(_on_gateway_connection_change)
 
     # Wire up position sync / broker fill handlers (ZeroMQ only).
@@ -644,7 +649,7 @@ def create_app(
 
     @app.errorhandler(500)
     def handle_500(error):
-        original = getattr(error, "original_exception", error)
+        original = error.original_exception or error
         logger.error(f"Unhandled server error: {original}\n{traceback.format_exc()}")
         notifier.send(f"[Flask] Unhandled server error: {original}")
         return jsonify({"error": "Internal server error"}), 500

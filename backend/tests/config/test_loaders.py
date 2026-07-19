@@ -116,7 +116,7 @@ class TestCliConfigLoader:
         cfg = CliConfigLoader(args=[]).load()
         assert cfg.mode == "backtest"
         assert cfg.pair == "MNQ"
-        assert getattr(cfg, "_cli_provided") == set()
+        assert cfg._cli_provided == set()
 
     def test_load_overrides_from_args(self):
         args = [
@@ -278,22 +278,6 @@ class TestDbConfigLoader:
         settings_repo.set("unknown_key", "value")
         loader = DbConfigLoader(db_path=db_path)
         cfg = loader.load()
-        assert cfg.pair == "MNQ"
-
-    def test_key_mapping_to_missing_attr_is_skipped(self, tmp_path):
-        db_path = f"sqlite:///{tmp_path / 'missing_attr.db'}"
-        from src.infrastructure.database.database import setup_database
-        from src.infrastructure.repositories.settings_repository import SettingsRepository
-
-        setup_database(db_url=db_path)
-        from src.infrastructure.database.database import get_db_session
-        get_db_session().__enter__()
-
-        settings_repo = SettingsRepository()
-        settings_repo.set("weird_key", "value")
-        loader = DbConfigLoader(db_path=db_path)
-        with patch.object(loader, "_key_to_attr", return_value="not_an_appconfig_attr"):
-            cfg = loader.load()
         assert cfg.pair == "MNQ"
 
     def test_empty_or_none_values_are_skipped(self, tmp_path):

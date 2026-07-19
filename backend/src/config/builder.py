@@ -235,7 +235,7 @@ class AppBuilder:
 
         print(f"{log_timestamp()} [liquid] Starting ZeroMQ gateway...")
         if cfg.nt_accounts:
-            live_account_configs = [a for a in cfg.nt_accounts if getattr(a, "live_enabled", True)]
+            live_account_configs = [a for a in cfg.nt_accounts if a.live_enabled]
             ds, executor = create_multi_account_live_components(
                 cfg.pair,
                 logger,

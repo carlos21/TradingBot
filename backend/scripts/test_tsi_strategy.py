@@ -299,7 +299,7 @@ def _calc_max_drawdown(balances: list[float]):
 def print_summary(trade_pairs: list, args, pair_tz: ZoneInfo):
     """Print daily/weekly/monthly PnL tables + overall summary."""
     ACCT = args.account
-    RISK_PCT = getattr(args, "risk_pct", None)
+    RISK_PCT = args.risk_pct
     RISK_USD_FIX = args.risk
     NQ_PV = 2.0
     FEE_PER_RT = FinancialCalc.DEFAULT_FEE_PER_RT
@@ -309,7 +309,7 @@ def print_summary(trade_pairs: list, args, pair_tz: ZoneInfo):
             return balance * RISK_PCT / 100.0
         return RISK_USD_FIX
 
-    mode = getattr(args, "mode", "real_futures")
+    mode = args.mode
 
     def _per_trade_sim(trade, close, balance=ACCT):
         usd, pct, actual_r, comm, _outcome = per_trade_sim(
@@ -324,10 +324,10 @@ def print_summary(trade_pairs: list, args, pair_tz: ZoneInfo):
         return usd, pct, actual_r, comm
 
     def _per_trade_cfn(trade, close, balance=ACCT):
-        cfd_spread = getattr(args, "cfd_spread", 1.5)
-        cfd_commission = getattr(args, "commission", None)
+        cfd_spread = args.cfd_spread
+        cfd_commission = args.commission
         if cfd_commission is None:
-            cfd_commission = getattr(args, "cfd_commission", 5.0)
+            cfd_commission = args.cfd_commission
         usd, pct, actual_r, comm, _outcome = per_trade_cfd(
             trade,
             close,
@@ -590,7 +590,7 @@ def print_summary(trade_pairs: list, args, pair_tz: ZoneInfo):
 # -------------------------------------------------------------------------
 
 async def run_test(args: argparse.Namespace):
-    quiet = getattr(args, "quiet", False)
+    quiet = args.quiet
     csv_path = Path(args.csv_file)
     if not csv_path.exists():
         print(f"❌ CSV file not found: {csv_path}")
@@ -599,7 +599,7 @@ async def run_test(args: argparse.Namespace):
     base_url = f"http://{APP_HOST}:{args.port}"
     server_ready = Event()
 
-    risk_per_trade = None if getattr(args, "risk_pct", None) is not None else args.risk
+    risk_per_trade = None if args.risk_pct is not None else args.risk
     server_proc = Process(
         target=run_server,
         args=(
@@ -610,7 +610,7 @@ async def run_test(args: argparse.Namespace):
             quiet,
             args.rr,
             risk_per_trade,
-            getattr(args, "risk_pct", None),
+            args.risk_pct,
             args.account,
             FinancialCalc.DEFAULT_FEE_PER_RT,
             args.session_end,
@@ -808,7 +808,7 @@ async def run_test(args: argparse.Namespace):
                             }
                         }""")
                         await page.wait_for_timeout(200)
-                        zoom = getattr(args, "snapshot_zoom", 3600)
+                        zoom = args.snapshot_zoom
                         await page.evaluate(
                             """(range) => { window.chartViewer.chart.timeScale().setVisibleRange({ from: range.start, to: range.end }); }""",
                             {"start": entry_ts - zoom, "end": entry_ts + zoom},
@@ -827,7 +827,7 @@ async def run_test(args: argparse.Namespace):
     print_summary(trade_pairs, args, pair_tz)
 
     # HTML report
-    if getattr(args, "html_report", False):
+    if args.html_report:
         html_path = Path(args.outdir) / "report.html"
         html_kwargs = dict(
             summary_results=[
@@ -851,13 +851,11 @@ async def run_test(args: argparse.Namespace):
             nq_pv=2.0,
             fee_per_rt=FinancialCalc.DEFAULT_FEE_PER_RT,
             be_threshold=BE_THRESHOLD,
-            risk_pct=getattr(args, "risk_pct", None),
+            risk_pct=args.risk_pct,
         )
         if args.mode == "real_cfd":
-            html_kwargs["cfd_spread"] = getattr(args, "cfd_spread", 1.5)
-            html_kwargs["cfd_commission"] = getattr(args, "commission", None) or getattr(
-                args, "cfd_commission", 5.0
-            )
+            html_kwargs["cfd_spread"] = args.cfd_spread
+            html_kwargs["cfd_commission"] = args.commission or args.cfd_commission
         generate_html_report(**html_kwargs)
         print(f"\n📄 HTML report: {html_path.resolve()}")
 
@@ -893,8 +891,13 @@ def main():
     )
     ap.add_argument("--rr", type=float, default=5.0, help="Risk:Reward ratio")
     ap.add_argument("--risk", type=float, default=1000.0, help="Fixed $ risk per trade")
-    ap.add_argument("--risk-pct", type=float, default=None, help="Risk % of balance")
+    ap.add_argument("--risk-pct", type=float, default=None, help="Risk %% of balance")
     ap.add_argument("--account", type=float, default=100_000.0, help="Simulated account size")
+    ap.add_argument("--cfd-spread", type=float, default=1.5, help="CFD spread in points")
+    ap.add_argument("--cfd-commission", type=float, default=5.0,
+                    help="CFD commission per round-trip lot in USD")
+    ap.add_argument("--commission", type=float, default=None,
+                    help="Override round-trip commission per lot/contract for ANY mode")
     ap.add_argument("--session-end", type=str, default="16:58", help="Session end time")
     ap.add_argument("--session-tz", type=str, default="America/New_York", help="Session timezone")
     ap.add_argument("--html-report", action="store_true", default=False, help="Generate HTML report")

@@ -64,6 +64,9 @@ class _FakeWarmupOrchestrator:
     def reset_cancel(self) -> None:
         pass
 
+    def set_progress_listener(self, listener: Any) -> None:
+        pass
+
     def run(self, bars: list[dict[str, Any]], pair: str) -> None:
         self.ran = True
         for bar in bars:
@@ -372,6 +375,9 @@ class TestWarmupCancellation:
             def reset_cancel(self) -> None:
                 self._stop_event.clear()
 
+            def set_progress_listener(self, listener) -> None:
+                pass
+
             def run(self, bars, pair) -> None:
                 started.set()
                 blocked.wait(timeout=5.0)  # stall until test signals it
@@ -428,6 +434,9 @@ class TestWarmupCancellation:
 
             def reset_cancel(self) -> None:
                 self._stop_event.clear()
+
+            def set_progress_listener(self, listener) -> None:
+                pass
 
             def run(self, bars, pair) -> None:
                 self.run_count += 1
@@ -582,3 +591,17 @@ class TestReadinessMonitorProgress:
         health = monitor.get_health()
         assert health["readiness_state"] == "WARMING_UP"
         assert "120m old" in health["readiness_reason"]
+
+
+class TestConnectionChange:
+    def test_on_connection_change_drives_state_machine(self) -> None:
+        monitor, _strategy = _make_monitor(
+            DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
+        )
+        assert monitor._state_machine.state.name == "DISCONNECTED"
+
+        monitor.on_connection_change(True)
+        assert monitor._state_machine.state.name == "CONNECTED"
+
+        monitor.on_connection_change(False)
+        assert monitor._state_machine.state.name == "DISCONNECTED"

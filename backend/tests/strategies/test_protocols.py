@@ -11,7 +11,7 @@ class TestLiquidityStrategyProtocol:
 
     def test_protocol_attributes_declared(self):
         """LiquidityStrategy protocol must declare the expected public surface."""
-        annotations = getattr(LiquidityStrategy, "__annotations__", {})
+        annotations = LiquidityStrategy.__annotations__
         assert "is_warmup" in annotations
         assert "options" in annotations
         assert "strategy_lines" in annotations

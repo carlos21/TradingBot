@@ -27,6 +27,7 @@ from src.application.live_readiness.warmup_orchestrator import WarmupOrchestrato
 from src.application.live_readiness.warmup_policy import MinimumBarsWarmupPolicy
 from src.domain.readiness import ReadinessStateMachine
 from src.services.trade_manager import TradeManager
+from src.strategies.entry_context import EntryFilter
 from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
 from src.strategies.liquidity_v2.prod_config import (
     get_prod_candle_config,
@@ -127,8 +128,8 @@ def _make_strategy(
     )
     # Disable the trading-hours filter so the historical 07:35 entry can fire.
     for i, f in enumerate(options.entry_filters):
-        if getattr(f, "__name__", "") == "time_range":
-            options.entry_filters[i] = lambda _ctx: (True, "ok")
+        if f.name == "time_range":
+            options.entry_filters[i] = EntryFilter(fn=lambda _ctx: (True, "ok"), name="time_range")
             break
 
     return LiquidityStrategyV2(
@@ -146,8 +147,8 @@ def _make_strategy(
         point_value=numbers.point_value,
         account_balance=numbers.account_balance,
         sl_levels=numbers.sl_levels,
-        max_entry_distance=getattr(numbers, "max_entry_distance", 50.0),
-        sl_level_tolerance=getattr(numbers, "sl_level_tolerance", 3.0),
+        max_entry_distance=numbers.max_entry_distance,
+        sl_level_tolerance=numbers.sl_level_tolerance,
         logger=logger,
         execution_context=ReadinessTradingContext(state_machine),
     )

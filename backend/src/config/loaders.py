@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import dataclasses
 import json
 import os
 import sys
@@ -211,7 +212,7 @@ class CliConfigLoader:
             setattr(cfg, attr, val)
         # CompositeConfigLoader needs to know which args were actually supplied
         # so that an explicit "--foo default" can reset an earlier non-default.
-        cfg._cli_provided = provided  # type: ignore[attr-defined]
+        cfg._cli_provided = provided
         cfg.validate()
         return cfg
 
@@ -232,18 +233,20 @@ class CompositeConfigLoader:
         base = self.loaders[0].load()
         for loader in self.loaders[1:]:
             override = loader.load()
-            cli_provided = getattr(override, "_cli_provided", None)
+            cli_provided = override._cli_provided
             # CLI: only override the arguments the user actually typed,
-            # even if they equal the hard-coded default. Env / DB sources skip
-            # attributes that still have the default value because those were
-            # not explicitly configured by the source.
-            attrs = cli_provided if cli_provided is not None else vars(override)
+            # even if they equal the hard-coded default. Env / DB sources
+            # (empty _cli_provided) skip attributes that still have the
+            # default value because those were not explicitly configured.
+            attrs = cli_provided if cli_provided else [
+                f.name for f in dataclasses.fields(override)
+                if f.name != "_cli_provided"
+            ]
+            defaults = AppConfig()
             for attr in attrs:
                 override_val = getattr(override, attr)
-                if cli_provided is None:
-                    default_val = getattr(AppConfig(), attr)
-                    if override_val == default_val:
-                        continue
+                if not cli_provided and override_val == getattr(defaults, attr):
+                    continue
                 setattr(base, attr, override_val)
         base.validate()
         return base
@@ -252,6 +255,44 @@ class CompositeConfigLoader:
 # ---------------------------------------------------------------------------
 # Database loader (reads runtime settings from SQLite)
 # ---------------------------------------------------------------------------
+
+# Mapping: settings key -> AppConfig attribute name.
+_KEY_TO_ATTR = {
+    "pair": "pair",
+    "instrument": "instrument",
+    "risk_per_trade": "risk_per_trade",
+    "risk_pct_per_trade": "risk_pct_per_trade",
+    "rr_ratio": "rr_ratio",
+    "flask_port": "flask_port",
+    "zmq_host": "zmq_host",
+    "zmq_market_port": "zmq_market_port",
+    "zmq_command_port": "zmq_command_port",
+    "zmq_query_port": "zmq_query_port",
+    "zmq_heartbeat_port": "zmq_heartbeat_port",
+    "account_balance": "account_balance",
+    "point_value": "point_value",
+    "min_stop_loss": "min_stop_loss",
+    "max_bounce": "max_bounce",
+    "extra_sl_space": "extra_sl_space",
+    "sl_level_tolerance": "sl_level_tolerance",
+    "min_cross_depth": "min_cross_depth",
+    "line_removal_mode": "line_removal_mode",
+    "session_start": "session_start",
+    "session_end": "session_end",
+    "daily_trades_limit": "daily_trades_limit",
+    "max_open_trades": "max_open_trades",
+    "reentry_threshold": "reentry_threshold",
+    "broker_mode": "broker_mode",
+    "broker_spread": "broker_spread",
+    "history_hours": "history_hours",
+}
+
+# Fail fast at import time if AppConfig drifts from the mapping above.
+assert set(_KEY_TO_ATTR.values()) <= {
+    f.name for f in dataclasses.fields(AppConfig)
+}, "_KEY_TO_ATTR maps a settings key to a missing AppConfig field"
+
+
 class DbConfigLoader:
     """Override AppConfig with values stored in the SQLite database."""
 
@@ -280,7 +321,7 @@ class DbConfigLoader:
                     continue
                 settings_dict[row.key] = row.value
                 attr = self._key_to_attr(row.key)
-                if attr and hasattr(cfg, attr):
+                if attr:
                     parsed = self._parse_attr(attr, row.value)
                     if parsed is not None:
                         setattr(cfg, attr, parsed)
@@ -344,36 +385,7 @@ class DbConfigLoader:
 
     @staticmethod
     def _key_to_attr(key: str) -> str | None:
-        mapping = {
-            "pair": "pair",
-            "instrument": "instrument",
-            "risk_per_trade": "risk_per_trade",
-            "risk_pct_per_trade": "risk_pct_per_trade",
-            "rr_ratio": "rr_ratio",
-            "flask_port": "flask_port",
-            "zmq_host": "zmq_host",
-            "zmq_market_port": "zmq_market_port",
-            "zmq_command_port": "zmq_command_port",
-            "zmq_query_port": "zmq_query_port",
-            "zmq_heartbeat_port": "zmq_heartbeat_port",
-            "account_balance": "account_balance",
-            "point_value": "point_value",
-            "min_stop_loss": "min_stop_loss",
-            "max_bounce": "max_bounce",
-            "extra_sl_space": "extra_sl_space",
-            "sl_level_tolerance": "sl_level_tolerance",
-            "min_cross_depth": "min_cross_depth",
-            "line_removal_mode": "line_removal_mode",
-            "session_start": "session_start",
-            "session_end": "session_end",
-            "daily_trades_limit": "daily_trades_limit",
-            "max_open_trades": "max_open_trades",
-            "reentry_threshold": "reentry_threshold",
-            "broker_mode": "broker_mode",
-            "broker_spread": "broker_spread",
-            "history_hours": "history_hours",
-        }
-        return mapping.get(key)
+        return _KEY_TO_ATTR.get(key)
 
     @staticmethod
     def _parse_attr(attr: str, value: str):

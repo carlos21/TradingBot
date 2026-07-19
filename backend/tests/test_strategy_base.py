@@ -8,7 +8,7 @@ import pytest
 from src.domain.types import Direction
 from src.services.trade_manager import TradeManager
 from src.strategies.base_strategy import BreakevenConfig
-from src.strategies.entry_context import EntryContext
+from src.strategies.entry_context import EntryContext, EntryFilter
 from src.strategies.liquidity_v2.base_strategy import (
     BaseLiquidityStrategy,
     LineRemovalMode,
@@ -365,9 +365,7 @@ class TestFiltersAllowEntry:
         assert hold is False
 
     def test_one_blocks(self):
-        def blocker(_ctx):
-            return False, "blocked"
-        blocker.__name__ = "blocker"
+        blocker = EntryFilter(fn=lambda _ctx: (False, "blocked"), name="blocker")
         strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.entry_filters = [blocker]
         ctx = MagicMock()
@@ -376,10 +374,7 @@ class TestFiltersAllowEntry:
         assert "blocker" in reason
 
     def test_hold_on_block(self):
-        def holder(_ctx):
-            return False, "hold"
-        holder.__name__ = "holder"
-        holder._hold_on_block = True
+        holder = EntryFilter(fn=lambda _ctx: (False, "hold"), name="holder", hold_on_block=True)
         strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS)
         strat.entry_filters = [holder]
         ctx = MagicMock()

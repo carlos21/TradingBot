@@ -19,19 +19,14 @@ class FakeDataSource:
         self.gateway = FakeGateway(connected=connected)
 
 
-class FakeAccountsRepo:
-    def __init__(self, accounts=None):
+class FakeSettingsService:
+    def __init__(self, accounts=None, credentials=None, instrument="MNQ 09-26"):
         self._accounts = accounts or []
+        self._credentials = credentials or {}
+        self._instrument = instrument
 
     def list_accounts(self):
         return self._accounts
-
-
-class FakeSettingsService:
-    def __init__(self, accounts=None, credentials=None, instrument="MNQ 09-26"):
-        self._accounts = FakeAccountsRepo(accounts)
-        self._credentials = credentials or {}
-        self._instrument = instrument
 
     def get_full_settings(self):
         return {

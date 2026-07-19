@@ -3,7 +3,7 @@
 
 from src.domain.types import Direction
 from src.strategies.base_strategy import BreakevenConfig
-from src.strategies.entry_context import open_trades_limit_filter
+from src.strategies.entry_context import EntryFilter, open_trades_limit_filter
 from src.strategies.tsi_cross.config import TsiCrossConfig, TsiCrossNumbers
 from src.strategies.tsi_cross.strategy import TsiCrossStrategy
 from tests.fakes import DummySocketIO, FakeLogger, MutableTradingContext
@@ -341,7 +341,7 @@ class TestTsiCrossStrategyEvaluateCross:
 
     def test_filter_block_prevents_open(self):
         config = TsiCrossConfig(
-            entry_filters=[lambda _ctx: (False, "blocked")],
+            entry_filters=[EntryFilter(fn=lambda _ctx: (False, "blocked"), name="blocker")],
             tsi_long_len=6,
             tsi_short_len=13,
             tsi_signal_len=4,

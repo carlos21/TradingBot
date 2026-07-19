@@ -128,6 +128,14 @@ class TestInitialization:
         ds = ZMQDataSource(logger=logger, gateway_config=config)
         assert ds._gateway_config is config
 
+    def test_set_readiness_monitor(self, data_source):
+        assert data_source._readiness_monitor is None
+        monitor = MagicMock()
+        data_source.set_readiness_monitor(monitor)
+        assert data_source._readiness_monitor is monitor
+        data_source.set_readiness_monitor(None)
+        assert data_source._readiness_monitor is None
+
     def test_ensure_gateway_creates_new(self, logger):
         ds = ZMQDataSource(logger=logger)
         with patch("src.infrastructure.gateway.datasource.TradingGateway") as MockGW:

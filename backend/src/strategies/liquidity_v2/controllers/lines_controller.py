@@ -29,9 +29,7 @@ class LinesController:
 
     def add_line(self, pair: str, price: float, creation_timestamp: float = None):
         ds = self.bars_loader.data_source
-        # Backward compatibility: only enforce the single-pair restriction when
-        # the data source still carries a hardcoded pair attribute.
-        if hasattr(ds, 'pair') and pair != ds.pair:
+        if pair != ds.pair:
             from flask import abort
             abort(400, f"Only pair '{ds.pair}' is supported")
 

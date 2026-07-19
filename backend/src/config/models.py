@@ -255,6 +255,14 @@ class AppConfig:
     """Telegram chat / channel ID to send notifications to."""
 
     # ------------------------------------------------------------------
+    # Internal bookkeeping
+    # ------------------------------------------------------------------
+    _cli_provided: set[str] = field(default_factory=set, repr=False, compare=False)
+    """Attribute names explicitly supplied on the command line. Populated by
+    ``CliConfigLoader`` so ``CompositeConfigLoader`` can distinguish
+    "not provided" from "provided but equal to the default"."""
+
+    # ------------------------------------------------------------------
     # Derived helpers
     # ------------------------------------------------------------------
     def __post_init__(self):

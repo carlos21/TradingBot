@@ -226,7 +226,7 @@ class BaseLiquidityStrategy:
         """Keep accounts that are live-enabled (in live mode) and assigned to this pair."""
         from src.domain.account_eligibility import filter_eligible_accounts
 
-        pair = getattr(self.trade_manager, "pair", None) or ""
+        pair = self.trade_manager.pair if self.trade_manager else ""
         return filter_eligible_accounts(accounts or [], pair, self._live_mode)
 
     def _get_current_risk(self) -> tuple[float | None, float | None]:
@@ -264,7 +264,7 @@ class BaseLiquidityStrategy:
         creation_timestamp: Epoch seconds when this line became valid
         pair: instrument symbol this line belongs to (defaults to trade_manager.pair)
         """
-        line_pair = pair or getattr(self.trade_manager, "pair", None) or ""
+        line_pair = pair or (self.trade_manager.pair if self.trade_manager else "")
         self.logger.info(f"[Strategy] add_strategy_line id={id} level={level} ts={creation_timestamp} pair={line_pair}")
         with self.lock:
             state = {
@@ -679,8 +679,7 @@ class BaseLiquidityStrategy:
         for f in self.entry_filters:
             ok, reason = f(ctx)
             if not ok:
-                hold = getattr(f, '_hold_on_block', False)
-                return False, f"{f.__name__}: {reason}", hold
+                return False, f"{f.name}: {reason}", f.hold_on_block
         return True, "ok", False
 
     def _filters_allow_reentry(self, ctx: EntryContext) -> tuple[bool, str, bool]:
@@ -696,12 +695,11 @@ class BaseLiquidityStrategy:
         are bypassed because they don't apply to re-entry context."""
         reentry_filter_names = {"time_range", "open_trades_limit", "rollover", "trading_windows"}
         for f in self.entry_filters:
-            if f.__name__ not in reentry_filter_names:
+            if f.name not in reentry_filter_names:
                 continue
             ok, reason = f(ctx)
             if not ok:
-                hold = getattr(f, '_hold_on_block', False)
-                return False, f"{f.__name__}: {reason}", hold
+                return False, f"{f.name}: {reason}", f.hold_on_block
         return True, "ok", False
 
     def _reset_trigger_state(self, line_state: dict[str, Any]):

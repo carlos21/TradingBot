@@ -334,3 +334,18 @@ class TestSettingsServiceEncryption:
         encrypted = svc._encrypt("hello")
         assert encrypted != "hello"
         assert svc._decrypt(encrypted) == "hello"
+
+
+class TestSettingsServiceListAccounts:
+
+    def test_list_accounts_empty(self):
+        svc = _make_service()
+        assert svc.list_accounts() == []
+
+    def test_list_accounts_delegates_to_repository(self):
+        svc = _make_service()
+        svc._accounts.upsert("Acct1", risk_usd=100.0, live_enabled=False)
+        accounts = svc.list_accounts()
+        assert [a.name for a in accounts] == ["Acct1"]
+        assert accounts[0].risk_usd == 100.0
+        assert accounts[0].live_enabled is False

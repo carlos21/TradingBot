@@ -64,7 +64,7 @@ class _ReadinessHarness:
 
 def _wait_for_state(app, target_name: str, timeout: float = 5.0) -> None:
     deadline = time.time() + timeout
-    monitor = getattr(app.data_source, "_readiness_monitor", None)
+    monitor = app.data_source._readiness_monitor
     while time.time() < deadline:
         if monitor is not None and monitor._state_machine.state.name == target_name:
             return
@@ -97,7 +97,7 @@ def readiness_harness(fake_nt, live_app):
     if isinstance(app.data_source, ZMQDataSource):
         app.data_source.check_history_completeness = lambda bars=None: (True, "test")
 
-    monitor = getattr(app.data_source, "_readiness_monitor", None)
+    monitor = app.data_source._readiness_monitor
     if monitor is not None:
         class _AlwaysWarm:
             def is_warm(self, _strategy):

@@ -194,6 +194,9 @@ to be:
         # Callbacks notified when a command is NACK'd or times out waiting for an ACK
         self._command_failure_listeners: list[Callable[[str, str, int, str], None]] = []
 
+        # Account names reported in config queries (refreshed from DB on demand)
+        self._account_names: list[str] = []
+
         # E2E test state tracking
         self._test_sequences: dict[str, dict[str, Any]] = {}
 
@@ -505,7 +508,7 @@ to be:
                         if key == "accounts" or key == "all":
                             # Refresh from DB so account changes don't require app restart
                             self._refresh_account_names()
-                            account_names = getattr(self, '_account_names', [])
+                            account_names = self._account_names
                             config["accounts"] = ",".join(account_names) if account_names else ""
                         else:
                             config[key] = None

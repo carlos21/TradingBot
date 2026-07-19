@@ -69,11 +69,7 @@ class ReadinessMonitor:
             multicaster = WarmupProgressMulticaster(
                 [self._progress_tracker, reporter]
             )
-            set_listener = getattr(
-                self._warmup_orchestrator, "set_progress_listener", None
-            )
-            if set_listener is not None:
-                set_listener(multicaster)
+            self._warmup_orchestrator.set_progress_listener(multicaster)
         self._logger = logger
 
         # Observe the state machine so progress tracking stays in sync with
@@ -89,6 +85,13 @@ class ReadinessMonitor:
 
     def set_pair(self, pair: str) -> None:
         self._pair = pair
+
+    def on_connection_change(self, connected: bool) -> None:
+        """Called when the gateway connection state changes."""
+        if connected:
+            self._state_machine.connect()
+        else:
+            self._state_machine.disconnect()
 
     def on_readiness_changed(
         self,
@@ -263,12 +266,12 @@ class ReadinessMonitor:
 
     def _schedule_history_retry(self) -> None:
         """Schedule another history refresh after a backoff delay."""
-        request_refresh = getattr(self._data_source, "request_refresh", None)
-        if request_refresh is None:
+        data_source = self._data_source
+        if data_source is None:
             if self._logger:
                 self._logger.warning(
-                    "[Readiness] Cannot request history retry: data source "
-                    "has no request_refresh method"
+                    "[Readiness] Cannot request history retry: no data source "
+                    "configured"
                 )
             return
 
@@ -287,7 +290,7 @@ class ReadinessMonitor:
             with self._retry_lock:
                 self._retry_timer = None
             try:
-                request_refresh()
+                data_source.request_refresh()
                 self._state_machine.history_retry_scheduled()
             except Exception as e:
                 # Request failed — don't count as an attempt so backoff

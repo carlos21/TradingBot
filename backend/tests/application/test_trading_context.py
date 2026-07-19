@@ -69,7 +69,15 @@ class TestReadinessTradingContext:
     def test_not_ready_in_other_states(self, transition_method: str) -> None:
         sm = ReadinessStateMachine()
         sm.connect()
-        getattr(sm, transition_method)("test") if transition_method == "degrade" else getattr(sm, transition_method)()
+        transition = {
+            "connect": sm.connect,
+            "start_refresh": sm.start_refresh,
+            "history_empty": sm.history_empty,
+            "history_retry_scheduled": sm.history_retry_scheduled,
+            "degrade": sm.degrade,
+            "disconnect": sm.disconnect,
+        }[transition_method]
+        transition("test") if transition_method == "degrade" else transition()
         ctx = ReadinessTradingContext(sm)
         assert ctx.is_trading_enabled() is False
         assert ctx.is_warmup() is False

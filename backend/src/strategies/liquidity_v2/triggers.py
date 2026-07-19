@@ -3,15 +3,31 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any
+from typing import Any, Protocol
 
 from src.domain.types import Direction
 from src.strategies.base_strategy import DecisionEventCategory
 from src.strategies.entry_context import EntryContext, EntryTrigger
 from src.strategies.indicators.tsi import calculate_tsi_series as _calculate_tsi_series
+from src.strategies.liquidity_v2.config import CandleConfig
+from src.utils.app_logger import ILogger
 
-if TYPE_CHECKING:
-    from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
+
+class TriggerStrategy(Protocol):
+    """Structural interface the trigger functions rely on.
+
+    Implemented at runtime by ``LiquidityStrategyV2``; declared as a Protocol
+    so triggers depend on the structure they use, not the concrete class.
+    """
+    max_entry_distance: float | None
+    sl_levels: list[float] | None
+    candle_config: CandleConfig
+    logger: ILogger | None
+
+    def _parse_tf_seconds(self, tf: str) -> int: ...
+    def get_history(self, tf: str, count: int) -> list[dict[str, Any]]: ...
+    def log_decision(self, *args: Any, **kwargs: Any) -> None: ...
+    def remove_strategy_line(self, line_id: Any) -> None: ...
 
 # --- CONFIGURATION ---
 FAST_MOVE_LOOKBACK   = 5      # Check the last 5 bars (15m)
@@ -189,7 +205,7 @@ def _process_tsi_rescue(strategy, line_id, line, bar, lvl, dir_, curr_tsi, curr_
     return None
 
 def tsi_cross_trigger(
-    strategy: LiquidityStrategyV2,
+    strategy: TriggerStrategy,
     line_id: Any,
     line: dict[str, Any],
     bar: dict[str, Any],
@@ -337,7 +353,7 @@ def tsi_cross_trigger(
 
     return None
 
-def _get_history_with_gap_check(strategy, tf, line_id, bar, min_bars=30):
+def _get_history_with_gap_check(strategy: TriggerStrategy, tf, line_id, bar, min_bars=30):
     """Fetch history and detect data gaps. Returns post-gap history or None if unusable."""
     history = strategy.get_history(tf, 50)
     if len(history) < min_bars:
@@ -345,28 +361,25 @@ def _get_history_with_gap_check(strategy, tf, line_id, bar, min_bars=30):
             strategy.logger.info(f"[TSI:{tf}] line={line_id} history too short: {len(history)} < {min_bars}")
         return None
 
-    parse_tf = getattr(strategy, '_parse_tf_seconds', None)
-    if parse_tf:
-        expected_interval = parse_tf(tf)
-        # Guard against mock objects in tests
-        if isinstance(expected_interval, (int, float)) and expected_interval > 0:
-            gap_idx = None
-            for i in range(1, len(history)):
-                gap = history[i]['time'] - history[i - 1]['time']
-                if gap > expected_interval * 2:
-                    gap_idx = i
-            if gap_idx is not None:
-                post_gap = history[gap_idx:]
-                if len(post_gap) < min_bars:
-                    strategy.log_decision(bar['time'], tf, line_id, "TSI_GAP",
-                        f"Data gap at bar {gap_idx}; post-gap history too short: {len(post_gap)} < {min_bars}",
-                        category=DecisionEventCategory.EVAL_FAILURE)
-                    if strategy.logger:
-                        strategy.logger.info(f"[TSI:{tf}] line={line_id} data gap, post-gap history too short: {len(post_gap)} < {min_bars}")
-                    return None
+    expected_interval = strategy._parse_tf_seconds(tf)
+    if expected_interval > 0:
+        gap_idx = None
+        for i in range(1, len(history)):
+            gap = history[i]['time'] - history[i - 1]['time']
+            if gap > expected_interval * 2:
+                gap_idx = i
+        if gap_idx is not None:
+            post_gap = history[gap_idx:]
+            if len(post_gap) < min_bars:
+                strategy.log_decision(bar['time'], tf, line_id, "TSI_GAP",
+                    f"Data gap at bar {gap_idx}; post-gap history too short: {len(post_gap)} < {min_bars}",
+                    category=DecisionEventCategory.EVAL_FAILURE)
                 if strategy.logger:
-                    strategy.logger.info(f"[TSI:{tf}] line={line_id} data gap detected at bar {gap_idx}, using post-gap history ({len(post_gap)} bars)")
-                return post_gap
+                    strategy.logger.info(f"[TSI:{tf}] line={line_id} data gap, post-gap history too short: {len(post_gap)} < {min_bars}")
+                return None
+            if strategy.logger:
+                strategy.logger.info(f"[TSI:{tf}] line={line_id} data gap detected at bar {gap_idx}, using post-gap history ({len(post_gap)} bars)")
+            return post_gap
     return history
 
 
@@ -551,7 +564,7 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
         config = VelocityTriggerConfig()
 
     def trigger(
-        strategy: LiquidityStrategyV2,
+        strategy: TriggerStrategy,
         line_id: Any,
         line: dict[str, Any],
         bar: dict[str, Any],
@@ -640,12 +653,12 @@ def make_velocity_adaptive_tsi_trigger(config: VelocityTriggerConfig = None):
     return trigger
 
 
-def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val):
+def _build_tsi_context(strategy: TriggerStrategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val):
     entry_price = bar['close']
     # Prevent entries too far from the line level
-    max_dist = getattr(strategy, 'max_entry_distance', None)
+    max_dist = strategy.max_entry_distance
     if max_dist is None:
-        sl_levels = getattr(strategy, 'sl_levels', None)
+        sl_levels = strategy.sl_levels
         if sl_levels:
             max_dist = max(sl_levels)
     if max_dist is not None and max_dist > 0:
@@ -672,7 +685,7 @@ def _build_tsi_context(strategy, line_id, line, bar, lvl, dir_, tsi_val, sig_val
 # --- HELPER FUNCTIONS FOR TSI ---
 
 def wick_near_line_trigger(
-    strategy: LiquidityStrategyV2,
+    strategy: TriggerStrategy,
     line_id: Any,
     line: dict[str, Any],
     bar: dict[str, Any],
@@ -745,7 +758,7 @@ def wick_near_line_trigger(
     )
 
 def three_candle_reversal_trigger(
-    strategy: LiquidityStrategyV2,
+    strategy: TriggerStrategy,
     line_id: Any,
     line: dict[str, Any],
     bar: dict[str, Any],
@@ -845,7 +858,7 @@ def three_candle_reversal_trigger(
     return None
 
 def double_5m_cross_trigger(
-    strategy: LiquidityStrategyV2,
+    strategy: TriggerStrategy,
     line_id: Any,
     line: dict[str, Any],
     bar: dict[str, Any],

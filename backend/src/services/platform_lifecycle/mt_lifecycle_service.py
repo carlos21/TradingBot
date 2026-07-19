@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import time
+from typing import TYPE_CHECKING
 
 from src.services.mt_manager_service import MetaTraderManagerService
 from src.services.settings_service import SettingsService
 from src.utils.app_logger import ILogger
+
+if TYPE_CHECKING:
+    from src.infrastructure.gateway.datasource import ZMQDataSource
 
 
 class MetaTraderLifecycleService:
@@ -32,16 +36,16 @@ class MetaTraderLifecycleService:
         except Exception:
             return None
 
-    def validate_before_start(self, data_source) -> tuple[bool, str | None]:
+    def validate_before_start(self, data_source: ZMQDataSource | None) -> tuple[bool, str | None]:
         """MetaTrader manages its own accounts; no pre-flight check needed."""
         return True, None
 
-    def maybe_launch_after_delay(self, data_source) -> None:
+    def maybe_launch_after_delay(self, data_source: ZMQDataSource | None) -> None:
         """Wait a few seconds, then launch MetaTrader terminal if not connected."""
         time.sleep(4)
 
-        gateway = getattr(data_source, "gateway", None)
-        if gateway and getattr(gateway, "is_connected", False):
+        gateway = data_source.gateway if data_source else None
+        if gateway and gateway.is_connected:
             self._logger.info("[MT Lifecycle] MetaTrader connected on its own, skipping launch.")
             return
 

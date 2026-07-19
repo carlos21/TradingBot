@@ -10,7 +10,7 @@ import pytest
 from src.config.models import DEFAULT_HISTORY_HOURS
 from src.domain.parity import ParityResult
 from src.infrastructure.gateway.datasource import DataSourceState, ZMQDataSource
-from src.routes.socketio_handlers import register_socketio_handlers
+from src.routes.socketio_handlers import SocketIOLogForwarder, register_socketio_handlers
 from tests.fakes import FakeDataSource, FakeLogger
 
 
@@ -715,7 +715,7 @@ class TestConnectionChangeCallback:
         assert ("platform_disconnected", (), {}) in socketio.emitted
 
     def test_log_forwarding_is_rate_limited(self, socketio, loader, logger):
-        register_socketio_handlers(
+        _, logger = register_socketio_handlers(
             socketio=socketio,
             loader=loader,
             data_source=FakeDataSource(),
@@ -732,7 +732,7 @@ class TestConnectionChangeCallback:
         assert len(system_log_events) <= 50
 
     def test_log_forwarding_extracts_source_from_prefix(self, socketio, loader, logger):
-        register_socketio_handlers(
+        _, logger = register_socketio_handlers(
             socketio=socketio,
             loader=loader,
             data_source=FakeDataSource(),
@@ -799,7 +799,7 @@ class TestPayloadValidation:
 
 class TestCleanup:
     def test_cleanup_stops_health_thread_and_unwraps_logger(self, socketio, loader, logger):
-        cleanup = register_socketio_handlers(
+        cleanup, logger = register_socketio_handlers(
             socketio=socketio,
             loader=loader,
             data_source=FakeDataSource(),
@@ -807,28 +807,27 @@ class TestCleanup:
             _logger=logger,
         )
 
-        assert getattr(logger, "_socketio_log_wrapped", False) is True
-        cleanup()
-        assert getattr(logger, "_socketio_log_wrapped", False) is False
+        assert isinstance(logger, SocketIOLogForwarder) is True
+        restored = cleanup()
+        assert isinstance(restored, SocketIOLogForwarder) is False
 
     def test_double_registration_does_not_double_wrap(self, socketio, loader, logger):
-        register_socketio_handlers(
+        _, wrapped = register_socketio_handlers(
             socketio=socketio,
             loader=loader,
             data_source=FakeDataSource(),
             live_mode=False,
             _logger=logger,
         )
-        original_info = logger.info
-        cleanup = register_socketio_handlers(
+        cleanup, rewrapped = register_socketio_handlers(
             socketio=socketio,
             loader=loader,
             data_source=FakeDataSource(),
             live_mode=False,
-            _logger=logger,
+            _logger=wrapped,
         )
-        # The second registration should not replace the already-wrapped method.
-        assert logger.info is original_info
+        # The second registration must not wrap the forwarder again.
+        assert rewrapped is wrapped
         cleanup()
 
 

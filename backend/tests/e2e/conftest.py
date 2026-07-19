@@ -334,10 +334,9 @@ def _force_ready(app: AppWiring) -> None:
     the machine would stay in WARMING_UP and the strategy would not trade.
     Tests that exercise order/command wiring can shortcut the warm-up phase.
     """
-    ctx = getattr(app.strategy, "execution_context", None)
-    sm = getattr(ctx, "_state_machine", None)
-    if sm is None:
-        return
+    ctx = app.strategy.execution_context
+    assert ctx is not None
+    sm = ctx._state_machine
     sm.connect()
     sm.history_loaded()
     sm.warmup_complete()

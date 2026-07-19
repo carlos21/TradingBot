@@ -202,7 +202,7 @@ class BaseStrategy:
         """Keep accounts that are live-enabled (in live mode) and assigned to this pair."""
         from src.domain.account_eligibility import filter_eligible_accounts
 
-        pair = getattr(self.trade_manager, "pair", None) or ""
+        pair = self.trade_manager.pair if self.trade_manager else ""
         return filter_eligible_accounts(accounts or [], pair, self._live_mode)
 
     def _get_current_risk(self) -> tuple[float | None, float | None]:
@@ -281,8 +281,7 @@ class BaseStrategy:
         for f in self.entry_filters:
             ok, reason = f(ctx)
             if not ok:
-                hold = getattr(f, '_hold_on_block', False)
-                return False, f"{f.__name__}: {reason}", hold
+                return False, f"{f.name}: {reason}", f.hold_on_block
         return True, "ok", False
 
     # ------------------------------------------------------------------
@@ -302,12 +301,9 @@ class BaseStrategy:
             if not cfg:
                 continue
 
-            # Support both BreakevenConfig dataclass and plain dict
-            def _be_val(obj, key):
-                return getattr(obj, key, None) if hasattr(obj, key) else obj.get(key)
-
-            trigger_rr = _be_val(cfg, 'trigger_rr')
-            move_to_rr = _be_val(cfg, 'move_to_rr')
+            # Stored as a plain dict (dataclasses.asdict) by the strategy that attached it.
+            trigger_rr = cfg.get('trigger_rr')
+            move_to_rr = cfg.get('move_to_rr')
             if trigger_rr is None or move_to_rr is None:
                 continue
 

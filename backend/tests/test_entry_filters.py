@@ -95,7 +95,7 @@ class TestMinCrossDepthFilter:
 
     def test_has_hold_on_block(self):
         f = min_cross_depth_filter(5.0)
-        assert getattr(f, "_hold_on_block", False) is True
+        assert f.hold_on_block is True
 
 
 class TestMaxBounceFilter:

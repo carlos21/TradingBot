@@ -47,10 +47,9 @@ def _teardown_in_memory_db(original_db: Any, test_db: Any) -> None:
 
 
 def _force_ready(app: AppWiring) -> None:
-    ctx = getattr(app.strategy, "execution_context", None)
-    sm = getattr(ctx, "_state_machine", None)
-    if sm is None:
-        return
+    ctx = app.strategy.execution_context
+    assert ctx is not None
+    sm = ctx._state_machine
     sm.connect()
     sm.history_loaded()
     sm.warmup_complete()

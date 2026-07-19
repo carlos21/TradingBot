@@ -59,7 +59,7 @@ class SQLRepositoryBase:
         # SQLAlchemy wraps the DBAPI exception; the original is available
         # via __cause__ or the first arg string.
         msg = str(exc).lower()
-        cause = getattr(exc, "__cause__", None)
+        cause = exc.__cause__
         if cause is not None:
             msg += " " + str(cause).lower()
         return "database is locked" in msg
@@ -90,7 +90,7 @@ def retry_on_sqlite_lock(
                     last_exc = exc
                     # Only retry SQLite lock errors; re-raise anything else immediately.
                     is_busy = "database is locked" in str(exc).lower()
-                    cause = getattr(exc, "__cause__", None)
+                    cause = exc.__cause__
                     if cause is not None:
                         is_busy = is_busy or "database is locked" in str(cause).lower()
                     if not is_busy or attempt == max_retries:

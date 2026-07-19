@@ -40,9 +40,7 @@ class TestNinjaTraderLifecycleService:
     def _service(self, accounts=None, settings=None, nt_service=None):
         settings_service = MagicMock()
         settings_service.get_full_settings.return_value = settings or {}
-        accounts_repo = MagicMock()
-        accounts_repo.list_accounts.return_value = accounts or []
-        settings_service._accounts = accounts_repo
+        settings_service.list_accounts.return_value = accounts or []
         nt_service = nt_service or MagicMock()
         return NinjaTraderLifecycleService(nt_service, settings_service, NoOpLogger())
 

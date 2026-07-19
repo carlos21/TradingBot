@@ -16,6 +16,7 @@ import pytest
 from dateutil import parser as dtparser
 
 from src.infrastructure.gateway.datasource import ZMQDataSource
+from src.strategies.entry_context import EntryFilter
 from tests.e2e.conftest import E2EHarness, _force_ready
 from tests.e2e.test_liquidity_v2_e2e import _wait_for_trade_closed_in_repo
 from tests.fake_ninjatrader.csv_bar_loader import load_bars
@@ -109,8 +110,8 @@ class TestCSVScenarioReplay:
         # signals naturally.
         strategy = app.strategy
         for i, f in enumerate(strategy.entry_filters):
-            if getattr(f, "__name__", "") in ("time_range", "trading_windows"):
-                strategy.entry_filters[i] = lambda ctx: (True, "ok")
+            if f.name in ("time_range", "trading_windows"):
+                strategy.entry_filters[i] = EntryFilter(fn=lambda ctx: (True, "ok"), name=f.name)
 
         pair = test_scenario["pair"]
         start_ts = _to_epoch(test_scenario["start"])

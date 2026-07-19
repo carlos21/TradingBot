@@ -24,6 +24,7 @@ from src.strategies.liquidity_v2.triggers import (
     tsi_cross_trigger,
     wick_near_line_trigger,
 )
+from src.utils.bar_aggregator import BarAggregator
 
 # ─── Helper to build bars ───────────────────────────────────────────
 
@@ -33,21 +34,29 @@ def _bar(time=0, open_=100, high=102, low=98, close=101, pair="MNQ", tf="5m"):
             "close": close, "volume": 100, "pair": pair, "tf": tf}
 
 
-def _make_strategy_mock(history_map=None):
-    """Create a mock strategy with configurable history per timeframe."""
-    s = MagicMock()
-    s.candle_config = CandleConfig()
-    s.max_entry_distance = None
-    _map = history_map or {}
+class _FakeTriggerStrategy:
+    """Typed stand-in for the TriggerStrategy protocol with real numeric defaults."""
 
-    def get_history(tf, count):
-        bars = _map.get(tf, [])
+    def __init__(self, history_map=None):
+        self.candle_config = CandleConfig()
+        self.max_entry_distance = None
+        self.sl_levels = None
+        self.logger = None
+        self.log_decision = MagicMock()
+        self.remove_strategy_line = MagicMock()
+        self._map = history_map or {}
+
+    def get_history(self, tf, count):
+        bars = self._map.get(tf, [])
         return bars[-count:]
 
-    s.get_history = MagicMock(side_effect=get_history)
-    s.log_decision = MagicMock()
-    s.remove_strategy_line = MagicMock()
-    return s
+    def _parse_tf_seconds(self, tf):
+        return BarAggregator.parse_timeframe(tf)
+
+
+def _make_strategy_mock(history_map=None):
+    """Create a fake strategy with configurable history per timeframe."""
+    return _FakeTriggerStrategy(history_map)
 
 
 # ─── TSI Math ────────────────────────────────────────────────────────
@@ -1183,11 +1192,11 @@ class TestGetHistoryWithGapCheck:
         result = _get_history_with_gap_check(s, "3m", "L1", _bar(time=history[-1]["time"]))
         assert result is None
 
-    def test_no_parse_tf_fallback_returns_full_history(self):
+    def test_unparseable_tf_skips_gap_check_returns_full_history(self):
         history = [_bar(time=i * 180, close=100 + i) for i in range(35)]
         s = _make_strategy_mock({"3m": history})
-        # No _parse_tf_seconds method
-        del s._parse_tf_seconds
+        # A non-positive interval disables gap detection
+        s._parse_tf_seconds = lambda _tf: 0
         result = _get_history_with_gap_check(s, "3m", "L1", _bar(time=35 * 180))
         assert result is not None
         assert len(result) == 35

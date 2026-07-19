@@ -499,23 +499,23 @@ def print_detailed_summary(logs: List[Dict], pair_tz: ZoneInfo):
 
 def _server_args(args, csv_path: Path, port: int, server_ready: Event, log_path: Optional[str] = None) -> tuple:
     """Build positional args for run_test_server."""
-    no_breakeven = getattr(args, 'no_breakeven', False)
-    no_reentry_breakeven = getattr(args, 'no_reentry_breakeven', False)
-    mode = getattr(args, 'mode', 'real_futures')
+    no_breakeven = args.no_breakeven
+    no_reentry_breakeven = args.no_reentry_breakeven
+    mode = args.mode
     broker_mode = 'cfd' if mode in ('real_cfd',) else 'futures'
-    broker_spread = getattr(args, 'cfd_spread', 0.0) if broker_mode == 'cfd' else 0.0
+    broker_spread = args.cfd_spread if broker_mode == 'cfd' else 0.0
     use_fractional_lots = mode in ('real_cfd',)
-    fee_per_rt = getattr(args, 'commission', None)
+    fee_per_rt = args.commission
     if fee_per_rt is None:
-        fee_per_rt = getattr(args, 'cfd_commission', FinancialCalc.DEFAULT_FEE_PER_RT) if mode == 'real_cfd' else FinancialCalc.DEFAULT_FEE_PER_RT
-    risk_per_trade = None if getattr(args, 'risk_pct', None) is not None else args.risk
-    session_end = getattr(args, 'session_end', '16:58')
-    session_tz = getattr(args, 'session_tz', 'America/New_York')
+        fee_per_rt = args.cfd_commission if mode == 'real_cfd' else FinancialCalc.DEFAULT_FEE_PER_RT
+    risk_per_trade = None if args.risk_pct is not None else args.risk
+    session_end = args.session_end
+    session_tz = args.session_tz
     return (
         str(csv_path.resolve()), args.bars_per_second, port, server_ready,
-        getattr(args, 'quiet', False), no_breakeven, no_reentry_breakeven,
+        args.quiet, no_breakeven, no_reentry_breakeven,
         broker_mode, broker_spread, args.rr, args.persist, risk_per_trade,
-        getattr(args, 'risk_pct', None), args.account, use_fractional_lots,
+        args.risk_pct, args.account, use_fractional_lots,
         fee_per_rt, session_end, session_tz, log_path,
     )
 
@@ -580,7 +580,7 @@ def _ensure_server_running(
 
 
 async def run_suite(args, scenarios: List[Dict], csv_path: Path):
-    quiet = getattr(args, 'quiet', False)
+    quiet = args.quiet
     if not quiet:
         print(f"🚀 Launching In-Memory Test Server with {csv_path}...")
 
@@ -644,7 +644,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 pair_name_val = sc.get("pair", "unknown")
                 date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
                 sdir = Path(args.outdir) / pair_name_val
-                if getattr(args, "group", None):
+                if args.group:
                     sdir = sdir / args.group
                 sdir = sdir / date_label
                 sdir.mkdir(parents=True, exist_ok=True)
@@ -732,8 +732,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
                 # Extend stream to session end so open trades get closed
                 scenario_date = dtparser.parse(sc["start"]).date()
-                session_end_time = dtime.fromisoformat(getattr(args, 'session_end', '16:58'))
-                session_end_tz = ZoneInfo(getattr(args, 'session_tz', 'America/New_York'))
+                session_end_time = dtime.fromisoformat(args.session_end)
+                session_end_tz = ZoneInfo(args.session_tz)
                 session_end_dt = datetime.combine(scenario_date, session_end_time, tzinfo=session_end_tz)
                 session_end_ts = int(session_end_dt.timestamp())
                 stream_stop_at = max(end_ts, session_end_ts)
@@ -901,7 +901,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     CYAN   = '\033[96m'; WHITE  = '\033[97m'
     BLUE   = '\033[94m'
     ACCT         = args.account   # simulated starting balance (configurable via --account)
-    RISK_PCT     = getattr(args, 'risk_pct', None)  # percentage risk per trade (e.g. 1.0 = 1%)
+    RISK_PCT     = args.risk_pct  # percentage risk per trade (e.g. 1.0 = 1%)
     RISK_USD_FIX = args.risk      # fixed risk per trade in USD (configurable via --risk)
     NQ_PV        = 2.0       # $ per point, MNQ micro contract
     FEE_PER_RT   = FinancialCalc.DEFAULT_FEE_PER_RT
@@ -1330,7 +1330,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         return usd, pct, actual_r, comm
 
     risk_desc = f"{RISK_PCT}% of balance" if RISK_PCT is not None else f"${RISK_USD_FIX:,.0f} fixed"
-    mode = getattr(args, 'mode', 'both')
+    mode = args.mode
     if mode in ('sim', 'both'):
         _print_results(f"SIM — ${ACCT:,.0f} account, {risk_desc} risk per trade", _unused_pnl_fn, _per_trade_sim)
     if mode in ('real_futures', 'both'):
@@ -1340,11 +1340,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             _per_trade_real,
         )
     if mode in ('real_cfd', 'both'):
-        cfd_spread = getattr(args, 'cfd_spread', 1.5)
+        cfd_spread = args.cfd_spread
         # Respect --commission override in CFD report, same as server startup logic
-        cfd_commission = getattr(args, 'commission', None)
+        cfd_commission = args.commission
         if cfd_commission is None:
-            cfd_commission = getattr(args, 'cfd_commission', 5.0)
+            cfd_commission = args.cfd_commission
 
         def _per_trade_cfd(trade, close, balance=ACCT):
             usd, pct, actual_r, comm, _outcome = per_trade_cfd(
@@ -1359,7 +1359,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             _per_trade_cfd,
         )
 
-    if getattr(args, 'results_json', None):
+    if args.results_json:
         out = {
             "config": {
                 "account": ACCT,
@@ -1367,8 +1367,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 "risk_pct": RISK_PCT,
                 "mode": mode,
                 "rr": args.rr,
-                "no_breakeven": getattr(args, 'no_breakeven', False),
-                "no_reentry_breakeven": getattr(args, 'no_reentry_breakeven', False),
+                "no_breakeven": args.no_breakeven,
+                "no_reentry_breakeven": args.no_reentry_breakeven,
             },
             "results": [
                 {
@@ -1384,7 +1384,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         }
         Path(args.results_json).write_text(json.dumps(out, indent=2, default=str))
 
-    if getattr(args, 'html_report', False):
+    if args.html_report:
         # For "both" mode, default HTML report to real_futures (the more realistic scenario)
         html_mode = "real_futures" if mode == "both" else mode
         html_path = Path(args.outdir) / "report.html"
@@ -1400,8 +1400,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             risk_pct=RISK_PCT,
         )
         if html_mode == "real_cfd":
-            html_kwargs["cfd_spread"] = getattr(args, 'cfd_spread', 1.5)
-            html_kwargs["cfd_commission"] = getattr(args, 'commission', None) or getattr(args, 'cfd_commission', 5.0)
+            html_kwargs["cfd_spread"] = args.cfd_spread
+            html_kwargs["cfd_commission"] = args.commission or args.cfd_commission
         generate_html_report(**html_kwargs)
         print(f"\n📄 HTML report: {html_path.resolve()}")
 

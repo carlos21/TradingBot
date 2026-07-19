@@ -32,7 +32,7 @@ class BarsLoader:
         self._from_time    = 0
         self.streaming     = False
         self._stop_event   = threading.Event()
-        self._thread       = None
+        self._thread: threading.Thread | None = None
         self._stop_at = None
         self._reached_stop_at = False
 
@@ -73,7 +73,7 @@ class BarsLoader:
     def _stop_background_task(self):
         """Signal the background subscription to stop and wait for it."""
         self._stop_event.set()
-        if self._thread is not None and hasattr(self._thread, 'is_alive') and self._thread.is_alive():
+        if isinstance(self._thread, threading.Thread) and self._thread.is_alive():
             self._thread.join(timeout=2.0)
             if self._thread.is_alive():
                 self.logger.warning("[BarsLoader] Background task did not stop within timeout")

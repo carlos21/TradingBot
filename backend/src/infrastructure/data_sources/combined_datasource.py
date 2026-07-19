@@ -3,6 +3,8 @@ from collections.abc import Callable
 
 
 class CombinedDataSource(ABC):
+    pair: str
+
     @abstractmethod
     def load_historical_bars(
         self,
@@ -32,4 +34,12 @@ class CombinedDataSource(ABC):
     @abstractmethod
     def pause(self) -> None:
         """Pause the data source. Implementations that block should break out."""
+        ...
+
+    def request_refresh(self, days: int | None = None) -> None:
+        """Request a fresh batch of historical bars from the platform.
+
+        No-op by default; only live platform sources (e.g. ZMQDataSource)
+        implement a real refresh request.
+        """
         ...

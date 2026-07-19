@@ -11,8 +11,8 @@ from src.config.models import AccountConfig
 from src.domain.events import DomainEvent, EventType
 from src.domain.types import Direction
 from src.services.trade_manager import TradeManager
-from src.strategies.base_strategy import BaseStrategy, BreakevenConfig, DecisionEventCategory
-from src.strategies.entry_context import EntryContext
+from src.strategies.base_strategy import BaseStrategy, DecisionEventCategory
+from src.strategies.entry_context import EntryContext, EntryFilter
 from tests.conftest import make_bar
 from tests.fakes import (
     DummySocketIO,
@@ -273,9 +273,7 @@ class TestFiltersAllowEntry:
         assert hold is False
 
     def test_one_blocks(self):
-        def blocker(_ctx):
-            return False, "blocked"
-        blocker.__name__ = "blocker"
+        blocker = EntryFilter(fn=lambda _ctx: (False, "blocked"), name="blocker")
         s = _make_base()
         s.entry_filters = [blocker]
         ctx = MagicMock()
@@ -284,10 +282,7 @@ class TestFiltersAllowEntry:
         assert "blocker" in reason
 
     def test_hold_on_block(self):
-        def holder(_ctx):
-            return False, "hold"
-        holder.__name__ = "holder"
-        holder._hold_on_block = True
+        holder = EntryFilter(fn=lambda _ctx: (False, "hold"), name="holder", hold_on_block=True)
         s = _make_base()
         s.entry_filters = [holder]
         ctx = MagicMock()
@@ -310,7 +305,7 @@ class TestBreakeven:
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open",
-            "breakeven_config": BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05),
+            "breakeven_config": {"trigger_rr": 2.0, "move_to_rr": 0.05},
         })
         tm.open_trades.append(s.open_trades[0])
         tm.trade_repository.inserted.append({"trade_id": "T1", "stop_loss": 90})
@@ -330,7 +325,7 @@ class TestBreakeven:
             "trade_id": "T1", "pair": "MNQ", "type": "short",
             "entry": 100, "stop_loss": 110, "take_profit": 70,
             "risk": 10, "status": "open",
-            "breakeven_config": BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05),
+            "breakeven_config": {"trigger_rr": 2.0, "move_to_rr": 0.05},
         })
         tm.open_trades.append(s.open_trades[0])
         tm.trade_repository.inserted.append({"trade_id": "T1", "stop_loss": 110})
@@ -344,7 +339,7 @@ class TestBreakeven:
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open",
-            "breakeven_config": BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05),
+            "breakeven_config": {"trigger_rr": 2.0, "move_to_rr": 0.05},
         })
         s._check_breakeven(make_bar(time=1000, high=121, low=100, pair="MNQ"))
         assert s.open_trades[0]["stop_loss"] == 90
@@ -365,7 +360,7 @@ class TestBreakeven:
             "trade_id": "T1", "pair": "MNQ", "type": "long",
             "entry": 100, "stop_loss": 90, "take_profit": 130,
             "risk": 10, "status": "open",
-            "breakeven_config": BreakevenConfig(trigger_rr=2.0, move_to_rr=0.05),
+            "breakeven_config": {"trigger_rr": 2.0, "move_to_rr": 0.05},
         })
         s._check_breakeven(make_bar(time=1000, high=115, low=100, pair="MNQ"))
         assert s.open_trades[0]["stop_loss"] == 90

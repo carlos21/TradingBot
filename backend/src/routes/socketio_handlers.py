@@ -4,6 +4,7 @@ import contextlib
 import re
 import threading
 import time
+from collections.abc import Callable
 
 from flask import request
 from flask_socketio import SocketIO, emit, join_room, leave_room
@@ -40,9 +41,6 @@ class _TokenBucket:
             return False
 
 
-# Sentinel attribute used to avoid double-wrapping the same logger instance.
-_LOGGER_WRAPPED_ATTR = "_socketio_log_wrapped"
-
 # Heuristic source tag at the start of a log message, e.g. "[LiveMode] ...".
 _LOG_SOURCE_RE = re.compile(r"^\[([^\]]+)\]\s*")
 
@@ -53,6 +51,73 @@ def _extract_log_source(message: str) -> str:
     if match:
         return match.group(1)
     return "server"
+
+
+def make_system_log_forwarder(socketio: SocketIO) -> Callable[[str, str], None]:
+    """Build the callback that forwards log entries to browsers via Socket.IO.
+
+    Rate-limited so a log storm (e.g. TSI during warm-up) cannot saturate
+    the Socket.IO connection and disconnect the browser.
+    Error-level logs always pass through to avoid dropping critical alerts.
+    """
+    bucket = _TokenBucket(rate=20.0, capacity=40.0)
+
+    def _forward_log(level: str, message: str) -> None:
+        if level != "ERROR" and not bucket.allow():
+            return
+        with contextlib.suppress(Exception):
+            socketio.emit("system_log", {
+                "time": time.time(),
+                "level": level,
+                "source": _extract_log_source(message),
+                "message": message,
+            })
+
+    return _forward_log
+
+
+class SocketIOLogForwarder(ILogger):
+    """ILogger decorator that also forwards info/warning/error logs to the browser via a callback."""
+
+    def __init__(self, delegate: ILogger, forward: Callable[[str, str], None]):
+        self.delegate = delegate
+        self._forward = forward
+
+    @staticmethod
+    def _format(message: str, args: tuple) -> str:
+        # Best-effort formatting so browser logs stay readable when callers
+        # pass printf-style arguments.
+        try:
+            return message % args if args else message
+        except Exception:
+            return message
+
+    def debug(self, message: str, *args, **kwargs) -> None:
+        self.delegate.debug(message, *args, **kwargs)
+
+    def info(self, message: str, *args, **kwargs) -> None:
+        self.delegate.info(message, *args, **kwargs)
+        self._forward("INFO", self._format(message, args))
+
+    def warning(self, message: str, *args, **kwargs) -> None:
+        self.delegate.warning(message, *args, **kwargs)
+        self._forward("WARNING", self._format(message, args))
+
+    def error(self, message: str, *args, **kwargs) -> None:
+        self.delegate.error(message, *args, **kwargs)
+        self._forward("ERROR", self._format(message, args))
+
+    def close(self) -> None:
+        self.delegate.close()
+
+
+def _current_sid() -> str | None:
+    """Return the Socket.IO session id for the current request.
+
+    flask-socketio injects ``request.sid`` at runtime; it is not declared on
+    Flask's Request type, so this helper is the single dynamic-access point.
+    """
+    return getattr(request, "sid", None)
 
 
 def register_socketio_handlers(
@@ -76,8 +141,10 @@ def register_socketio_handlers(
         coordinator: Optional StreamCoordinator for per-instrument streaming
 
     Returns:
-        A cleanup function that stops the background health thread and
-        unwraps the logger. Callers should invoke it on shutdown/reload.
+        A ``(cleanup, logger)`` tuple. ``cleanup`` stops the background health
+        thread and unwraps the logger; callers should invoke it on
+        shutdown/reload. ``logger`` is the effective logger the handlers use
+        (a ``SocketIOLogForwarder`` around the given one).
     """
 
     def _resolve_session(symbol: str | None = None):
@@ -229,7 +296,7 @@ def register_socketio_handlers(
             _emit_error("join_instrument requires {'pair': ...}")
             return
         symbol = payload["pair"]
-        sid = getattr(request, "sid", None)
+        sid = _current_sid()
         if sid is None:
             _emit_error("join_instrument: no socket sid available")
             return
@@ -262,7 +329,7 @@ def register_socketio_handlers(
             _emit_error("leave_instrument requires {'pair': ...}")
             return
         symbol = payload["pair"]
-        sid = getattr(request, "sid", None)
+        sid = _current_sid()
         if sid is not None:
             leave_room(symbol)
             if coordinator is not None:
@@ -414,74 +481,35 @@ def register_socketio_handlers(
     _health_thread = threading.Thread(target=_health_loop, name="SocketIO-Health", daemon=True)
     _health_thread.start()
 
-    # Wire up log forwarding to connected browsers
-    _original_logger_methods = {}
-    _system_log_bucket = _TokenBucket(rate=20.0, capacity=40.0)
+    # Wire up log forwarding to connected browsers. In app wiring the logger
+    # already arrives wrapped (app_factory decorates it eagerly so every
+    # component shares the forwarder); _wrap_logger keeps direct registration
+    # working and is idempotent either way.
+    _forward_log = make_system_log_forwarder(socketio)
 
-    def _forward_log(level: str, message: str):
-        """Forward log entries to browsers via Socket.IO.
+    def _wrap_logger() -> ILogger:
+        """Decorate the logger so logs also reach browsers (idempotent)."""
+        if isinstance(_logger, SocketIOLogForwarder):
+            return _logger
+        return SocketIOLogForwarder(_logger, _forward_log)
 
-        Rate-limited so a log storm (e.g. TSI during warm-up) cannot saturate
-        the Socket.IO connection and disconnect the browser.
-        Error-level logs always pass through to avoid dropping critical alerts.
+    def _unwrap_logger(logger: ILogger) -> ILogger:
+        """Restore the delegate logger."""
+        if isinstance(logger, SocketIOLogForwarder):
+            return logger.delegate
+        return logger
+
+    _logger = _wrap_logger()
+
+    def cleanup() -> ILogger:
+        """Stop background threads and unwrap the logger.
+
+        Returns the restored (unwrapped) logger.
         """
-        if level != "ERROR" and not _system_log_bucket.allow():
-            return
-        try:
-            socketio.emit("system_log", {
-                "time": time.time(),
-                "level": level,
-                "source": _extract_log_source(message),
-                "message": message,
-            })
-        except Exception as exc:
-            _logger.error(f"[SocketIO] failed to forward log: {exc}")
-
-    def _wrap_logger():
-        """Wrap the logger's methods to also emit via Socket.IO.
-
-        Idempotent: if the logger is already wrapped by a previous
-        registration call, do nothing.
-        """
-        if getattr(_logger, _LOGGER_WRAPPED_ATTR, False):
-            return
-        for level in ("debug", "info", "warning", "error"):
-            orig = getattr(_logger, level, None)
-            if orig is None:
-                continue
-            _original_logger_methods[level] = orig
-
-            def make_wrapper(lvl, original):
-                def wrapper(msg: str, *args, **kwargs):
-                    original(msg, *args, **kwargs)
-                    if lvl in ("info", "warning", "error"):
-                        # Best-effort formatting so browser logs stay readable
-                        # when callers pass printf-style arguments.
-                        try:
-                            formatted = msg % args if args else msg
-                        except Exception:
-                            formatted = msg
-                        _forward_log(lvl.upper(), formatted)
-                return wrapper
-
-            setattr(_logger, level, make_wrapper(level, orig))
-        setattr(_logger, _LOGGER_WRAPPED_ATTR, True)
-
-    def _unwrap_logger():
-        """Restore the original logger methods."""
-        if not getattr(_logger, _LOGGER_WRAPPED_ATTR, False):
-            return
-        for level, orig in _original_logger_methods.items():
-            setattr(_logger, level, orig)
-        _original_logger_methods.clear()
-        delattr(_logger, _LOGGER_WRAPPED_ATTR)
-
-    _wrap_logger()
-
-    def cleanup() -> None:
-        """Stop background threads and unwrap the logger."""
+        nonlocal _logger
         _health_stop_event.set()
         _health_thread.join(timeout=2.0)
-        _unwrap_logger()
+        _logger = _unwrap_logger(_logger)
+        return _logger
 
-    return cleanup
+    return cleanup, _logger

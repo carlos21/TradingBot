@@ -14,6 +14,7 @@ from src.application.use_cases.trade_open_use_case import TradeOpenUseCase
 from src.domain.repositories import TradeRepository
 from src.domain.types import Direction
 from src.financial_calc import FinancialCalc
+from src.infrastructure.gateway.executor import MultiAccountExecutor
 from src.notifier import NoOpNotifier, Notifier
 from src.services.trade_executor import NoOpExecutor, TradeExecutor
 from src.utils.app_logger import ILogger
@@ -160,7 +161,7 @@ class TradeManager:
         try:
             return {
                 a.name for a in self._accounts_repo.list_accounts()
-                if a.name and getattr(a, "live_enabled", True)
+                if a.name and a.live_enabled
             }
         except Exception:
             return set()
@@ -456,13 +457,12 @@ class TradeManager:
             if candidate_accounts:
                 account = next(iter(candidate_accounts))
             else:
-                # Some executors (e.g. MultiAccountExecutor) carry their own
-                # account list when no accounts repo is wired yet.
-                executor_configs = getattr(self.trade_executor, "account_configs", None)
-                if executor_configs:
+                # MultiAccountExecutor carries its own account list when no
+                # accounts repo is wired yet.
+                if isinstance(self.trade_executor, MultiAccountExecutor):
                     account = next(
-                        (getattr(c, "name", None) for c in executor_configs
-                         if getattr(c, "name", None) and (not self._live_mode or getattr(c, "live_enabled", True))),
+                        (c.name for c in self.trade_executor.account_configs
+                         if c.name and (not self._live_mode or c.live_enabled)),
                         None,
                     )
 

@@ -217,7 +217,7 @@ class LiquidityStrategyV2(BaseLiquidityStrategy):
         # Persist to DB if repository available
         if self.decision_log_repository is not None:
             try:
-                pair = getattr(self.trade_manager, 'pair', '') or ''
+                pair = self.trade_manager.pair if self.trade_manager else ""
                 self.decision_log_repository.add_log(
                     bar_time=bar_time,
                     pair=pair,

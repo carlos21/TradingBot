@@ -246,6 +246,10 @@ class SettingsService:
         """Delete an account by name."""
         self._accounts.delete(name)
 
+    def list_accounts(self) -> list[AccountConfig]:
+        """Return all configured NinjaTrader accounts."""
+        return self._accounts.list_accounts()
+
     def get_instruments(self) -> list[dict]:
         """Return the current instrument registry as plain dictionaries."""
         return [asdict(inst) for inst in self._instruments.get_all()]

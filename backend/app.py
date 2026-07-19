@@ -71,7 +71,7 @@ def main():
 
     if config.mode == "live":
         platform_label = "NinjaTrader" if config.platform_type == "ninjatrader" else "MetaTrader"
-        if config.platform_type == "ninjatrader" and not getattr(config, "nt_accounts", None):
+        if config.platform_type == "ninjatrader" and not config.nt_accounts:
             app_logger.warning(
                 f"[{instance}] No NT accounts configured. Live streaming will be unavailable until accounts are added."
             )

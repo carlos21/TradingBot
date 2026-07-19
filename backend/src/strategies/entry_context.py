@@ -52,8 +52,19 @@ class EntryContext:
         """Check if entry is short direction."""
         return self.direction.is_short
 
-# A function that receives the entry "context" and decides if we should open.
-EntryFilter = Callable[['EntryContext'], tuple[bool, str]]
+@dataclass(frozen=True)
+class EntryFilter:
+    """A named, pluggable entry filter. hold_on_block=True keeps the line alive on block."""
+    fn: Callable[['EntryContext'], tuple[bool, str]]
+    name: str
+    hold_on_block: bool = False
+
+    def __call__(self, ctx: 'EntryContext') -> tuple[bool, str]:
+        return self.fn(ctx)
+
+    @property
+    def __name__(self) -> str:
+        return self.name
 
 EntryTrigger = Callable[
     ['_BaseLiquidityStrategy', Any, dict[str, Any], dict[str, Any]],
@@ -69,8 +80,7 @@ def open_trades_limit_filter(limit: int | None = 1) -> EntryFilter:
             return True, "limit: unlimited"
         count = sum(1 for t in ctx.strategy.open_trades if t.get('status') == 'open')
         return (count < limit, f"open-trades {count} >= limit {limit}")
-    _f.__name__ = "open_trades_limit"
-    return _f
+    return EntryFilter(fn=_f, name="open_trades_limit")
 
 
 def min_cross_depth_filter(min_depth: float) -> EntryFilter:
@@ -79,9 +89,8 @@ def min_cross_depth_filter(min_depth: float) -> EntryFilter:
     def _f(ctx: EntryContext) -> tuple[bool, str]:
         ok = ctx.cross_depth >= min_depth
         return ok, f"level={ctx.level}, extreme={ctx.extreme:.2f}, depth={ctx.cross_depth:.2f} < min_depth={min_depth}"
-    _f.__name__ = "min_cross_depth"
-    _f._hold_on_block = True  # do not remove line when this filter blocks; let depth accumulate
-    return _f
+    # do not remove line when this filter blocks; let depth accumulate
+    return EntryFilter(fn=_f, name="min_cross_depth", hold_on_block=True)
 
 
 def max_bounce_filter(max_bounce: float) -> EntryFilter:
@@ -89,8 +98,7 @@ def max_bounce_filter(max_bounce: float) -> EntryFilter:
     def _f(ctx: EntryContext) -> tuple[bool, str]:
         ok = ctx.cross_depth <= max_bounce
         return ok, f"level={ctx.level}, extreme={ctx.extreme:.2f}, depth={ctx.cross_depth:.2f} > max_bounce={max_bounce}"
-    _f.__name__ = "max_bounce"
-    return _f
+    return EntryFilter(fn=_f, name="max_bounce")
 
 
 def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: str | None = None) -> EntryFilter:
@@ -131,8 +139,7 @@ def time_range_filter(start_time_str: str, end_time_str: str, timezone_str: str 
 
         msg = f"Time {bar_time} ({tz_name}) outside {t_start}-{t_end}"
         return False, msg
-    _f.__name__ = "time_range"
-    return _f
+    return EntryFilter(fn=_f, name="time_range")
 
 
 def rollover_filter(enabled: bool = False, timezone_str: str | None = None) -> EntryFilter:
@@ -182,8 +189,7 @@ def rollover_filter(enabled: bool = False, timezone_str: str | None = None) -> E
         if (bar_dt.month, bar_dt.day) in _cache[year]:
             return False, f"Rollover day {bar_dt.date()} ({tz_name}) - no trades allowed"
         return True, "ok"
-    _f.__name__ = "rollover"
-    return _f
+    return EntryFilter(fn=_f, name="rollover")
 
 
 def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str | None = None) -> EntryFilter:
@@ -228,8 +234,7 @@ def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str | None 
             return True, f"daily_count {daily_count} < {max_trades_per_day}"
 
         return False, f"Daily limit reached: {daily_count} >= {max_trades_per_day}"
-    _f.__name__ = "daily_trades_limit"
-    return _f
+    return EntryFilter(fn=_f, name="daily_trades_limit")
 
 
 @dataclass(frozen=True)
@@ -335,5 +340,4 @@ def trading_windows_filter(windows: list[TradingWindow], timezone_str: str | Non
             return False, (f"Window {window.start}-{window.end} limit reached: "
                            f"{count} >= {window.max_trades}")
         return True, f"window {window.start}-{window.end}: {count} < {window.max_trades}"
-    _f.__name__ = "trading_windows"
-    return _f
+    return EntryFilter(fn=_f, name="trading_windows")

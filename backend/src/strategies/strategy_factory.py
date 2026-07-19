@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.strategies.liquidity_v2.base_strategy import StrategyOptions
 from src.strategies.liquidity_v2.strategy import LiquidityStrategyV2
 from src.strategies.tsi_cross.config import TsiCrossNumbers
 from src.strategies.tsi_cross.strategy import TsiCrossStrategy
@@ -66,7 +67,7 @@ class StrategyFactory:
         logger=None,
         account_configs=None,
         accounts_repo=None,
-        options=None,
+        options: StrategyOptions | None = None,
         config=None,
         live_mode: bool = False,
         execution_context=None,
@@ -94,8 +95,8 @@ class StrategyFactory:
         if config is None and options is not None:
             from src.strategies.tsi_cross.config import TsiCrossConfig
             config = TsiCrossConfig(
-                entry_filters=list(getattr(options, 'entry_filters', None) or []),
-                breakeven=getattr(options, 'breakeven', None),
+                entry_filters=list(options.entry_filters or []),
+                breakeven=options.breakeven,
             )
 
         return TsiCrossStrategy(

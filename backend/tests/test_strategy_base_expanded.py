@@ -11,10 +11,10 @@ Focus areas:
 
 import dataclasses
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 import pytest
 
+from src.config.models import AccountConfig
 from src.domain.types import Direction
 from src.services.trade_manager import TradeManager
 from src.strategies.base_strategy import BreakevenConfig
@@ -55,11 +55,13 @@ def _make_base(event_publisher=None, line_repo=None, trade_repo=None, trade_mana
     # Accept plain dicts for account_configs in tests
     if account_configs:
         account_configs = [
-            SimpleNamespace(
+            AccountConfig(
                 name=ac.get("name"),
                 risk_usd=ac.get("risk_usd"),
                 risk_pct=ac.get("risk_pct"),
                 rr_ratio=ac.get("rr_ratio"),
+                live_enabled=ac.get("live_enabled", True),
+                instrument_symbols=ac.get("instrument_symbols") or [],
             )
             if isinstance(ac, dict) else ac
             for ac in account_configs

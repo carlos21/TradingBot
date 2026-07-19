@@ -114,7 +114,7 @@ class StrategyTradeService:
             "risk_pct": result.risk_pct,
             "contracts": result.contracts,
             "entry_time": result.entry_time,
-            "rr_ratio": result.rr_ratio if hasattr(result, "rr_ratio") else base_trade.get("rr_ratio", 5.0),
+            "rr_ratio": base_trade.get("rr_ratio", 5.0),
             "account": result.account,
             "line_level": base_trade.get("line_level"),
             "is_reentry": base_trade.get("is_reentry", False),

@@ -32,6 +32,7 @@ class StrategyNumbers:
     account_configs: list = field(default_factory=list)  # list[AccountConfig]
     be_threshold_points: float = 2.0  # exit within this many pts of entry is BE
     sl_tp_tolerance: float = 0.5      # pts tolerance for SL/TP hit detection
+    close_on_opposite_cross: bool = False  # tsi_cross: close on opposite TSI cross instead of fixed TP
 
 @dataclass
 class CandleConfig:

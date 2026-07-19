@@ -17,6 +17,7 @@ from collections import defaultdict
 from collections.abc import Callable
 from datetime import datetime, timezone
 from enum import Enum, auto
+from typing import TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
 from src.config.models import DEFAULT_HISTORY_HOURS
@@ -27,6 +28,9 @@ from src.utils.app_logger import ILogger
 
 from .gateway import GatewayConfig, TradingGateway
 from .protocol import MessageType
+
+if TYPE_CHECKING:
+    from src.application.live_readiness.readiness_monitor import ReadinessMonitor
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +130,9 @@ class ZMQDataSource(CombinedDataSource):
         self.on_heartbeat_stale: Callable[[float], None] | None = None
         self.on_late_history_batch: Callable[[int], None] | None = None
 
+        # Readiness monitor injected by app_factory after construction
+        self._readiness_monitor: ReadinessMonitor | None = None
+
         # CombinedDataSource interface
         self._stop_event = threading.Event()
         self._callback: Callable[[dict], None] | None = None
@@ -190,6 +197,10 @@ class ZMQDataSource(CombinedDataSource):
     def set_coordinator(self, coordinator) -> None:
         """Wire the data source to a ``StreamCoordinator`` for multi-pair routing."""
         self._coordinator = coordinator
+
+    def set_readiness_monitor(self, monitor: ReadinessMonitor | None) -> None:
+        """Inject the readiness monitor stopped together with this data source."""
+        self._readiness_monitor = monitor
 
     def load_historical_bars(
         self,
@@ -320,7 +331,7 @@ class ZMQDataSource(CombinedDataSource):
     def stop(self) -> None:
         """Stop receiving data."""
         self._cancel_pending_refresh_timer()
-        monitor = getattr(self, "_readiness_monitor", None)
+        monitor = self._readiness_monitor
         if monitor is not None:
             with contextlib.suppress(Exception):
                 monitor.stop()
