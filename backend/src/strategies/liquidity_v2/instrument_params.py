@@ -51,13 +51,17 @@ class InstrumentParams:
     be_threshold_points: float
     sl_tp_tolerance: float
 
-    # Session windows (local times, per-window entry limits)
+    # Global concurrent-open-trades cap for this instrument's session
+    # (applies to initial entries and re-entries alike, across all windows).
+    max_open_trades: int
+
+    # Session windows (local times, per-window initial-entry limits)
     trading_windows: list[TradingWindow] = field(default_factory=list)
 
 
 _DEFAULT_WINDOWS = [
-    TradingWindow("08:00", "15:30", max_open_trades=1, max_trades=1),
-    TradingWindow("01:00", "07:59", max_open_trades=1, max_trades=1)
+    TradingWindow("08:00", "15:30", max_trades=1),
+    TradingWindow("01:00", "07:59", max_trades=1)
 ]
 
 INSTRUMENT_PARAMS: dict[str, InstrumentParams] = {
@@ -80,6 +84,7 @@ INSTRUMENT_PARAMS: dict[str, InstrumentParams] = {
         post_cross1_max_dist=80.0,
         be_threshold_points=2.0,
         sl_tp_tolerance=0.5,
+        max_open_trades=2,
         trading_windows=list(_DEFAULT_WINDOWS),
     ),
     # TODO(tune): MES point values are scaled from MNQ (~0.3x) as placeholders.
@@ -103,6 +108,7 @@ INSTRUMENT_PARAMS: dict[str, InstrumentParams] = {
         post_cross1_max_dist=25.0,
         be_threshold_points=0.75,
         sl_tp_tolerance=0.25,
+        max_open_trades=2,
         trading_windows=list(_DEFAULT_WINDOWS),
     ),
 }

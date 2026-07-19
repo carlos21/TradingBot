@@ -77,13 +77,22 @@ def main():
     start_ts = f"{parse_ts_with_date(def_start, session_date)}Z"
     end_ts = f"{parse_ts_with_date(def_end, session_date)}Z"
 
-    # Lines date (defaults to the session date; pick the day before when
-    # lines are drawn ahead of the session, e.g. London)
-    while True:
-        lines_date = prompter.ask("Lines date (YYYY-MM-DD)", default=session_date)
-        if is_valid_date(lines_date):
-            break
-        print("  Expected format: YYYY-MM-DD")
+    # Lines date: London lines are drawn the evening before the session, so
+    # use the day before automatically and only ask for the time. Other
+    # groups prompt, defaulting to the session date.
+    if args.group == "london":
+        from datetime import datetime, timedelta
+
+        lines_date = (
+            datetime.strptime(session_date, "%Y-%m-%d") - timedelta(days=1)
+        ).strftime("%Y-%m-%d")
+        print(f"Lines date: {lines_date} (day before the session)")
+    else:
+        while True:
+            lines_date = prompter.ask("Lines date (YYYY-MM-DD)", default=session_date)
+            if is_valid_date(lines_date):
+                break
+            print("  Expected format: YYYY-MM-DD")
 
     # Collect lines
     lines: list[dict] = []

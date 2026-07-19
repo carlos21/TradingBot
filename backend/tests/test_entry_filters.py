@@ -78,6 +78,34 @@ class TestOpenTradesLimitFilter:
         ok, _ = f(ctx)
         assert ok is True
 
+    def _strategy_with_open(self, n):
+        strategy = MagicMock()
+        strategy.open_trades = [{"status": "open"}] * n
+        strategy.trade_repository = MagicMock()
+        strategy.trade_repository.list_trades.return_value = []
+        return strategy
+
+    def test_cap_two_boundaries(self):
+        f = open_trades_limit_filter(2)
+        for n, expected in ((0, True), (1, True), (2, False), (3, False)):
+            ok, _ = f(_make_ctx(strategy=self._strategy_with_open(n)))
+            assert ok is expected, f"open={n}: expected {expected}, got {ok}"
+
+    def test_reentry_ctx_blocked_at_cap(self):
+        f = open_trades_limit_filter(2)
+        ctx = _make_ctx(strategy=self._strategy_with_open(2))
+        ctx.is_reentry = True
+        ok, reason = f(ctx)
+        assert ok is False
+        assert "open-trades" in reason
+
+    def test_reentry_ctx_allowed_below_cap(self):
+        f = open_trades_limit_filter(2)
+        ctx = _make_ctx(strategy=self._strategy_with_open(1))
+        ctx.is_reentry = True
+        ok, reason = f(ctx)
+        assert ok is True, f"Expected allow but got: {reason}"
+
 
 class TestMinCrossDepthFilter:
 
@@ -421,29 +449,23 @@ class TestTradingWindowsFilter:
         assert ok is False
         assert "outside all trading windows" in reason
 
-    def test_reentry_ctx_respects_open_trades_limit(self):
-        f = trading_windows_filter([TradingWindow("08:00", "15:30", max_open_trades=1)], _NY)
-        strategy = _window_strategy(open_trades=[{"status": "open"}])
-        ctx = _make_ctx(strategy=strategy)
-        ctx.is_reentry = True
-        ok, reason = f(ctx)
-        assert ok is False
-        assert "open-trades" in reason
+    def test_ignores_open_trades(self):
+        """Concurrency is not a window concern anymore (handled by open_trades_limit_filter)."""
+        f = trading_windows_filter([TradingWindow("08:00", "15:30")], _NY)
+        strategy = _window_strategy(open_trades=[{"status": "open"}, {"status": "open"}])
+        ok, reason = f(_make_ctx(strategy=strategy))
+        assert ok is True, f"Expected allow but got: {reason}"
 
-    def test_open_trades_limit_per_window(self):
-        f = trading_windows_filter([
-            TradingWindow("08:00", "11:00", max_open_trades=1),
-            TradingWindow("13:30", "15:30", max_open_trades=2),
-        ], _NY)
-        # 14:00 NY (window 2, limit 2) with 1 open trade -> allowed
-        strategy = _window_strategy(open_trades=[{"status": "open"}])
-        bar_time = int(datetime(2025, 6, 15, 18, 0, tzinfo=timezone.utc).timestamp())
-        ok, _ = f(_make_ctx(strategy=strategy, bar_time=bar_time))
-        assert ok is True
-        # 10:00 NY (window 1, limit 1) with 1 open trade -> blocked
+    def test_window_max_trades_independent_of_open_slots(self):
+        """max_trades counts initial entries in the window even with free open slots."""
+        f = trading_windows_filter([TradingWindow("08:00", "15:30", max_trades=1)], _NY)
+        strategy = _window_strategy(
+            open_trades=[],  # nothing open right now
+            trades=[_window_trade(datetime(2025, 6, 15, 13, 0, tzinfo=timezone.utc))],
+        )
         ok, reason = f(_make_ctx(strategy=strategy))
         assert ok is False
-        assert "open-trades" in reason
+        assert "limit reached" in reason
 
     def test_blocks_in_gap_between_windows(self):
         f = trading_windows_filter([

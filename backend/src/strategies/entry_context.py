@@ -239,29 +239,33 @@ def daily_trades_limit_filter(max_trades_per_day: int, timezone_str: str | None 
 
 @dataclass(frozen=True)
 class TradingWindow:
-    """A trading session window with its own entry limits.
+    """A trading session window with its own initial-entry limit.
 
     ``max_trades`` counts only INITIAL entries whose entry time falls inside this
     window; re-entry trades never consume window slots (each initial trade keeps
     its own re-entry chain, bounded by the strategy's max_reentry_attempts).
+
+    Concurrent-open-trades limiting is NOT a window concern — use the global
+    ``open_trades_limit_filter`` for that.
     """
     start: str                # "HH:MM", local time
     end: str                  # "HH:MM"; overnight ("22:00"->"02:00") supported
-    max_open_trades: int = 1  # concurrent open trades allowed while inside this window
     max_trades: int = 1       # max INITIAL entries inside this window (re-entries excluded)
 
 
 def trading_windows_filter(windows: list[TradingWindow], timezone_str: str | None = None) -> EntryFilter:
     """
-    Blocks entries outside all trading windows, and enforces per-window limits.
+    Blocks entries outside all trading windows, and enforces per-window
+    initial-entry limits.
 
     For the window containing the current bar:
-    - blocks when concurrent open trades >= window.max_open_trades (applies to
-      initial entries and re-entries alike);
     - blocks INITIAL entries when the number of initial strategy entries already
       inside this window instance >= window.max_trades. Re-entry evaluations
       (``ctx.is_reentry``) skip this check, and re-entry trades are excluded from
       the count, so every initial trade keeps its own re-entry chain.
+
+    Concurrent-open-trades limiting is handled separately by
+    ``open_trades_limit_filter`` (a single global cap, not per window).
 
     Supports overnight windows such as "22:00"-"02:00"; the window instance is
     resolved as an absolute interval so post-midnight entries count toward the
@@ -312,12 +316,7 @@ def trading_windows_filter(windows: list[TradingWindow], timezone_str: str | Non
 
         window, win_start, win_end = matched
 
-        # 4. Open trades limit (applies to initial entries and re-entries alike)
-        open_count = sum(1 for t in ctx.strategy.open_trades if t.get('status') == 'open')
-        if open_count >= window.max_open_trades:
-            return False, f"open-trades {open_count} >= limit {window.max_open_trades}"
-
-        # 5. Per-window initial-entry limit (re-entries bypass and are excluded)
+        # 4. Per-window initial-entry limit (re-entries bypass and are excluded)
         if ctx.is_reentry:
             return True, "re-entry: window ok, trade count not applied"
 

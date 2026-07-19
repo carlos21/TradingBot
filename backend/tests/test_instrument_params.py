@@ -34,6 +34,14 @@ class TestCatalog:
         assert p.post_cross1_max_dist == 80.0
         assert p.be_threshold_points == 2.0
         assert p.sl_tp_tolerance == 0.5
+        assert p.max_open_trades == 2
+
+    def test_windows_have_no_open_trades_concern(self):
+        for p in INSTRUMENT_PARAMS.values():
+            assert p.max_open_trades == 2
+            for w in p.trading_windows:
+                assert not hasattr(w, "max_open_trades")
+                assert w.max_trades == 1
 
     def test_unknown_symbol_falls_back_to_default(self):
         assert get_instrument_params("ZZZ") is INSTRUMENT_PARAMS[DEFAULT_SYMBOL]
@@ -92,6 +100,20 @@ class TestPerSymbolProdConfig:
         # The trading_windows filter is installed by default (catalog windows).
         filter_names = [f.__name__ for f in options.entry_filters]
         assert "trading_windows" in filter_names
+
+    def test_open_trades_limit_precedes_trading_windows(self):
+        numbers = get_prod_strategy_numbers(rr_ratio=5.0)
+        options = get_prod_strategy_options(
+            numbers.max_bounce,
+            numbers.min_cross_depth,
+            skip_rollover_days=False,
+            reentry_only=False,
+            line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
+            max_reentry_attempts=1,
+        )
+        filter_names = [f.__name__ for f in options.entry_filters]
+        assert "open_trades_limit" in filter_names
+        assert filter_names.index("open_trades_limit") < filter_names.index("trading_windows")
 
 
 if __name__ == "__main__":

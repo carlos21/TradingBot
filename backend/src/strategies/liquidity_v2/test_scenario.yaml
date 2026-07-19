@@ -1,11 +1,13 @@
 scenarios:
-  - name: "MNQ - 2026-07-17"
+  - name: "MNQ - 2026-06-08"
     pair: "MNQ"
-    tf: "5m"
-    start: "2026-07-17 00:00:00Z"
-    end:   "2026-07-17 16:00:00Z"
+    tf: "1m"
+    start: "2026-06-08 00:00:00Z"
+    end:   "2026-06-08 16:00:00Z"
     lines:
-      - { price: 28578.50, at: "2026-07-17 01:00:00" }
+      - { price: 29302.75, at: "2026-06-07 23:00:00" }
     expect:
-      none: true
+      entry: 29345.25
+      sl:    29385.25
+      tp:    29145.25
     show_tsi: false

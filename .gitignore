@@ -203,3 +203,4 @@ frontend/node_modules
 frontend/coverage
 coverage/
 **/TestResults/
+.env

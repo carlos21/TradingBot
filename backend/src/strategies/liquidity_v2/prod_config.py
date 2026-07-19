@@ -3,6 +3,7 @@ from src.strategies.entry_context import (
     TradingWindow,
     max_bounce_filter,
     min_cross_depth_filter,
+    open_trades_limit_filter,
     rollover_filter,
     trading_windows_filter,
 )
@@ -170,8 +171,13 @@ def get_prod_strategy_options(max_bounce: float,
             # Enforce max_bounce (see StrategyNumbers above).
             max_bounce_filter(max_bounce),
 
+            # Global concurrent-open-trades cap (per instrument, from the
+            # catalog). Applies across all windows, to initial entries and
+            # re-entries alike.
+            open_trades_limit_filter(params.max_open_trades),
+
             # Only trade inside the configured windows; each window caps
-            # concurrent open trades and initial entries (re-entries excluded).
+            # the number of INITIAL entries (re-entries excluded).
             # (Auto-detects timezone from pair, e.g. MNQ -> NY).
             trading_windows_filter(windows),
 
