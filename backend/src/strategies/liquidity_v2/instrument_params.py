@@ -55,7 +55,10 @@ class InstrumentParams:
     trading_windows: list[TradingWindow] = field(default_factory=list)
 
 
-_DEFAULT_WINDOWS = [TradingWindow("08:00", "15:30", max_open_trades=1, max_trades=1)]
+_DEFAULT_WINDOWS = [
+    TradingWindow("08:00", "15:30", max_open_trades=1, max_trades=1),
+    TradingWindow("01:00", "07:59", max_open_trades=1, max_trades=1)
+]
 
 INSTRUMENT_PARAMS: dict[str, InstrumentParams] = {
     "MNQ": InstrumentParams(

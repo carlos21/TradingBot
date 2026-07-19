@@ -19,7 +19,7 @@
 #         tp:    19435.00
 #     # or: expect: { none: true }  when no trade should trigger
 
-scenarios: []
+scenarios:
 
   - name: "MNQ - 2026-07-17"
     pair: "MNQ"
