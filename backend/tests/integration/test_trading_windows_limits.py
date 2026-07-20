@@ -9,7 +9,10 @@ Semantics under test:
 - ``open_trades_limit`` = one global concurrent-open cap (catalog
   ``max_open_trades`` = 2), across all windows, initial entries and re-entries.
 - ``trading_windows`` = window membership + per-window INITIAL-entry limit
-  (``max_trades`` = 1 per window), independent of how many trades are open.
+  (``max_trades`` = 1 per window) + per-window concurrent-open limit
+  (``max_open_trades`` = 1), where an open trade is attributed to the window
+  instance in which its CURRENT leg was opened. Two concurrent trades are
+  therefore only possible when their active legs live in DIFFERENT windows.
 
 June 2025 = EDT (UTC-4): 14:00 UTC is 10:00 New York.
 """
@@ -29,6 +32,7 @@ REENTRY_FILTER_NAMES = {"time_range", "open_trades_limit", "rollover", "trading_
 LONDON_BAR = int(datetime(2025, 6, 15, 10, 0, tzinfo=timezone.utc).timestamp())   # 06:00 NY
 NY_BAR = int(datetime(2025, 6, 15, 14, 0, tzinfo=timezone.utc).timestamp())       # 10:00 NY
 OUTSIDE_BAR = int(datetime(2025, 6, 15, 22, 0, tzinfo=timezone.utc).timestamp())  # 18:00 NY
+NY_LEG = int(datetime(2025, 6, 15, 12, 30, tzinfo=timezone.utc).timestamp())      # 08:30 NY
 
 
 def _options(symbol: str):
@@ -59,6 +63,17 @@ def _strategy(open_count=0, open_sources=None, repo_trades=None):
     sources = open_sources or [None] * open_count
     strategy = MagicMock()
     strategy.open_trades = [{"status": "open", "source": s} for s in sources]
+    strategy.trade_repository = MagicMock()
+    strategy.trade_repository.list_trades.return_value = repo_trades or []
+    return strategy
+
+
+def _strategy_with_open_legs(leg_entries, repo_trades=None):
+    """Strategy with open trades whose CURRENT leg opened at the given epochs."""
+    strategy = MagicMock()
+    strategy.open_trades = [
+        {"status": "open", "source": None, "entry_time": e} for e in leg_entries
+    ]
     strategy.trade_repository = MagicMock()
     strategy.trade_repository.list_trades.return_value = repo_trades or []
     return strategy
@@ -177,3 +192,36 @@ class TestEntryChainOpenTradesCap:
         ok, name, _ = _run_entry_filters(options, _ctx(_strategy(2), NY_BAR, cross_depth=5.0))
         assert ok is False
         assert name == "open_trades_limit"
+
+
+class TestSameWindowConcurrency:
+    """Per-window concurrent-open limit: an open trade is attributed to the
+    window instance in which its CURRENT leg was opened, so two concurrent
+    trades are only possible across DIFFERENT session windows."""
+
+    def test_ny_setup_blocked_with_ny_window_leg_open(self):
+        """Regression (scenario 2024-10-21): a London-born chain's re-entry
+        leg opened at 08:30 NY, then a NY initial triggered while that leg
+        was still open — two concurrent NY-session trades. Must be blocked
+        by trading_windows (the global cap of 2 alone allowed it)."""
+        strategy = _strategy_with_open_legs([NY_LEG])
+        ok, name, reason = _run_entry_filters(_options("MNQ"), _ctx(strategy, NY_BAR))
+        assert ok is False
+        assert name == "trading_windows", f"blocked by {name}: {reason}"
+        assert "open-trades" in reason
+
+    def test_ny_setup_allowed_with_london_window_leg_open(self):
+        """The intended feature: a trade whose active leg lives in the London
+        window does not consume the NY window's concurrent-open slot."""
+        strategy = _strategy_with_open_legs([LONDON_BAR])
+        ok, name, reason = _run_entry_filters(_options("MNQ"), _ctx(strategy, NY_BAR))
+        assert ok is True, f"blocked by {name}: {reason}"
+
+    def test_reentry_blocked_with_same_window_leg_open(self):
+        """A re-entry evaluated inside a window that already has an open leg
+        is blocked as well (mirrors the pre-d135f53 behavior)."""
+        strategy = _strategy_with_open_legs([NY_LEG])
+        ok, name, reason = _run_reentry_filters(
+            _options("MNQ"), _ctx(strategy, NY_BAR, is_reentry=True))
+        assert ok is False
+        assert name == "trading_windows", f"blocked by {name}: {reason}"

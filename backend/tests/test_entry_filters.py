@@ -450,7 +450,9 @@ class TestTradingWindowsFilter:
         assert "outside all trading windows" in reason
 
     def test_ignores_open_trades(self):
-        """Concurrency is not a window concern anymore (handled by open_trades_limit_filter)."""
+        """Open trades without a leg entry_time can't be attributed to any
+        window, so the window's concurrent-open check ignores them (the global
+        open_trades_limit_filter still counts them)."""
         f = trading_windows_filter([TradingWindow("08:00", "15:30")], _NY)
         strategy = _window_strategy(open_trades=[{"status": "open"}, {"status": "open"}])
         ok, reason = f(_make_ctx(strategy=strategy))

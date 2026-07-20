@@ -36,11 +36,13 @@ class TestCatalog:
         assert p.sl_tp_tolerance == 0.5
         assert p.max_open_trades == 2
 
-    def test_windows_have_no_open_trades_concern(self):
+    def test_windows_carry_per_window_open_trades_limit(self):
+        """Catalog: global cap is 2 (cross-window concurrency); each window
+        caps its own concurrent open legs at 1 and initial entries at 1."""
         for p in INSTRUMENT_PARAMS.values():
             assert p.max_open_trades == 2
             for w in p.trading_windows:
-                assert not hasattr(w, "max_open_trades")
+                assert w.max_open_trades == 1
                 assert w.max_trades == 1
 
     def test_unknown_symbol_falls_back_to_default(self):

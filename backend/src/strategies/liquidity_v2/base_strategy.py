@@ -689,8 +689,9 @@ class BaseLiquidityStrategy:
         - time_range_filter (don't enter outside trading hours)
         - open_trades_limit_filter (don't enter if max open trades reached)
         - rollover_filter (don't enter during rollover)
-        - trading_windows_filter (window hours still apply;
-          the per-window trade count is skipped via ctx.is_reentry)
+        - trading_windows_filter (window hours and the per-window
+          concurrent-open limit still apply; the per-window trade count is
+          skipped via ctx.is_reentry)
         Filters like daily_trades_limit, min_cross_depth, and max_bounce
         are bypassed because they don't apply to re-entry context."""
         reentry_filter_names = {"time_range", "open_trades_limit", "rollover", "trading_windows"}

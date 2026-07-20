@@ -173,11 +173,14 @@ def get_prod_strategy_options(max_bounce: float,
 
             # Global concurrent-open-trades cap (per instrument, from the
             # catalog). Applies across all windows, to initial entries and
-            # re-entries alike.
+            # re-entries alike; this is what allows up to N concurrent trades
+            # when their active legs live in DIFFERENT session windows.
             open_trades_limit_filter(params.max_open_trades),
 
             # Only trade inside the configured windows; each window caps
-            # the number of INITIAL entries (re-entries excluded).
+            # concurrent open trades whose current leg opened inside it
+            # (re-entries included) and the number of INITIAL entries
+            # (re-entries excluded).
             # (Auto-detects timezone from pair, e.g. MNQ -> NY).
             trading_windows_filter(windows),
 
