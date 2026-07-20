@@ -15,7 +15,7 @@ with DD/MM/YYYY dates and times in the configured local timezone
 
 EXAMPLES
 --------
-  # Backfill the 2026-07-02 → 2026-07-05 gap (defaults):
+  # Backfill the 2026-04-03 → 2026-04-05 gap (defaults):
   cd backend && poetry run python -m scripts.backfill_nq_live.py
 
   # See what would be written without touching the file:
@@ -23,7 +23,7 @@ EXAMPLES
 
   # Custom range / file:
   poetry run python -m scripts.backfill_nq_live.py \
-      --start 2026-07-02 --end 2026-07-05 --output ../csvs/NQ_live.csv
+      --start 2026-04-03 --end 2026-04-05 --output ../csvs/NQ_live.csv
 
 Requires DATABENTO_API_KEY in the environment or in the project-root .env
 (or pass --api-key).
@@ -65,14 +65,14 @@ def parse_args() -> argparse.Namespace:
         epilog=__doc__,
     )
     parser.add_argument(
-        "--start", default="2026-07-02", metavar="YYYY-MM-DD",
+        "--start", default="2026-04-03", metavar="YYYY-MM-DD",
         help="First calendar date to fetch, in --tz local time (inclusive). "
-             "[default: 2026-07-02]",
+             "[default: 2026-04-03]",
     )
     parser.add_argument(
-        "--end", default="2026-07-05", metavar="YYYY-MM-DD",
+        "--end", default="2026-04-05", metavar="YYYY-MM-DD",
         help="Last calendar date to fetch, in --tz local time (inclusive). "
-             "[default: 2026-07-05]",
+             "[default: 2026-04-05]",
     )
     parser.add_argument(
         "--output", default=str(_PROJECT_ROOT / "csvs" / "NQ_live.csv"),

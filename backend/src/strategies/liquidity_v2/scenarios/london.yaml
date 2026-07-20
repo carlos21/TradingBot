@@ -21,6 +21,27 @@
 
 scenarios:
 
+  - name: "MNQ - 2026-04-05"
+    pair: "MNQ"
+    tf: "5m"
+    start: "2026-04-05 00:00:00Z"
+    end:   "2026-04-05 16:00:00Z"
+    lines:
+      - { price: 24058.00, at: "2026-04-04 22:00:00" }
+    expect:
+      none: true
+    summary: true
+
+  - name: "MNQ - 2026-04-29"
+    pair: "MNQ"
+    tf: "5m"
+    start: "2026-04-29 00:00:00Z"
+    end:   "2026-04-29 16:00:00Z"
+    lines:
+      - { price: 27298.25, at: "2026-04-28 22:00:00" }
+    expect:
+      none: true
+
   - name: "MNQ - 2026-05-01"
     pair: "MNQ"
     tf: "1m"
