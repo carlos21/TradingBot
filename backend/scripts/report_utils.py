@@ -3,6 +3,43 @@
 Shared report utility functions used by html_report.py and html_comparison_report.py.
 """
 
+from dateutil import parser as dtparser
+
+
+def trade_sort_ts(trade, close, scenario_date_str):
+    """Chronological sort key for a (trade, close) pair.
+
+    Uses the trade exit time when available, then entry time, then the
+    scenario start as a fallback.
+    """
+    if close is not None and close.get("exit_time"):
+        return close["exit_time"]
+    if trade is not None and trade.get("entry_time"):
+        return trade["entry_time"]
+    return dtparser.parse(scenario_date_str).timestamp()
+
+
+def flatten_trade_records(summary_results):
+    """Flatten summary_results into per-trade records sorted chronologically.
+
+    Each record: {"sc_idx", "pair_idx", "result", "trade", "close", "sort_ts"}.
+    Sorting by exit/entry time keeps % risk compounding correct when scenario
+    groups are merged (--group all) and their trades interleave in time.
+    """
+    records = []
+    for sc_idx, r in enumerate(summary_results):
+        for pair_idx, (trade, close) in enumerate(r.get("trade_pairs") or []):
+            records.append({
+                "sc_idx": sc_idx,
+                "pair_idx": pair_idx,
+                "result": r,
+                "trade": trade,
+                "close": close,
+                "sort_ts": trade_sort_ts(trade, close, r.get("date", "")),
+            })
+    records.sort(key=lambda rec: rec["sort_ts"])
+    return records
+
 
 def compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold,
                       risk_pct=None, balance=None, cfd_spread=None, cfd_commission=None):

@@ -52,6 +52,7 @@ from src.infrastructure.repositories.trades_repository import SQLTradeRepository
 from src.infrastructure.database import database
 from scripts.html_report import generate_html_report
 from scripts.mode_pnl import per_trade_sim, per_trade_futures, per_trade_cfd
+from scripts.report_utils import flatten_trade_records
 
 APP_HOST = "127.0.0.1"
 
@@ -644,8 +645,13 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 pair_name_val = sc.get("pair", "unknown")
                 date_label = dtparser.parse(sc["start"]).strftime("%Y-%m-%d")
                 sdir = Path(args.outdir) / pair_name_val
-                if args.group:
-                    sdir = sdir / args.group
+                # With --group all (or no group), keep snapshots under each
+                # scenario's own group subdir to avoid same-date collisions.
+                snap_group = args.group
+                if snap_group in (None, "all"):
+                    snap_group = sc.get("_group")
+                if snap_group:
+                    sdir = sdir / snap_group
                 sdir = sdir / date_label
                 sdir.mkdir(parents=True, exist_ok=True)
                 if args.snapshot:
@@ -976,8 +982,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
         monthly = defaultdict(_new_bucket)
-        running_balance = ACCT
 
+        # Order-independent per-day pass: scenario status and velocity.
         for r in summary_results:
             scenario_date = dtparser.parse(r["date"]).date()
             if r["status"] != "PASS":
@@ -985,94 +991,101 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
             if r.get("velocity") is not None:
                 daily[str(scenario_date)]["velocity"] = r["velocity"]
 
-            for trade, close in (r.get("trade_pairs") or []):
-                # Use trade exit time for bucketing (not scenario date)
-                if close is not None and close.get("exit_time"):
-                    exit_dt = datetime.fromtimestamp(close["exit_time"], tz=pair_tz)
-                    d_key = str(exit_dt.date())
-                    iso = exit_dt.isocalendar()
-                    w_key = f"{iso.year}-W{iso.week:02d}"
-                    m_key = exit_dt.strftime("%Y-%m")
-                else:
-                    # Fallback to scenario date for open trades
-                    d_key = str(scenario_date)
-                    iso = scenario_date.isocalendar()
-                    w_key = f"{iso.year}-W{iso.week:02d}"
-                    m_key = scenario_date.strftime("%Y-%m")
+        # Chronological per-trade pass: % risk compounding follows the running
+        # balance in true time order, even when merged groups interleave.
+        running_balance = ACCT
 
+        for rec in flatten_trade_records(summary_results):
+            r = rec["result"]
+            trade, close = rec["trade"], rec["close"]
+            scenario_date = dtparser.parse(r["date"]).date()
+            # Use trade exit time for bucketing (not scenario date)
+            if close is not None and close.get("exit_time"):
+                exit_dt = datetime.fromtimestamp(close["exit_time"], tz=pair_tz)
+                d_key = str(exit_dt.date())
+                iso = exit_dt.isocalendar()
+                w_key = f"{iso.year}-W{iso.week:02d}"
+                m_key = exit_dt.strftime("%Y-%m")
+            else:
+                # Fallback to scenario date for open trades
+                d_key = str(scenario_date)
+                iso = scenario_date.isocalendar()
+                w_key = f"{iso.year}-W{iso.week:02d}"
+                m_key = scenario_date.strftime("%Y-%m")
+
+            for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                if bucket[key]["start_balance"] is None:
+                    bucket[key]["start_balance"] = running_balance
+
+            # Track SL points and exact risk dollars for entry/reentry
+            if trade:
+                sl_pts = trade.get("risk")
+                risk_dollars = trade.get("risk_dollars")
+                is_reentry_trade = trade.get("is_reentry", False)
+                if sl_pts is not None and risk_dollars is not None:
+                    for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                        if is_reentry_trade:
+                            bucket[key]["reentry_sl_sum"] += sl_pts
+                            bucket[key]["reentry_sl_count"] += 1
+                            bucket[key]["reentry_risk_sum"] += risk_dollars
+                            bucket[key]["reentry_risk_count"] += 1
+                        else:
+                            bucket[key]["entry_sl_sum"] += sl_pts
+                            bucket[key]["entry_sl_count"] += 1
+                            bucket[key]["entry_risk_sum"] += risk_dollars
+                            bucket[key]["entry_risk_count"] += 1
+
+            if close is None:
                 for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
-                    if bucket[key]["start_balance"] is None:
-                        bucket[key]["start_balance"] = running_balance
+                    bucket[key]["open"] += 1
+                continue
+            result_type = close.get("result_type", None)
+            t_usd, t_pct, actual_r, t_comm = per_trade_fn(trade, close, running_balance)
+            if t_usd is not None:
+                running_balance += t_usd
+            is_reentry = trade.get("is_reentry", False) if trade else False
 
-                # Track SL points and exact risk dollars for entry/reentry
-                if trade:
-                    sl_pts = trade.get("risk")
-                    risk_dollars = trade.get("risk_dollars")
-                    is_reentry_trade = trade.get("is_reentry", False)
-                    if sl_pts is not None and risk_dollars is not None:
-                        for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
-                            if is_reentry_trade:
-                                bucket[key]["reentry_sl_sum"] += sl_pts
-                                bucket[key]["reentry_sl_count"] += 1
-                                bucket[key]["reentry_risk_sum"] += risk_dollars
-                                bucket[key]["reentry_risk_count"] += 1
-                            else:
-                                bucket[key]["entry_sl_sum"] += sl_pts
-                                bucket[key]["entry_sl_count"] += 1
-                                bucket[key]["entry_risk_sum"] += risk_dollars
-                                bucket[key]["entry_risk_count"] += 1
+            # Track contracts used for this trade
+            trade_contracts = trade.get("contracts") if trade else None
+            if trade_contracts is not None:
+                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                    bucket[key]["contracts"].append(trade_contracts)
 
-                if close is None:
-                    for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
-                        bucket[key]["open"] += 1
-                    continue
-                result_type = close.get("result_type", None)
-                t_usd, t_pct, actual_r, t_comm = per_trade_fn(trade, close, running_balance)
-                if t_usd is not None:
-                    running_balance += t_usd
-                is_reentry = trade.get("is_reentry", False) if trade else False
-
-                # Track contracts used for this trade
-                trade_contracts = trade.get("contracts") if trade else None
-                if trade_contracts is not None:
-                    for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
-                        bucket[key]["contracts"].append(trade_contracts)
-
-                if result_type == "SP":
-                    for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
-                        if t_usd is not None:
-                            bucket[key]["usd"] += t_usd
-                            bucket[key]["commission"] += t_comm
-                        bucket[key]["sp"] += 1
-                    continue
-
-                if result_type == "BE":
-                    for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
-                        if t_usd is not None:
-                            bucket[key]["usd"] += t_usd
-                            bucket[key]["commission"] += t_comm
-                        bucket[key]["be"] += 1
-                        if is_reentry:
-                            bucket[key]["reentry_be"] += 1
-                    continue
-
-                # Use unified BE threshold from FinancialCalc
-                is_be = FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD)
-                is_win = actual_r >= BE_THRESHOLD
+            if result_type == "SP":
                 for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
                     if t_usd is not None:
                         bucket[key]["usd"] += t_usd
                         bucket[key]["commission"] += t_comm
-                    if is_be:    bucket[key]["be"]     += 1
-                    elif is_win: bucket[key]["wins"]   += 1
-                    else:        bucket[key]["losses"] += 1
+                    bucket[key]["sp"] += 1
+                continue
+
+            if result_type == "BE":
+                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                    if t_usd is not None:
+                        bucket[key]["usd"] += t_usd
+                        bucket[key]["commission"] += t_comm
+                    bucket[key]["be"] += 1
                     if is_reentry:
-                        if is_be:
-                            bucket[key]["reentry_be"] += 1
-                        elif is_win:
-                            bucket[key]["reentry_win"] += 1
-                        else:
-                            bucket[key]["reentry_loss"] += 1
+                        bucket[key]["reentry_be"] += 1
+                continue
+
+            # Use unified BE threshold from FinancialCalc
+            is_be = FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD)
+            is_win = actual_r >= BE_THRESHOLD
+            for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                if t_usd is not None:
+                    bucket[key]["usd"] += t_usd
+                    bucket[key]["commission"] += t_comm
+                if is_be:    bucket[key]["be"]     += 1
+                elif is_win: bucket[key]["wins"]   += 1
+                else:        bucket[key]["losses"] += 1
+                if is_reentry:
+                    if is_be:
+                        bucket[key]["reentry_be"] += 1
+                    elif is_win:
+                        bucket[key]["reentry_win"] += 1
+                    else:
+                        bucket[key]["reentry_loss"] += 1
 
         CHECKMARK = "\u2713"
         CROSSMARK = "\u2717"
@@ -1221,29 +1234,30 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
         # ── Overall summary (count each individual trade) ─────────────────────
         outcomes = []
-        for r in summary_results:
+        for rec in flatten_trade_records(summary_results):
+            r = rec["result"]
+            close = rec["close"]
             scenario_date = dtparser.parse(r["date"]).date()
-            for trade, close in (r.get("trade_pairs") or []):
-                if close is None:
-                    continue
-                exit_ts = close.get("exit_time")
-                if exit_ts:
-                    date_str = datetime.fromtimestamp(exit_ts, tz=pair_tz).strftime("%Y-%m-%d")
-                else:
-                    date_str = str(scenario_date)
-                result_type = close.get("result_type", None)
-                if result_type == "SP":
-                    outcomes.append(("sp", date_str))
-                elif result_type == "BE":
+            if close is None:
+                continue
+            exit_ts = close.get("exit_time")
+            if exit_ts:
+                date_str = datetime.fromtimestamp(exit_ts, tz=pair_tz).strftime("%Y-%m-%d")
+            else:
+                date_str = str(scenario_date)
+            result_type = close.get("result_type", None)
+            if result_type == "SP":
+                outcomes.append(("sp", date_str))
+            elif result_type == "BE":
+                outcomes.append(("be", date_str))
+            else:
+                actual_r = close.get("result", 0.0)
+                if FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD):
                     outcomes.append(("be", date_str))
+                elif actual_r >= BE_THRESHOLD:
+                    outcomes.append((True, date_str))
                 else:
-                    actual_r = close.get("result", 0.0)
-                    if FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD):
-                        outcomes.append(("be", date_str))
-                    elif actual_r >= BE_THRESHOLD:
-                        outcomes.append((True, date_str))
-                    else:
-                        outcomes.append((False, date_str))
+                    outcomes.append((False, date_str))
 
         total_t = len(outcomes)
         wins    = sum(1 for o, _ in outcomes if o is True)
@@ -1411,7 +1425,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--yaml", required=True)
+    ap.add_argument("--yaml", action="append", required=True,
+                    help="Scenario yaml file(s). Repeat --yaml to merge multiple groups")
     ap.add_argument("--group", default=None,
                     help="Scenario group (e.g. ny, london). Snapshots go to <outdir>/<pair>/<group>/<date>/. "
                          "Default: derived from the yaml path when it lives in a scenarios/ directory")
@@ -1465,30 +1480,37 @@ def main():
 
     # Snapshots are grouped per session: explicit --group, or derived from the
     # yaml path (…/scenarios/<group>.yaml). No group → flat <pair>/<date> layout.
-    if args.group is None and Path(args.yaml).parent.name == "scenarios":
-        args.group = Path(args.yaml).stem
+    if args.group is None and len(args.yaml) == 1 and Path(args.yaml[0]).parent.name == "scenarios":
+        args.group = Path(args.yaml[0]).stem
 
-    yaml_path = Path(args.yaml)
-    if not yaml_path.exists():
-        print(f"❌ YAML file not found: {yaml_path}")
-        return
+    scenarios = []
+    for yaml_arg in args.yaml:
+        yaml_path = Path(yaml_arg)
+        if not yaml_path.exists():
+            print(f"❌ YAML file not found: {yaml_path}")
+            return
 
-    if not args.quiet:
-        print(f"📂 Loading scenarios from {yaml_path}...")
-    try:
-        ydoc = yaml.safe_load(yaml_path.read_text())
-    except Exception as e:
-        print(f"❌ Error parsing YAML: {e}")
-        return
+        if not args.quiet:
+            print(f"📂 Loading scenarios from {yaml_path}...")
+        try:
+            ydoc = yaml.safe_load(yaml_path.read_text())
+        except Exception as e:
+            print(f"❌ Error parsing YAML {yaml_path}: {e}")
+            return
 
-    if not ydoc:
-        print("⚠️  YAML file is empty or invalid.")
-        return
+        if not ydoc:
+            continue
 
-    scenarios = ydoc.get("scenarios", [])
+        for sc in ydoc.get("scenarios", []):
+            sc["_group"] = yaml_path.stem
+            scenarios.append(sc)
+
     if not scenarios:
-        print("⚠️  No 'scenarios' key found in YAML or list is empty.")
+        print("⚠️  No 'scenarios' found in the given YAML file(s).")
         return
+
+    # Run scenarios in chronological order so merged groups interleave correctly.
+    scenarios.sort(key=lambda sc: _parse_yaml_dt(sc["start"]))
 
     if not args.quiet:
         print(f"✅ Found {len(scenarios)} scenarios. Starting runner...")

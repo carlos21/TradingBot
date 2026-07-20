@@ -9,7 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from dateutil import parser as dtparser
 
-from scripts.report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pct, pnl_class, h as _h
+from scripts.report_utils import compute_trade_pnl, calc_max_dd, fmt_usd, fmt_pct, pnl_class, h as _h, flatten_trade_records
 
 
 TAILWIND_CONFIG = """tailwind.config = {
@@ -59,19 +59,28 @@ def generate_html_report(summary_results, account, risk, mode, output_path,
         mode_label = "REAL (MNQ Futures)"
 
     # ── 1. Compute per-scenario / per-trade data ──────────────────────────
-    enriched = []  # list of {name, date, status, trades: [{outcome, usd, pct, r, contracts}], net_usd, net_pct}
+    # Per-trade PnL is computed in chronological order across all scenarios so
+    # % risk compounding uses the correct running balance even when merged
+    # groups (--group all) interleave in time.
+    td_map = {}           # (sc_idx, pair_idx) -> trade pnl dict
+    sc_start_balances = {}  # sc_idx -> balance before its first trade (chrono order)
     running_balance = account
-    for r in summary_results:
+    for rec in flatten_trade_records(summary_results):
+        key = (rec["sc_idx"], rec["pair_idx"])
+        if rec["sc_idx"] not in sc_start_balances:
+            sc_start_balances[rec["sc_idx"]] = running_balance
+        td = compute_trade_pnl(rec["trade"], rec["close"], account, risk, mode, nq_pv, fee_per_rt, be_threshold,
+                               risk_pct=risk_pct, balance=running_balance,
+                               cfd_spread=cfd_spread, cfd_commission=cfd_commission)
+        td_map[key] = td
+        if td["outcome"] != "open":
+            running_balance += td["usd"]
+
+    enriched = []  # list of {name, date, status, trades: [{outcome, usd, pct, r, contracts}], net_usd, net_pct}
+    for sc_idx, r in enumerate(summary_results):
         date = dtparser.parse(r["date"]).date()
-        sc_start_balance = running_balance
-        trades_data = []
-        for trade, close in (r.get("trade_pairs") or []):
-            td = compute_trade_pnl(trade, close, account, risk, mode, nq_pv, fee_per_rt, be_threshold,
-                                   risk_pct=risk_pct, balance=running_balance,
-                                   cfd_spread=cfd_spread, cfd_commission=cfd_commission)
-            trades_data.append(td)
-            if td["outcome"] != "open":
-                running_balance += td["usd"]
+        sc_start_balance = sc_start_balances.get(sc_idx, account)
+        trades_data = [td_map[(sc_idx, i)] for i in range(len(r.get("trade_pairs") or []))]
         net_usd = sum(t["usd"] for t in trades_data)
         net_pct = net_usd / sc_start_balance * 100 if sc_start_balance else 0.0
         net_commission = sum(t.get("commission", 0.0) for t in trades_data)

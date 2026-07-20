@@ -31,6 +31,29 @@ parse_scenario_args() {
   done
 }
 
+# Resolves a group name to one or more yaml files, stored in RESOLVED_YAMLS.
+# "all" expands to every $SCENARIOS_DIR/*.yaml (sorted); anything else delegates
+# to resolve_scenario_yaml. Returns 1 (via resolve_scenario_yaml) on unknown groups.
+resolve_scenario_yamls() {
+  local group="$1"
+  RESOLVED_YAMLS=()
+
+  if [[ "$group" == "all" ]]; then
+    local f
+    for f in "$SCENARIOS_DIR"/*.yaml; do
+      [[ -f "$f" ]] && RESOLVED_YAMLS+=("$f")
+    done
+    if [[ ${#RESOLVED_YAMLS[@]} -eq 0 ]]; then
+      echo "No scenario yamls found in $SCENARIOS_DIR" >&2
+      return 1
+    fi
+  else
+    local yaml
+    yaml="$(resolve_scenario_yaml "$group")" || return 1
+    RESOLVED_YAMLS+=("$yaml")
+  fi
+}
+
 # Resolves a group name (or a direct yaml path) to a yaml file.
 # Echoes the path on success; prints available groups to stderr and returns 1.
 resolve_scenario_yaml() {
