@@ -1387,7 +1387,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
     if args.html_report:
         # For "both" mode, default HTML report to real_futures (the more realistic scenario)
         html_mode = "real_futures" if mode == "both" else mode
-        html_path = Path(args.outdir) / "report.html"
+        report_name = "report.html"
+        if args.group:
+            report_name = f"{sanitize(args.group)}_report.html"
+        html_path = Path(args.outdir) / report_name
         html_kwargs = dict(
             summary_results=summary_results,
             account=ACCT,
