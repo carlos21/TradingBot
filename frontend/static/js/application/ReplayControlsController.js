@@ -24,8 +24,6 @@ export class ReplayControlsController {
     this.modifySlTradeSelect = null;
     this.modifySlInput = null;
     this.modifySlBtn = null;
-    this.startStreamingBtn = null;
-    this.reconnectBtn = null;
   }
 
   init() {
@@ -33,7 +31,6 @@ export class ReplayControlsController {
     this._bindReplayEvents();
     this._bindTimeframeEvents();
     this._bindTestTradeEvents();
-    this._bindStreamingEvents();
     this._bindTestModal();
 
     this.socket.on('stream_status', ({ playing, live_mode }) => {
@@ -63,8 +60,6 @@ export class ReplayControlsController {
     this.modifySlTradeSelect = this.dom.getElementById('modifySlTradeSelect');
     this.modifySlInput = this.dom.getElementById('modifySlInput');
     this.modifySlBtn = this.dom.getElementById('modifySlBtn');
-    this.startStreamingBtn = this.dom.getElementById('startStreamingBtn');
-    this.reconnectBtn = this.dom.getElementById('reconnectBtn');
   }
 
   _bindReplayEvents() {
@@ -95,72 +90,6 @@ export class ReplayControlsController {
   _setActiveTf(button) {
     for (const b of this.tfButtons) b.classList.remove('active');
     button.classList.add('active');
-  }
-
-  _setStreamingLoading(loading) {
-    if (!this.startStreamingBtn) return;
-    if (loading) {
-      this.startStreamingBtn.disabled = true;
-      this.startStreamingBtn.classList.add('opacity-50', 'cursor-not-allowed');
-      this._originalStreamingBtnHTML = this.startStreamingBtn.innerHTML;
-      this.startStreamingBtn.innerHTML = `
-        <svg class="animate-spin w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24">
-          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-        </svg>
-        <span>Starting…</span>
-      `;
-    } else {
-      this.startStreamingBtn.disabled = false;
-      this.startStreamingBtn.classList.remove('opacity-50', 'cursor-not-allowed');
-      if (this._originalStreamingBtnHTML) {
-        this.startStreamingBtn.innerHTML = this._originalStreamingBtnHTML;
-      }
-    }
-  }
-
-  _bindStreamingEvents() {
-    if (this.startStreamingBtn) {
-      this.dom.addEventListener(this.startStreamingBtn, 'click', async () => {
-        const statusEl = this.dom.getElementById('connectionStatus');
-        if (statusEl) statusEl.textContent = 'Starting ZeroMQ gateway…';
-        this._setStreamingLoading(true);
-        try {
-          const resp = await fetch('/api/stream/start', { method: 'POST' });
-          const data = await resp.json();
-          if (!resp.ok) {
-            if (statusEl) statusEl.textContent = '⚠️ ' + (data.message || 'Error starting stream');
-            this._setStreamingLoading(false);
-          } else {
-            if (statusEl) statusEl.textContent = data.message || 'Starting…';
-          }
-        } catch (err) {
-          if (statusEl) statusEl.textContent = 'Error: ' + err.message;
-          this._setStreamingLoading(false);
-        }
-      });
-    }
-
-    if (this.reconnectBtn) {
-      this.dom.addEventListener(this.reconnectBtn, 'click', async () => {
-        const statusEl = this.dom.getElementById('connectionStatus');
-        if (statusEl) statusEl.textContent = 'Reconnecting…';
-        this.reconnectBtn.classList.add('hidden');
-        try {
-          const resp = await fetch('/api/stream/start', { method: 'POST' });
-          const data = await resp.json();
-          if (!resp.ok) {
-            if (statusEl) statusEl.textContent = '⚠️ ' + (data.message || 'Error starting stream');
-            this.reconnectBtn.classList.remove('hidden');
-          } else {
-            if (statusEl) statusEl.textContent = data.message || 'Starting…';
-          }
-        } catch (err) {
-          if (statusEl) statusEl.textContent = 'Error: ' + err.message;
-          this.reconnectBtn.classList.remove('hidden');
-        }
-      });
-    }
   }
 
   _openTestModal() {

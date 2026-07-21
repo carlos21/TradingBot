@@ -46,6 +46,10 @@ export class ApiClient {
     return this.post('/api/settings', payload);
   }
 
+  async saveCredentials(username, password) {
+    return this.post('/api/settings/credentials', { username, password });
+  }
+
   async getAccounts() {
     return this.get('/api/accounts');
   }

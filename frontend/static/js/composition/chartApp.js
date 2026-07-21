@@ -8,6 +8,7 @@ import { HttpTradeService } from '../adapters/HttpTradeService.js';
 import { ChartController } from '../application/ChartController.js';
 import { ChartSocketController } from '../application/ChartSocketController.js';
 import { ReplayControlsController } from '../application/ReplayControlsController.js';
+import { StreamingControlsController } from '../application/StreamingControlsController.js';
 
 /**
  * Composition root for the chart page.
@@ -41,5 +42,8 @@ export function createChartApp(opts = {}) {
   const controls = new ReplayControlsController(controller, socket, dom, notification, tradeService);
   controls.init();
 
-  return { controller, socketController, controls, socket };
+  const streamingControls = new StreamingControlsController(dom, notification);
+  streamingControls.init();
+
+  return { controller, socketController, controls, streamingControls, socket };
 }

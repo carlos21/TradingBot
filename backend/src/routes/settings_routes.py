@@ -19,6 +19,10 @@ def register_settings_routes(
     def api_save_settings():
         return settings_controller.save_settings()
 
+    @app.route("/api/settings/credentials", methods=["POST"])
+    def api_save_credentials():
+        return settings_controller.save_credentials()
+
     @app.route("/api/accounts", methods=["GET"])
     def api_get_accounts():
         return settings_controller.get_accounts()

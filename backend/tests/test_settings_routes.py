@@ -14,6 +14,9 @@ class FakeSettingsController:
     def save_settings(self):
         return {"success": True}
 
+    def save_credentials(self):
+        return {"success": True}
+
     def get_accounts(self):
         return []
 
@@ -46,6 +49,11 @@ class TestSettingsRoutes:
     def test_save_settings(self, app):
         with app.test_client() as client:
             resp = client.post("/api/settings")
+            assert resp.status_code == 200
+
+    def test_save_credentials(self, app):
+        with app.test_client() as client:
+            resp = client.post("/api/settings/credentials")
             assert resp.status_code == 200
 
     def test_get_accounts(self, app):

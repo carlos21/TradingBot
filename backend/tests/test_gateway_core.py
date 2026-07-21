@@ -379,6 +379,63 @@ class TestCallbackRegistration:
 
 
 # ---------------------------------------------------------------------------
+# Callback registration idempotency
+# ---------------------------------------------------------------------------
+
+
+class TestCallbackIdempotency:
+    """on() / on_connection_change() are idempotent: registering the same
+    callback object twice is a no-op, so a stop→start cycle (which
+    re-registers all handlers) never double-delivers a message."""
+
+    def test_on_same_callback_registered_once(self, gateway):
+        def cb(_):
+            return None
+        gateway.on(MessageType.TICK, cb)
+        gateway.on(MessageType.TICK, cb)
+        assert gateway._callbacks[MessageType.TICK].count(cb) == 1
+
+    def test_on_same_callback_dispatched_exactly_once(self, gateway):
+        received = []
+        cb = lambda p: received.append(p)  # noqa: E731
+        gateway.on_tick(cb)
+        gateway.on_tick(cb)
+        env = TickMessage(pair="MNQ", price=100.0, volume=10, time=1234).to_envelope(seq_num=1)
+        gateway._handle_message(env.to_json())
+        assert len(received) == 1
+
+    def test_on_different_callbacks_both_dispatched(self, gateway):
+        received_a = []
+        received_b = []
+        gateway.on_tick(lambda p: received_a.append(p))
+        gateway.on_tick(lambda p: received_b.append(p))
+        env = TickMessage(pair="MNQ", price=100.0, volume=10, time=1234).to_envelope(seq_num=1)
+        gateway._handle_message(env.to_json())
+        assert len(received_a) == 1
+        assert len(received_b) == 1
+
+    def test_on_connection_change_same_callback_notified_once(self, gateway):
+        calls = []
+        cb = lambda connected: calls.append(connected)  # noqa: E731
+        gateway.on_connection_change(cb)
+        gateway.on_connection_change(cb)
+        assert gateway._connection_listeners.count(cb) == 1
+        env = ConnectMessage(platform="nt", version="1").to_envelope(seq_num=1)
+        gateway._handle_message(env.to_json())
+        assert calls == [True]
+
+    def test_on_connection_change_different_callbacks_both_notified(self, gateway):
+        calls_a = []
+        calls_b = []
+        gateway.on_connection_change(lambda c: calls_a.append(c))
+        gateway.on_connection_change(lambda c: calls_b.append(c))
+        env = ConnectMessage(platform="nt", version="1").to_envelope(seq_num=1)
+        gateway._handle_message(env.to_json())
+        assert calls_a == [True]
+        assert calls_b == [True]
+
+
+# ---------------------------------------------------------------------------
 # Connection state management
 # ---------------------------------------------------------------------------
 

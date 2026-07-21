@@ -21,13 +21,17 @@ class FakeZMQDataSource(ZMQDataSource):
         self._gateway = FakeGateway(running=running, connected=connected)
         self._started = False
         self._stopped = False
+        self.start_calls = 0
+        self.stop_calls = 0
 
     def start(self):
         self._started = True
+        self.start_calls += 1
         self._gateway.is_running = True
 
     def stop(self):
         self._stopped = True
+        self.stop_calls += 1
         self._gateway.is_running = False
         self._gateway.is_connected = False
 
@@ -211,6 +215,32 @@ class TestStreamStart:
             data = resp.get_json()
             assert data["status"] == "error"
             assert "bind failed" in data["message"]
+
+    def test_start_stop_start_cycle_restarts_gateway(self, app):
+        """After a stop, a second start must call data_source.start() again."""
+        ds = FakeZMQDataSource(running=False, connected=False)
+        socketio = FakeSocketIO()
+        lifecycle = FakePlatformLifecycleService()
+        make_registered_app(app, data_source=ds, socketio=socketio, platform_lifecycle=lifecycle)
+        with app.test_client() as client:
+            # First start: gateway comes up
+            resp = client.post("/api/stream/start")
+            assert resp.status_code == 200
+            assert resp.get_json()["status"] == "starting"
+            assert ds._gateway.is_running is True
+
+            # Stop: gateway goes down
+            resp = client.post("/api/stream/stop")
+            assert resp.status_code == 200
+            assert resp.get_json()["status"] == "stopped"
+            assert ds._gateway.is_running is False
+
+            # Second start: must restart the gateway, not skip as already running
+            resp = client.post("/api/stream/start")
+            assert resp.status_code == 200
+            assert resp.get_json()["status"] == "starting"
+            assert ds._gateway.is_running is True
+            assert ds.start_calls == 2
 
 
 class TestStreamStop:

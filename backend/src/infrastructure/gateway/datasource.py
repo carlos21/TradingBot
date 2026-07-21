@@ -329,14 +329,21 @@ class ZMQDataSource(CombinedDataSource):
         self.logger.info("ZMQDataSource started")
 
     def stop(self) -> None:
-        """Stop receiving data."""
+        """Stop receiving data.
+
+        Always stops the gateway, even when it was injected: ``start()``
+        starts the (possibly injected) gateway unconditionally, so ``stop()``
+        must be symmetric.  Otherwise ``POST /api/stream/stop`` leaves the
+        gateway running and a later start short-circuits to
+        "already_connected" without ever re-binding.
+        """
         self._cancel_pending_refresh_timer()
         monitor = self._readiness_monitor
         if monitor is not None:
             with contextlib.suppress(Exception):
                 monitor.stop()
         self._stop_heartbeat_monitor()
-        if self._owns_gateway and self._gateway:
+        if self._gateway:
             self._gateway.stop()
         self._state = DataSourceState.DISCONNECTED
         self.logger.info("ZMQDataSource stopped")

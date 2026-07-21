@@ -17,6 +17,11 @@ function setConnectionStatus(text) {
   if (el) el.textContent = text;
 }
 
+function setStopStreamingVisible(visible) {
+  const btn = document.getElementById('stopStreamingBtn');
+  if (btn) btn.classList.toggle('hidden', !visible);
+}
+
 function getUrlPair() {
   const params = new URLSearchParams(window.location.search);
   return params.get('pair');
@@ -150,6 +155,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   fetch('/api/stream/status')
     .then(r => r.json())
     .then(data => {
+      if (data.live_mode) setStopStreamingVisible(!!data.gateway_running);
       if (data.platform_connected) {
         hideOverlay();
         setConnectionStatus('Connected');

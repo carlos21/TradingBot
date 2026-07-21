@@ -1015,11 +1015,17 @@ to be:
     # -------------------------------------------------------------------------
 
     def on(self, msg_type: MessageType, callback: Callable) -> None:
-        """Register a callback for a specific message type."""
+        """Register a callback for a specific message type.
+
+        Idempotent: registering the same callback twice is a no-op, so a
+        gateway stop/start cycle (which re-registers all handlers) never
+        delivers a message more than once.
+        """
         with self._lock:
             if msg_type not in self._callbacks:
                 self._callbacks[msg_type] = []
-            self._callbacks[msg_type].append(callback)
+            if callback not in self._callbacks[msg_type]:
+                self._callbacks[msg_type].append(callback)
 
     def on_tick(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """Register tick callback."""
@@ -1122,8 +1128,12 @@ to be:
 
         Called with True when platform connects (heartbeat or connect handshake)
         and False when heartbeat timeout occurs.
+
+        Idempotent: registering the same callback twice is a no-op, so a
+        gateway stop/start cycle never notifies listeners more than once.
         """
-        self._connection_listeners.append(callback)
+        if callback not in self._connection_listeners:
+            self._connection_listeners.append(callback)
 
     def on_market_status(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """Register market status callback.

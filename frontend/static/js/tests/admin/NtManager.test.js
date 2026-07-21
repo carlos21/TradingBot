@@ -65,12 +65,9 @@ describe('NtManager', () => {
     expect(document.getElementById('nt-creds-pass').type).toBe('password');
   });
 
-  it('saveCredentials posts settings and reloads', async () => {
+  it('saveCredentials posts credentials-only endpoint and shows status', async () => {
     const { http, api } = buildApi();
-    http.setResponse('GET', '/api/settings', {
-      credentials: { username: '', password: '', stored_usernames: [] },
-    });
-    http.setResponse('POST', '/api/settings', { saved: true });
+    http.setResponse('POST', '/api/settings/credentials', { saved: true });
 
     const manager = new NtManager(api);
     manager.init();
@@ -84,10 +81,8 @@ describe('NtManager', () => {
 
     expect(http.requests).toContainEqual({
       method: 'POST',
-      url: '/api/settings',
-      data: expect.objectContaining({
-        credentials: { username: 'user1', password: 'pass1' },
-      }),
+      url: '/api/settings/credentials',
+      data: { username: 'user1', password: 'pass1' },
     });
     expect(document.getElementById('nt-creds-status').textContent).toBe('Credentials saved');
   });

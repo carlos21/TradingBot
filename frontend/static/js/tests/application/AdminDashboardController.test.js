@@ -142,12 +142,6 @@ function setupAdminDocument() {
         <input id="settings-account-riskpct" />
         <input id="settings-account-rr" />
         <input id="settings-account-live" type="checkbox" />
-        <input id="settings-nt-user" list="settings-nt-user-list" />
-        <datalist id="settings-nt-user-list"></datalist>
-        <input id="settings-nt-pass" type="password" />
-        <button id="settings-nt-toggle-pass"></button>
-        <svg id="eye-icon"></svg>
-        <svg id="eye-slash-icon"></svg>
         <button id="settings-save-btn"></button>
         <span id="settings-save-status"></span>
         <div><button id="settings-account-add"></button></div>

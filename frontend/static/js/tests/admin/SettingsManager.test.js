@@ -24,12 +24,6 @@ function setupDom() {
     <input id="settings-account-rr" />
     <input id="settings-account-live" type="checkbox" />
     <div id="settings-account-instruments"></div>
-    <input id="settings-nt-user" list="settings-nt-user-list" />
-    <datalist id="settings-nt-user-list"></datalist>
-    <input id="settings-nt-pass" type="password" />
-    <button id="settings-nt-toggle-pass"></button>
-    <svg id="eye-icon"></svg>
-    <svg id="eye-slash-icon" class="hidden"></svg>
     <button id="settings-save-btn"></button>
     <div id="settings-save-status"></div>
     <div id="settings-account-add-wrapper">
@@ -65,11 +59,6 @@ function sampleSettings() {
     accounts: [
       { name: 'acc1', risk_usd: 100, risk_pct: 1, rr_ratio: 2, live_enabled: true, instrument_symbols: ['MNQ'] },
     ],
-    credentials: {
-      username: 'user1',
-      password: 'pass1',
-      stored_usernames: ['user1'],
-    },
   };
 }
 
@@ -115,7 +104,6 @@ describe('SettingsManager', () => {
     expect(manager.instruments).toEqual(sampleInstruments());
     expect(document.getElementById('settings-session-end').value).toBe('16:58');
     expect(document.getElementById('settings-flask-port').value).toBe('5001');
-    expect(document.getElementById('settings-nt-user').value).toBe('user1');
     expect(document.getElementById('settings-accounts-count').textContent).toBe('1 account');
   });
 
@@ -299,18 +287,6 @@ describe('SettingsManager', () => {
     expect(manager.accounts[0].name).toBe('acc2');
   });
 
-  it('togglePassword switches input type', () => {
-    const { http, api } = buildApi();
-    http.setResponse('GET', '/api/settings', sampleSettings());
-
-    const manager = new SettingsManager(api);
-    manager.init();
-
-    expect(document.getElementById('settings-nt-pass').type).toBe('password');
-    document.getElementById('settings-nt-toggle-pass').click();
-    expect(document.getElementById('settings-nt-pass').type).toBe('text');
-  });
-
   it('saveSettings posts payload with instruments and reloads', async () => {
     const { http, api } = buildApi();
     http.setResponse('GET', '/api/settings', sampleSettings());
@@ -328,6 +304,7 @@ describe('SettingsManager', () => {
     await new Promise(r => setTimeout(r, 50));
 
     const post = http.requests.find(r => r.method === 'POST' && r.url === '/api/settings');
+    expect(post.data.credentials).toBeUndefined();
     expect(post.data.trading.instruments).toEqual([
       { symbol: 'MNQ', full_name: 'MNQ 12-26' },
       { symbol: 'ES', full_name: 'ES 09-26' },

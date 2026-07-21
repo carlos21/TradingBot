@@ -188,6 +188,11 @@ class NinjaTraderBarAuditor:
     and compares them against Python's cached bars.
 
     Thread-safe.  Runs entirely in a background timer thread.
+
+    Audit runs are gated on streaming state: while the gateway is not running
+    or the data source is not actively streaming, scheduled runs are skipped
+    silently (debug log only).  The timer keeps re-arming, so auditing resumes
+    automatically once streaming (re)starts.
     """
 
     def __init__(
@@ -258,6 +263,16 @@ class NinjaTraderBarAuditor:
 
     def _run_audit(self) -> None:
         try:
+            # Only audit while live streaming is active.  Before the user
+            # starts streaming (or after they stop it) the gateway is down or
+            # no bars are flowing, so an audit would only produce spurious
+            # error logs.  The timer keeps re-arming in ``finally`` below, so
+            # auditing resumes automatically on the next tick once streaming
+            # (re)starts.
+            if not self._gateway.is_running or not self._data_source.is_streaming:
+                self._logger.debug("[BarAuditor] Skipping audit — streaming not active")
+                return
+
             # Fire-and-forget async request
             self._pending_event = threading.Event()
             self._remote_bars = []

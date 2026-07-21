@@ -45,9 +45,6 @@ function setupDocument() {
         <button id="modifySlBtn">Update SL</button>
       </div>
     </div>
-    <button id="startStreamingBtn">Start Streaming</button>
-    <button id="reconnectBtn" class="hidden">Reconnect</button>
-    <div id="connectionStatus"></div>
     <div class="replay-control">Control 1</div>
     <div class="replay-control">Control 2</div>
   `;
@@ -116,95 +113,6 @@ describe('ReplayControlsController', () => {
 
       const btn = document.querySelector('[data-timeframe="1m"]');
       expect(btn.classList.contains('active')).toBe(true);
-    });
-  });
-
-  describe('streaming buttons', () => {
-    it('starts streaming and updates status on success', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ message: 'Stream started' }),
-      });
-
-      const { controls } = buildControls(document, window);
-      controls.init();
-
-      const btn = document.getElementById('startStreamingBtn');
-      btn.click();
-      await new Promise(r => setTimeout(r, 10));
-
-      expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', { method: 'POST' });
-      expect(document.getElementById('connectionStatus').textContent).toBe('Stream started');
-      expect(btn.disabled).toBe(true);
-    });
-
-    it('restores start button on error response', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        json: async () => ({ message: 'Already running' }),
-      });
-
-      const { controls } = buildControls(document, window);
-      controls.init();
-
-      const btn = document.getElementById('startStreamingBtn');
-      const originalHTML = btn.innerHTML;
-      btn.click();
-      await new Promise(r => setTimeout(r, 10));
-
-      expect(document.getElementById('connectionStatus').textContent).toBe('⚠️ Already running');
-      expect(btn.disabled).toBe(false);
-      expect(btn.innerHTML).toBe(originalHTML);
-    });
-
-    it('restores start button on network error', async () => {
-      global.fetch = vi.fn().mockRejectedValue(new Error('Network failed'));
-
-      const { controls } = buildControls(document, window);
-      controls.init();
-
-      const btn = document.getElementById('startStreamingBtn');
-      btn.click();
-      await new Promise(r => setTimeout(r, 10));
-
-      expect(document.getElementById('connectionStatus').textContent).toBe('Error: Network failed');
-      expect(btn.disabled).toBe(false);
-    });
-
-    it('reconnects and hides reconnect button on success', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: async () => ({ message: 'Reconnected' }),
-      });
-
-      const { controls } = buildControls(document, window);
-      controls.init();
-
-      const reconnectBtn = document.getElementById('reconnectBtn');
-      reconnectBtn.classList.remove('hidden');
-      reconnectBtn.click();
-      await new Promise(r => setTimeout(r, 10));
-
-      expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', { method: 'POST' });
-      expect(document.getElementById('connectionStatus').textContent).toBe('Reconnected');
-      expect(reconnectBtn.classList.contains('hidden')).toBe(true);
-    });
-
-    it('shows reconnect button again on reconnect error', async () => {
-      global.fetch = vi.fn().mockResolvedValue({
-        ok: false,
-        json: async () => ({ message: 'Failed' }),
-      });
-
-      const { controls } = buildControls(document, window);
-      controls.init();
-
-      const reconnectBtn = document.getElementById('reconnectBtn');
-      reconnectBtn.classList.remove('hidden');
-      reconnectBtn.click();
-      await new Promise(r => setTimeout(r, 10));
-
-      expect(reconnectBtn.classList.contains('hidden')).toBe(false);
     });
   });
 

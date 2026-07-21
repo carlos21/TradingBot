@@ -224,6 +224,32 @@ class TestSettingsServiceSaveFullSettings:
         assert len(accounts) == 1
         assert accounts[0].name == "NewAccount"
 
+    def test_save_full_settings_without_accounts_preserves_accounts(self):
+        """A partial payload (e.g. credentials-only from the NT tab) must not
+        wipe existing accounts."""
+        svc = _make_service()
+        svc._accounts.upsert("ExistingAccount", risk_usd=100.0)
+        svc.save_full_settings({
+            "trading": {},
+            "network": {},
+            "credentials": {"username": "user1", "password": "pass1"},
+        })
+        accounts = svc._accounts.list_accounts()
+        assert len(accounts) == 1
+        assert accounts[0].name == "ExistingAccount"
+
+    def test_save_full_settings_with_empty_accounts_still_clears(self):
+        """Explicitly sending an empty accounts list is still a deliberate clear."""
+        svc = _make_service()
+        svc._accounts.upsert("ExistingAccount", risk_usd=100.0)
+        svc.save_full_settings({
+            "trading": {},
+            "network": {},
+            "accounts": [],
+            "credentials": {},
+        })
+        assert svc._accounts.list_accounts() == []
+
     def test_save_credentials(self):
         svc = _make_service()
         svc.save_full_settings({
@@ -259,6 +285,22 @@ class TestSettingsServiceSaveFullSettings:
             "credentials": {"username": "", "password": "pass1"},
         })
         assert svc._creds.get_credential("ninjatrader") is None
+
+    def test_save_credentials_only_does_not_touch_accounts(self):
+        svc = _make_service()
+        svc._accounts.upsert("ExistingAccount", risk_usd=100.0)
+        svc.save_credentials("user1", "pass1")
+        accounts = svc._accounts.list_accounts()
+        assert len(accounts) == 1
+        assert accounts[0].name == "ExistingAccount"
+        cred = svc._creds.get_credential("ninjatrader")
+        assert cred == ("user1", "pass1")
+
+    def test_save_credentials_only_does_not_change_settings(self):
+        svc = _make_service()
+        svc._settings.set("flask_port", "8080")
+        svc.save_credentials("user1", "pass1")
+        assert svc._settings.get("flask_port") == "8080"
 
     def test_changing_username_returns_latest_credential(self):
         """Changing the stored username must surface the new credential, not the old one."""

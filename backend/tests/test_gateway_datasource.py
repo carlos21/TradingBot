@@ -304,12 +304,12 @@ class TestLifecycle:
         ds.stop()
         mock_gw.stop.assert_called_once()
 
-    def test_stop_does_not_stop_external_gateway(self, logger, mock_gateway):
+    def test_stop_stops_injected_gateway(self, logger, mock_gateway):
         ds = ZMQDataSource(logger=logger, gateway=mock_gateway)
         ds.stop()
-        # In datasource.py stop(): if self._owns_gateway and self._gateway: self._gateway.stop()
-        # Since _owns_gateway is False, stop should NOT be called.
-        mock_gateway.stop.assert_not_called()
+        # stop() is symmetric with start(): the gateway is always stopped,
+        # even when it was injected (production wiring always injects it).
+        mock_gateway.stop.assert_called_once()
 
     def test_shutdown_sets_stop_event_and_stops_gateway(self, logger):
         mock_gw = MagicMock(spec=TradingGateway)

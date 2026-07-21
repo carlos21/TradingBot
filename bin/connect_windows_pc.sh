@@ -31,6 +31,14 @@ HOST_FILTER=""
 TIMEOUT_MS=200
 LIST_ALL=false
 USE_WOL=true
+DEBUG=false
+
+# Print a debug line when -d/--debug is set.
+debug() {
+    if [[ "$DEBUG" == true ]]; then
+        echo -e "${BLUE}[debug]${NC} $*"
+    fi
+}
 
 # Colors for output
 RED='\033[0;31m'
@@ -50,6 +58,7 @@ Options:
   -m MAC         Partial or full MAC address of the Windows PC (e.g., "aa:bb:cc")
   -n HOSTNAME    Hostname of the Windows PC (case-insensitive substring match)
   -a             List all discovered devices and exit without connecting
+  -d             Print debug output (interfaces, ARP parsing, match decisions)
   -t TIMEOUT     Ping timeout in milliseconds (default: 200)
   -B BROADCAST   Wake-on-LAN broadcast address (default: $WOL_BROADCAST)
   -M MAC         Wake-on-LAN target MAC address (default: $WOL_MAC)
@@ -77,6 +86,7 @@ args=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --no-wol) USE_WOL=false; shift ;;
+        --debug) DEBUG=true; shift ;;
         -h|-\?|--help) usage; exit 0 ;;
         *) args+=("$1"); shift ;;
     esac
@@ -87,11 +97,12 @@ else
     set -- "${args[@]}"
 fi
 
-while getopts "m:n:at:B:M:r:w:p:b:h" opt; do
+while getopts "m:n:adt:B:M:r:w:p:b:h" opt; do
     case $opt in
         m) MAC_FILTER="$OPTARG" ;;
         n) HOST_FILTER="$OPTARG" ;;
         a) LIST_ALL=true ;;
+        d) DEBUG=true ;;
         t) TIMEOUT_MS="$OPTARG" ;;
         B) WOL_BROADCAST="$OPTARG" ;;
         M) WOL_MAC="$OPTARG" ;;
@@ -179,8 +190,10 @@ discover_pc() {
     echo -e "${YELLOW}ARP results:${NC}"
     echo "------------------------------"
 
+    local arp_total=0 arp_resolved=0 arp_incomplete=0
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
+        arp_total=$((arp_total + 1))
 
         # Parse arp -a output format on macOS:
         # ? (192.168.1.10) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]
@@ -189,8 +202,15 @@ discover_pc() {
         mac=$(echo "$line" | sed -n 's/.*at \([0-9a-f:]*\).*/\1/p')
         host=$(echo "$line" | awk '{print $1}')
 
-        [[ -z "$ip" ]] && continue
-        [[ -z "$mac" || "$mac" == "(incomplete)" ]] && continue
+        if [[ -z "$ip" ]]; then
+            debug "skip (no IP parsed): $line"
+            continue
+        fi
+        if [[ -z "$mac" || "$mac" == "(incomplete)" ]]; then
+            arp_incomplete=$((arp_incomplete + 1))
+            continue
+        fi
+        arp_resolved=$((arp_resolved + 1))
 
         mac_normalized=$(normalize_mac "$mac")
         host_lower=$(lowercase "$host")
@@ -203,6 +223,7 @@ discover_pc() {
         elif [[ -n "$HOST_FILTER_LOWER" && "$host_lower" == *"$HOST_FILTER_LOWER"* ]]; then
             match=1
         fi
+        debug "entry: $host -> $ip ($mac_normalized) match=$match"
 
         if [[ "$match" -eq 1 ]]; then
             if [[ "$LIST_ALL" == true ]]; then
@@ -218,6 +239,11 @@ discover_pc() {
             fi
         fi
     done < <(arp -a)
+
+    debug "ARP entries: $arp_total total, $arp_resolved resolved"
+    if [[ "$arp_resolved" -eq 0 ]]; then
+        debug "no resolved ARP entries at all — ping sweep may not be reaching the subnet"
+    fi
 
     return 0
 }
@@ -244,7 +270,9 @@ else
 fi
 
 # Get the default gateway and subnet
-GATEWAY=$(route -n get default 2>/dev/null | awk '/gateway:/{print $2}' | head -1)
+DEFAULT_ROUTE=$(route -n get default 2>/dev/null)
+GATEWAY=$(echo "$DEFAULT_ROUTE" | awk '/gateway:/{print $2}' | head -1)
+DEFAULT_IFACE=$(echo "$DEFAULT_ROUTE" | awk '/interface:/{print $2}' | head -1)
 if [[ -z "$GATEWAY" ]]; then
     echo -e "${RED}Error:${NC} Could not determine default gateway. Are you connected to a network?"
     exit 1
@@ -253,6 +281,12 @@ fi
 # Derive subnet from gateway (assumes /24 home network)
 SUBNET=$(echo "$GATEWAY" | sed 's/\.[0-9]*$//')
 NETWORK="${SUBNET}.0/24"
+
+debug "default interface: ${DEFAULT_IFACE:-unknown}"
+debug "interface config: $(ifconfig "$DEFAULT_IFACE" 2>/dev/null | grep 'inet ' || echo 'no IPv4 address')"
+debug "MAC filter: '${MAC_FILTER:-none}' (normalized: '${MAC_FILTER_NORMALIZED:-none}')"
+debug "hostname filter: '${HOST_FILTER:-none}'"
+debug "ping -W argument: $PING_WAIT_ARG ($(uname -s) mode)"
 
 echo -e "${BLUE}Gateway:${NC}   $GATEWAY"
 echo -e "${BLUE}Network:${NC}   $NETWORK"

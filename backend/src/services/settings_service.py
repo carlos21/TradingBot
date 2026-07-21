@@ -140,8 +140,6 @@ class SettingsService:
         """Persist a grouped settings payload from the UI."""
         trading = payload.get("trading", {})
         network = payload.get("network", {})
-        accounts = payload.get("accounts", [])
-        credentials = payload.get("credentials", {})
 
         self._save_instruments(trading)
         self._sync_legacy_instrument_settings()
@@ -153,17 +151,35 @@ class SettingsService:
         for key, value in network.items():
             self._settings.set(key, str(value) if value is not None else "")
 
-        self._accounts.clear_all()
-        for acct in accounts:
-            self._accounts.upsert(
-                name=acct["name"],
-                risk_usd=acct.get("risk_usd") or None,
-                risk_pct=acct.get("risk_pct") or None,
-                rr_ratio=acct.get("rr_ratio") or None,
-                live_enabled=bool(acct.get("live_enabled", True)),
-                instrument_symbols=acct.get("instrument_symbols") or [],
-            )
+        # Only replace accounts when the payload explicitly contains them.
+        # This prevents a credentials-only save (or any partial payload) from
+        # accidentally wiping all configured NT accounts.
+        if "accounts" in payload:
+            accounts = payload.get("accounts", [])
+            self._accounts.clear_all()
+            for acct in accounts:
+                self._accounts.upsert(
+                    name=acct["name"],
+                    risk_usd=acct.get("risk_usd") or None,
+                    risk_pct=acct.get("risk_pct") or None,
+                    rr_ratio=acct.get("rr_ratio") or None,
+                    live_enabled=bool(acct.get("live_enabled", True)),
+                    instrument_symbols=acct.get("instrument_symbols") or [],
+                )
 
+        credentials = payload.get("credentials", {})
+        self._save_credentials_dict(credentials)
+
+        mt_terminal_path = payload.get("mt_terminal_path", "")
+        if mt_terminal_path:
+            self._settings.set("mt_terminal_path", mt_terminal_path)
+
+    def save_credentials(self, username: str, password: str) -> None:
+        """Persist NinjaTrader credentials only, without touching accounts."""
+        self._save_credentials_dict({"username": username, "password": password})
+
+    def _save_credentials_dict(self, credentials: dict) -> None:
+        """Internal helper: encrypt and store NT credentials if a username is given."""
         username = credentials.get("username", "")
         password = credentials.get("password", "")
         if username:
@@ -172,10 +188,6 @@ class SettingsService:
                 username,
                 self._encrypt(password),
             )
-
-        mt_terminal_path = payload.get("mt_terminal_path", "")
-        if mt_terminal_path:
-            self._settings.set("mt_terminal_path", mt_terminal_path)
 
     def _save_instruments(self, trading: dict) -> None:
         """Persist full-name changes for catalog instruments.

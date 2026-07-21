@@ -78,18 +78,11 @@ export class NtManager {
   async saveCredentials() {
     this.showCredsStatus('Saving...', 'info');
     try {
-      const payload = {
-        trading: {},
-        network: {},
-        accounts: [],
-        credentials: {
-          username: this.el.credsUser.value,
-          password: this.el.credsPass.value,
-        },
-      };
-      await this.api.saveSettings(payload);
+      await this.api.saveCredentials(
+        this.el.credsUser.value,
+        this.el.credsPass.value,
+      );
       this.showCredsStatus('Credentials saved', 'success');
-      await this.loadCredentials();
     } catch (e) {
       console.error('[NtManager] Failed to save credentials:', e);
       this.showCredsStatus('Failed to save credentials', 'error');

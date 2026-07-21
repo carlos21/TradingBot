@@ -73,12 +73,14 @@ export class ChartSocketController {
 
     this.socket.on('gateway_started', () => {
       this._setConnectionStatus(`ZeroMQ gateway started. Launching ${this._getPlatformLabel()}...`);
+      this._setStopStreamingVisible(true);
     });
 
     this.socket.on('platform_connected', () => {
       this._setOverlayVisible(false);
       this._showReconnectButton(false);
       this._setConnectionStatus('Connected! Loading chart...');
+      this._setStopStreamingVisible(true);
     });
 
     this.socket.on('platform_disconnected', () => {
@@ -95,11 +97,15 @@ export class ChartSocketController {
       this._setOverlayVisible(true);
       this._setConnectionStatus('Streaming stopped');
       this._showReconnectButton(false);
+      this._setStopStreamingVisible(false);
     });
   }
 
   _updateOverlay(data) {
     if (data.live_mode) {
+      // The stop button tracks the gateway lifecycle: visible whenever the
+      // gateway is running, regardless of platform connection state.
+      this._setStopStreamingVisible(!!data.gateway_running);
       if (data.platform_connected) {
         this._setOverlayVisible(false);
         this._showReconnectButton(false);
@@ -109,6 +115,7 @@ export class ChartSocketController {
       }
     } else {
       this._setOverlayVisible(false);
+      this._setStopStreamingVisible(false);
     }
   }
 
@@ -139,5 +146,10 @@ export class ChartSocketController {
     const startBtn = this.dom.getElementById('startStreamingBtn');
     if (btn) btn.classList.toggle('hidden', !visible);
     if (startBtn) startBtn.classList.toggle('hidden', visible);
+  }
+
+  _setStopStreamingVisible(visible) {
+    const btn = this.dom.getElementById('stopStreamingBtn');
+    if (btn) btn.classList.toggle('hidden', !visible);
   }
 }

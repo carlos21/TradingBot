@@ -471,3 +471,110 @@ class TestNinjaTraderBarAuditorLifecycle:
 
         # on_drift must NOT fire for edge-only drift
         on_drift.assert_not_called()
+
+
+class TestNinjaTraderBarAuditorStreamingGuard:
+    """
+    _run_audit() must skip silently while streaming is not active (gateway
+    down or data source not streaming). The timer re-arms in `finally`, so
+    auditing resumes automatically once streaming (re)starts.
+    """
+
+    def test_audit_skipped_when_gateway_not_running(self):
+        gateway = MagicMock()
+        gateway.is_running = False
+        data_source = MagicMock()
+        data_source.is_streaming = True
+        logger = MagicMock()
+
+        auditor = NinjaTraderBarAuditor(
+            gateway=gateway,
+            data_source=data_source,
+            logger=logger,
+            interval_minutes=5,
+            bars_back=10,
+        )
+        auditor.start()
+        auditor._run_audit()
+
+        # No audit request fired, no error/warning noise
+        gateway.send_audit_request.assert_not_called()
+        data_source.load_historical_bars.assert_not_called()
+        logger.error.assert_not_called()
+        logger.warning.assert_not_called()
+
+        # Skip is logged at debug level only
+        debug_calls = [call for call in logger.debug.call_args_list if "Skipping audit" in str(call)]
+        assert len(debug_calls) == 1, f"Expected one skip debug log, got: {debug_calls}"
+
+        # Timer re-armed via finally — auditor keeps running and will retry
+        assert auditor._running is True
+        assert auditor._timer is not None
+        auditor.stop()
+
+    def test_audit_skipped_when_not_streaming(self):
+        gateway = MagicMock()
+        gateway.is_running = True
+        data_source = MagicMock()
+        data_source.is_streaming = False
+        logger = MagicMock()
+
+        auditor = NinjaTraderBarAuditor(
+            gateway=gateway,
+            data_source=data_source,
+            logger=logger,
+            interval_minutes=5,
+            bars_back=10,
+        )
+        auditor.start()
+        auditor._run_audit()
+
+        # No audit request fired, no error/warning noise
+        gateway.send_audit_request.assert_not_called()
+        data_source.load_historical_bars.assert_not_called()
+        logger.error.assert_not_called()
+        logger.warning.assert_not_called()
+
+        # Skip is logged at debug level only
+        debug_calls = [call for call in logger.debug.call_args_list if "Skipping audit" in str(call)]
+        assert len(debug_calls) == 1, f"Expected one skip debug log, got: {debug_calls}"
+
+        # Timer re-armed via finally — auditor keeps running and will retry
+        assert auditor._running is True
+        assert auditor._timer is not None
+        auditor.stop()
+
+    def test_audit_proceeds_when_running_and_streaming(self, monkeypatch):
+        gateway = MagicMock()
+        gateway.is_running = True
+        data_source = MagicMock()
+        data_source.is_streaming = True
+        logger = MagicMock()
+
+        bar_100 = {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100, "pair": "MNQ"}
+        data_source.load_historical_bars.return_value = [bar_100]
+
+        auditor = NinjaTraderBarAuditor(
+            gateway=gateway,
+            data_source=data_source,
+            logger=logger,
+            interval_minutes=5,
+            bars_back=10,
+        )
+
+        def mock_send_audit_request(bars_back):
+            auditor._on_audit_response({
+                "bars": [bar_100],
+            })
+
+        gateway.send_audit_request.side_effect = mock_send_audit_request
+
+        # Patch sleep to avoid real 1.5s delay in unit tests
+        monkeypatch.setattr("time.sleep", lambda _x: None)
+
+        auditor._run_audit()
+
+        # Audit ran: request sent and bars compared successfully
+        gateway.send_audit_request.assert_called_once()
+        ok_calls = [call for call in logger.info.call_args_list if "[BarAuditor] OK" in str(call)]
+        assert len(ok_calls) == 1, f"Expected one OK log, got: {ok_calls}"

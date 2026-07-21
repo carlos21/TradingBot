@@ -38,12 +38,6 @@ export class SettingsManager {
       accountRr: document.getElementById('settings-account-rr'),
       accountLive: document.getElementById('settings-account-live'),
       accountInstruments: document.getElementById('settings-account-instruments'),
-      ntUser: document.getElementById('settings-nt-user'),
-      ntUserList: document.getElementById('settings-nt-user-list'),
-      ntPass: document.getElementById('settings-nt-pass'),
-      ntTogglePass: document.getElementById('settings-nt-toggle-pass'),
-      eyeIcon: document.getElementById('eye-icon'),
-      eyeSlashIcon: document.getElementById('eye-slash-icon'),
       saveBtn: document.getElementById('settings-save-btn'),
       saveStatus: document.getElementById('settings-save-status'),
       addAccountBtn: document.getElementById('settings-account-add'),
@@ -54,7 +48,6 @@ export class SettingsManager {
   bindEvents() {
     this.el.saveBtn.addEventListener('click', () => this.saveSettings());
     this.el.addAccountBtn.addEventListener('click', () => this.addAccount());
-    this.el.ntTogglePass.addEventListener('click', () => this.togglePassword());
   }
 
   async loadSettings() {
@@ -77,24 +70,10 @@ export class SettingsManager {
 
       this.accounts = data.accounts || [];
       this.renderAccounts();
-
-      const c = data.credentials || {};
-      this.populateUsernameDropdown(c.stored_usernames || [], c.username || '');
-      this.el.ntPass.value = c.password || '';
     } catch (e) {
       console.error('[SettingsManager] Failed to load settings:', e);
       this.showStatus('Failed to load settings', 'error');
     }
-  }
-
-  populateUsernameDropdown(usernames, current) {
-    this.el.ntUserList.innerHTML = '';
-    for (const u of usernames) {
-      const opt = document.createElement('option');
-      opt.value = u;
-      this.el.ntUserList.appendChild(opt);
-    }
-    this.el.ntUser.value = current || '';
   }
 
   renderInstruments() {
@@ -306,13 +285,6 @@ export class SettingsManager {
     this.renderAccounts();
   }
 
-  togglePassword() {
-    const isPassword = this.el.ntPass.type === 'password';
-    this.el.ntPass.type = isPassword ? 'text' : 'password';
-    this.el.eyeIcon.classList.toggle('hidden', isPassword);
-    this.el.eyeSlashIcon.classList.toggle('hidden', !isPassword);
-  }
-
   async saveSettings() {
     this.showStatus('Saving...', 'info');
     try {
@@ -334,14 +306,9 @@ export class SettingsManager {
           zmq_heartbeat_port: this.el.zmqHb.value,
         },
         accounts: this.accounts,
-        credentials: {
-          username: this.el.ntUser.value,
-          password: this.el.ntPass.value,
-        },
       };
       await this.api.saveSettings(payload);
       this.showStatus('Settings saved successfully', 'success');
-      // Refresh to get updated stored_usernames
       await this.loadSettings();
     } catch (e) {
       console.error('[SettingsManager] Failed to save settings:', e);

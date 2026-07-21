@@ -29,6 +29,19 @@ class SettingsController:
             abort(500, f"Failed to save settings: {exc}")
         return jsonify({"success": True}), 200
 
+    def save_credentials(self):
+        payload = request.get_json(silent=True) or {}
+        username = payload.get("username", "")
+        password = payload.get("password", "")
+        if not username:
+            abort(400, "Username is required")
+        try:
+            self._svc.save_credentials(username, password)
+        except Exception as exc:
+            logger.exception("Failed to save credentials: %s", exc)
+            abort(500, f"Failed to save credentials: {exc}")
+        return jsonify({"success": True}), 200
+
     def get_accounts(self):
         data = self._svc.get_full_settings()
         return jsonify(data.get("accounts", [])), 200

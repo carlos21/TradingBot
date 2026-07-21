@@ -9,6 +9,7 @@ function setupDocument() {
     <div id="connectionStatus">Idle</div>
     <button id="reconnectBtn" class="hidden">Reconnect</button>
     <button id="startStreamingBtn">Start Streaming</button>
+    <button id="stopStreamingBtn" class="hidden">Stop Streaming</button>
   `;
   return { doc: document, win: window };
 }
@@ -259,6 +260,68 @@ describe('ChartSocketController', () => {
     expect(doc.getElementById('connectionOverlay').classList.contains('hidden')).toBe(false);
     expect(doc.getElementById('connectionStatus').textContent).toBe('Streaming stopped');
     expect(doc.getElementById('reconnectBtn').classList.contains('hidden')).toBe(true);
+  });
+
+  describe('stop streaming button visibility', () => {
+    it('shows stop button on stream_status when live and gateway running', () => {
+      const { doc } = setupDocument();
+      const { socket } = buildController(doc, window);
+
+      socket.trigger('stream_status', { playing: true, live_mode: true, gateway_running: true, platform_connected: true });
+
+      expect(doc.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(false);
+    });
+
+    it('hides stop button on stream_status when live but gateway not running', () => {
+      const { doc } = setupDocument();
+      const { socket } = buildController(doc, window);
+
+      socket.trigger('gateway_started');
+      expect(doc.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(false);
+
+      socket.trigger('stream_status', { playing: true, live_mode: true, gateway_running: false, platform_connected: false });
+      expect(doc.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(true);
+    });
+
+    it('hides stop button on stream_status when not live', () => {
+      const { doc } = setupDocument();
+      const { socket } = buildController(doc, window);
+
+      socket.trigger('gateway_started');
+      expect(doc.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(false);
+
+      socket.trigger('stream_status', { playing: false, live_mode: false, gateway_running: true });
+      expect(doc.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(true);
+    });
+
+    it('shows stop button on gateway_started', () => {
+      const { doc } = setupDocument();
+      const { socket } = buildController(doc, window);
+
+      socket.trigger('gateway_started');
+
+      expect(doc.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(false);
+    });
+
+    it('shows stop button on platform_connected', () => {
+      const { doc } = setupDocument();
+      const { socket } = buildController(doc, window);
+
+      socket.trigger('platform_connected');
+
+      expect(doc.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(false);
+    });
+
+    it('hides stop button on gateway_stopped', () => {
+      const { doc } = setupDocument();
+      const { socket } = buildController(doc, window);
+
+      socket.trigger('gateway_started');
+      expect(doc.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(false);
+
+      socket.trigger('gateway_stopped');
+      expect(doc.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(true);
+    });
   });
 
   it('falls back to NinjaTrader platform label', () => {
