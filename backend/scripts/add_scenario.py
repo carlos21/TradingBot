@@ -78,15 +78,19 @@ def main():
     end_ts = f"{parse_ts_with_date(def_end, session_date)}Z"
 
     # Lines date: London lines are drawn the evening before the session, so
-    # use the day before automatically and only ask for the time. Other
-    # groups prompt, defaulting to the session date.
-    if args.group == "london":
-        from datetime import datetime, timedelta
+    # use the day before automatically and only ask for the time. NY lines are
+    # drawn on the current day, so use today automatically. Other groups prompt,
+    # defaulting to the session date.
+    from datetime import datetime, timedelta
 
+    if args.group == "london":
         lines_date = (
             datetime.strptime(session_date, "%Y-%m-%d") - timedelta(days=1)
         ).strftime("%Y-%m-%d")
         print(f"Lines date: {lines_date} (day before the session)")
+    elif args.group == "ny":
+        lines_date = datetime.now().strftime("%Y-%m-%d")
+        print(f"Lines date: {lines_date} (current day)")
     else:
         while True:
             lines_date = prompter.ask("Lines date (YYYY-MM-DD)", default=session_date)
