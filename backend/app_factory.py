@@ -451,6 +451,11 @@ def create_app(
         instrument_registry=registry,
         session_factory=session_factory,
         default_symbol=pair,
+        stream_activator=(
+            data_source.ensure_instrument_streaming
+            if isinstance(data_source, ZMQDataSource)
+            else None
+        ),
     )
 
     # Wire the data source to route incoming market data by pair.

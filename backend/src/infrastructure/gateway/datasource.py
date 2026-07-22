@@ -31,6 +31,7 @@ from .protocol import MessageType
 
 if TYPE_CHECKING:
     from src.application.live_readiness.readiness_monitor import ReadinessMonitor
+    from src.domain.models import Instrument
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,6 @@ class ZMQDataSource(CombinedDataSource):
         history_hours: int = DEFAULT_HISTORY_HOURS,
         notifier: Notifier | None = None,
         market_filter: IMarketClosureFilter | None = None,
-        instrument_registry=None,
     ):
         """
         Initialize the ZMQ data source.
@@ -92,7 +92,6 @@ class ZMQDataSource(CombinedDataSource):
             pair: Trading pair symbol
             history_hours: Number of hours of historical bars to load on connect
             market_filter: Optional filter that classifies gaps as scheduled market closures
-            instrument_registry: Optional registry of instruments for multi-pair streaming
         """
         self.logger = logger
         self.pair = pair
@@ -101,7 +100,6 @@ class ZMQDataSource(CombinedDataSource):
         self._gateway_config = gateway_config or GatewayConfig()
         self._owns_gateway = gateway is None
         self._market_filter = market_filter
-        self._instrument_registry = instrument_registry
         self._coordinator = None
 
         # Track the first connect so we always refresh history on startup.
@@ -115,6 +113,11 @@ class ZMQDataSource(CombinedDataSource):
         self._per_pair_bars: dict[str, list[dict]] = {}
         self._per_pair_locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
         self._bars_lock = threading.RLock()
+
+        # Additional instruments subscribed on demand (multi-instrument mode),
+        # keyed by full_name.  Re-subscribed on every platform reconnect.
+        self._extra_instruments: dict[str, Instrument] = {}
+        self._extra_instruments_lock = threading.Lock()
         self._state = DataSourceState.DISCONNECTED
         self._last_history_time: int = 0
 
@@ -139,8 +142,8 @@ class ZMQDataSource(CombinedDataSource):
         self._from_time: int = 0
         self._cb_lock = threading.Lock()
 
-        # Live bar building from ticks (for partial bars)
-        self._current_bar: dict | None = None
+        # Live bar building from ticks (for partial bars), one forming bar per pair.
+        self._current_bars: dict[str, dict] = {}
         self._last_emit_time: float = 0.0
 
         # Track native partial bar receipts so tick-derived partials don't
@@ -432,12 +435,14 @@ class ZMQDataSource(CombinedDataSource):
 
         bar_time = (tick_time // 60) * 60
 
-        # Reset on minute boundary
-        if self._current_bar is not None and self._current_bar["time"] != bar_time:
-            self._current_bar = None
+        current_bar = self._current_bars.get(tick_pair)
 
-        if self._current_bar is None:
-            self._current_bar = {
+        # Reset on minute boundary
+        if current_bar is not None and current_bar["time"] != bar_time:
+            current_bar = None
+
+        if current_bar is None:
+            current_bar = {
                 "time": bar_time,
                 "open": price,
                 "high": price,
@@ -446,11 +451,12 @@ class ZMQDataSource(CombinedDataSource):
                 "volume": volume,
                 "pair": tick_pair,
             }
+            self._current_bars[tick_pair] = current_bar
         else:
-            self._current_bar["high"] = max(self._current_bar["high"], price)
-            self._current_bar["low"] = min(self._current_bar["low"], price)
-            self._current_bar["close"] = price
-            self._current_bar["volume"] += volume
+            current_bar["high"] = max(current_bar["high"], price)
+            current_bar["low"] = min(current_bar["low"], price)
+            current_bar["close"] = price
+            current_bar["volume"] += volume
 
         # Emit partial bar at most once per second, but only if the platform
         # is not already sending native partial bars (which are the source of truth).
@@ -464,7 +470,7 @@ class ZMQDataSource(CombinedDataSource):
                 return
             if self._state in (DataSourceState.CONNECTED, DataSourceState.REFRESHING):
                 return  # Suppress partial bars before history is ready
-            partial = dict(self._current_bar)
+            partial = dict(current_bar)
             partial["partial"] = True
             if self._coordinator is not None:
                 self._coordinator.route_partial_bar(partial)
@@ -752,11 +758,11 @@ class ZMQDataSource(CombinedDataSource):
             if pair != self.pair:
                 with self._per_pair_locks[pair]:
                     bars_copy = list(self._per_pair_bars.get(pair, []))
-                self._state = DataSourceState.STREAMING
+                # A secondary instrument's history completing must not touch the
+                # default pair's lifecycle state; only the stream liveness stamp.
                 self._last_completed_bar_time = time.monotonic()
                 self.logger.info(
-                    f"History complete for {pair}: {len(bars_copy)} bars cached, "
-                    f"switching to STREAMING mode"
+                    f"History complete for {pair}: {len(bars_copy)} bars cached"
                 )
                 self._coordinator.route_history_loaded(bars_copy)
                 return
@@ -843,12 +849,9 @@ class ZMQDataSource(CombinedDataSource):
                     preserved = [b for b in self._per_pair_bars.get(pair, []) if b["time"] < cutoff]
                     self._per_pair_bars[pair] = preserved
                     removed = len(self._per_pair_bars.get(pair, [])) - len(preserved)
-                previous_state = self._state
-                self._state = DataSourceState.REFRESHING
-                self._current_bar = None
-                if previous_state != DataSourceState.CONNECTED:
-                    with self._bars_lock:
-                        self._refresh_buffer.clear()
+                # A secondary instrument's refresh must not touch the default
+                # pair's lifecycle state.
+                self._current_bars.clear()
                 self.logger.info(f"Refresh start for {pair}: preserved {len(preserved)} historical bars, removed {removed} recent bars")
                 return
             # Fall through for default pair to keep legacy cache behavior.
@@ -870,7 +873,7 @@ class ZMQDataSource(CombinedDataSource):
 
         previous_state = self._state
         self._state = DataSourceState.REFRESHING
-        self._current_bar = None
+        self._current_bars.clear()
         if previous_state != DataSourceState.CONNECTED:
             with self._bars_lock:
                 self._refresh_buffer.clear()
@@ -900,6 +903,45 @@ class ZMQDataSource(CombinedDataSource):
     # -------------------------------------------------------------------------
     # Public API
     # -------------------------------------------------------------------------
+
+    def ensure_instrument_streaming(self, instrument: Instrument) -> None:
+        """Subscribe an additional instrument and request its history on demand.
+
+        Used by the ``StreamCoordinator`` when a client joins a non-default
+        instrument room.  Idempotent: a second call for the same instrument
+        (or for the default instrument, which is subscribed at connect) is a
+        no-op.  Requested instruments are re-subscribed automatically on every
+        platform reconnect (see ``on_platform_connected``).
+        """
+        full_name = getattr(instrument, "full_name", None)
+        if not full_name:
+            self.logger.debug(
+                f"ensure_instrument_streaming skipped for {getattr(instrument, 'symbol', '?')}: no full_name"
+            )
+            return
+        if self._state == DataSourceState.DISCONNECTED:
+            self.logger.debug(
+                f"ensure_instrument_streaming skipped for {full_name}: platform not connected"
+            )
+            return
+        gateway = self._ensure_gateway()
+        with self._extra_instruments_lock:
+            if full_name in self._extra_instruments or full_name == gateway.instrument:
+                self.logger.debug(
+                    f"ensure_instrument_streaming skipped for {full_name}: already requested"
+                )
+                return
+            self._extra_instruments[full_name] = instrument
+        self._subscribe_and_refresh(instrument)
+
+    def _subscribe_and_refresh(self, instrument: Instrument) -> None:
+        """Send subscribe + history refresh for an instrument to the platform."""
+        gateway = self._ensure_gateway()
+        days = max(1, math.ceil(self.history_hours / 24))
+        gateway.send_subscribe(instrument.full_name)
+        self.logger.info(f"Subscribed to instrument {instrument.full_name} ({instrument.symbol})")
+        gateway.send_refresh_request(days=days, instrument=instrument.full_name)
+        self.logger.info(f"Requested {days}d history refresh for {instrument.full_name}")
 
     def request_refresh(self, days: int = None) -> None:
         """Request historical data refresh from platform.
@@ -973,14 +1015,6 @@ class ZMQDataSource(CombinedDataSource):
             )
             return
 
-        # Determine the list of instruments to subscribe to.
-        if self._instrument_registry is not None:
-            instruments = [i.full_name for i in self._instrument_registry.get_all() if i.full_name]
-            if not instruments:
-                instruments = [default_instrument]
-        else:
-            instruments = [default_instrument]
-
         should_refresh = (
             self._first_platform_connect
             or self._gateway is None
@@ -1014,15 +1048,25 @@ class ZMQDataSource(CombinedDataSource):
                 )
                 should_refresh = True
 
-        # Tell NinjaTrader which instrument(s) to use before requesting history/live bars.
-        for instrument in instruments:
+        # Tell NinjaTrader which instrument to use before requesting history/live bars.
+        # The default instrument is always subscribed first; any extra instruments
+        # requested via ``ensure_instrument_streaming`` are re-subscribed below
+        # (platform-side subscriptions do not survive a reconnect).
+        try:
+            gateway.send_subscribe(default_instrument)
+        except Exception as e:
+            self.logger.error(f"Failed to subscribe to {default_instrument}: {e}")
+
+        with self._extra_instruments_lock:
+            extra_instruments = list(self._extra_instruments.values())
+        for instrument in extra_instruments:
             try:
-                gateway.send_subscribe(instrument)
+                self._subscribe_and_refresh(instrument)
             except Exception as e:
-                self.logger.error(f"Failed to subscribe to {instrument}: {e}")
+                self.logger.error(f"Failed to re-subscribe {instrument.full_name}: {e}")
 
         delay = self._history_request_delay_sec
-        self.logger.info(f"Platform connected, instruments={instruments}, requesting historical data refresh in {delay}s")
+        self.logger.info(f"Platform connected, instrument={default_instrument}, requesting historical data refresh in {delay}s")
         self._cancel_pending_refresh_timer()
         self._pending_refresh_timer = threading.Timer(delay, self._do_delayed_refresh)
         self._pending_refresh_timer.start()

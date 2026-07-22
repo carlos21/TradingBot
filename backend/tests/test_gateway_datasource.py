@@ -107,7 +107,7 @@ class TestInitialization:
         assert ds.on_before_refresh is None
         assert ds._callback is None
         assert ds._from_time == 0
-        assert ds._current_bar is None
+        assert ds._current_bars == {}
         assert ds._last_emit_time == 0.0
         assert ds._last_native_partial_time == 0.0
         assert ds._stats == {
@@ -332,7 +332,7 @@ class TestTickHandling:
         tick = make_tick(time_val=1000, price=5000.0, volume=10)
         data_source._on_tick(tick)
         assert data_source._stats["ticks_received"] == 1
-        cb = data_source._current_bar
+        cb = data_source._current_bars["MNQ"]
         assert cb is not None
         assert cb["time"] == (1000 // 60) * 60
         assert cb["open"] == 5000.0
@@ -345,7 +345,7 @@ class TestTickHandling:
     def test_on_tick_updates_existing_bar(self, data_source):
         data_source._on_tick(make_tick(time_val=1000, price=5000.0, volume=10))
         data_source._on_tick(make_tick(time_val=1001, price=5100.0, volume=5))
-        cb = data_source._current_bar
+        cb = data_source._current_bars["MNQ"]
         assert cb["high"] == 5100.0
         assert cb["low"] == 5000.0
         assert cb["close"] == 5100.0
@@ -355,7 +355,7 @@ class TestTickHandling:
         # Two ticks in different minutes
         data_source._on_tick(make_tick(time_val=60, price=100.0))
         data_source._on_tick(make_tick(time_val=120, price=200.0))
-        cb = data_source._current_bar
+        cb = data_source._current_bars["MNQ"]
         assert cb["time"] == 120
         assert cb["open"] == 200.0
         assert cb["high"] == 200.0
@@ -363,7 +363,7 @@ class TestTickHandling:
     def test_on_tick_uses_pair_from_source_when_missing(self, data_source):
         tick = {"time": 1000, "price": 5000.0, "volume": 1}
         data_source._on_tick(tick)
-        assert data_source._current_bar["pair"] == "MNQ"
+        assert data_source._current_bars["MNQ"]["pair"] == "MNQ"
 
     def test_on_tick_emits_partial_after_one_second(self, data_source):
         live_bars = []
@@ -865,14 +865,14 @@ class TestRefreshStartHandling:
         new_bar = make_bar(time_val=now - 100, open_=11.0, high=12.0, low=10.0, close=11.5)
         data_source._historical_bars = [old_bar, new_bar]
         data_source._state = DataSourceState.STREAMING
-        data_source._current_bar = {"time": now}
+        data_source._current_bars["MNQ"] = {"time": now}
 
         data_source._on_refresh_start()
 
         assert len(data_source._historical_bars) == 1
         assert data_source._historical_bars[0]["time"] == old_bar["time"]
         assert data_source.state == DataSourceState.REFRESHING
-        assert data_source._current_bar is None
+        assert data_source._current_bars == {}
 
     def test_on_refresh_start_calls_before_refresh_callback(self, data_source):
         called = []
@@ -1158,7 +1158,7 @@ class TestErrorHandling:
     def test_on_tick_missing_volume_defaults_to_zero(self, data_source):
         tick = {"time": 1000, "price": 5000.0}
         data_source._on_tick(tick)
-        assert data_source._current_bar["volume"] == 0
+        assert data_source._current_bars["MNQ"]["volume"] == 0
 
     def test_load_historical_bars_thread_safe(self, data_source):
         data_source._historical_bars = [
@@ -1505,3 +1505,81 @@ class TestHistoryCompletenessMarketClosures:
             complete, reason = data_source.check_history_completeness()
         assert complete is False
         assert "Gap detected" in reason
+
+
+# ---------------------------------------------------------------------------
+# Multi-instrument: on-demand subscribe via ensure_instrument_streaming
+# ---------------------------------------------------------------------------
+
+
+class TestEnsureInstrumentStreaming:
+
+    def test_sends_subscribe_and_refresh_with_full_name(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        data_source._state = DataSourceState.STREAMING
+        data_source.ensure_instrument_streaming(Instrument(symbol="MES", full_name="MES 09-26"))
+
+        mock_gateway.send_subscribe.assert_called_once_with("MES 09-26")
+        mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MES 09-26")
+        assert "MES 09-26" in data_source._extra_instruments
+
+    def test_second_call_is_idempotent(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        data_source._state = DataSourceState.STREAMING
+        instrument = Instrument(symbol="MES", full_name="MES 09-26")
+        data_source.ensure_instrument_streaming(instrument)
+        data_source.ensure_instrument_streaming(instrument)
+
+        assert mock_gateway.send_subscribe.call_count == 1
+        assert mock_gateway.send_refresh_request.call_count == 1
+
+    def test_skips_default_instrument(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        data_source._state = DataSourceState.STREAMING
+        # gateway.instrument is "MNQ 06-26" (already subscribed at connect)
+        data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
+
+        mock_gateway.send_subscribe.assert_not_called()
+        mock_gateway.send_refresh_request.assert_not_called()
+        assert data_source._extra_instruments == {}
+
+    def test_noop_when_disconnected(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        assert data_source._state == DataSourceState.DISCONNECTED
+        data_source.ensure_instrument_streaming(Instrument(symbol="MES", full_name="MES 09-26"))
+
+        mock_gateway.send_subscribe.assert_not_called()
+        mock_gateway.send_refresh_request.assert_not_called()
+        assert data_source._extra_instruments == {}
+
+    def test_noop_without_full_name(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        data_source._state = DataSourceState.STREAMING
+        data_source.ensure_instrument_streaming(Instrument(symbol="MES", full_name=""))
+
+        mock_gateway.send_subscribe.assert_not_called()
+        assert data_source._extra_instruments == {}
+
+    def test_extras_resubscribed_on_platform_reconnect(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        data_source._state = DataSourceState.STREAMING
+        data_source.ensure_instrument_streaming(Instrument(symbol="MES", full_name="MES 09-26"))
+
+        mock_gateway.send_subscribe.reset_mock()
+        mock_gateway.send_refresh_request.reset_mock()
+
+        # Simulate reconnect: subscriptions die platform-side, so both the
+        # default and the extra instrument must be re-subscribed.
+        data_source._state = DataSourceState.DISCONNECTED
+        data_source.on_platform_connected()
+
+        subscribed = [c.args[0] for c in mock_gateway.send_subscribe.call_args_list]
+        assert "MNQ 06-26" in subscribed
+        assert "MES 09-26" in subscribed
+        mock_gateway.send_refresh_request.assert_any_call(days=30, instrument="MES 09-26")

@@ -1,10 +1,13 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { StreamingControlsController } from '../../application/StreamingControlsController.js';
+import { StreamingLifecycleController } from '../../application/StreamingLifecycleController.js';
+import { StreamingEventType } from '../../domain/streamingLifecycle.js';
 import { FakeDomService } from '../fakes/FakeDomService.js';
 import { FakeNotification } from '../fakes/FakeNotification.js';
 
 function setupDocument() {
   document.body.innerHTML = `
+    <div id="connectionOverlay"></div>
     <button id="startStreamingBtn">Start Streaming</button>
     <button id="reconnectBtn" class="hidden">Reconnect</button>
     <button id="stopStreamingBtn" class="hidden">Stop Streaming</button>
@@ -15,8 +18,10 @@ function setupDocument() {
 function buildControls() {
   const dom = new FakeDomService(document, window);
   const notification = new FakeNotification();
-  const controls = new StreamingControlsController(dom, notification);
-  return { dom, notification, controls };
+  const lifecycle = new StreamingLifecycleController(dom);
+  lifecycle.init();
+  const controls = new StreamingControlsController(dom, notification, lifecycle);
+  return { dom, notification, lifecycle, controls };
 }
 
 describe('StreamingControlsController', () => {
@@ -42,6 +47,22 @@ describe('StreamingControlsController', () => {
 
       expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', { method: 'POST' });
       expect(document.getElementById('connectionStatus').textContent).toBe('Stream started');
+    });
+
+    it('moves the machine to STREAMING when the platform was already connected', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: 'already_connected', message: 'Platform is already connected' }),
+      });
+
+      const { controls, lifecycle } = buildControls();
+      controls.init();
+
+      document.getElementById('startStreamingBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      expect(lifecycle.getState()).toBe('streaming');
+      expect(document.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(false);
     });
 
     it('shows warning in status and restores button on error response', async () => {
@@ -79,17 +100,23 @@ describe('StreamingControlsController', () => {
   });
 
   describe('reconnect', () => {
+    function driveToDisconnected(lifecycle) {
+      lifecycle.dispatch({ type: StreamingEventType.PLATFORM_CONNECTED });
+      lifecycle.dispatch({ type: StreamingEventType.PLATFORM_DISCONNECTED });
+    }
+
     it('posts to /api/stream/start and hides button while in flight', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({ message: 'Reconnected' }),
       });
 
-      const { controls } = buildControls();
+      const { controls, lifecycle } = buildControls();
       controls.init();
+      driveToDisconnected(lifecycle);
 
       const reconnectBtn = document.getElementById('reconnectBtn');
-      reconnectBtn.classList.remove('hidden');
+      expect(reconnectBtn.classList.contains('hidden')).toBe(false);
       reconnectBtn.click();
       expect(reconnectBtn.classList.contains('hidden')).toBe(true);
       await new Promise(r => setTimeout(r, 10));
@@ -105,11 +132,11 @@ describe('StreamingControlsController', () => {
         json: async () => ({ message: 'Failed' }),
       });
 
-      const { controls } = buildControls();
+      const { controls, lifecycle } = buildControls();
       controls.init();
+      driveToDisconnected(lifecycle);
 
       const reconnectBtn = document.getElementById('reconnectBtn');
-      reconnectBtn.classList.remove('hidden');
       reconnectBtn.click();
       await new Promise(r => setTimeout(r, 10));
 
@@ -119,14 +146,19 @@ describe('StreamingControlsController', () => {
   });
 
   describe('stop streaming', () => {
+    function driveToStreaming(lifecycle) {
+      lifecycle.dispatch({ type: StreamingEventType.PLATFORM_CONNECTED });
+    }
+
     it('posts to /api/stream/stop without alerting on success', async () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: true,
         json: async () => ({ message: 'Stopped' }),
       });
 
-      const { controls, notification } = buildControls();
+      const { controls, notification, lifecycle } = buildControls();
       controls.init();
+      driveToStreaming(lifecycle);
 
       const stopBtn = document.getElementById('stopStreamingBtn');
       stopBtn.click();
@@ -135,7 +167,12 @@ describe('StreamingControlsController', () => {
 
       expect(global.fetch).toHaveBeenCalledWith('/api/stream/stop', { method: 'POST' });
       expect(notification.alerts).toHaveLength(0);
+      // Stop stays busy until the backend confirms via gateway_stopped.
+      expect(lifecycle.getState()).toBe('stopping');
+
+      lifecycle.dispatch({ type: StreamingEventType.GATEWAY_STOPPED });
       expect(stopBtn.disabled).toBe(false);
+      expect(stopBtn.classList.contains('hidden')).toBe(true);
     });
 
     it('alerts and restores button on failure response', async () => {
@@ -144,8 +181,9 @@ describe('StreamingControlsController', () => {
         json: async () => ({ message: 'Gateway busy' }),
       });
 
-      const { controls, notification } = buildControls();
+      const { controls, notification, lifecycle } = buildControls();
       controls.init();
+      driveToStreaming(lifecycle);
 
       const stopBtn = document.getElementById('stopStreamingBtn');
       const originalHTML = stopBtn.innerHTML;
@@ -160,8 +198,9 @@ describe('StreamingControlsController', () => {
     it('alerts on network error', async () => {
       global.fetch = vi.fn().mockRejectedValue(new Error('Network down'));
 
-      const { controls, notification } = buildControls();
+      const { controls, notification, lifecycle } = buildControls();
       controls.init();
+      driveToStreaming(lifecycle);
 
       const stopBtn = document.getElementById('stopStreamingBtn');
       stopBtn.click();

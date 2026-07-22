@@ -1,12 +1,20 @@
+import { StreamingEventType } from '../domain/streamingLifecycle.js';
+
 /**
  * Maps Socket.IO events to ChartController commands.
  * Depends only on the controller's public API and socket ports.
+ *
+ * Streaming-lifecycle socket events (gateway_started / platform_connected /
+ * platform_disconnected / gateway_stopped / stream_status) are dispatched
+ * into the shared StreamingLifecycleController state machine, which owns the
+ * Start/Reconnect/Stop buttons and the connection overlay.
  */
 export class ChartSocketController {
-  constructor(socket, controller, domService) {
+  constructor(socket, controller, domService, lifecycle) {
     this.socket = socket;
     this.controller = controller;
     this.dom = domService;
+    this.lifecycle = lifecycle;
   }
 
   init() {
@@ -67,63 +75,38 @@ export class ChartSocketController {
     this.socket.on('stream_status', data => {
       console.log('[ChartSocketController] stream_status received:', data);
       if (!data.playing) this.controller.setPlaying(false);
-      if (data.live_mode) this.controller.setLiveMode(true);
-      this._updateOverlay(data);
+      if (data.live_mode) {
+        this.controller.setLiveMode(true);
+        if (!data.platform_connected) {
+          this._setConnectionStatus(`Waiting for ${this._getPlatformLabel()} connection...`);
+        }
+      }
+      this.lifecycle.dispatch({ type: StreamingEventType.STATUS_SYNC, ...data });
     });
 
     this.socket.on('gateway_started', () => {
       this._setConnectionStatus(`ZeroMQ gateway started. Launching ${this._getPlatformLabel()}...`);
-      this._setStopStreamingVisible(true);
+      this.lifecycle.dispatch({ type: StreamingEventType.GATEWAY_STARTED });
     });
 
     this.socket.on('platform_connected', () => {
-      this._setOverlayVisible(false);
-      this._showReconnectButton(false);
       this._setConnectionStatus('Connected! Loading chart...');
-      this._setStopStreamingVisible(true);
+      this.lifecycle.dispatch({ type: StreamingEventType.PLATFORM_CONNECTED });
     });
 
     this.socket.on('platform_disconnected', () => {
       this.controller.setHistoryReady(false);
       this.controller.clearPendingBars();
-      this._setOverlayVisible(true);
       this._setConnectionStatus(`Lost connection — ${this._getPlatformLabel()} disconnected`);
-      this._showReconnectButton(true);
+      this.lifecycle.dispatch({ type: StreamingEventType.PLATFORM_DISCONNECTED });
     });
 
     this.socket.on('gateway_stopped', () => {
       this.controller.setHistoryReady(false);
       this.controller.clearPendingBars();
-      this._setOverlayVisible(true);
       this._setConnectionStatus('Streaming stopped');
-      this._showReconnectButton(false);
-      this._setStopStreamingVisible(false);
+      this.lifecycle.dispatch({ type: StreamingEventType.GATEWAY_STOPPED });
     });
-  }
-
-  _updateOverlay(data) {
-    if (data.live_mode) {
-      // The stop button tracks the gateway lifecycle: visible whenever the
-      // gateway is running, regardless of platform connection state.
-      this._setStopStreamingVisible(!!data.gateway_running);
-      if (data.platform_connected) {
-        this._setOverlayVisible(false);
-        this._showReconnectButton(false);
-      } else {
-        this._setOverlayVisible(true);
-        this._setConnectionStatus(`Waiting for ${this._getPlatformLabel()} connection...`);
-      }
-    } else {
-      this._setOverlayVisible(false);
-      this._setStopStreamingVisible(false);
-    }
-  }
-
-  _setOverlayVisible(visible) {
-    const overlay = this.dom.getElementById('connectionOverlay');
-    if (!overlay) return;
-    if (visible) overlay.classList.remove('hidden');
-    else overlay.classList.add('hidden');
   }
 
   _matchesCurrentPair(data) {
@@ -139,17 +122,5 @@ export class ChartSocketController {
   _getPlatformLabel() {
     const overlay = this.dom.getElementById('connectionOverlay');
     return overlay?.dataset.platformLabel || 'NinjaTrader';
-  }
-
-  _showReconnectButton(visible) {
-    const btn = this.dom.getElementById('reconnectBtn');
-    const startBtn = this.dom.getElementById('startStreamingBtn');
-    if (btn) btn.classList.toggle('hidden', !visible);
-    if (startBtn) startBtn.classList.toggle('hidden', visible);
-  }
-
-  _setStopStreamingVisible(visible) {
-    const btn = this.dom.getElementById('stopStreamingBtn');
-    if (btn) btn.classList.toggle('hidden', !visible);
   }
 }

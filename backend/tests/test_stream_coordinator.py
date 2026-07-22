@@ -203,3 +203,50 @@ class TestHelpers:
         session = coordinator.require_session("ES")
         assert session.symbol == "ES"
         assert coordinator.get_session("ES") is session
+
+
+class TestStreamActivator:
+    @pytest.fixture
+    def activator(self):
+        return MagicMock()
+
+    @pytest.fixture
+    def activated_coordinator(self, registry, factory, activator):
+        return StreamCoordinator(
+            instrument_registry=registry,
+            session_factory=factory,
+            default_symbol="MNQ",
+            stop_grace_sec=0.0,
+            stream_activator=activator,
+        )
+
+    def test_activator_fires_for_new_non_default_symbol(self, activated_coordinator, activator):
+        session = activated_coordinator.join_instrument("ES", "sid-1")
+        activator.assert_called_once_with(session.instrument)
+        assert session.instrument.full_name == "ES 09-26"
+
+    def test_activator_not_fired_for_default_symbol(self, activated_coordinator, activator):
+        activated_coordinator.join_instrument("MNQ", "sid-1")
+        activator.assert_not_called()
+
+    def test_activator_not_fired_when_session_already_started(self, activated_coordinator, activator):
+        activated_coordinator.join_instrument("ES", "sid-1")
+        activated_coordinator.join_instrument("ES", "sid-2")
+        activator.assert_called_once()
+
+    def test_activator_exception_does_not_break_joining(self, registry, factory):
+        failing = MagicMock(side_effect=RuntimeError("boom"))
+        coordinator = StreamCoordinator(
+            instrument_registry=registry,
+            session_factory=factory,
+            default_symbol="MNQ",
+            stop_grace_sec=0.0,
+            stream_activator=failing,
+        )
+        session = coordinator.join_instrument("ES", "sid-1")
+        assert session._started is True
+        assert session.client_count() == 1
+
+    def test_no_activator_configured_still_joins(self, coordinator):
+        session = coordinator.join_instrument("ES", "sid-1")
+        assert session._started is True

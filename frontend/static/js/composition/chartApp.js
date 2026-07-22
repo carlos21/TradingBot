@@ -9,6 +9,7 @@ import { ChartController } from '../application/ChartController.js';
 import { ChartSocketController } from '../application/ChartSocketController.js';
 import { ReplayControlsController } from '../application/ReplayControlsController.js';
 import { StreamingControlsController } from '../application/StreamingControlsController.js';
+import { StreamingLifecycleController } from '../application/StreamingLifecycleController.js';
 
 /**
  * Composition root for the chart page.
@@ -36,14 +37,20 @@ export function createChartApp(opts = {}) {
     },
   });
 
-  const socketController = new ChartSocketController(socket, controller, dom);
+  // Single owner of the streaming-control UI state (Start/Reconnect/Stop
+  // buttons + connection overlay). Both the click and socket controllers
+  // dispatch lifecycle events into it.
+  const streamingLifecycle = new StreamingLifecycleController(dom);
+  streamingLifecycle.init();
+
+  const socketController = new ChartSocketController(socket, controller, dom, streamingLifecycle);
   socketController.init();
 
   const controls = new ReplayControlsController(controller, socket, dom, notification, tradeService);
   controls.init();
 
-  const streamingControls = new StreamingControlsController(dom, notification);
+  const streamingControls = new StreamingControlsController(dom, notification, streamingLifecycle);
   streamingControls.init();
 
-  return { controller, socketController, controls, streamingControls, socket };
+  return { controller, socketController, controls, streamingControls, streamingLifecycle, socket };
 }

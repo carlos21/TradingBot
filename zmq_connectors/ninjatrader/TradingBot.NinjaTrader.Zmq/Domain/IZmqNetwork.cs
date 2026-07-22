@@ -17,8 +17,8 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
         void SendBar(string pair, DateTime time, double open, double high, double low, double close, long volume, bool isPartial = false, long seqNum = 0);
         void SendAuditResponse(string pair, List<JObject> bars);
         void SendHistoryBatch(string pair, List<JObject> bars, int days);
-        void SendHistoryEnd();
-        void SendRefreshStart();
+        void SendHistoryEnd(string pair);
+        void SendRefreshStart(string pair);
         void SendEntryFill(string tradeId, double entryPrice, double? stopLoss = null, double? takeProfit = null, double? slippage = null, string account = null, double? quantity = null, double? accountBalance = null);
         void SendExitFill(string tradeId, double exitPrice, string resultType, string account = null, double? realizedPnl = null, double? commission = null, double? accountBalance = null);
         void SendTradeLog(string tradeId, string evt, string msg);

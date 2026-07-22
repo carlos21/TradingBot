@@ -126,9 +126,9 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             result.Should().BeTrue();
 
             System.Threading.Thread.Sleep(200);
-            _network.Received(1).SendRefreshStart();
+            _network.Received(1).SendRefreshStart("MNQ");
             _network.Received(3).SendHistoryBatch("MNQ", Arg.Any<List<JObject>>(), Arg.Any<int>());
-            _network.Received(1).SendHistoryEnd();
+            _network.Received(1).SendHistoryEnd("MNQ");
         }
 
         [Fact]

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Windows.Threading;
 using NinjaTrader.Cbi;
@@ -10,26 +11,36 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
     /// <summary>
     /// NinjaTrader-specific streaming coordinator.
     /// Encapsulates all NinjaTrader market-data and BarsRequest usage.
+    /// Supports streaming multiple instruments simultaneously, one
+    /// <see cref="InstrumentStream"/> context per subscribed instrument.
     /// </summary>
     public sealed class NtStreamingCoordinator : IStreamingCoordinator
     {
+        private sealed class InstrumentStream
+        {
+            public string FullName;
+            public string Pair;
+            public Instrument Instrument;
+            public BarsRequest LiveBarsRequest;
+            public readonly BarStreamTracker BarTracker = new BarStreamTracker();
+            public SessionIterator SessionIterator;
+            public System.Timers.Timer LiveBarsDelayTimer;
+            public bool LiveBarsSubscribed;
+            public bool MarketIsOpen = true;
+            public DateTime LastMarketStatusSent = DateTime.MinValue;
+        }
+
         private readonly IZmqNetwork _network;
         private readonly ILogger _logger;
         private readonly ZmqConfiguration _config;
-        private readonly BarStreamTracker _barTracker = new BarStreamTracker();
         private readonly TickRateLimiter _tickRateLimiter;
         private readonly TickRateLimiter _partialBarRateLimiter;
 
-        private string _currentInstrument;
-        private Instrument _subscribedInstrument;
-        private bool _isStreaming;
-        private BarsRequest _liveBarsRequest;
-        private System.Timers.Timer _liveBarsDelayTimer;
+        private readonly Dictionary<string, InstrumentStream> _streams =
+            new Dictionary<string, InstrumentStream>(StringComparer.OrdinalIgnoreCase);
+        private readonly List<string> _subscriptionOrder = new List<string>();
+        private readonly object _streamsLock = new object();
         private System.Timers.Timer _barsRequestWatchdog;
-        private bool _liveBarsSubscribed;
-        private SessionIterator _sessionIterator;
-        private bool _marketIsOpen = true;
-        private DateTime _lastMarketStatusSent = DateTime.MinValue;
 
         private long _ticksSent;
         private long _barsSent;
@@ -45,8 +56,23 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             _partialBarRateLimiter = new TickRateLimiter(1);
         }
 
-        public string CurrentInstrument => _currentInstrument ?? string.Empty;
-        public bool IsStreaming => _isStreaming;
+        public string CurrentInstrument
+        {
+            get
+            {
+                lock (_streamsLock)
+                    return _subscriptionOrder.Count > 0 ? _subscriptionOrder[0] : string.Empty;
+            }
+        }
+
+        public bool IsStreaming
+        {
+            get
+            {
+                lock (_streamsLock)
+                    return _streams.Count > 0;
+            }
+        }
 
         public (long ticks, long bars, long partials) GetStats() =>
             (_ticksSent, _barsSent, _partialBarsSent);
@@ -73,15 +99,30 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 return false;
             }
 
-            _currentInstrument = instrument;
-            _subscribedInstrument = resolved;
-            _isStreaming = true;
+            lock (_streamsLock)
+            {
+                if (_streams.ContainsKey(instrument))
+                {
+                    _logger.Info($"Already subscribed to instrument {instrument}");
+                    return true;
+                }
 
-            SubscribeToMarketData();
-            StartLiveBarsDelayTimer();
+                var ctx = new InstrumentStream
+                {
+                    FullName = instrument,
+                    Pair = instrument.Split(' ')[0],
+                    Instrument = resolved
+                };
+                _streams[instrument] = ctx;
+                _subscriptionOrder.Add(instrument);
 
-            _logger.Success($"Subscribed to instrument {instrument}");
-            return true;
+                ctx.Instrument.MarketData.Update += OnMarketDataUpdate;
+                _logger.Info($"Subscribed to market data for {instrument}");
+                StartLiveBarsDelayTimer(ctx);
+
+                _logger.Success($"Subscribed to instrument {instrument}");
+                return true;
+            }
         }
 
         public void Stop()
@@ -96,32 +137,53 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
 
         private void StopCore()
         {
-            UnsubscribeFromLiveBars();
-            UnsubscribeFromMarketData();
-            _currentInstrument = null;
-            _subscribedInstrument = null;
-            _sessionIterator = null;
-            _isStreaming = false;
-        }
-
-        private string Pair => string.IsNullOrEmpty(_currentInstrument)
-            ? string.Empty
-            : _currentInstrument.Split(' ')[0];
-
-        private void SubscribeToMarketData()
-        {
-            if (_subscribedInstrument == null) return;
-            _subscribedInstrument.MarketData.Update += OnMarketDataUpdate;
-            _logger.Info($"Subscribed to market data for {_currentInstrument}");
-        }
-
-        private void UnsubscribeFromMarketData()
-        {
-            if (_subscribedInstrument != null)
+            List<InstrumentStream> snapshot;
+            lock (_streamsLock)
             {
-                _subscribedInstrument.MarketData.Update -= OnMarketDataUpdate;
-                _logger.Info($"Unsubscribed from market data for {_currentInstrument ?? "<none>"}");
-                _subscribedInstrument = null;
+                snapshot = new List<InstrumentStream>(_streams.Values);
+                _streams.Clear();
+                _subscriptionOrder.Clear();
+            }
+
+            StopBarsRequestWatchdog();
+
+            foreach (var ctx in snapshot)
+            {
+                UnsubscribeFromLiveBars(ctx);
+                if (ctx.Instrument != null)
+                {
+                    ctx.Instrument.MarketData.Update -= OnMarketDataUpdate;
+                    _logger.Info($"Unsubscribed from market data for {ctx.FullName ?? "<none>"}");
+                }
+            }
+        }
+
+        private InstrumentStream FindContext(Instrument instrument)
+        {
+            if (instrument == null) return null;
+            lock (_streamsLock)
+            {
+                foreach (var ctx in _streams.Values)
+                {
+                    if (ReferenceEquals(ctx.Instrument, instrument))
+                        return ctx;
+                }
+                var fullName = instrument.FullName;
+                foreach (var ctx in _streams.Values)
+                {
+                    if (string.Equals(ctx.Instrument.FullName, fullName, StringComparison.OrdinalIgnoreCase))
+                        return ctx;
+                }
+                var masterName = instrument.MasterInstrument?.Name;
+                if (masterName != null)
+                {
+                    foreach (var ctx in _streams.Values)
+                    {
+                        if (string.Equals(ctx.Instrument.MasterInstrument.Name, masterName, StringComparison.OrdinalIgnoreCase))
+                            return ctx;
+                    }
+                }
+                return null;
             }
         }
 
@@ -129,13 +191,17 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
         {
             try
             {
-                if (!_isStreaming || e.MarketDataType != MarketDataType.Last)
+                if (e.MarketDataType != MarketDataType.Last)
                     return;
 
-                if (!_liveBarsSubscribed)
+                var ctx = FindContext(e.Instrument);
+                if (ctx == null)
+                    return;
+
+                if (!ctx.LiveBarsSubscribed)
                 {
-                    StopLiveBarsDelayTimer();
-                    SubscribeToLiveBars();
+                    StopLiveBarsDelayTimer(ctx);
+                    SubscribeToLiveBars(ctx);
                 }
 
                 if (!_tickRateLimiter.TryAllow())
@@ -156,39 +222,39 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             }
         }
 
-        private void SubscribeToLiveBars()
+        private void SubscribeToLiveBars(InstrumentStream ctx)
         {
-            if (_subscribedInstrument == null)
+            if (ctx.Instrument == null)
             {
-                _logger.Error("Cannot subscribe to live bars, instrument is null");
+                _logger.Error($"Cannot subscribe to live bars for {ctx.FullName}, instrument is null");
                 return;
             }
-            if (_liveBarsSubscribed)
+            if (ctx.LiveBarsSubscribed)
                 return;
 
-            _liveBarsSubscribed = true;
+            ctx.LiveBarsSubscribed = true;
 
-            _liveBarsRequest = new BarsRequest(_subscribedInstrument, 2)
+            ctx.LiveBarsRequest = new BarsRequest(ctx.Instrument, 2)
             {
                 BarsPeriod = new BarsPeriod { BarsPeriodType = BarsPeriodType.Minute, Value = 1 },
-                TradingHours = _subscribedInstrument.MasterInstrument.TradingHours
+                TradingHours = ctx.Instrument.MasterInstrument.TradingHours
             };
-            _liveBarsRequest.Update += OnLiveBarsUpdate;
-            _liveBarsRequest.Request((bars, errorCode, errorMessage) =>
+            ctx.LiveBarsRequest.Update += (s, e) => OnLiveBarsUpdate(ctx, s, e);
+            ctx.LiveBarsRequest.Request((bars, errorCode, errorMessage) =>
             {
                 try
                 {
                     if (errorCode != ErrorCode.NoError)
                     {
-                        _logger.Error($"Live bars request failed: {errorMessage}");
-                        _liveBarsSubscribed = false;
+                        _logger.Error($"Live bars request failed for {ctx.FullName}: {errorMessage}");
+                        ctx.LiveBarsSubscribed = false;
                         return;
                     }
                     if (bars?.Bars != null && bars.Bars.Count > 0)
                     {
                         lock (_barSendLock)
                         {
-                            var pair = Pair;
+                            var pair = ctx.Pair;
                             for (int i = 0; i < bars.Bars.Count - 1; i++)
                             {
                                 _network?.SendBar(pair,
@@ -202,42 +268,40 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                             }
 
                             int lastCompletedIdx = Math.Max(0, bars.Bars.Count - 2);
-                            _barTracker.Reset(lastCompletedIdx);
+                            ctx.BarTracker.Reset(lastCompletedIdx);
                         }
-                        _sessionIterator = new SessionIterator(_subscribedInstrument.MasterInstrument.TradingHours);
-                        _logger.Info($"Live bars stream ready. Cached {bars.Bars.Count} bars.");
+                        ctx.SessionIterator = new SessionIterator(ctx.Instrument.MasterInstrument.TradingHours);
+                        _logger.Info($"Live bars stream ready for {ctx.FullName}. Cached {bars.Bars.Count} bars.");
                     }
                 }
                 catch (Exception callbackEx)
                 {
                     _logger.Error("Live bars request callback error", callbackEx);
-                    _liveBarsSubscribed = false;
+                    ctx.LiveBarsSubscribed = false;
                 }
             });
 
-            _logger.Info("Subscribed to live 1m bars");
+            _logger.Info($"Subscribed to live 1m bars for {ctx.FullName}");
             StartBarsRequestWatchdog();
         }
 
-        private void UnsubscribeFromLiveBars()
+        private void UnsubscribeFromLiveBars(InstrumentStream ctx)
         {
-            StopLiveBarsDelayTimer();
-            StopBarsRequestWatchdog();
-            if (_liveBarsRequest != null)
+            StopLiveBarsDelayTimer(ctx);
+            if (ctx.LiveBarsRequest != null)
             {
-                _liveBarsRequest.Update -= OnLiveBarsUpdate;
-                _liveBarsRequest.Dispose();
-                _liveBarsRequest = null;
+                ctx.LiveBarsRequest.Dispose();
+                ctx.LiveBarsRequest = null;
             }
-            _liveBarsSubscribed = false;
-            _barTracker.Reset(-1);
+            ctx.LiveBarsSubscribed = false;
+            ctx.BarTracker.Reset(-1);
         }
 
-        private void OnLiveBarsUpdate(object sender, BarsUpdateEventArgs e)
+        private void OnLiveBarsUpdate(InstrumentStream ctx, object sender, BarsUpdateEventArgs e)
         {
             try
             {
-                if (!_isStreaming)
+                if (!IsStreaming)
                     return;
 
                 var series = e.BarsSeries;
@@ -245,21 +309,21 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                     return;
 
                 var formingBarTime = series.GetTime(series.Count - 1);
-                var pair = Pair;
+                var pair = ctx.Pair;
 
                 lock (_barSendLock)
                 {
                     int sent = 0;
-                    foreach (var bar in _barTracker.GetUnsentBars(series))
+                    foreach (var bar in ctx.BarTracker.GetUnsentBars(series))
                     {
                         _network?.SendBar(pair, bar.Time, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume,
                             isPartial: false, seqNum: bar.SequenceNumber);
                         _barsSent++;
-                        _barTracker.MarkSent(bar.Index, formingBarTime);
+                        ctx.BarTracker.MarkSent(bar.Index, formingBarTime);
                         sent++;
                     }
                     if (sent > 1)
-                        _logger.Info($"[CatchUp] sent={sent} forming={formingBarTime:HH:mm:ss} lastIdx={_barTracker.LastSentIndex} seriesCount={series.Count}");
+                        _logger.Info($"[CatchUp] {pair} sent={sent} forming={formingBarTime:HH:mm:ss} lastIdx={ctx.BarTracker.LastSentIndex} seriesCount={series.Count}");
                 }
 
                 if (_partialBarRateLimiter?.TryAllow() == true)
@@ -279,55 +343,66 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             }
         }
 
-        private void StartLiveBarsDelayTimer()
+        private void StartLiveBarsDelayTimer(InstrumentStream ctx)
         {
-            StopLiveBarsDelayTimer();
-            _liveBarsDelayTimer = new System.Timers.Timer(10000);
-            _liveBarsDelayTimer.Elapsed += (s, e) =>
+            StopLiveBarsDelayTimer(ctx);
+            ctx.LiveBarsDelayTimer = new System.Timers.Timer(10000);
+            ctx.LiveBarsDelayTimer.Elapsed += (s, e) =>
             {
-                StopLiveBarsDelayTimer();
-                if (!_liveBarsSubscribed && _isStreaming)
+                StopLiveBarsDelayTimer(ctx);
+                if (!ctx.LiveBarsSubscribed && IsStreaming)
                 {
-                    _logger.Info("[LiveBars] No tick received within 10s, creating BarsRequest anyway");
-                    SubscribeToLiveBars();
+                    _logger.Info($"[LiveBars] No tick received within 10s for {ctx.FullName}, creating BarsRequest anyway");
+                    SubscribeToLiveBars(ctx);
                 }
             };
-            _liveBarsDelayTimer.AutoReset = false;
-            _liveBarsDelayTimer.Start();
+            ctx.LiveBarsDelayTimer.AutoReset = false;
+            ctx.LiveBarsDelayTimer.Start();
         }
 
-        private void StopLiveBarsDelayTimer()
+        private void StopLiveBarsDelayTimer(InstrumentStream ctx)
         {
-            if (_liveBarsDelayTimer != null)
+            if (ctx.LiveBarsDelayTimer != null)
             {
-                _liveBarsDelayTimer.Stop();
-                _liveBarsDelayTimer.Dispose();
-                _liveBarsDelayTimer = null;
+                ctx.LiveBarsDelayTimer.Stop();
+                ctx.LiveBarsDelayTimer.Dispose();
+                ctx.LiveBarsDelayTimer = null;
             }
         }
 
         private void StartBarsRequestWatchdog()
         {
-            StopBarsRequestWatchdog();
+            if (_barsRequestWatchdog != null)
+                return;
+
             _barsRequestWatchdog = new System.Timers.Timer(30000);
             _barsRequestWatchdog.Elapsed += (s, e) =>
             {
                 try
                 {
-                    if (!_isStreaming || _liveBarsRequest == null)
-                        return;
-
-                    CheckMarketStatus();
-
-                    var lastForming = _barTracker.LastFormingBarTime;
-                    if (lastForming != DateTime.MinValue)
+                    List<InstrumentStream> snapshot;
+                    lock (_streamsLock)
                     {
-                        var elapsed = DateTime.Now - lastForming;
-                        if (elapsed.TotalSeconds > 75)
+                        snapshot = new List<InstrumentStream>(_streams.Values);
+                    }
+
+                    foreach (var ctx in snapshot)
+                    {
+                        if (ctx.LiveBarsRequest == null)
+                            continue;
+
+                        CheckMarketStatus(ctx);
+
+                        var lastForming = ctx.BarTracker.LastFormingBarTime;
+                        if (lastForming != DateTime.MinValue)
                         {
-                            _logger.Warning($"[BarsRequestWatchdog] No forming bar update in {elapsed.TotalSeconds:F0}s. Recreating BarsRequest...");
-                            UnsubscribeFromLiveBars();
-                            SubscribeToLiveBars();
+                            var elapsed = DateTime.Now - lastForming;
+                            if (elapsed.TotalSeconds > 75)
+                            {
+                                _logger.Warning($"[BarsRequestWatchdog] {ctx.FullName}: No forming bar update in {elapsed.TotalSeconds:F0}s. Recreating BarsRequest...");
+                                UnsubscribeFromLiveBars(ctx);
+                                SubscribeToLiveBars(ctx);
+                            }
                         }
                     }
                 }
@@ -350,32 +425,32 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             }
         }
 
-        private void CheckMarketStatus()
+        private void CheckMarketStatus(InstrumentStream ctx)
         {
-            if (_sessionIterator == null) return;
+            if (ctx.SessionIterator == null) return;
 
             DateTime nextBegin;
             bool isOpen;
             try
             {
-                isOpen = _sessionIterator.IsInSession(DateTime.Now, false, true);
-                _sessionIterator.GetNextSession(DateTime.Now, false);
-                nextBegin = _sessionIterator.ActualSessionBegin;
+                isOpen = ctx.SessionIterator.IsInSession(DateTime.Now, false, true);
+                ctx.SessionIterator.GetNextSession(DateTime.Now, false);
+                nextBegin = ctx.SessionIterator.ActualSessionBegin;
             }
             catch (Exception ex)
             {
-                _logger.Warning($"[MarketStatus] Failed to query session: {ex.Message}");
+                _logger.Warning($"[MarketStatus] Failed to query session for {ctx.FullName}: {ex.Message}");
                 return;
             }
 
-            bool shouldSend = isOpen != _marketIsOpen || (DateTime.Now - _lastMarketStatusSent).TotalMinutes > 5;
+            bool shouldSend = isOpen != ctx.MarketIsOpen || (DateTime.Now - ctx.LastMarketStatusSent).TotalMinutes > 5;
             if (shouldSend)
             {
-                _marketIsOpen = isOpen;
-                _lastMarketStatusSent = DateTime.Now;
-                var pair = Pair;
-                _network?.SendMarketStatus(_marketIsOpen, nextBegin, pair);
-                var status = _marketIsOpen ? "OPEN" : "CLOSED";
+                ctx.MarketIsOpen = isOpen;
+                ctx.LastMarketStatusSent = DateTime.Now;
+                var pair = ctx.Pair;
+                _network?.SendMarketStatus(ctx.MarketIsOpen, nextBegin, pair);
+                var status = ctx.MarketIsOpen ? "OPEN" : "CLOSED";
                 _logger.Info($"[MarketStatus] {pair} market is {status}, next_open={nextBegin:yyyy-MM-dd HH:mm:ss}");
             }
         }

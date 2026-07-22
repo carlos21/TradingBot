@@ -82,7 +82,6 @@ class FakeZMQDataSource(ZMQDataSource):
         self._gateway_config = MagicMock()
         self._owns_gateway = False
         self._market_filter = None
-        self._instrument_registry = None
         self._coordinator = None
 
         self._first_platform_connect = True
@@ -107,7 +106,9 @@ class FakeZMQDataSource(ZMQDataSource):
         self._from_time = 0
         self._cb_lock = MagicMock()
 
-        self._current_bar = None
+        self._current_bars = {}
+        self._extra_instruments = {}
+        self._extra_instruments_lock = threading.Lock()
         self._last_emit_time = 0.0
         self._last_native_partial_time = 0.0
 
@@ -275,3 +276,44 @@ class TestMultiInstrumentRouting:
         # No assertion on coordinator because route_late_history_batch delegates
         # to the session; just ensure no exception and state is unchanged.
         assert data_source._state == DataSourceState.STREAMING
+
+
+class TestSecondaryPairStateHygiene:
+    """A secondary instrument's refresh/history lifecycle must not mutate the
+    default pair's data-source state."""
+
+    def test_secondary_history_end_does_not_touch_state(self, data_source, coordinator):
+        data_source.set_coordinator(coordinator)
+        data_source._state = DataSourceState.STREAMING
+        data_source._on_history_batch({
+            "pair": "ES",
+            "bars": [
+                {"time": 100, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1, "pair": "ES"},
+            ],
+        })
+        data_source._on_history_end({"pair": "ES"})
+        assert data_source._state == DataSourceState.STREAMING
+        # Stream liveness stamp is still updated.
+        assert data_source._last_completed_bar_time > 0
+        assert len(coordinator.history_loaded) == 1
+
+    def test_secondary_refresh_start_does_not_touch_state(self, data_source, coordinator):
+        data_source.set_coordinator(coordinator)
+        data_source._state = DataSourceState.STREAMING
+        data_source._per_pair_bars["ES"] = [
+            {"time": 100, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1, "pair": "ES"},
+        ]
+        data_source._on_refresh_start({"pair": "ES"})
+        # Was REFRESHING before the fix; the default pair's lifecycle is unaffected.
+        assert data_source._state == DataSourceState.STREAMING
+
+    def test_on_tick_keeps_separate_forming_bars_per_pair(self, data_source, coordinator):
+        data_source.set_coordinator(coordinator)
+        data_source._state = DataSourceState.STREAMING
+        data_source._on_tick({"time": 100, "price": 10, "volume": 1, "pair": "ES"})
+        data_source._on_tick({"time": 101, "price": 200, "volume": 1, "pair": "MNQ"})
+        data_source._on_tick({"time": 102, "price": 12, "volume": 1, "pair": "ES"})
+        assert data_source._current_bars["ES"]["close"] == 12
+        assert data_source._current_bars["ES"]["high"] == 12
+        assert data_source._current_bars["MNQ"]["close"] == 200
+        assert data_source._current_bars["MNQ"]["high"] == 200

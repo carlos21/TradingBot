@@ -72,9 +72,9 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             _handler.Handle(TestDataFactory.RefreshPayload("MNQ 09-25", 3));
             await Task.Delay(100); // async handler
 
-            _network.Received(1).SendRefreshStart();
+            _network.Received(1).SendRefreshStart("MNQ");
             _network.Received(3).SendHistoryBatch("MNQ", Arg.Any<List<JObject>>(), Arg.Any<int>());
-            _network.Received(1).SendHistoryEnd();
+            _network.Received(1).SendHistoryEnd("MNQ");
             _logger.Infos.Should().Contain(s => s.Contains("Sent 5 historical bars"));
         }
 
@@ -86,7 +86,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             _handler.Handle(TestDataFactory.RefreshPayload("MNQ 09-25"));
             await Task.Delay(50);
 
-            _network.DidNotReceive().SendRefreshStart();
+            _network.DidNotReceive().SendRefreshStart(Arg.Any<string>());
             _logger.Errors.Should().Contain(e => e.Message.Contains("Instrument 'MNQ 09-25' not found"));
         }
 
@@ -96,7 +96,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             _handler.Handle(new JObject());
             await Task.Delay(50);
 
-            _network.DidNotReceive().SendRefreshStart();
+            _network.DidNotReceive().SendRefreshStart(Arg.Any<string>());
             _logger.Errors.Should().Contain(e => e.Message.Contains("Instrument missing"));
         }
 
@@ -111,7 +111,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             _handler.Handle(TestDataFactory.RefreshPayload("MNQ 09-25"));
             await Task.Delay(50);
 
-            _network.Received(1).SendHistoryEnd();
+            _network.Received(1).SendHistoryEnd("MNQ");
             _logger.Warnings.Should().Contain(w => w.Contains("No historical bars found"));
         }
 
@@ -159,7 +159,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             await Task.Delay(100);
 
             _network.DidNotReceiveWithAnyArgs().SendHistoryBatch(null, null, 0);
-            _network.Received(1).SendHistoryEnd();
+            _network.Received(1).SendHistoryEnd("MNQ");
         }
 
         [Fact]
@@ -190,7 +190,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             await Task.Delay(100);
 
             _network.Received(1).SendHistoryBatch("MNQ", Arg.Is<List<JObject>>(list => list.Count == 1), 3);
-            _network.Received(1).SendHistoryEnd();
+            _network.Received(1).SendHistoryEnd("MNQ");
         }
 
         [Fact]
@@ -218,7 +218,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             _handler.Handle(TestDataFactory.RefreshPayload("MNQ 09-25"));
             await Task.Delay(100);
 
-            _network.Received(1).SendHistoryEnd();
+            _network.Received(1).SendHistoryEnd("MNQ");
             _logger.Warnings.Should().Contain(w => w.Contains("No historical bars found"));
         }
     }

@@ -224,10 +224,7 @@
           <p class="text-slate-400 text-sm mb-4">Start streaming to connect with <span id="platform-label" data-config-key="platform_label">Platform</span> and load live market data.</p>
 
           <div class="text-left">
-            <label for="overlayInstrumentSelector" class="block text-xs font-medium text-slate-400 uppercase tracking-wider mb-1.5">Instrument</label>
-            <select id="overlayInstrumentSelector" class="w-full bg-surface-700 text-slate-100 text-sm rounded-lg px-3 py-2.5 border border-surface-600 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none">
-              <!-- Populated from /api/config -->
-            </select>
+            <p id="overlayInstrumentLabel" class="text-center text-sm font-medium text-slate-300"></p>
           </div>
         </div>
 
@@ -260,12 +257,24 @@
       <div class="flex justify-between items-center">
         <!-- Left group: timeframes + instrument -->
         <div class="flex items-center space-x-4">
-          <!-- Instrument selector -->
+          <!-- Current instrument (this tab is pinned to it via ?pair=) -->
           <div class="flex items-center space-x-2">
-            <label for="instrumentSelector" class="text-sm text-slate-400">Instrument:</label>
-            <select id="instrumentSelector" class="bg-surface-700 text-slate-100 text-sm rounded px-2 py-1 border border-surface-600 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none">
-              <!-- Populated from /api/config -->
-            </select>
+            <span id="currentInstrumentLabel" class="text-sm font-medium text-slate-200"></span>
+            <div class="relative">
+              <button
+                id="instrumentsMenuBtn"
+                class="px-2 py-1 text-sm text-slate-400 hover:text-slate-200 bg-surface-800 hover:bg-surface-700 rounded border border-surface-700 transition-colors"
+                title="Open another instrument in a new tab"
+              >
+                Instruments ▾
+              </button>
+              <div
+                id="instrumentsMenu"
+                class="hidden absolute left-0 mt-1 w-64 bg-surface-800 border border-surface-700 rounded-lg shadow-lg z-50 py-1"
+              >
+                <!-- Populated by JS from /api/config -->
+              </div>
+            </div>
           </div>
 
           <!-- Timeframe buttons -->

@@ -513,25 +513,25 @@ class FakeNinjaTrader:
         self._connected = True
         self._logger.info(f"FakeNT sent CONNECT for {pair}")
 
-    def send_history_batch(self, bars: list[dict[str, Any]], days: int = 30) -> None:
+    def send_history_batch(self, bars: list[dict[str, Any]], days: int = 30, pair: str = "MNQ") -> None:
         """Send a batch of historical bars."""
-        msg = HistoryBatchMessage(pair="MNQ", bars=bars, days=days)
+        msg = HistoryBatchMessage(pair=pair, bars=bars, days=days)
         self._publish(msg.to_envelope(seq_num=self._next_seq()))
 
-    def send_history_end(self) -> None:
+    def send_history_end(self, pair: str | None = None) -> None:
         """Signal end of historical data transmission."""
         envelope = MessageEnvelope.create(
             msg_type=MessageType.HISTORY_END,
-            payload={},
+            payload={"pair": pair} if pair else {},
             seq_num=self._next_seq(),
         )
         self._publish(envelope)
 
-    def send_refresh_start(self) -> None:
+    def send_refresh_start(self, pair: str | None = None) -> None:
         """Signal that the platform is about to send a fresh history batch."""
         envelope = MessageEnvelope.create(
             msg_type=MessageType.REFRESH_START,
-            payload={},
+            payload={"pair": pair} if pair else {},
             seq_num=self._next_seq(),
         )
         self._publish(envelope)

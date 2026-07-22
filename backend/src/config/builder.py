@@ -251,7 +251,6 @@ class AppBuilder:
                 history_hours=cfg.history_hours,
                 notifier=notifier,
                 instrument=cfg.instrument,
-                instrument_registry=registry,
             )
         else:
             ds, executor = create_live_components(
@@ -268,7 +267,6 @@ class AppBuilder:
                 history_hours=cfg.history_hours,
                 notifier=notifier,
                 instrument=cfg.instrument,
-                instrument_registry=registry,
             )
 
         numbers, options = session_params(cfg.pair)

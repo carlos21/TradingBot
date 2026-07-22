@@ -52,7 +52,7 @@ def register_core_routes(
                 logger.error(f"[API /config] failed to load instruments: {exc}")
         return jsonify({
             'instruments': instruments,
-            'pair': instruments[0]["symbol"] if instruments else pair,
+            'pair': pair,
             'platform_type': platform_type,
             'platform_label': platform_label,
             'is_ninjatrader': platform_type == 'ninjatrader',
@@ -68,9 +68,10 @@ def register_core_routes(
         from flask import request
         tf       = request.args.get('tf', '5m')
         start_ts = request.args.get('start_time', type=int)
+        pair_arg = request.args.get('pair')
 
         try:
-            bars = data_source.load_historical_bars(tf, start_ts)
+            bars = data_source.load_historical_bars(tf, start_ts, pair=pair_arg)
         except Exception as exc:
             logger.error(f"[API /bars] failed to load bars: {exc}")
             return jsonify({"error": f"Failed to load bars: {exc}"}), 500

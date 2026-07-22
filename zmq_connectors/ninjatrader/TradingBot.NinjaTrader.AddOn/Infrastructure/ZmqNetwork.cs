@@ -168,8 +168,8 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             });
         }
 
-        public void SendHistoryEnd() => Send(MessageType.HistoryEnd, new JObject());
-        public void SendRefreshStart() => Send(MessageType.RefreshStart, new JObject());
+        public void SendHistoryEnd(string pair) => Send(MessageType.HistoryEnd, new JObject { ["pair"] = pair });
+        public void SendRefreshStart(string pair) => Send(MessageType.RefreshStart, new JObject { ["pair"] = pair });
 
         public void SendEntryFill(string tradeId, double entryPrice, double? stopLoss = null, double? takeProfit = null, double? slippage = null, string account = null, double? quantity = null, double? accountBalance = null)
         {

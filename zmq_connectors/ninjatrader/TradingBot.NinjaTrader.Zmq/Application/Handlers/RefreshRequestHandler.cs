@@ -60,7 +60,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                 }
 
                 var pair = instrumentName.Split(' ')[0];
-                _network.SendRefreshStart();
+                _network.SendRefreshStart(pair);
                 _logger.Info("Sending refresh_start");
 
                 var endUtc = _clock.UtcNow;
@@ -70,7 +70,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                 if (bars == null || bars.Count == 0)
                 {
                     _logger.Warning($"No historical bars found for {instrumentName}");
-                    _network.SendHistoryEnd();
+                    _network.SendHistoryEnd(pair);
                     return;
                 }
 
@@ -102,7 +102,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                 if (batch.Count > 0)
                     _network.SendHistoryBatch(pair, batch, days);
 
-                _network.SendHistoryEnd();
+                _network.SendHistoryEnd(pair);
                 _logger.Info($"Sent {jBars.Count} historical bars for {pair}");
             }
             catch (Exception ex)

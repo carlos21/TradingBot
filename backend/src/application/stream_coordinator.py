@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Callable
 from typing import Any, Protocol
 
 from src.domain.models import Instrument
@@ -36,11 +37,13 @@ class StreamCoordinator:
         session_factory: ISessionFactory,
         default_symbol: str | None = None,
         stop_grace_sec: float = 5.0,
+        stream_activator: Callable[[Instrument], None] | None = None,
     ):
         self._registry = instrument_registry
         self._session_factory = session_factory
         self._default_symbol = default_symbol
         self._stop_grace_sec = stop_grace_sec
+        self._activator = stream_activator
 
         self._sessions: dict[str, StreamingSession] = {}
         self._session_lock = threading.RLock()
@@ -82,6 +85,13 @@ class StreamCoordinator:
             session.join_client(sid)
             if not session._started:
                 session.start()
+                # Ask the data source to subscribe a non-default instrument so
+                # its bars/history actually reach this session.
+                if self._activator is not None and symbol != self._default_symbol:
+                    try:
+                        self._activator(session.instrument)
+                    except Exception as e:
+                        logger.error(f"stream activator failed for {symbol}: {e}")
             return session
 
     def leave_instrument(self, symbol: str, sid: str) -> None:

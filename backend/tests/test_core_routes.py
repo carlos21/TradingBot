@@ -11,7 +11,10 @@ from tests.fakes import FakeLogger
 
 
 class GoodDataSource(CombinedDataSource):
-    def load_historical_bars(self, timeframe="1m", start_time=None):
+    last_pair = None
+
+    def load_historical_bars(self, timeframe="1m", start_time=None, end_time=None, pair=None):
+        GoodDataSource.last_pair = pair
         bars = [
             {"time": 1000, "open": 100.0, "high": 102.0, "low": 98.0, "close": 101.0, "volume": 100, "pair": "MNQ"},
         ]
@@ -125,3 +128,10 @@ class TestCoreRoutes:
             assert resp.status_code == 200
             data = resp.get_json()
             assert len(data) == 1
+
+    def test_get_bars_forwards_pair_param(self, app):
+        with app.test_client() as client:
+            resp = client.get("/api/bars?tf=1m&pair=MES")
+            assert resp.status_code == 200
+        # GoodDataSource records the last pair kwarg it was called with.
+        assert GoodDataSource.last_pair == "MES"

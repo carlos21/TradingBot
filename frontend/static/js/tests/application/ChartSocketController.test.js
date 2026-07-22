@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ChartSocketController } from '../../application/ChartSocketController.js';
+import { StreamingLifecycleController } from '../../application/StreamingLifecycleController.js';
 import { FakeSocket } from '../fakes/FakeSocket.js';
 import { FakeDomService } from '../fakes/FakeDomService.js';
 
@@ -34,9 +35,11 @@ function buildController(doc, win) {
     handleHistoryReady: vi.fn(),
     clearPendingBars: vi.fn(),
   };
-  const socketController = new ChartSocketController(socket, controller, dom);
+  const lifecycle = new StreamingLifecycleController(dom);
+  lifecycle.init();
+  const socketController = new ChartSocketController(socket, controller, dom, lifecycle);
   socketController.init();
-  return { socket, controller, dom, socketController };
+  return { socket, controller, dom, lifecycle, socketController };
 }
 
 describe('ChartSocketController', () => {
@@ -239,6 +242,8 @@ describe('ChartSocketController', () => {
     const { doc } = setupDocument();
     const { socket, controller } = buildController(doc, window);
 
+    // A disconnect can only happen while streaming.
+    socket.trigger('platform_connected');
     socket.trigger('platform_disconnected');
 
     expect(controller.setHistoryReady).toHaveBeenCalledWith(false);
