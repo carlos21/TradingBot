@@ -1,7 +1,7 @@
 import { createChartApp } from './composition/chartApp.js';
 import { NtAccountsDisplay } from './NtAccountsDisplay.js';
 import { StreamHealthPanel } from './StreamHealthPanel.js';
-import { StreamingEventType } from './domain/streamingLifecycle.js';
+import { StreamingEventType, StreamingState } from './domain/streamingLifecycle.js';
 import { resolvePinnedPair, findInstrument } from './domain/instruments.js';
 import { InstrumentsMenuController } from './application/InstrumentsMenuController.js';
 import { BrowserDomService } from './adapters/browser/BrowserDomService.js';
@@ -93,6 +93,13 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const healthPanel = new StreamHealthPanel(socket);
   window.healthPanel = healthPanel;
+
+  // The stream health panel only makes sense while the platform is actually
+  // streaming — drive its visibility from the streaming lifecycle machine.
+  healthPanel.setActive(streamingLifecycle.getState() === StreamingState.STREAMING);
+  streamingLifecycle.onStateChange = (state) => {
+    healthPanel.setActive(state === StreamingState.STREAMING);
+  };
 
   // On page load, sync the streaming lifecycle machine with the backend so
   // the overlay and streaming controls match the real gateway state.

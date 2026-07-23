@@ -265,10 +265,84 @@ class TestPlatformConnection:
     def test_on_platform_connected_no_instrument_does_not_subscribe(self, data_source, mock_gateway):
         mock_gateway.instrument = ""
         data_source.on_platform_connected()
-        assert data_source.state == DataSourceState.CONNECTED
+        # Unconfigured instrument must not strand the machine in CONNECTED —
+        # it returns to DISCONNECTED so a later connect can retry.
+        assert data_source.state == DataSourceState.DISCONNECTED
         mock_gateway.send_subscribe.assert_not_called()
         mock_gateway.send_refresh_request.assert_not_called()
         assert data_source._pending_refresh_timer is None
+
+    def test_on_platform_connected_retries_after_instrument_configured(self, data_source, mock_gateway):
+        mock_gateway.instrument = ""
+        data_source.on_platform_connected()
+        assert data_source.state == DataSourceState.DISCONNECTED
+
+        mock_gateway.instrument = "MNQ 06-26"
+        data_source._history_request_delay_sec = 10.0  # keep the timer from firing
+        data_source.on_platform_connected()
+        assert data_source.state == DataSourceState.CONNECTED
+        mock_gateway.send_subscribe.assert_called_once_with("MNQ 06-26")
+        data_source._cancel_pending_refresh_timer()
+
+
+# ---------------------------------------------------------------------------
+# History retry while CONNECTED
+# ---------------------------------------------------------------------------
+
+
+class TestHistoryRetry:
+
+    def _connect_and_send_first_refresh(self, data_source):
+        data_source._history_request_delay_sec = 0.02
+        data_source._history_retry_base_delay_sec = 0.02
+        data_source.on_platform_connected()
+        data_source._pending_refresh_timer.join()
+
+    def test_retry_resends_subscribe_and_refresh_while_connected(self, data_source, mock_gateway):
+        self._connect_and_send_first_refresh(data_source)
+        assert data_source.state == DataSourceState.CONNECTED
+        assert mock_gateway.send_refresh_request.call_count == 1
+
+        retry_timer = data_source._history_retry_timer
+        assert retry_timer is not None
+        retry_timer.join()
+
+        assert mock_gateway.send_subscribe.call_count == 2
+        assert mock_gateway.send_refresh_request.call_count == 2
+        # The retry re-arms itself while still CONNECTED.
+        assert data_source._history_retry_timer is not None
+        data_source._cancel_history_retry_timer()
+
+    def test_refresh_start_disarms_retry(self, data_source, mock_gateway):
+        self._connect_and_send_first_refresh(data_source)
+        data_source._on_refresh_start({"pair": "MNQ"})
+        assert data_source._history_retry_timer is None
+
+    def test_disconnect_disarms_retry(self, data_source, mock_gateway):
+        self._connect_and_send_first_refresh(data_source)
+        data_source.on_platform_disconnected()
+        assert data_source._history_retry_timer is None
+
+    def test_stop_disarms_retry(self, data_source, mock_gateway):
+        self._connect_and_send_first_refresh(data_source)
+        data_source.stop()
+        assert data_source._history_retry_timer is None
+
+    def test_notifier_alert_after_repeated_retry_failures(self, data_source, mock_gateway):
+        data_source._state = DataSourceState.CONNECTED
+        data_source._notifier = MagicMock()
+
+        data_source._on_history_retry()  # attempt 1 — no alert
+        data_source._on_history_retry()  # attempt 2 — no alert
+        assert data_source._notifier.send.call_count == 0
+
+        data_source._on_history_retry()  # attempt 3 — alert
+        assert data_source._notifier.send.call_count == 1
+
+        data_source._on_history_retry()  # attempt 4 — throttled
+        data_source._on_history_retry()  # attempt 5 — throttled
+        assert data_source._notifier.send.call_count == 1
+        data_source._cancel_history_retry_timer()
 
 
 # ---------------------------------------------------------------------------

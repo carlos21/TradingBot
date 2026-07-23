@@ -6,7 +6,7 @@ import threading
 from flask import Flask, jsonify
 
 from src.application.ports import PlatformLifecycleService
-from src.infrastructure.gateway.datasource import ZMQDataSource
+from src.infrastructure.gateway.datasource import DataSourceState, ZMQDataSource
 from src.utils.app_logger import ILogger
 
 
@@ -63,6 +63,12 @@ def register_stream_routes(
 
         gateway = data_source.gateway
         if gateway and gateway.is_connected:
+            # Recover a datasource stuck in CONNECTED (platform connected but no
+            # history ever arrived): kick a refresh. Self-guarded — request_refresh
+            # is a no-op while refreshing or disconnected, and we skip it entirely
+            # when the stream is healthy.
+            if data_source.state != DataSourceState.STREAMING:
+                data_source.request_refresh()
             platform_label = "Platform"
             return jsonify({
                 "status": "already_connected",

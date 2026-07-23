@@ -33,6 +33,9 @@ export class StreamingLifecycleController {
     this._startBusy = null;
     this._stopBusy = null;
     this._startSymbol = null;
+
+    /** Optional listener called with the new state after each transition. */
+    this.onStateChange = null;
   }
 
   init() {
@@ -54,8 +57,16 @@ export class StreamingLifecycleController {
    * Returns the new state.
    */
   dispatch(event) {
+    const prev = this.state;
     this.state = reduceStreamingState(this.state, event);
     this._render();
+    if (this.state !== prev && typeof this.onStateChange === 'function') {
+      try {
+        this.onStateChange(this.state);
+      } catch (err) {
+        console.error('[StreamingLifecycle] onStateChange listener failed:', err);
+      }
+    }
     return this.state;
   }
 

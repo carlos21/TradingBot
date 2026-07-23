@@ -168,6 +168,15 @@ class ZMQDataSource(CombinedDataSource):
         self._history_request_delay_sec: float = 1.0
         self._pending_refresh_timer: threading.Timer | None = None
 
+        # Retry while CONNECTED: the platform can miss the first refresh request
+        # (e.g. its command socket has not re-established after a rebind), and
+        # CONNECTED otherwise has no way to recover — the readiness retry loop
+        # only arms once a history_end arrives.
+        self._history_retry_base_delay_sec: float = 5.0
+        self._history_retry_max_delay_sec: float = 30.0
+        self._history_retry_timer: threading.Timer | None = None
+        self._history_retry_attempt: int = 0
+
         # Notifier for alerts when bar stream dies
         self._notifier = notifier or NoOpNotifier()
 
@@ -341,6 +350,7 @@ class ZMQDataSource(CombinedDataSource):
         "already_connected" without ever re-binding.
         """
         self._cancel_pending_refresh_timer()
+        self._cancel_history_retry_timer()
         monitor = self._readiness_monitor
         if monitor is not None:
             with contextlib.suppress(Exception):
@@ -836,6 +846,11 @@ class ZMQDataSource(CombinedDataSource):
 
         pair = payload.get("pair", self.pair) if payload else self.pair
 
+        if pair == self.pair:
+            # The default instrument's refresh actually started — the CONNECTED
+            # retry has done its job.
+            self._cancel_history_retry_timer()
+
         self.logger.info(f"Refresh start for {pair} - clearing recent data")
 
         if self._coordinator is not None:
@@ -982,6 +997,53 @@ class ZMQDataSource(CombinedDataSource):
             self._pending_refresh_timer.cancel()
             self._pending_refresh_timer = None
 
+    def _arm_history_retry(self) -> None:
+        """Schedule a subscribe+refresh retry while stuck in CONNECTED."""
+        self._cancel_history_retry_timer()
+        delay = min(
+            self._history_retry_base_delay_sec * (2 ** self._history_retry_attempt),
+            self._history_retry_max_delay_sec,
+        )
+        self._history_retry_timer = threading.Timer(delay, self._on_history_retry)
+        self._history_retry_timer.daemon = True
+        self._history_retry_timer.start()
+
+    def _cancel_history_retry_timer(self) -> None:
+        """Cancel any pending history retry."""
+        if self._history_retry_timer is not None:
+            self._history_retry_timer.cancel()
+            self._history_retry_timer = None
+
+    def _on_history_retry(self) -> None:
+        """Re-send subscribe+refresh when the platform never answered."""
+        self._history_retry_timer = None
+        if self._state != DataSourceState.CONNECTED:
+            return
+        self._history_retry_attempt += 1
+        attempt = self._history_retry_attempt
+        self.logger.warning(
+            f"No history received after connect — retrying subscribe+refresh "
+            f"(attempt {attempt})"
+        )
+        if attempt >= 3 and attempt % 6 == 3:
+            # The platform is connected (heartbeats flow) but never answers
+            # commands — its command channel is most likely wedged. Retries
+            # may still heal it; make sure the user knows where to look.
+            try:
+                self._notifier.send(
+                    f"⚠️ NinjaTrader connector is not responding to commands "
+                    f"(attempt {attempt}). Check NinjaTrader / restart the connector."
+                )
+            except Exception as e:
+                self.logger.error(f"Failed to send notifier alert: {e}")
+        gateway = self._ensure_gateway()
+        try:
+            gateway.send_subscribe(gateway.instrument)
+        except Exception as e:
+            self.logger.error(f"Failed to re-subscribe to {gateway.instrument}: {e}")
+        self.request_refresh()
+        self._arm_history_retry()
+
     def _do_delayed_refresh(self) -> None:
         """Execute the delayed refresh request."""
         self._pending_refresh_timer = None
@@ -996,7 +1058,9 @@ class ZMQDataSource(CombinedDataSource):
             )
             return
         self.logger.info("Requesting historical data refresh after delay")
+        self._history_retry_attempt = 0
         self.request_refresh()
+        self._arm_history_retry()
 
     def on_platform_connected(self) -> None:
         """Called when the platform connects. Auto-request refresh if needed."""
@@ -1013,6 +1077,9 @@ class ZMQDataSource(CombinedDataSource):
                 "Instrument is not configured in Admin → Settings. "
                 "Live data will not start and the chart will not load."
             )
+            # Go back to DISCONNECTED so a later connect retries once the
+            # instrument is configured, instead of stranding in CONNECTED.
+            self._state = DataSourceState.DISCONNECTED
             return
 
         should_refresh = (
@@ -1076,6 +1143,7 @@ class ZMQDataSource(CombinedDataSource):
         if self._state != DataSourceState.DISCONNECTED:
             self._state = DataSourceState.DISCONNECTED
             self._cancel_pending_refresh_timer()
+            self._cancel_history_retry_timer()
             self.logger.info("Platform disconnected")
 
     def _on_gateway_connection_change(self, connected: bool) -> None:

@@ -3,7 +3,7 @@
 import pytest
 from flask import Flask
 
-from src.infrastructure.gateway.datasource import ZMQDataSource
+from src.infrastructure.gateway.datasource import DataSourceState, ZMQDataSource
 from src.routes.stream_routes import register_stream_routes
 from tests.fakes import FakeLogger
 
@@ -23,6 +23,8 @@ class FakeZMQDataSource(ZMQDataSource):
         self._stopped = False
         self.start_calls = 0
         self.stop_calls = 0
+        self._state = DataSourceState.DISCONNECTED
+        self.refresh_calls = 0
 
     def start(self):
         self._started = True
@@ -34,6 +36,9 @@ class FakeZMQDataSource(ZMQDataSource):
         self.stop_calls += 1
         self._gateway.is_running = False
         self._gateway.is_connected = False
+
+    def request_refresh(self, days=None):
+        self.refresh_calls += 1
 
 
 class FakeNonZMQDataSource:
@@ -165,12 +170,26 @@ class TestStreamStart:
             assert "No accounts configured" in data["message"]
 
     def test_start_already_connected(self, app):
-        make_registered_app(app, data_source=FakeZMQDataSource(running=True, connected=True))
+        ds = FakeZMQDataSource(running=True, connected=True)
+        make_registered_app(app, data_source=ds)
         with app.test_client() as client:
             resp = client.post("/api/stream/start")
             assert resp.status_code == 200
             data = resp.get_json()
             assert data["status"] == "already_connected"
+            # A connected-but-not-streaming datasource gets a recovery kick.
+            assert ds.refresh_calls == 1
+
+    def test_start_already_connected_streaming_does_not_refresh(self, app):
+        ds = FakeZMQDataSource(running=True, connected=True)
+        ds._state = DataSourceState.STREAMING
+        make_registered_app(app, data_source=ds)
+        with app.test_client() as client:
+            resp = client.post("/api/stream/start")
+            assert resp.status_code == 200
+            assert resp.get_json()["status"] == "already_connected"
+            # A healthy stream must not be disturbed by a redundant refresh.
+            assert ds.refresh_calls == 0
 
     def test_start_starts_gateway(self, app):
         ds = FakeZMQDataSource(running=False, connected=False)

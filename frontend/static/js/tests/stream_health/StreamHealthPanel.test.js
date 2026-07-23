@@ -344,4 +344,40 @@ describe('StreamHealthPanel', () => {
     expect(body.children.length).toBe(1);
     expect(body.textContent).toContain('Mismatch');
   });
+
+  describe('lifecycle visibility gate', () => {
+    const readyUpdate = {
+      readiness_state: 'READY',
+      readiness_reason: 'Indicators warmed',
+      readiness_percent: 100,
+      platform_connected: true,
+    };
+    const wrapper = () => document.getElementById('streamHealthWrapper');
+
+    it('stays hidden when inactive even with a READY health update', () => {
+      buildHealthDom();
+      const panel = new StreamHealthPanel(socket);
+      panel.setActive(false);
+
+      socket.trigger('health_update', readyUpdate);
+
+      expect(panel.model.currentState).toBe('READY');
+      expect(wrapper().classList.contains('hidden')).toBe(true);
+    });
+
+    it('hides immediately when deactivated and shows again on reactivation', () => {
+      buildHealthDom();
+      const panel = new StreamHealthPanel(socket);
+
+      socket.trigger('health_update', readyUpdate);
+      expect(wrapper().classList.contains('hidden')).toBe(false);
+
+      // Stream stops → panel disappears even though the model still says READY.
+      panel.setActive(false);
+      expect(wrapper().classList.contains('hidden')).toBe(true);
+
+      panel.setActive(true);
+      expect(wrapper().classList.contains('hidden')).toBe(false);
+    });
+  });
 });

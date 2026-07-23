@@ -32,7 +32,12 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         private Thread _commandThread;
         private Thread _heartbeatThread;
         private Thread _safetyThread;
+        private Thread _connectionWatchdogThread;
         private CancellationTokenSource _cts;
+
+        private readonly int _watchdogIntervalMs;
+        private readonly int _watchdogFailureThreshold;
+        private readonly int _watchdogPingTimeoutMs;
 
         /// <summary>
         /// When true, the background safety loop will flatten any open position
@@ -85,7 +90,10 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             IBarHistoryService barHistoryService,
             IPnLCalculator pnlCalculator,
             IConnectorClock clock,
-            ITradeIdExtractor tradeIdExtractor)
+            ITradeIdExtractor tradeIdExtractor,
+            int watchdogIntervalMs = 5000,
+            int watchdogFailureThreshold = 3,
+            int watchdogPingTimeoutMs = 2000)
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _network = network ?? throw new ArgumentNullException(nameof(network));
@@ -100,6 +108,9 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             _pnlCalculator = pnlCalculator ?? throw new ArgumentNullException(nameof(pnlCalculator));
             _clock = clock ?? throw new ArgumentNullException(nameof(clock));
             _tradeIdExtractor = tradeIdExtractor ?? throw new ArgumentNullException(nameof(tradeIdExtractor));
+            _watchdogIntervalMs = watchdogIntervalMs;
+            _watchdogFailureThreshold = watchdogFailureThreshold;
+            _watchdogPingTimeoutMs = watchdogPingTimeoutMs;
         }
 
         public void Connect()
@@ -139,6 +150,10 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                     _safetyThread = new Thread(SafetyLoop) { IsBackground = true, Name = "ZMQ-Safety" };
                     _safetyThread.Start();
                     _logger.Info($"Safety guard started (enabled={SafetyGuardEnabled}, interval={SafetyCheckIntervalMs}ms)");
+
+                    _connectionWatchdogThread = new Thread(ConnectionWatchdogLoop) { IsBackground = true, Name = "ZMQ-ConnWatchdog" };
+                    _connectionWatchdogThread.Start();
+                    _logger.Info($"Connection watchdog started (interval={_watchdogIntervalMs}ms, threshold={_watchdogFailureThreshold})");
                 }
                 catch (Exception ex)
                 {
@@ -176,6 +191,11 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 {
                     _safetyThread.Join(600);
                     _safetyThread = null;
+                }
+                if (_connectionWatchdogThread != null && _connectionWatchdogThread.IsAlive)
+                {
+                    _connectionWatchdogThread.Join(600);
+                    _connectionWatchdogThread = null;
                 }
 
                 _network?.Stop();
@@ -429,6 +449,72 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 }
 
                 Thread.Sleep(SafetyCheckIntervalMs);
+            }
+        }
+
+        /// <summary>
+        /// Detects a dead Python command channel (e.g. after the Python backend or
+        /// the whole WSL VM restarts while NinjaTrader keeps running). The passive
+        /// command PullSocket never notices the half-open TCP connection on its own,
+        /// so every Python command times out. Ping the query channel (REQ/REP);
+        /// after too many consecutive failures, recreate all ZMQ sockets so the
+        /// connector reconnects. After recreation we deliberately do NOT re-send
+        /// SendConnect or re-subscribe: Python's retry loop re-sends subscribe+refresh.
+        /// </summary>
+        private void ConnectionWatchdogLoop()
+        {
+            // Use real Thread.Sleep rather than _clock.Sleep so the watchdog keeps
+            // running even if the clock abstraction is mocked.
+            Thread.Sleep(_watchdogIntervalMs);
+
+            int consecutiveFailures = 0;
+            while (_connected && !_cts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    bool reachable = false;
+                    try
+                    {
+                        reachable = _network != null && _network.SendTestPingWithResponse(_watchdogPingTimeoutMs);
+                    }
+                    catch (Exception pingEx)
+                    {
+                        _logger.Warning($"Connection watchdog ping error: {pingEx.Message}");
+                    }
+
+                    if (reachable)
+                    {
+                        consecutiveFailures = 0;
+                    }
+                    else
+                    {
+                        consecutiveFailures++;
+                        if (consecutiveFailures >= _watchdogFailureThreshold)
+                        {
+                            _logger.Warning($"Python unreachable on query channel after {consecutiveFailures} failed pings — recreating ZMQ sockets");
+                            try
+                            {
+                                // Do NOT wrap this in any lock the watchdog holds: the ping
+                                // and ReceiveCommand acquire the network's internal locks and
+                                // release them on their own (ReceiveCommand holds the recv lock
+                                // for at most ~100ms, so Stop() blocking briefly is fine).
+                                _network.Stop();
+                                _network.Start();
+                            }
+                            catch (Exception restartEx)
+                            {
+                                _logger.Error("Connection watchdog failed to recreate ZMQ sockets", restartEx);
+                            }
+                            consecutiveFailures = 0;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("Connection watchdog error", ex);
+                }
+
+                Thread.Sleep(_watchdogIntervalMs);
             }
         }
 

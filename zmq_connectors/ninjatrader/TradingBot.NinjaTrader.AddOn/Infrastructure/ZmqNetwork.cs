@@ -43,19 +43,34 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
         {
             _marketPub = new PublisherSocket();
             _marketPub.Options.SendHighWatermark = 10000;
+            EnableTcpKeepalive(_marketPub);
             _marketPub.Connect(_config.MarketDataAddress);
 
             _commandPull = new PullSocket();
+            EnableTcpKeepalive(_commandPull);
             _commandPull.Connect(_config.CommandAddress);
 
             _queryReq = new RequestSocket();
+            EnableTcpKeepalive(_queryReq);
             _queryReq.Connect(_config.QueryAddress);
 
             _heartbeatPub = new PublisherSocket();
             _heartbeatPub.Options.SendHighWatermark = 1000;
+            EnableTcpKeepalive(_heartbeatPub);
             _heartbeatPub.Connect(_config.HeartbeatAddress);
 
             _logger?.Info($"Connected to ZMQ endpoints: market={_config.MarketPort}, cmd={_config.CommandPort}");
+        }
+
+        // Lets passive sockets (especially the command PullSocket) detect a half-open
+        // TCP connection (e.g. Python backend / WSL VM restarted) and reconnect on
+        // their own, instead of sitting wedged until NinjaTrader is restarted.
+        private static void EnableTcpKeepalive(NetMQSocket socket)
+        {
+            socket.Options.TcpKeepalive = true;
+            socket.Options.TcpKeepaliveIdle = TimeSpan.FromSeconds(10);
+            socket.Options.TcpKeepaliveInterval = TimeSpan.FromSeconds(5);
+            socket.Options.TcpKeepaliveCnt = 3;
         }
 
         public void Stop()

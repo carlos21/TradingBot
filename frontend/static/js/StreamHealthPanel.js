@@ -33,12 +33,30 @@ export class StreamHealthPanel {
 
     this.userCollapsed = false;
     this.lastAlertLevel = 'ok';
+    // Visibility gate driven by the streaming lifecycle state machine: the
+    // panel only makes sense while the platform is actually streaming.
+    this.active = true;
 
     if (!this.renderer.wrapper) return;
 
     this._bindEvents();
     this._loadPreference();
     this._restorePosition();
+  }
+
+  /**
+   * Show/hide the whole panel. When inactive, renders are suppressed and the
+   * wrapper stays hidden no matter what the readiness model says (the model
+   * can hold a stale READY state after the stream stops).
+   */
+  setActive(active) {
+    this.active = active;
+    if (!this.renderer.wrapper) return;
+    if (!active) {
+      this.renderer.hideWrapper();
+    } else {
+      this._render();
+    }
   }
 
   _bindEvents() {
@@ -173,6 +191,10 @@ export class StreamHealthPanel {
   }
 
   _render() {
+    if (!this.active) {
+      this.renderer.hideWrapper();
+      return;
+    }
     const stepper = this.calculator.computeStepper(this.model);
     const phase = this.calculator.computePhaseDisplay(this.model);
     this.renderer.render(this.model, stepper, phase);

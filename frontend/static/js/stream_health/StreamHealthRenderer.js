@@ -59,6 +59,11 @@ export class StreamHealthRenderer {
     this.BADGE_DANGER = 'bg-rose-500 text-slate-100';
   }
 
+  /** Hide the whole panel regardless of model state (lifecycle gate). */
+  hideWrapper() {
+    if (this.wrapper) this.wrapper.classList.add('hidden');
+  }
+
   render(model, stepper, phaseDisplay) {
     if (!this.bar) return;
 
@@ -68,7 +73,6 @@ export class StreamHealthRenderer {
       return;
     }
     this.wrapper.classList.remove('hidden');
-
     const level = model.alertLevel;
 
     // Compact bar
