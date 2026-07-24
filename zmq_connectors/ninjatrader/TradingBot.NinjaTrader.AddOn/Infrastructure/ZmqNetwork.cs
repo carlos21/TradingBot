@@ -65,12 +65,14 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
         // Lets passive sockets (especially the command PullSocket) detect a half-open
         // TCP connection (e.g. Python backend / WSL VM restarted) and reconnect on
         // their own, instead of sitting wedged until NinjaTrader is restarted.
+        // NOTE: targets the NetMQ 4.0.1.13 API bundled with NinjaTrader — that
+        // version's SocketOptions exposes no public TcpKeepaliveCnt (OS default
+        // probe count is used).
         private static void EnableTcpKeepalive(NetMQSocket socket)
         {
             socket.Options.TcpKeepalive = true;
             socket.Options.TcpKeepaliveIdle = TimeSpan.FromSeconds(10);
             socket.Options.TcpKeepaliveInterval = TimeSpan.FromSeconds(5);
-            socket.Options.TcpKeepaliveCnt = 3;
         }
 
         public void Stop()

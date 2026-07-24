@@ -83,6 +83,14 @@ class ReadinessMonitor:
         self._warmup_in_progress: bool = False
         self._warmup_thread: threading.Thread | None = None
 
+        # Gap-fill: when readiness is blocked by a fillable hole in the recent
+        # history (e.g. infrastructure downtime), re-request history so the
+        # platform can supply the missing bars. Bounded so a genuinely
+        # unfillable gap (data feed was down too) cannot loop forever.
+        self._gap_fill_attempts: int = 0
+        self._gap_fill_in_flight: bool = False
+        self._max_gap_fill_attempts: int = 3
+
     def set_pair(self, pair: str) -> None:
         self._pair = pair
 
@@ -90,6 +98,9 @@ class ReadinessMonitor:
         """Called when the gateway connection state changes."""
         if connected:
             self._state_machine.connect()
+            # Fresh connection: new gap-fill episode.
+            self._gap_fill_attempts = 0
+            self._gap_fill_in_flight = False
         else:
             self._state_machine.disconnect()
 
@@ -108,6 +119,10 @@ class ReadinessMonitor:
         self._cancel_warmup()
         self._state_machine.start_refresh()
         self._bar_buffer.clear()
+        # The pending gap-fill request has landed; allow the next attempt if
+        # this refresh still doesn't close the hole. The attempt counter is
+        # intentionally NOT reset here — it caps the whole episode.
+        self._gap_fill_in_flight = False
         if self._progress_emitter is not None:
             self._progress_emitter.emit_phase_started(
                 "refreshing", "Historical data refresh started"
@@ -349,6 +364,10 @@ class ReadinessMonitor:
                     # Surface the actual blocker (e.g. stale bars / market closed)
                     # in the progress tracker without changing the state machine.
                     self._progress_tracker.update_state(state, reason)
+                    if reason.startswith("Gap detected"):
+                        # A hole in recent history is fillable: the platform has
+                        # those bars. Staleness is not — waiting is correct there.
+                        self._maybe_request_gap_fill()
                     return
 
             if not self._warmup_policy.is_warm(self._warmup_orchestrator.strategy):
@@ -376,6 +395,32 @@ class ReadinessMonitor:
             if self._logger:
                 self._logger.error(f"[Readiness] Warmup completion check failed: {e}")
                 self._logger.error(traceback.format_exc())
+
+    def _maybe_request_gap_fill(self) -> None:
+        """Request a history refresh to fill a hole in recent bars.
+
+        Bounded per readiness episode (see ``_max_gap_fill_attempts``): if the
+        platform cannot supply the missing bars either (e.g. its data feed was
+        down for the same window), we stop asking and wait for the hole to age
+        out of the completeness window instead of looping full refreshes.
+        """
+        if self._gap_fill_in_flight or self._gap_fill_attempts >= self._max_gap_fill_attempts:
+            return
+        if self._data_source is None:
+            return
+        self._gap_fill_attempts += 1
+        self._gap_fill_in_flight = True
+        if self._logger:
+            self._logger.warning(
+                f"[Readiness] Requesting history refresh to fill the gap "
+                f"(attempt {self._gap_fill_attempts}/{self._max_gap_fill_attempts})"
+            )
+        try:
+            self._data_source.request_refresh()
+        except Exception as e:
+            self._gap_fill_in_flight = False
+            if self._logger:
+                self._logger.error(f"[Readiness] Gap-fill refresh request failed: {e}")
 
     def get_health(self) -> dict[str, Any]:
         """Return readiness-specific health fields."""

@@ -13,7 +13,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
     /// Headless orchestration service for the ZMQ connector.
     /// Contains all business logic without any dependency on NinjaTrader APIs.
     /// </summary>
-    public sealed class ConnectorService : IDisposable
+    public sealed class ConnectorService : IDisposable, IConnectorService
     {
         private readonly ZmqConfiguration _config;
         private readonly IZmqNetwork _network;
@@ -38,6 +38,8 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         private readonly int _watchdogIntervalMs;
         private readonly int _watchdogFailureThreshold;
         private readonly int _watchdogPingTimeoutMs;
+        private readonly int _watchdogBackoffThreshold;
+        private readonly int _watchdogBackoffIntervalMs;
 
         /// <summary>
         /// When true, the background safety loop will flatten any open position
@@ -93,7 +95,9 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             ITradeIdExtractor tradeIdExtractor,
             int watchdogIntervalMs = 5000,
             int watchdogFailureThreshold = 3,
-            int watchdogPingTimeoutMs = 2000)
+            int watchdogPingTimeoutMs = 2000,
+            int watchdogBackoffThreshold = 3,
+            int watchdogBackoffIntervalMs = 300000)
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _network = network ?? throw new ArgumentNullException(nameof(network));
@@ -111,6 +115,8 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             _watchdogIntervalMs = watchdogIntervalMs;
             _watchdogFailureThreshold = watchdogFailureThreshold;
             _watchdogPingTimeoutMs = watchdogPingTimeoutMs;
+            _watchdogBackoffThreshold = watchdogBackoffThreshold;
+            _watchdogBackoffIntervalMs = watchdogBackoffIntervalMs;
         }
 
         public void Connect()
@@ -463,11 +469,15 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         /// </summary>
         private void ConnectionWatchdogLoop()
         {
-            // Use real Thread.Sleep rather than _clock.Sleep so the watchdog keeps
-            // running even if the clock abstraction is mocked.
-            Thread.Sleep(_watchdogIntervalMs);
-
             int consecutiveFailures = 0;
+            int consecutiveCycles = 0;
+            int currentIntervalMs = _watchdogIntervalMs;
+            bool backingOff = false;
+
+            // Use real Thread.Sleep (in slices) rather than _clock.Sleep so the
+            // watchdog keeps running even if the clock abstraction is mocked.
+            SleepWatchdog(currentIntervalMs);
+
             while (_connected && !_cts.Token.IsCancellationRequested)
             {
                 try
@@ -485,6 +495,13 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                     if (reachable)
                     {
                         consecutiveFailures = 0;
+                        consecutiveCycles = 0;
+                        if (backingOff)
+                        {
+                            backingOff = false;
+                            currentIntervalMs = _watchdogIntervalMs;
+                            _logger.Info("Python reachable again — connection watchdog back to normal ping interval");
+                        }
                     }
                     else
                     {
@@ -506,6 +523,14 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                                 _logger.Error("Connection watchdog failed to recreate ZMQ sockets", restartEx);
                             }
                             consecutiveFailures = 0;
+
+                            consecutiveCycles++;
+                            if (!backingOff && consecutiveCycles >= _watchdogBackoffThreshold)
+                            {
+                                backingOff = true;
+                                currentIntervalMs = _watchdogBackoffIntervalMs;
+                                _logger.Warning($"Python still unreachable — backing off to {currentIntervalMs}ms ping interval");
+                            }
                         }
                     }
                 }
@@ -514,7 +539,23 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                     _logger.Error("Connection watchdog error", ex);
                 }
 
-                Thread.Sleep(_watchdogIntervalMs);
+                SleepWatchdog(currentIntervalMs);
+            }
+        }
+
+        /// <summary>
+        /// Sleeps in short slices so the loop still wakes promptly on
+        /// cancellation/Disconnect even when the backoff interval is minutes long
+        /// (mirrors the heartbeat loop's sliced sleep).
+        /// </summary>
+        private void SleepWatchdog(int milliseconds)
+        {
+            int slept = 0;
+            while (slept < milliseconds && _connected && !_cts.Token.IsCancellationRequested)
+            {
+                int slice = Math.Min(100, milliseconds - slept);
+                Thread.Sleep(slice);
+                slept += slice;
             }
         }
 

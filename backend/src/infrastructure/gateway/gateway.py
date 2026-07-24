@@ -29,6 +29,7 @@ from src.utils.app_logger import ILogger
 from .protocol import (
     AuditRequestMessage,
     CloseOrderCommand,
+    DisconnectMessage,
     MessageEnvelope,
     MessageType,
     ModifyOrderCommand,
@@ -1315,6 +1316,20 @@ to be:
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
         self.logger.info(f"Queued SUBSCRIBE command: {instrument}")
+
+    def send_disconnect(self, reason: str = "stream stopped") -> None:
+        """Tell the platform we are deliberately shutting the stream down.
+
+        Best-effort: failures are logged and swallowed — the gateway may
+        already be unhealthy when stop() runs.
+        """
+        try:
+            cmd = DisconnectMessage(reason=reason)
+            envelope = cmd.to_envelope(seq_num=self._next_seq())
+            self._send_command(envelope)
+            self.logger.info(f"Queued DISCONNECT command: {reason}")
+        except Exception as e:
+            self.logger.warning(f"Failed to send disconnect notification: {e}")
 
     def send_refresh_request(self, days: int = 1, instrument: str | None = None) -> None:
         """Request historical data refresh."""

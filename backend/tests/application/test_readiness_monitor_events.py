@@ -605,3 +605,102 @@ class TestConnectionChange:
 
         monitor.on_connection_change(False)
         assert monitor._state_machine.state.name == "DISCONNECTED"
+
+
+class _BlockingDataSource:
+    """History that never passes completeness, with a configurable reason."""
+
+    def __init__(self, reason: str) -> None:
+        self._reason = reason
+        self.requests: list[int | None] = []
+
+    def check_history_completeness(
+        self, bars: list[dict[str, Any]] | None = None
+    ) -> tuple[bool, str]:
+        return False, self._reason
+
+    def request_refresh(self, days: int | None = None) -> None:
+        self.requests.append(days)
+
+
+class TestGapFill:
+    """Auto gap-fill: a fillable hole in recent history triggers a bounded
+    refresh; staleness does not."""
+
+    @staticmethod
+    def _drive_to_warming_up(monitor: ReadinessMonitor) -> None:
+        monitor.on_connection_change(True)
+        monitor.on_history_complete(_make_bars(40))
+        _join_warmup(monitor)
+
+    def test_gap_reason_requests_refresh_once(self) -> None:
+        ds = _BlockingDataSource("Gap detected: 40m hole in last 2h")
+        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+
+        self._drive_to_warming_up(monitor)
+
+        assert len(ds.requests) == 1
+        assert monitor._gap_fill_in_flight is True
+
+    def test_no_duplicate_request_while_fill_in_flight(self) -> None:
+        ds = _BlockingDataSource("Gap detected: 40m hole in last 2h")
+        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+        self._drive_to_warming_up(monitor)
+
+        # More live-bar-driven checks while the fill refresh is still running.
+        monitor._try_warmup_complete()
+        monitor._try_warmup_complete()
+
+        assert len(ds.requests) == 1
+
+    def test_refresh_start_clears_in_flight_and_allows_next_attempt(self) -> None:
+        ds = _BlockingDataSource("Gap detected: 40m hole in last 2h")
+        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+        self._drive_to_warming_up(monitor)
+
+        monitor.on_refresh_start()
+        assert monitor._gap_fill_in_flight is False
+
+        # The fill refresh completes but the hole is still there → attempt 2.
+        monitor.on_history_complete(_make_bars(40))
+        _join_warmup(monitor)
+
+        assert len(ds.requests) == 2
+
+    def test_gap_fill_capped_at_three_attempts(self) -> None:
+        ds = _BlockingDataSource("Gap detected: 40m hole in last 2h")
+        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+        self._drive_to_warming_up(monitor)
+        assert len(ds.requests) == 1
+
+        for expected in (2, 3):
+            monitor.on_refresh_start()
+            monitor.on_history_complete(_make_bars(40))
+            _join_warmup(monitor)
+            assert len(ds.requests) == expected
+
+        # Cap reached: further cycles must not request again.
+        monitor.on_refresh_start()
+        monitor.on_history_complete(_make_bars(40))
+        _join_warmup(monitor)
+        assert len(ds.requests) == 3
+
+    def test_stale_reason_never_requests_refresh(self) -> None:
+        ds = _BlockingDataSource("Last bar is 120m old (need < 1m)")
+        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+
+        self._drive_to_warming_up(monitor)
+        monitor._try_warmup_complete()
+
+        assert ds.requests == []
+
+    def test_fresh_connection_resets_gap_fill_episode(self) -> None:
+        ds = _BlockingDataSource("Gap detected: 40m hole in last 2h")
+        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+        self._drive_to_warming_up(monitor)
+        assert monitor._gap_fill_attempts == 1
+
+        monitor.on_connection_change(True)
+
+        assert monitor._gap_fill_attempts == 0
+        assert monitor._gap_fill_in_flight is False

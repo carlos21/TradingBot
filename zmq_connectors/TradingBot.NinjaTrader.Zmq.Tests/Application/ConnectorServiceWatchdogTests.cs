@@ -55,13 +55,16 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         private ConnectorService CreateService(
             int watchdogIntervalMs = 30,
             int watchdogFailureThreshold = 3,
-            int watchdogPingTimeoutMs = 50)
+            int watchdogPingTimeoutMs = 50,
+            int watchdogBackoffThreshold = 3,
+            int watchdogBackoffIntervalMs = 300000)
         {
             var service = new ConnectorService(
                 _config, _network, _logger, _dispatcher, _orderTracker,
                 _streamingCoordinator, _accountProvider, _orderExecutionService,
                 _instrumentProvider, _barHistoryService, _pnlCalculator, _clock, _tradeIdExtractor,
-                watchdogIntervalMs, watchdogFailureThreshold, watchdogPingTimeoutMs);
+                watchdogIntervalMs, watchdogFailureThreshold, watchdogPingTimeoutMs,
+                watchdogBackoffThreshold, watchdogBackoffIntervalMs);
             service.SafetyGuardEnabled = false;
             return service;
         }
@@ -151,6 +154,71 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             Thread.Sleep(150);
             pings.Should().Be(pingsAfterDisconnect, "watchdog loop must stop after Disconnect");
             _network.Received(1).Stop(); // only the Disconnect() one
+        }
+
+        [Fact]
+        public void Watchdog_BacksOff_AfterThresholdRecreationCycles()
+        {
+            int pings = 0;
+            _network.SendTestPingWithResponse(Arg.Any<double>())
+                .Returns(_ => { Interlocked.Increment(ref pings); return false; });
+            int stops = 0;
+            var thirdStop = new ManualResetEventSlim(false);
+            _network.When(x => x.Stop()).Do(_ => { if (Interlocked.Increment(ref stops) >= 3) thirdStop.Set(); });
+            var service = CreateService(watchdogIntervalMs: 20, watchdogFailureThreshold: 3,
+                watchdogBackoffThreshold: 3, watchdogBackoffIntervalMs: 400);
+
+            service.Connect();
+            try
+            {
+                thirdStop.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue("3 recreation cycles should occur at the fast interval");
+
+                int pingsAtBackoff = Volatile.Read(ref pings);
+                Thread.Sleep(450);
+                int pingsDuringBackoff = Volatile.Read(ref pings) - pingsAtBackoff;
+                pingsDuringBackoff.Should().BeLessThanOrEqualTo(3,
+                    "after backing off to a 400ms interval the ping rate must collapse (fast rate would be ~20 in this window)");
+                _logger.Warnings.Should().Contain(w => w.Contains("backing off"));
+            }
+            finally
+            {
+                service.Disconnect("cleanup");
+            }
+        }
+
+        [Fact]
+        public void Watchdog_PingSuccess_DuringBackoff_RestoresFastInterval()
+        {
+            int failFlag = 1;
+            int pings = 0;
+            _network.SendTestPingWithResponse(Arg.Any<double>())
+                .Returns(_ => { Interlocked.Increment(ref pings); return Volatile.Read(ref failFlag) == 0; });
+            int stops = 0;
+            var thirdStop = new ManualResetEventSlim(false);
+            _network.When(x => x.Stop()).Do(_ => { if (Interlocked.Increment(ref stops) >= 3) thirdStop.Set(); });
+            var service = CreateService(watchdogIntervalMs: 20, watchdogFailureThreshold: 3,
+                watchdogBackoffThreshold: 3, watchdogBackoffIntervalMs: 400);
+
+            service.Connect();
+            try
+            {
+                thirdStop.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue("watchdog should enter backoff first");
+                _logger.Warnings.Should().Contain(w => w.Contains("backing off"));
+
+                Volatile.Write(ref failFlag, 0); // Python is back
+                Thread.Sleep(600); // worst-case one backoff sleep (400ms) + margin for the success ping
+
+                int pingsBeforeWindow = Volatile.Read(ref pings);
+                Thread.Sleep(300);
+                int pingsInWindow = Volatile.Read(ref pings) - pingsBeforeWindow;
+                pingsInWindow.Should().BeGreaterThanOrEqualTo(5,
+                    "a successful ping must restore the fast 20ms interval and reset the cycle count");
+                _logger.Infos.Should().Contain(i => i.Contains("reachable again"));
+            }
+            finally
+            {
+                service.Disconnect("cleanup");
+            }
         }
     }
 }

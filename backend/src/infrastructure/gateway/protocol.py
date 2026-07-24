@@ -487,6 +487,23 @@ class SubscribeMessage:
 
 
 @dataclass
+class DisconnectMessage:
+    """Tell the platform we are deliberately shutting the stream down.
+
+    Lets the connector distinguish an intentional stop from a dead channel:
+    it should stop streaming and go quiet instead of trying to reconnect.
+    """
+    reason: str = "stream stopped"
+
+    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        return MessageEnvelope.create(
+            msg_type=MessageType.DISCONNECT,
+            payload={"reason": self.reason},
+            seq_num=seq_num,
+        )
+
+
+@dataclass
 class RefreshRequestMessage:
     """Request historical data refresh."""
     days: int = 1

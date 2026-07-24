@@ -346,6 +346,33 @@ class TestHistoryRetry:
 
 
 # ---------------------------------------------------------------------------
+# Disconnect notification on stop
+# ---------------------------------------------------------------------------
+
+
+class TestStopDisconnectNotification:
+
+    def test_stop_sends_disconnect_before_gateway_stop(self, data_source, mock_gateway):
+        data_source._disconnect_flush_sec = 0
+        calls = []
+        mock_gateway.send_disconnect.side_effect = lambda *a, **k: calls.append("disconnect")
+        mock_gateway.stop.side_effect = lambda: calls.append("stop")
+
+        data_source.stop()
+
+        mock_gateway.send_disconnect.assert_called_once_with("stream stopped")
+        assert calls == ["disconnect", "stop"]
+
+    def test_stop_survives_disconnect_send_failure(self, data_source, mock_gateway):
+        data_source._disconnect_flush_sec = 0
+        mock_gateway.send_disconnect.side_effect = Exception("command channel dead")
+
+        data_source.stop()  # must not raise
+
+        mock_gateway.stop.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # Start / Stop / Lifecycle
 # ---------------------------------------------------------------------------
 

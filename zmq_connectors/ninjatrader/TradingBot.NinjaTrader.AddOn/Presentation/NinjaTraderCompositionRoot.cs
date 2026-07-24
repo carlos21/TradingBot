@@ -37,7 +37,7 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
             dispatcher.Register(new AuditRequestHandler(network, logger, instrumentProvider, barHistoryService, streamingCoordinator, clock));
             dispatcher.Register(new TestStartHandler(network, logger));
 
-            return new ConnectorService(
+            var connectorService = new ConnectorService(
                 config,
                 network,
                 logger,
@@ -51,6 +51,12 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
                 pnlCalculator,
                 clock,
                 tradeIdExtractor);
+
+            // Registered after the service exists: the handler needs the service to
+            // act on a platform-requested disconnect.
+            dispatcher.Register(new DisconnectHandler(network, logger, connectorService));
+
+            return connectorService;
         }
     }
 }

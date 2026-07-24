@@ -177,6 +177,10 @@ class ZMQDataSource(CombinedDataSource):
         self._history_retry_timer: threading.Timer | None = None
         self._history_retry_attempt: int = 0
 
+        # Grace period for the disconnect notification to flush before the
+        # gateway sockets close on stop().
+        self._disconnect_flush_sec: float = 0.25
+
         # Notifier for alerts when bar stream dies
         self._notifier = notifier or NoOpNotifier()
 
@@ -348,6 +352,9 @@ class ZMQDataSource(CombinedDataSource):
         must be symmetric.  Otherwise ``POST /api/stream/stop`` leaves the
         gateway running and a later start short-circuits to
         "already_connected" without ever re-binding.
+
+        A disconnect notification is sent first so the platform can tell an
+        intentional stop from a dead channel and stand down quietly.
         """
         self._cancel_pending_refresh_timer()
         self._cancel_history_retry_timer()
@@ -357,6 +364,12 @@ class ZMQDataSource(CombinedDataSource):
                 monitor.stop()
         self._stop_heartbeat_monitor()
         if self._gateway:
+            # Notify the platform, then give the async command sender a brief
+            # moment to flush it before the sockets close.
+            with contextlib.suppress(Exception):
+                self._gateway.send_disconnect("stream stopped")
+            if self._gateway.is_running:
+                time.sleep(self._disconnect_flush_sec)
             self._gateway.stop()
         self._state = DataSourceState.DISCONNECTED
         self.logger.info("ZMQDataSource stopped")

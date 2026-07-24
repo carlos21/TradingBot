@@ -84,13 +84,13 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
                 _instrumentProvider, _barHistoryService, _pnlCalculator, _clock, _tradeIdExtractor
             };
             deps[nullIndex] = null;
-            var args = deps.Concat(new object[] { Type.Missing, Type.Missing, Type.Missing }).ToArray();
+            var args = deps.Concat(new object[] { Type.Missing, Type.Missing, Type.Missing, Type.Missing, Type.Missing }).ToArray();
             var ctor = typeof(ConnectorService).GetConstructor(new[]
             {
                 typeof(ZmqConfiguration), typeof(IZmqNetwork), typeof(ILogger), typeof(CommandDispatcher), typeof(IOrderTracker),
                 typeof(IStreamingCoordinator), typeof(IAccountProvider), typeof(IOrderExecutionService), typeof(IInstrumentProvider),
                 typeof(IBarHistoryService), typeof(IPnLCalculator), typeof(IConnectorClock), typeof(ITradeIdExtractor),
-                typeof(int), typeof(int), typeof(int)
+                typeof(int), typeof(int), typeof(int), typeof(int), typeof(int)
             });
 
             Action act = () => ctor.Invoke(args);

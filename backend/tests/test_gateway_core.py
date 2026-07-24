@@ -1205,6 +1205,20 @@ class TestCommandSending:
         with pytest.raises(ValueError, match="instrument is required"):
             gw.send_subscribe("")
 
+    def test_send_disconnect(self, gateway, logger):
+        gateway._running = True
+        gateway.send_disconnect("stream stopped")
+        assert len(gateway._pending_commands) == 1
+        cmd = gateway._pending_commands[1]
+        assert cmd["type"] == MessageType.DISCONNECT.value
+        assert cmd["payload"]["reason"] == "stream stopped"
+
+    def test_send_disconnect_failure_is_swallowed(self, gateway, logger):
+        gateway._running = True
+        gateway._send_command = MagicMock(side_effect=Exception("socket gone"))
+        gateway.send_disconnect()  # must not raise
+        assert any("disconnect" in m.lower() for m in logger.messages)
+
     def test_send_audit_request(self, gateway, logger):
         gateway._running = True
         gateway.send_audit_request(bars_back=30)

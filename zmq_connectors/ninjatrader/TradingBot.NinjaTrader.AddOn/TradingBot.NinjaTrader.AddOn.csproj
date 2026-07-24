@@ -54,7 +54,10 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="NetMQ" Version="4.0.2.2" />
+    <!-- Pinned to the NetMQ version bundled with NinjaTrader
+         (Documents/NinjaTrader 8/bin/Custom/NetMQ.dll), which the NinjaScript
+         compiler and NT runtime actually use — do not upgrade past it. -->
+    <PackageReference Include="NetMQ" Version="4.0.1.13" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
   </ItemGroup>
 
