@@ -60,6 +60,25 @@ def session_window_for_group(group: str) -> tuple[str, str]:
     return GROUP_SESSION_WINDOWS.get(group, DEFAULT_SESSION_WINDOW)
 
 
+def default_lines_date_for_group(group: str, session_date: str) -> str | None:
+    """
+    Return the default support/resistance lines date for a scenario group,
+    or None when the caller should prompt the user.
+
+    London lines are drawn the evening before the session, NY lines are drawn
+    on the session day itself, and other groups have no automatic default.
+    """
+    from datetime import datetime, timedelta
+
+    if group == "london":
+        return (
+            datetime.strptime(session_date, "%Y-%m-%d") - timedelta(days=1)
+        ).strftime("%Y-%m-%d")
+    if group == "ny":
+        return session_date
+    return None
+
+
 def snap_dir_for_group(group: str) -> Path:
     """Snapshot output dir for a scenario group (per-session folders)."""
     return REPO_ROOT / "scenarios_out" / "MNQ" / group

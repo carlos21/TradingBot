@@ -13,6 +13,7 @@ from scripts.scenario_management import (
     ScenarioDiffService,
     ScenarioYamlFormatter,
     available_groups,
+    default_lines_date_for_group,
     derive_name,
     find_insert_position,
     is_valid_date,
@@ -166,6 +167,15 @@ class TestGroupHelpers:
 
     def test_session_window_unknown_group_falls_back(self):
         assert session_window_for_group("asia") == DEFAULT_SESSION_WINDOW
+
+    def test_default_lines_date_for_london_is_day_before_session(self):
+        assert default_lines_date_for_group("london", "2026-07-21") == "2026-07-20"
+
+    def test_default_lines_date_for_ny_matches_session_date(self):
+        assert default_lines_date_for_group("ny", "2026-07-21") == "2026-07-21"
+
+    def test_default_lines_date_for_unknown_group_returns_none(self):
+        assert default_lines_date_for_group("asia", "2026-07-21") is None
 
     def test_scenarios_yaml_for_group(self, tmp_path: Path, monkeypatch):
         (tmp_path / "ny.yaml").write_text("scenarios: []\n")

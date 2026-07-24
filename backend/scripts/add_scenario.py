@@ -21,6 +21,7 @@ from scenario_management import (
     FileSnapshotCleaner,
     FileTestScenarioWriter,
     SubprocessDiscoveryRunner,
+    default_lines_date_for_group,
     derive_name,
     find_insert_position,
     is_valid_date,
@@ -79,18 +80,15 @@ def main():
 
     # Lines date: London lines are drawn the evening before the session, so
     # use the day before automatically and only ask for the time. NY lines are
-    # drawn on the current day, so use today automatically. Other groups prompt,
-    # defaulting to the session date.
-    from datetime import datetime, timedelta
-
-    if args.group == "london":
-        lines_date = (
-            datetime.strptime(session_date, "%Y-%m-%d") - timedelta(days=1)
-        ).strftime("%Y-%m-%d")
-        print(f"Lines date: {lines_date} (day before the session)")
-    elif args.group == "ny":
-        lines_date = datetime.now().strftime("%Y-%m-%d")
-        print(f"Lines date: {lines_date} (current day)")
+    # drawn on the session day itself, so use the session date automatically.
+    # Other groups prompt, defaulting to the session date.
+    auto_lines_date = default_lines_date_for_group(args.group, session_date)
+    if auto_lines_date is not None:
+        lines_date = auto_lines_date
+        if args.group == "london":
+            print(f"Lines date: {lines_date} (day before the session)")
+        elif args.group == "ny":
+            print(f"Lines date: {lines_date} (same as session)")
     else:
         while True:
             lines_date = prompter.ask("Lines date (YYYY-MM-DD)", default=session_date)
