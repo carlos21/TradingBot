@@ -72,6 +72,7 @@ class TradeManager:
         self.be_threshold_points = be_threshold_points
         self.sl_tp_tolerance  = sl_tp_tolerance
         self._accounts_repo   = accounts_repo
+        self.instrument       = instrument
         self._live_mode       = live_mode
         self._lock = RLock()
 

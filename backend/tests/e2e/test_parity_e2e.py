@@ -48,7 +48,7 @@ def _feed_bar(nt, bar: dict[str, Any], delay_sec: float = 0.15) -> None:
 def _transition_to_live(nt, ds, delay_sec: float = 1.0) -> None:
     """Send empty history so the data source transitions to STREAMING state."""
     nt.send_history_batch([])
-    nt.send_history_end()
+    nt.send_history_end(pair="MNQ")
     for _ in range(200):
         if ds.state == DataSourceState.STREAMING:
             break
@@ -64,6 +64,8 @@ def _create_parity_service(app) -> ParityCheckService:
         checker=NinjaTraderParityChecker(market_filter=MarketClosureFilter(instrument="MNQ")),
         market_filter=MarketClosureFilter(instrument="MNQ"),
         logger=app.logger,
+        pair="MNQ",
+        instrument="MNQ 09-26",
     )
 
 
@@ -120,7 +122,7 @@ class TestParityCheckE2E:
         time.sleep(0.1)
 
         # Bypass the service's auto-request and compare directly
-        python_bars = app.data_source.load_historical_bars("1m")
+        python_bars = app.data_source.load_historical_bars("1m", pair="MNQ")
         checker = NinjaTraderParityChecker(market_filter=MarketClosureFilter(instrument="MNQ"))
         result = checker.check(python_bars, bars[:2] + bars[3:])
 
@@ -152,7 +154,7 @@ class TestParityCheckE2E:
         nt.send_audit_response(tampered)
         time.sleep(0.1)
 
-        python_bars = app.data_source.load_historical_bars("1m")
+        python_bars = app.data_source.load_historical_bars("1m", pair="MNQ")
         checker = NinjaTraderParityChecker(market_filter=MarketClosureFilter(instrument="MNQ"))
         result = checker.check(python_bars, tampered)
 
@@ -186,7 +188,7 @@ class TestParityCheckE2E:
         for bar in bars_local:
             _feed_bar(nt, bar)
 
-        python_bars = app.data_source.load_historical_bars("1m")
+        python_bars = app.data_source.load_historical_bars("1m", pair="MNQ")
         checker = NinjaTraderParityChecker(market_filter=MarketClosureFilter(instrument="MNQ"))
         result = checker.check(python_bars, bars_remote)
 

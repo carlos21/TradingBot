@@ -179,28 +179,54 @@ class TestZMQTradeExecutor:
         executor, gateway = self._make()
         executor.on_trade_close("T1", 99.0, account="Sim101")
         gateway.send_close_order.assert_called_once_with(
-            trade_id="T1", reason="strategy", account="Sim101"
+            trade_id="T1", reason="strategy", account="Sim101", instrument=None
         )
 
     def test_on_sl_update_passes_account(self):
         executor, gateway = self._make()
         executor.on_sl_update("T1", 96.0, account="Sim101")
         gateway.send_modify_order.assert_called_once_with(
-            trade_id="T1", stop_loss=96.0, account="Sim101"
+            trade_id="T1", stop_loss=96.0, account="Sim101", instrument=None
         )
 
     def test_on_trade_close_sends_close_order(self):
         executor, gateway = self._make()
         executor.on_trade_close("T1", 99.0)
         gateway.send_close_order.assert_called_once_with(
-            trade_id="T1", reason="strategy", account=None
+            trade_id="T1", reason="strategy", account=None, instrument=None
         )
 
     def test_on_sl_update_sends_modify_order(self):
         executor, gateway = self._make()
         executor.on_sl_update("T1", 96.0)
         gateway.send_modify_order.assert_called_once_with(
-            trade_id="T1", stop_loss=96.0, account=None
+            trade_id="T1", stop_loss=96.0, account=None, instrument=None
+        )
+
+    def test_on_trade_close_resolves_instrument_via_trade_resolver(self):
+        """Close carries the trade's own instrument — no gateway default."""
+        executor, gateway = self._make()
+        executor.trade_resolver = lambda trade_id: {
+            "trade_id": trade_id,
+            "instrument": "MNQ SEP25",
+            "account": "Sim101",
+        }
+        executor.on_trade_close("T1", 99.0)
+        gateway.send_close_order.assert_called_once_with(
+            trade_id="T1", reason="strategy", account="Sim101", instrument="MNQ SEP25"
+        )
+
+    def test_on_sl_update_resolves_instrument_via_trade_resolver(self):
+        """Modify-stop carries the trade's own instrument — no gateway default."""
+        executor, gateway = self._make()
+        executor.trade_resolver = lambda trade_id: {
+            "trade_id": trade_id,
+            "instrument": "MNQ SEP25",
+            "account": "Sim101",
+        }
+        executor.on_sl_update("T1", 96.0)
+        gateway.send_modify_order.assert_called_once_with(
+            trade_id="T1", stop_loss=96.0, account="Sim101", instrument="MNQ SEP25"
         )
 
 
@@ -209,6 +235,8 @@ class TestMultiAccountExecutor:
         gateway = MagicMock()
         gateway_executor = MagicMock()
         gateway_executor._gateway = gateway
+        # Trade not found in any session → falls back to the trade_manager repo.
+        gateway_executor._resolve_trade.return_value = None
         executor = MultiAccountExecutor(
             trade_manager=trade_manager,
             account_configs=[],

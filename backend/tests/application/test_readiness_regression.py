@@ -117,7 +117,7 @@ def _make_strategy(
         account_balance=100000.0,
         logger=logger,
     )
-    numbers = get_prod_strategy_numbers(rr_ratio=5.0)
+    numbers = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
     options = get_prod_strategy_options(
         max_bounce=numbers.max_bounce,
         min_cross_depth=numbers.min_cross_depth,
@@ -125,6 +125,7 @@ def _make_strategy(
         reentry_only=False,
         line_removal_mode=LineRemovalMode.ON_EVALUATE,
         max_reentry_attempts=3,
+        symbol="MNQ",
     )
     # Disable the trading-hours filter so the historical 07:35 entry can fire.
     for i, f in enumerate(options.entry_filters):

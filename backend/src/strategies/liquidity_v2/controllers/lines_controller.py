@@ -28,10 +28,9 @@ class LinesController:
         } for line in lines])
 
     def add_line(self, pair: str, price: float, creation_timestamp: float = None):
-        ds = self.bars_loader.data_source
-        if pair != ds.pair:
-            from flask import abort
-            abort(400, f"Only pair '{ds.pair}' is supported")
+        loader_pair = self.bars_loader.pair
+        if loader_pair is not None and pair != loader_pair:
+            abort(400, f"Only pair '{loader_pair}' is supported")
 
         try:
             price = LineInputValidator.validate_price(price)

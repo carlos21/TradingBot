@@ -148,17 +148,22 @@ def register_socketio_handlers(
     """
 
     def _resolve_session(symbol: str | None = None):
-        """Return the loader/session for the requested symbol."""
+        """Return the bars loader for the requested symbol."""
         if coordinator is not None:
             return coordinator.require_session(symbol).bars_loader
+        if loader is None:
+            raise ValueError("No streaming session available")
         return loader
 
     def _resolve_pair(payload: dict | None) -> str | None:
-        """Extract pair from payload, falling back to coordinator default."""
+        """Extract the pair from the payload.
+
+        There is no default instrument: with a coordinator a missing pair is
+        an error surfaced to the client; without one (legacy single-session
+        wiring) ``None`` simply means "the only session".
+        """
         if payload and isinstance(payload, dict) and payload.get("pair"):
             return payload["pair"]
-        if coordinator is not None:
-            return coordinator.get_default_symbol()
         return None
 
     def _emit_to_pair(event: str, payload: dict, pair: str | None = None) -> None:
@@ -207,15 +212,16 @@ def register_socketio_handlers(
         except (TypeError, ValueError) as exc:
             raise ValueError(f"{name} must be an integer") from exc
 
-    # Track the last history-loaded signature emitted on connect so reconnects
-    # do not spam the frontend with duplicate events.
-    _last_history_loaded_signature: dict | None = None
-
-    def _history_loaded_signature(cached: list[dict]) -> dict:
+    def _history_loaded_signature(cached: list[dict], symbol: str | None = None) -> dict:
         readiness_state = "UNKNOWN"
         readiness_reason = "Cached bars available on connect"
-        if readiness_monitor is not None:
-            health = readiness_monitor.get_health()
+        monitor = readiness_monitor
+        if coordinator is not None and symbol:
+            session = coordinator.get_session(symbol)
+            if session is not None:
+                monitor = session.readiness_monitor
+        if monitor is not None:
+            health = monitor.get_health()
             readiness_state = health.get("readiness_state", readiness_state)
             readiness_reason = health.get("readiness_reason", readiness_reason)
         return {
@@ -223,6 +229,7 @@ def register_socketio_handlers(
             "readiness_reason": readiness_reason,
             "bar_count": len(cached),
             "last_bar_time": cached[-1]["time"] if cached else None,
+            "pair": symbol,
         }
 
     def _emit_health():
@@ -244,7 +251,7 @@ def register_socketio_handlers(
             platform_connected = data_source.gateway.is_connected
 
         emit("stream_status", {
-            "playing": loader.streaming,
+            "playing": loader.streaming if loader is not None else False,
             "live_mode": live_mode,
             "gateway_running": gateway_running,
             "platform_connected": platform_connected,
@@ -256,38 +263,12 @@ def register_socketio_handlers(
         if live_mode and platform_connected:
             emit("platform_connected")
 
-        # If historical bars are already cached (e.g. server has been running),
-        # tell the frontend to draw them immediately. This avoids an empty
-        # chart while waiting for a fresh history load cycle.
-        # Reconnects are deduplicated by signature so the same cached batch is
-        # not emitted repeatedly.
-        if live_mode and isinstance(data_source, ZMQDataSource):
-            try:
-                cached = data_source.load_historical_bars("1m")
-                if cached:
-                    payload = _history_loaded_signature(cached)
-                    if history_loaded_deduper is not None:
-                        history_loaded_deduper.emit(socketio, payload)
-                    else:
-                        signature = _history_loaded_signature(cached)
-                        nonlocal _last_history_loaded_signature
-                        if signature != _last_history_loaded_signature:
-                            _last_history_loaded_signature = signature
-                            emit("history_loaded", {
-                                "readiness_state": signature["readiness_state"],
-                                "readiness_reason": signature["readiness_reason"],
-                                "bar_count": signature["bar_count"],
-                            })
-            except Exception as exc:
-                # Don't break the connect handshake, but let the client know.
-                _logger.error(f"[SocketIO] failed to load cached bars on connect: {exc}")
-                with contextlib.suppress(Exception):
-                    emit("history_load_failed", {"error": str(exc)})
-
         # Note: we do NOT auto-request a refresh here. Refreshing on every
         # browser connect duplicates the refresh already scheduled when the
         # platform connected and causes unnecessary load on NinjaTrader.
         # Use the explicit 'request_refresh' event to force a refresh.
+        # Cached bars are emitted per instrument on join_instrument — there is
+        # no default instrument to load on bare connect.
 
     @socketio.on("join_instrument")
     @_safe_handler
@@ -307,15 +288,11 @@ def register_socketio_handlers(
             try:
                 cached = data_source.load_historical_bars("1m", pair=symbol)
                 if cached:
-                    sig = _history_loaded_signature(cached)
+                    sig = _history_loaded_signature(cached, symbol)
                     if history_loaded_deduper is not None:
                         history_loaded_deduper.emit(socketio, sig)
                     else:
-                        socketio.emit("history_loaded", {
-                            "readiness_state": sig["readiness_state"],
-                            "readiness_reason": sig["readiness_reason"],
-                            "bar_count": sig["bar_count"],
-                        }, room=symbol)
+                        socketio.emit("history_loaded", sig, room=symbol)
             except Exception as exc:
                 _logger.error(f"[SocketIO] failed to load cached bars on join: {exc}")
                 with contextlib.suppress(Exception):
@@ -346,6 +323,9 @@ def register_socketio_handlers(
             stop_at = _as_int(stop_at, "stopAt")
 
         symbol = _resolve_pair(payload)
+        if coordinator is not None and symbol is None:
+            _emit_error("start_stream requires {'pair': ...}")
+            return
         session_loader = _resolve_session(symbol)
 
         # Set base time first so set_timeframe uses the right window
@@ -360,6 +340,9 @@ def register_socketio_handlers(
         if live_mode:
             return
         symbol = _resolve_pair(payload)
+        if coordinator is not None and symbol is None:
+            _emit_error("pause_stream requires {'pair': ...}")
+            return
         session_loader = _resolve_session(symbol)
         session_loader.pause()
         _emit_to_pair("stream_status", {"playing": False}, symbol)
@@ -376,6 +359,9 @@ def register_socketio_handlers(
         window_secs = BarAggregator.parse_timeframe(tf)
 
         symbol = _resolve_pair(payload)
+        if coordinator is not None and symbol is None:
+            _emit_error("step_stream requires {'pair': ...}")
+            return
         session_loader = _resolve_session(symbol)
 
         session_loader.seek(from_time + window_secs)
@@ -389,6 +375,9 @@ def register_socketio_handlers(
         if live_mode:
             return
         symbol = _resolve_pair(payload)
+        if coordinator is not None and symbol is None:
+            _emit_error("seek requires {'pair': ...}")
+            return
         session_loader = _resolve_session(symbol)
         session_loader.seek(_as_int(payload.get("fromTime", 0), "fromTime"))
 
@@ -399,6 +388,9 @@ def register_socketio_handlers(
         from_time = _as_int(payload.get("fromTime", 0), "fromTime")
 
         symbol = _resolve_pair(payload)
+        if coordinator is not None and symbol is None:
+            _emit_error("set_timeframe requires {'pair': ...}")
+            return
         session_loader = _resolve_session(symbol)
 
         session_loader.seek(from_time)
@@ -411,6 +403,9 @@ def register_socketio_handlers(
             return
         # payload: {pair, direction: 1|-1, fast: true|false}
         symbol = _resolve_pair(payload)
+        if coordinator is not None and symbol is None:
+            _emit_error("jump_day requires {'pair': ...}")
+            return
         session_loader = _resolve_session(symbol)
 
         direction_raw = payload.get("direction", 1)
@@ -444,15 +439,23 @@ def register_socketio_handlers(
 
     @socketio.on("check_parity")
     @_safe_handler
-    def on_check_parity(_payload=None):
-        if parity_service is None:
+    def on_check_parity(payload=None):
+        service = parity_service
+        if coordinator is not None:
+            symbol = _resolve_pair(payload)
+            if symbol is None:
+                _emit_error("check_parity requires {'pair': ...}")
+                return
+            session = coordinator.get_session(symbol)
+            service = session.parity_service if session is not None else None
+        if service is None:
             emit("parity_result", {
                 "ok": False,
                 "error": "Parity service not available",
             })
             return
         try:
-            result = parity_service.check_parity(hours_back=5)
+            result = service.check_parity(hours_back=5)
             emit("parity_result", result.to_dict())
         except Exception as e:
             _logger.error(f"check_parity failed: {e}")

@@ -272,7 +272,7 @@ class TestSessionEnd:
         # Send fresh history so ZMQDataSource transitions to LIVE
         now_ts = int(time.time())
         nt.send_history_batch([{"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}])
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         time.sleep(0.3)
         # The readiness monitor needs enough bars for indicator warm-up. Short-circuit
         # it so the session-end path can be tested in isolation.
@@ -489,7 +489,7 @@ class TestStrategyDrivenFeatures:
         # Get out of warmup so check_breakeven runs
         now_ts = int(time.time())
         nt.send_history_batch([{"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}])
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         time.sleep(0.3)
         # One bar is not enough for the real warm-up policy; force LIVE for this test.
         _force_ready(app)
@@ -557,7 +557,7 @@ class TestStrategyDrivenFeatures:
 
         now_ts = int(time.time())
         nt.send_history_batch([{"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}])
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         time.sleep(0.3)
         # One bar is not enough for the real warm-up policy; force LIVE for this test.
         _force_ready(app)
@@ -635,7 +635,7 @@ class TestMultiAccountAdvanced:
 
         now_ts = int(time.time())
         nt.send_history_batch([{"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}])
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         time.sleep(0.3)
         # One bar is not enough for the real warm-up policy; force LIVE for this test.
         _force_ready(app)
@@ -796,7 +796,7 @@ class TestControllerAndQueries:
 
         # Send history so data source transitions to LIVE (bars reach loader)
         nt.send_history_batch([{"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}])
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         time.sleep(0.3)
 
         trade = app.trade_manager.open_trade(
@@ -963,7 +963,7 @@ class TestBarStreamStall:
         nt.send_history_batch([
             {"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"}
         ])
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         time.sleep(0.2)
 
         assert ds.state.name == "STREAMING"
@@ -996,7 +996,7 @@ class TestGapDetection:
             {"time": now_ts - 240, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"},
             {"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"},
         ])
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         time.sleep(0.2)
 
         assert ds._gap_count >= 1
@@ -1015,7 +1015,7 @@ class TestGapDetection:
             {"time": now_ts - 120, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"},
             {"time": now_ts - 60, "open": 21000, "high": 21010, "low": 20990, "close": 21000, "volume": 100, "pair": "MNQ"},
         ])
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         time.sleep(0.2)
 
         assert ds._gap_count == 0

@@ -2,12 +2,12 @@
 
 Covers the multi-instrument plumbing:
 
-1. The default pair (MNQ) streams as usual after CONNECT + history.
+1. MNQ streams after it is explicitly joined (no default instrument).
 2. When a client joins a second instrument (MES), the ``StreamCoordinator``
    activator makes the data source send a per-instrument ``subscribe`` and
    ``refresh_request`` to the platform.
 3. MES history and live bars land in the MES per-pair cache / MES session and
-   never pollute the default ``_historical_bars`` cache.
+   never pollute the MNQ cache.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from src.infrastructure.database import database as db_module
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.gateway.executor import ZMQTradeExecutor
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
-from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.strategies.liquidity_v2.config import CandleConfig
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from tests.e2e.conftest import (
@@ -37,7 +36,7 @@ from tests.fakes import FakeLineRepository, FakeLogger, FakeTradeRepository
 
 
 class _TwoInstrumentRegistry:
-    """Registry with MNQ (default) and MES."""
+    """Registry with MNQ and MES."""
 
     def get_all(self) -> list[Instrument]:
         return [
@@ -65,8 +64,8 @@ def live_app_two_instruments(
         heartbeat_pub=free_ports["heartbeat"],
         platform_connects=True,
     )
-    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
-    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ", market_filter=MarketClosureFilter(instrument="MNQ"))
+    gateway = TradingGateway(e2e_logger, config=config)
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway)
     trade_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
 
     repos = Repositories(
@@ -137,7 +136,7 @@ def _command_seen(nt: FakeNinjaTrader, msg_type: str, instrument: str) -> bool:
     )
 
 
-def test_join_second_instrument_streams_alongside_default(
+def test_join_second_instrument_streams_alongside_first(
     fake_nt: FakeNinjaTrader,
     live_app_two_instruments: AppWiring,
 ) -> None:
@@ -146,19 +145,20 @@ def test_join_second_instrument_streams_alongside_default(
     coordinator = app.coordinator
     assert coordinator is not None
 
-    # (a) Connect the platform and let the default pair reach STREAMING.
+    # (a) Join MNQ explicitly, connect the platform, and let MNQ reach STREAMING.
+    coordinator.join_instrument("MNQ", "fake-sid-1")
     time.sleep(0.3)  # slow-joiner protection
     fake_nt.send_connect(pair="MNQ")
     _wait_until(
         lambda: _command_seen(fake_nt, "subscribe", "MNQ 09-26"),
-        description="default MNQ subscribe command",
+        description="MNQ subscribe command",
     )
     fake_nt.send_history_batch(_build_history(60, "MNQ"))
-    fake_nt.send_history_end()
-    _wait_until(lambda: data_source.is_streaming, description="default pair STREAMING")
+    fake_nt.send_history_end(pair="MNQ")
+    _wait_until(lambda: data_source.is_streaming, description="MNQ STREAMING")
 
     # (b) Simulate a browser joining the MES instrument room.
-    coordinator.join_instrument("MES", "fake-sid")
+    coordinator.join_instrument("MES", "fake-sid-2")
 
     # The activator must subscribe MES and request its history.
     _wait_until(
@@ -171,7 +171,7 @@ def test_join_second_instrument_streams_alongside_default(
     )
 
     # (c) MES history arrives tagged with pair=MES; it must land in the
-    # per-pair cache only, and the default lifecycle state must be untouched.
+    # per-pair cache only, and the connection state must be untouched.
     mes_history = _build_history(30, "MES")
     fake_nt.send_history_batch(mes_history, pair="MES")
     fake_nt.send_history_end(pair="MES")
@@ -179,7 +179,7 @@ def test_join_second_instrument_streams_alongside_default(
         lambda: len(data_source.load_historical_bars("1m", pair="MES")) == 30,
         description="MES history in per-pair cache",
     )
-    assert all(b["pair"] == "MNQ" for b in data_source._historical_bars)
+    assert all(b["pair"] == "MNQ" for b in data_source._bars_by_pair.get("MNQ", []))
     assert data_source.is_streaming
 
     # The MES session exists, was started, and received the history batch.
@@ -199,15 +199,119 @@ def test_join_second_instrument_streams_alongside_default(
         ),
         description="live MES bar in per-pair cache",
     )
-    assert all(b["pair"] == "MNQ" for b in data_source._historical_bars)
+    assert all(b["pair"] == "MNQ" for b in data_source._bars_by_pair.get("MNQ", []))
 
-    # (e) The default MNQ stream is unaffected and keeps working.
+    # (e) The MNQ stream is unaffected and keeps working.
+    mnq_bars = data_source._bars_by_pair["MNQ"]
     mnq_bar = _make_bar(
-        data_source._historical_bars[-1]["time"] + 60,
+        mnq_bars[-1]["time"] + 60,
         22000.0, 22010.0, 21990.0, 22005.0, 400, pair="MNQ",
     )
     fake_nt.send_bar(mnq_bar)
     _wait_until(
-        lambda: any(b["time"] == mnq_bar["time"] for b in data_source._historical_bars),
-        description="live MNQ bar in default cache",
+        lambda: any(b["time"] == mnq_bar["time"] for b in data_source._bars_by_pair["MNQ"]),
+        description="live MNQ bar in MNQ cache",
     )
+
+
+def test_second_instrument_refresh_flow_isolated_from_first(
+    fake_nt: FakeNinjaTrader,
+    live_app_two_instruments: AppWiring,
+) -> None:
+    """Regression: second instrument joining mid-stream.
+
+    1. Its full refresh flow (refresh_start/batches/history_end) must emit a
+       ``history_loaded`` for the second instrument even when its dedupe
+       signature is identical to the first instrument's (same bar count and
+       last-bar time — the weekend collision that emptied the MNQ chart).
+    2. While the second instrument refreshes, the first instrument's bars must
+       neither be diverted into the refresh buffer nor double-routed.
+    3. The second session's readiness monitor is seeded with the current
+       gateway connection state (CONNECTED, not DISCONNECTED).
+    """
+    app = live_app_two_instruments
+    data_source = app.data_source
+    coordinator = app.coordinator
+
+    # Capture history_loaded emits at the socket layer.
+    history_loaded_payloads: list[dict] = []
+    orig_emit = app.socketio.emit
+
+    def _emit_catcher(event, *args, **kwargs):
+        if event == "history_loaded":
+            history_loaded_payloads.append(args[0] if args else kwargs.get("data"))
+        return orig_emit(event, *args, **kwargs)
+
+    app.socketio.emit = _emit_catcher
+
+    # Count route_bar deliveries for one specific MNQ live bar.
+    mnq_route_count = {"n": 0}
+    mnq_live_time: dict[str, int] = {}
+    orig_route_bar = coordinator.route_bar
+
+    def _route_bar_spy(bar):
+        if bar.get("pair") == "MNQ" and bar.get("time") == mnq_live_time.get("t"):
+            mnq_route_count["n"] += 1
+        return orig_route_bar(bar)
+
+    coordinator.route_bar = _route_bar_spy
+
+    try:
+        # (a) MNQ streams first.
+        coordinator.join_instrument("MNQ", "fake-sid-1")
+        time.sleep(0.3)  # slow-joiner protection
+        fake_nt.send_connect(pair="MNQ")
+        _wait_until(
+            lambda: _command_seen(fake_nt, "subscribe", "MNQ 09-26"),
+            description="MNQ subscribe command",
+        )
+        mnq_history = _build_history(60, "MNQ")
+        fake_nt.send_history_batch(mnq_history, pair="MNQ")
+        fake_nt.send_history_end(pair="MNQ")
+        _wait_until(lambda: data_source.is_streaming, description="MNQ STREAMING")
+        _wait_until(
+            lambda: any(p and p.get("pair") == "MNQ" for p in history_loaded_payloads),
+            description="history_loaded for MNQ",
+        )
+
+        # (b) Second client joins MES; its session monitor is seeded CONNECTED.
+        coordinator.join_instrument("MES", "fake-sid-2")
+        mes_session = coordinator.get_session("MES")
+        assert mes_session is not None
+        assert mes_session.readiness_monitor._state_machine.state.name == "CONNECTED"
+        _wait_until(
+            lambda: _command_seen(fake_nt, "refresh_request", "MES 09-26"),
+            description="MES refresh_request command",
+        )
+
+        # (c) The platform starts the MES refresh. An MNQ live bar arriving
+        # during it must stream normally: stored immediately, not buffered.
+        fake_nt.send_refresh_start(pair="MES")
+        mnq_live = _make_bar(
+            mnq_history[-1]["time"] + 60,
+            22000.0, 22010.0, 21990.0, 22005.0, 400, pair="MNQ",
+        )
+        mnq_live_time["t"] = mnq_live["time"]
+        fake_nt.send_bar(mnq_live)
+        _wait_until(
+            lambda: any(b["time"] == mnq_live["time"] for b in data_source._bars_by_pair["MNQ"]),
+            description="MNQ live bar stored during MES refresh",
+        )
+        assert "MNQ" not in data_source._refresh_buffer
+
+        # (d) MES history with an IDENTICAL dedupe signature (same bar count,
+        # same last-bar time) must still emit its own history_loaded.
+        mes_history = [dict(b, pair="MES") for b in mnq_history]
+        fake_nt.send_history_batch(mes_history, pair="MES")
+        fake_nt.send_history_end(pair="MES")
+        _wait_until(
+            lambda: any(p and p.get("pair") == "MES" for p in history_loaded_payloads),
+            description="history_loaded for MES despite identical signature",
+        )
+
+        # (e) The MNQ live bar was routed exactly once — the old shared
+        # refresh buffer used to re-route it at the second pair's history_end.
+        assert mnq_route_count["n"] == 1
+    finally:
+        app.socketio.emit = orig_emit
+        coordinator.route_bar = orig_route_bar

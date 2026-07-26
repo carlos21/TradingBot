@@ -37,10 +37,12 @@ class TestParityCheckService:
             checker=checker,
             market_filter=market_filter,
             logger=logger,
+            pair="MNQ",
+            instrument="MNQ",
         )
 
         # Patch the send to auto-trigger the response handler
-        def _auto_send(bars_back):
+        def _auto_send(bars_back, instrument=None):
             service._on_audit_response({
                 "bars": remote_bars,
                 "count": len(remote_bars),
@@ -63,7 +65,7 @@ class TestParityCheckService:
 
         assert result.all_good is True
         assert result.gaps_found == 0
-        ds.load_historical_bars.assert_called_once_with("1m")
+        ds.load_historical_bars.assert_called_once_with("1m", pair="MNQ")
 
     def test_detects_missing_bar(self):
         """Remote has more bars than local → missing gap detected."""
@@ -94,7 +96,7 @@ class TestParityCheckService:
         local = [self._bar(100, 10.0, 11.0, 9.0, 10.5, 100)]
         service, _, _ = self._make_service(local, [])
         # Override to send empty
-        service._gateway.send_audit_request.side_effect = lambda bars_back: service._on_audit_response({"bars": [], "count": 0})
+        service._gateway.send_audit_request.side_effect = lambda bars_back, instrument=None: service._on_audit_response({"bars": [], "count": 0})
 
         result = service.check_parity(hours_back=5)
 

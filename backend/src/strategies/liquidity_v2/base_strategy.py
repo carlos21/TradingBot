@@ -156,7 +156,7 @@ class BaseLiquidityStrategy:
             risk_pct_per_trade=risk_pct_per_trade,
             use_fractional_lots=use_fractional_lots,
             accounts_repo=accounts_repo,
-            instrument=None,
+            instrument=getattr(trade_manager, "instrument", None),
             live_mode=live_mode,
         )
 

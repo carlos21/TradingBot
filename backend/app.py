@@ -46,7 +46,7 @@ def main():
     instance = config.instance_name
     app_logger = wiring.logger
     app_logger.info(
-        f"[{instance}] Starting Liquid instance — pair={config.pair} mode={config.mode}"
+        f"[{instance}] Starting Liquid instance — mode={config.mode}"
     )
 
     # Register signal handlers for graceful shutdown

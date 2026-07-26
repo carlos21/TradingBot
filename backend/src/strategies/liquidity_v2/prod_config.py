@@ -24,7 +24,7 @@ def get_prod_strategy_numbers(rr_ratio: float,
                               risk_per_trade: float = None,
                               risk_pct_per_trade: float = None,
                               account_configs=None,
-                              symbol: str = "MNQ") -> StrategyNumbers:
+                              *, symbol: str) -> StrategyNumbers:
     """
     Numeric parameters that control risk, stop-loss tiers, and entry distance.
 
@@ -137,7 +137,7 @@ def get_prod_strategy_options(max_bounce: float,
                                 line_removal_mode: LineRemovalMode,
                                 max_reentry_attempts: int,
                                 trading_windows: list[TradingWindow] | None = None,
-                                symbol: str = "MNQ") -> StrategyOptions:
+                                *, symbol: str) -> StrategyOptions:
     """
     High-level strategy behaviour: filters, triggers, breakeven, re-entry.
 

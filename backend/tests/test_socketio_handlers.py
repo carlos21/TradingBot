@@ -75,21 +75,20 @@ class FakeBarsLoader:
 
 
 class FakeCoordinator:
-    def __init__(self, default_symbol="MNQ"):
-        self.default_symbol = default_symbol
+    def __init__(self):
         self._sessions: dict[str, FakeSession] = {}
         self._join_calls: list[tuple[str, str]] = []
         self._leave_calls: list[tuple[str, str]] = []
 
-    def get_default_symbol(self) -> str:
-        return self.default_symbol
-
     def require_session(self, symbol):
         if not symbol:
-            symbol = self.default_symbol
+            raise ValueError("symbol is required")
         if symbol not in self._sessions:
             self._sessions[symbol] = FakeSession(symbol)
         return self._sessions[symbol]
+
+    def get_session(self, symbol):
+        return self._sessions.get(symbol)
 
     def join_instrument(self, symbol: str, sid: str):
         self._join_calls.append((symbol, sid))
@@ -110,6 +109,7 @@ class FakeSession:
     def __init__(self, symbol: str):
         self.symbol = symbol
         self.bars_loader = FakeBarsLoader()
+        self.readiness_monitor = None
         self._clients: set[str] = set()
         self._started = False
 
@@ -141,7 +141,6 @@ class FakeZMQDataSource(ZMQDataSource):
         self._gateway = gateway
         self._state = state
         self._refresh_calls = []
-        self.pair = "MNQ"
         self.history_hours = DEFAULT_HISTORY_HOURS
         self._cached_bars = cached_bars or []
 
@@ -149,10 +148,10 @@ class FakeZMQDataSource(ZMQDataSource):
     def state(self):
         return self._state
 
-    def load_historical_bars(self, timeframe="1m", start_time=None):
+    def load_historical_bars(self, timeframe="1m", start_time=None, pair=None):
         return list(self._cached_bars)
 
-    def request_refresh(self, days=None):
+    def request_refresh(self, days=None, pair=None):
         if self._state == DataSourceState.REFRESHING:
             return
         self._refresh_calls.append(days or self.history_hours)
@@ -238,7 +237,9 @@ class TestConnectHandler:
         assert data_source._refresh_calls == []
 
     @patch("src.routes.socketio_handlers.emit")
-    def test_connect_emits_history_loaded_when_cached_bars_exist(self, mock_emit, socketio, loader, logger):
+    def test_connect_does_not_emit_cached_history(self, mock_emit, socketio, loader, logger):
+        # There is no default instrument: cached bars are emitted per
+        # instrument on join_instrument, never on a bare connect.
         gateway = FakeGateway()
         cached = [{"time": 1, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}]
         data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.CONNECTED, cached_bars=cached)
@@ -253,53 +254,76 @@ class TestConnectHandler:
         handler(None)
 
         emitted_events = [call[0][0] for call in mock_emit.call_args_list]
-        assert "history_loaded" in emitted_events
-        history_loaded_payload = next(call[0][1] for call in mock_emit.call_args_list if call[0][0] == "history_loaded")
-        assert history_loaded_payload["bar_count"] == 1
+        assert "history_loaded" not in emitted_events
 
-    @patch("src.routes.socketio_handlers.emit")
-    def test_connect_dedupes_history_loaded_on_reconnect(self, mock_emit, socketio, loader, logger):
-        gateway = FakeGateway()
-        cached = [{"time": 1, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}]
-        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.CONNECTED, cached_bars=cached)
+
+class TestJoinInstrumentHistoryLoaded:
+    def _register(self, socketio, loader, logger, data_source, coordinator, deduper=None):
         register_socketio_handlers(
             socketio=socketio,
             loader=loader,
             data_source=data_source,
             live_mode=True,
             _logger=logger,
+            coordinator=coordinator,
+            history_loaded_deduper=deduper,
         )
-        handler = socketio.handlers["connect"]
+        return socketio.handlers["join_instrument"]
 
-        # Simulate three reconnects with the same cached bars.
-        handler(None)
-        handler(None)
-        handler(None)
+    def _join(self, handler, pair="MNQ", sid="sid-1"):
+        with patch("src.routes.socketio_handlers.join_room"), \
+             patch("src.routes.socketio_handlers.request", new=MagicMock()) as mock_request:
+            mock_request.sid = sid
+            handler({"pair": pair})
 
-        history_loaded_calls = [call for call in mock_emit.call_args_list if call[0][0] == "history_loaded"]
-        assert len(history_loaded_calls) == 1
-
-    @patch("src.routes.socketio_handlers.emit")
-    def test_connect_re_emits_history_loaded_when_bars_change(self, mock_emit, socketio, loader, logger):
-        gateway = FakeGateway()
+    def test_join_instrument_emits_history_loaded_when_cached_bars_exist(self, socketio, loader, logger):
         cached = [{"time": 1, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}]
-        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.CONNECTED, cached_bars=cached)
-        register_socketio_handlers(
-            socketio=socketio,
-            loader=loader,
-            data_source=data_source,
-            live_mode=True,
-            _logger=logger,
+        data_source = FakeZMQDataSource(gateway=FakeGateway(), cached_bars=cached)
+        handler = self._register(socketio, loader, logger, data_source, FakeCoordinator())
+
+        self._join(handler)
+
+        history_loaded = [e for e in socketio.emitted if e[0] == "history_loaded"]
+        assert len(history_loaded) == 1
+        assert history_loaded[0][1][0]["bar_count"] == 1
+        assert history_loaded[0][2] == {"room": "MNQ"}
+
+    def test_join_instrument_dedupes_history_loaded_on_rejoin(self, socketio, loader, logger):
+        from src.utils.history_loaded_deduper import HistoryLoadedDeduper
+
+        cached = [{"time": 1, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}]
+        data_source = FakeZMQDataSource(gateway=FakeGateway(), cached_bars=cached)
+        handler = self._register(
+            socketio, loader, logger, data_source, FakeCoordinator(),
+            deduper=HistoryLoadedDeduper(),
         )
-        handler = socketio.handlers["connect"]
-        handler(None)
+
+        # Simulate three rejoins with the same cached bars.
+        self._join(handler)
+        self._join(handler)
+        self._join(handler)
+
+        history_loaded = [e for e in socketio.emitted if e[0] == "history_loaded"]
+        assert len(history_loaded) == 1
+
+    def test_join_instrument_re_emits_history_loaded_when_bars_change(self, socketio, loader, logger):
+        from src.utils.history_loaded_deduper import HistoryLoadedDeduper
+
+        cached = [{"time": 1, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"}]
+        data_source = FakeZMQDataSource(gateway=FakeGateway(), cached_bars=cached)
+        handler = self._register(
+            socketio, loader, logger, data_source, FakeCoordinator(),
+            deduper=HistoryLoadedDeduper(),
+        )
+
+        self._join(handler)
 
         # Change the cached bars (e.g. after a refresh).
         data_source._cached_bars = [{"time": 2, "open": 2, "high": 3, "low": 1, "close": 2, "volume": 1, "pair": "MNQ"}]
-        handler(None)
+        self._join(handler)
 
-        history_loaded_calls = [call for call in mock_emit.call_args_list if call[0][0] == "history_loaded"]
-        assert len(history_loaded_calls) == 2
+        history_loaded = [e for e in socketio.emitted if e[0] == "history_loaded"]
+        assert len(history_loaded) == 2
 
 
 class TestStartStreamHandler:
@@ -831,11 +855,11 @@ class TestCleanup:
         cleanup()
 
 
-class TestConnectEdgeCases:
+class TestJoinInstrumentEdgeCases:
     @patch("src.routes.socketio_handlers.emit")
-    def test_connect_logs_and_emits_when_cached_load_fails(self, mock_emit, socketio, loader):
+    def test_join_instrument_logs_and_emits_when_cached_load_fails(self, mock_emit, socketio, loader):
         class _BrokenZMQDataSource(FakeZMQDataSource):
-            def load_historical_bars(self, timeframe="1m", start_time=None):
+            def load_historical_bars(self, timeframe="1m", start_time=None, pair=None):
                 raise RuntimeError("cache unreachable")
 
         errors: list[str] = []
@@ -852,9 +876,13 @@ class TestConnectEdgeCases:
             data_source=data_source,
             live_mode=True,
             _logger=logger,
+            coordinator=FakeCoordinator(),
         )
-        handler = socketio.handlers["connect"]
-        handler(None)
+        handler = socketio.handlers["join_instrument"]
+        with patch("src.routes.socketio_handlers.join_room"), \
+             patch("src.routes.socketio_handlers.request", new=MagicMock()) as mock_request:
+            mock_request.sid = "sid-1"
+            handler({"pair": "MNQ"})
 
         emitted_events = [call[0][0] for call in mock_emit.call_args_list]
         assert "history_load_failed" in emitted_events

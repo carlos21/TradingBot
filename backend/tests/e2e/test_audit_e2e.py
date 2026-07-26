@@ -48,7 +48,7 @@ def _send_audit_and_wait(harness: E2EHarness, bars_back: int = 60, timeout: floa
         event.set()
 
     gateway.on_audit_response(_on_response)
-    gateway.send_audit_request(bars_back)
+    gateway.send_audit_request(bars_back, instrument="MNQ 09-26")
 
     if not event.wait(timeout=timeout):
         raise TimeoutError("AUDIT_RESPONSE did not arrive in time")
@@ -58,7 +58,7 @@ def _send_audit_and_wait(harness: E2EHarness, bars_back: int = 60, timeout: floa
 def _transition_to_live(nt, ds, delay_sec: float = 1.0) -> None:
     """Send empty history so the data source transitions to STREAMING state."""
     nt.send_history_batch([])
-    nt.send_history_end()
+    nt.send_history_end(pair="MNQ")
     # Wait for state transition
     for _ in range(200):
         if ds.state == DataSourceState.STREAMING:
@@ -96,7 +96,7 @@ class TestAuditRoundTrip:
             _feed_bar(nt, bar)
 
         # Load what Python cached
-        python_bars = app.data_source.load_historical_bars("1m")
+        python_bars = app.data_source.load_historical_bars("1m", pair="MNQ")
 
         # Request audit from FakeNT
         audit_bars = _send_audit_and_wait(e2e_harness, bars_back=5)
@@ -124,7 +124,7 @@ class TestAuditRoundTrip:
         for bar in bars:
             _feed_bar(nt, bar)
 
-        python_bars = app.data_source.load_historical_bars("1m")
+        python_bars = app.data_source.load_historical_bars("1m", pair="MNQ")
 
         # FakeNT manually sends audit WITHOUT bar 3 (simulating lost bar)
         nt.send_audit_response(bars[:2] + bars[3:])  # drops bars[2]
@@ -155,7 +155,7 @@ class TestAuditRoundTrip:
         for bar in bars:
             _feed_bar(nt, bar)
 
-        python_bars = app.data_source.load_historical_bars("1m")
+        python_bars = app.data_source.load_historical_bars("1m", pair="MNQ")
 
         # Tamper with bar 2's close in the audit response
         tampered = [dict(b) for b in bars]
@@ -199,6 +199,8 @@ class TestNinjaTraderBarAuditorE2E:
             interval_minutes=0,  # never auto-fire
             bars_back=3,
             on_drift=lambda r: drift_results.append(r),
+            pair="MNQ",
+            instrument="MNQ 09-26",
         )
         auditor.start()
         try:
@@ -237,6 +239,8 @@ class TestNinjaTraderBarAuditorE2E:
             interval_minutes=0,
             bars_back=3,
             on_drift=lambda r: drift_results.append(r),
+            pair="MNQ",
+            instrument="MNQ 09-26",
         )
         auditor.start()
         try:

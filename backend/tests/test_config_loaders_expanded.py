@@ -121,11 +121,11 @@ class TestEnvConfigLoader:
         assert cfg.flask_port == 5001
 
     def test_load_overrides_string_fields(self, monkeypatch):
-        monkeypatch.setenv("PAIR", "ES")
+        monkeypatch.setenv("CSV_FILE", "csvs/ES_live.csv")
         monkeypatch.setenv("MODE", "live")
         monkeypatch.setenv("ZMQ_HOST", "0.0.0.0")
         cfg = EnvConfigLoader().load()
-        assert cfg.pair == "ES"
+        assert cfg.csv_file == "csvs/ES_live.csv"
         assert cfg.mode == "live"
         assert cfg.zmq_host == "0.0.0.0"
 
@@ -180,9 +180,9 @@ class TestEnvConfigLoader:
 
     def test_empty_env_var_ignored(self, monkeypatch):
         """An empty string env var must not overwrite the hard-coded default."""
-        monkeypatch.setenv("PAIR", "")
+        monkeypatch.setenv("CSV_FILE", "")
         cfg = EnvConfigLoader().load()
-        assert cfg.pair == "MNQ"
+        assert cfg.csv_file == AppConfig().csv_file
 
     def test_broker_spread_parsed_as_float(self, monkeypatch):
         monkeypatch.setenv("BROKER_SPREAD", "1.5")
@@ -202,9 +202,9 @@ class TestCliConfigLoader:
         assert cfg.flask_port == 5001
 
     def test_overrides_string_fields(self):
-        loader = CliConfigLoader(args=["--pair", "ES", "--mode", "live"])
+        loader = CliConfigLoader(args=["--csv-file", "csvs/ES_live.csv", "--mode", "live"])
         cfg = loader.load()
-        assert cfg.pair == "ES"
+        assert cfg.csv_file == "csvs/ES_live.csv"
         assert cfg.mode == "live"
 
     def test_overrides_numeric_fields(self):
@@ -247,16 +247,16 @@ class TestCliConfigLoader:
         assert cfg.reentry_after_sl is False
 
     def test_uses_sys_argv_by_default(self, monkeypatch):
-        monkeypatch.setattr(sys, "argv", ["prog", "--pair", "YM"])
+        monkeypatch.setattr(sys, "argv", ["prog", "--instance-name", "bot2"])
         loader = CliConfigLoader()
         cfg = loader.load()
-        assert cfg.pair == "YM"
+        assert cfg.instance_name == "bot2"
 
     def test_unset_args_leave_defaults(self):
         """Args not supplied on the CLI must not appear in the parsed namespace."""
-        loader = CliConfigLoader(args=["--pair", "ES"])
+        loader = CliConfigLoader(args=["--csv-file", "csvs/ES_live.csv"])
         cfg = loader.load()
-        assert cfg.pair == "ES"
+        assert cfg.csv_file == "csvs/ES_live.csv"
         assert cfg.mode == "backtest"
         assert cfg.flask_port == 5001
         assert cfg.bootstrap_existing_lines is True
@@ -273,53 +273,53 @@ class TestCompositeConfigLoader:
         assert cfg.mode == "backtest"
 
     def test_single_loader(self, monkeypatch):
-        monkeypatch.setenv("PAIR", "ES")
+        monkeypatch.setenv("CSV_FILE", "csvs/ES_live.csv")
         loader = CompositeConfigLoader(EnvConfigLoader())
         cfg = loader.load()
-        assert cfg.pair == "ES"
+        assert cfg.csv_file == "csvs/ES_live.csv"
 
     def test_later_overrides_earlier(self, monkeypatch):
-        monkeypatch.setenv("PAIR", "ES")
+        monkeypatch.setenv("CSV_FILE", "csvs/ES_live.csv")
         # CLI comes after env and should override.
         loader = CompositeConfigLoader(
             EnvConfigLoader(),
-            CliConfigLoader(args=["--pair", "YM"]),
+            CliConfigLoader(args=["--csv-file", "csvs/YM_live.csv"]),
         )
         cfg = loader.load()
-        assert cfg.pair == "YM"
+        assert cfg.csv_file == "csvs/YM_live.csv"
 
     def test_empty_cli_does_not_wipe_env_vars(self, monkeypatch):
         """Key Composite behaviour: an empty CLI must not reset env overrides."""
-        monkeypatch.setenv("PAIR", "ES")
+        monkeypatch.setenv("CSV_FILE", "csvs/ES_live.csv")
         loader = CompositeConfigLoader(
             EnvConfigLoader(),
             CliConfigLoader(args=[]),
         )
         cfg = loader.load()
-        assert cfg.pair == "ES"
+        assert cfg.csv_file == "csvs/ES_live.csv"
 
     def test_merge_is_field_by_field(self, monkeypatch):
-        monkeypatch.setenv("PAIR", "ES")
+        monkeypatch.setenv("CSV_FILE", "csvs/ES_live.csv")
         monkeypatch.setenv("ZMQ_HOST", "0.0.0.0")
         loader = CompositeConfigLoader(
             EnvConfigLoader(),
             CliConfigLoader(args=["--mode", "live"]),
         )
         cfg = loader.load()
-        assert cfg.pair == "ES"          # from env
-        assert cfg.zmq_host == "0.0.0.0" # from env
-        assert cfg.mode == "live"        # from CLI
-        assert cfg.flask_port == 5001    # default untouched
+        assert cfg.csv_file == "csvs/ES_live.csv"  # from env
+        assert cfg.zmq_host == "0.0.0.0"           # from env
+        assert cfg.mode == "live"                  # from CLI
+        assert cfg.flask_port == 5001              # default untouched
 
     def test_three_loaders(self, monkeypatch):
-        monkeypatch.setenv("PAIR", "ES")
+        monkeypatch.setenv("CSV_FILE", "csvs/ES_live.csv")
         loader = CompositeConfigLoader(
             EnvConfigLoader(),
-            CliConfigLoader(args=["--pair", "YM"]),
-            CliConfigLoader(args=["--pair", "NQ"]),
+            CliConfigLoader(args=["--csv-file", "csvs/YM_live.csv"]),
+            CliConfigLoader(args=["--csv-file", "csvs/NQ_live.csv"]),
         )
         cfg = loader.load()
-        assert cfg.pair == "NQ"
+        assert cfg.csv_file == "csvs/NQ_live.csv"
 
     def test_cli_can_reset_env_value_to_default(self, monkeypatch):
         """A CLI arg that equals the hard-coded default must still override env."""
@@ -368,7 +368,9 @@ class TestDbConfigLoader:
         assert cfg.zmq_host == "0.0.0.0"
         assert cfg.flask_port == 5002
 
-    def test_loads_instruments(self, tmp_path):
+    def test_instruments_setting_does_not_override_config(self, tmp_path):
+        """The ``instruments`` setting belongs to the instrument registry;
+        DbConfigLoader must not apply it to AppConfig (no default instrument)."""
         db_path = f"sqlite:///{tmp_path / 'instruments_loader.db'}"
         setup_database(db_url=db_path)
         from src.infrastructure.database.database import get_db_session
@@ -383,9 +385,8 @@ class TestDbConfigLoader:
 
         loader = DbConfigLoader(db_path=db_path)
         cfg = loader.load()
-        assert cfg.pair == "NQ"
-        assert cfg.instrument == "NQ 09-26"
-        assert cfg.point_value == 5.0
+        assert cfg.pair == "MNQ"       # AppConfig default, untouched
+        assert cfg.point_value == 2.0  # AppConfig default, untouched
 
     def test_loads_accounts(self, db_loader):
         cfg = db_loader.load()

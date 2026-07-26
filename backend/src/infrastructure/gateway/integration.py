@@ -5,7 +5,7 @@ This module provides the live trading entry point using ZeroMQ.
 
 Usage:
     from src.infrastructure.gateway import create_live_components
-    data_source, trade_executor = create_live_components(pair="MNQ")
+    data_source, trade_executor = create_live_components(logger)
 
     # Then pass to app_factory:
     wiring = create_app(
@@ -31,7 +31,6 @@ from .gateway import GatewayConfig, TradingGateway
 
 
 def create_live_components(
-    pair: str,
     logger: ILogger,
     *,
     risk_usd: float | None = None,
@@ -44,15 +43,15 @@ def create_live_components(
     heartbeat_port: int = 5558,
     history_hours: int = DEFAULT_HISTORY_HOURS,
     notifier: Notifier | None = None,
-    instrument: str | None = None,
 ) -> tuple[ZMQDataSource, ZMQTradeExecutor]:
     """
     Create ZeroMQ-based data source and trade executor for live trading.
 
     This is the main entry point for using ZeroMQ with the existing app_factory.
+    There is no configured default instrument: the platform subscribes exactly
+    the instruments users select in the UI.
 
     Args:
-        pair: Trading pair symbol (e.g., "MNQ", "MNQ")
         logger: Logger instance (required)
         risk_usd: Fixed dollar risk per trade (optional)
         risk_pct: Percentage of account to risk per trade (optional)
@@ -77,7 +76,7 @@ def create_live_components(
     )
 
     # Create gateway with logger (logger is required first param)
-    gateway = TradingGateway(logger, config=config, pair=pair, instrument=instrument)
+    gateway = TradingGateway(logger, config=config)
 
     # Store account names for config queries from NinjaTrader
     gateway.set_account_names(account_names or [])
@@ -86,10 +85,9 @@ def create_live_components(
     data_source = ZMQDataSource(
         logger,
         gateway=gateway,
-        pair=pair,
         history_hours=history_hours,
         notifier=notifier,
-        market_filter=MarketClosureFilter(instrument=pair),
+        market_filter=MarketClosureFilter(),
     )
 
     # Create trade executor that uses the same gateway (logger is required)
@@ -100,7 +98,7 @@ def create_live_components(
         risk_pct=risk_pct,
     )
 
-    logger.info(f"Created ZeroMQ live components for {pair}")
+    logger.info("Created ZeroMQ live components")
     logger.info(f"  Market data: tcp://{host}:{market_port}")
     logger.info(f"  Commands: tcp://{host}:{command_port}")
     if account_names:
@@ -110,7 +108,6 @@ def create_live_components(
 
 
 def create_multi_account_live_components(
-    pair: str,
     logger: ILogger,
     *,
     account_configs,
@@ -124,7 +121,6 @@ def create_multi_account_live_components(
     accounts_repo=None,
     history_hours: int = DEFAULT_HISTORY_HOURS,
     notifier: Notifier | None = None,
-    instrument: str | None = None,
 ) -> tuple[ZMQDataSource, MultiAccountExecutor]:
     """
     Create ZeroMQ components for multi-account live trading.
@@ -134,7 +130,6 @@ def create_multi_account_live_components(
     NinjaTrader connector.
 
     Args:
-        pair: Trading pair symbol
         logger: Logger instance (required)
         account_configs: List of AccountConfig objects (name + per-account risk)
         risk_usd: Default fixed dollar risk (fallback when account risk not set)
@@ -151,7 +146,6 @@ def create_multi_account_live_components(
 
     account_names = [a.name for a in account_configs]
     data_source, gateway_executor = create_live_components(
-        pair=pair,
         logger=logger,
         risk_usd=risk_usd,
         risk_pct=risk_pct,
@@ -162,7 +156,6 @@ def create_multi_account_live_components(
         query_port=query_port,
         heartbeat_port=heartbeat_port,
         history_hours=history_hours,
-        instrument=instrument,
     )
 
     # MultiAccountExecutor will be wired with TradeManager inside app_factory
@@ -176,7 +169,7 @@ def create_multi_account_live_components(
         accounts_repo=accounts_repo,
     )
 
-    logger.info(f"Created multi-account live components for {pair}")
+    logger.info("Created multi-account live components")
     for acct in account_configs:
         risk_info = f"risk=${acct.risk_usd}" if acct.risk_usd is not None else (f"risk_pct={acct.risk_pct}%" if acct.risk_pct is not None else "default")
         logger.info(f"  Account: {acct.name} ({risk_info})")
@@ -185,14 +178,12 @@ def create_multi_account_live_components(
 
 
 def create_gateway_only(
-    pair: str,
     logger: ILogger,
     host: str = "127.0.0.1",
     market_port: int = 5555,
     command_port: int = 5556,
     query_port: int = 5557,
     heartbeat_port: int = 5558,
-    instrument: str | None = None,
 ) -> TradingGateway:
     """
     Create just the ZeroMQ gateway for advanced use cases.
@@ -201,7 +192,6 @@ def create_gateway_only(
     or if you need to share a gateway between multiple components.
 
     Args:
-        pair: Trading pair symbol
         logger: Logger instance (required)
         host: ZeroMQ host address
         market_port: Port for market data
@@ -220,7 +210,7 @@ def create_gateway_only(
         platform_connects=True,
     )
 
-    return TradingGateway(logger, config=config, pair=pair, instrument=instrument)
+    return TradingGateway(logger, config=config)
 
 
 def get_platform_addresses(

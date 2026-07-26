@@ -85,8 +85,6 @@ def coordinator(registry, factory):
     return StreamCoordinator(
         instrument_registry=registry,
         session_factory=factory,
-        default_symbol="MNQ",
-        stop_grace_sec=0.0,
     )
 
 
@@ -106,15 +104,22 @@ class TestSessionLifecycle:
         session = coordinator.get_session("MNQ")
         assert session.client_count() == 2
 
-    def test_leave_removes_client_and_stops_session(self, coordinator):
+    def test_leave_keeps_session_streaming_at_zero_clients(self, coordinator):
         coordinator.join_instrument("MNQ", "sid-1")
         coordinator.leave_instrument("MNQ", "sid-1")
-        # The stop timer fires asynchronously; give it a moment.
-        import time
-        time.sleep(0.05)
+        # Sessions persist at zero clients — they stop only via stop_all().
         session = coordinator.get_session("MNQ")
-        assert session is None or session._started is False
+        assert session is not None
+        assert session._started is True
+        assert session.client_count() == 0
+        assert coordinator.list_active_symbols() == ["MNQ"]
+
+    def test_stop_all_stops_and_clears_sessions(self, coordinator):
+        coordinator.join_instrument("MNQ", "sid-1")
+        coordinator.join_instrument("ES", "sid-2")
+        coordinator.stop_all()
         assert coordinator.list_active_symbols() == []
+        assert coordinator.get_session("MNQ") is None
 
     def test_leave_does_not_stop_with_remaining_clients(self, coordinator):
         coordinator.join_instrument("MNQ", "sid-1")
@@ -172,7 +177,7 @@ class TestDataRouting:
         assert len(mnq.history_loaded_calls) == 0
         assert len(es.history_loaded_calls) == 1
 
-    def test_route_history_loaded_broadcasts_when_pair_unknown(self, coordinator):
+    def test_route_history_loaded_drops_when_pair_unknown(self, coordinator):
         coordinator.join_instrument("MNQ", "sid-1")
         coordinator.join_instrument("ES", "sid-2")
 
@@ -180,8 +185,8 @@ class TestDataRouting:
 
         mnq = coordinator.get_session("MNQ")
         es = coordinator.get_session("ES")
-        assert len(mnq.history_loaded_calls) == 1
-        assert len(es.history_loaded_calls) == 1
+        assert len(mnq.history_loaded_calls) == 0
+        assert len(es.history_loaded_calls) == 0
 
     def test_unknown_pair_creates_session_on_demand(self, coordinator):
         # A request for an unregistered symbol creates a minimal session.
@@ -192,17 +197,16 @@ class TestDataRouting:
 
 
 class TestHelpers:
-    def test_get_default_symbol_uses_default(self, coordinator):
-        assert coordinator.get_default_symbol() == "MNQ"
-
-    def test_get_default_symbol_falls_back_to_registry(self, registry, factory):
-        c = StreamCoordinator(registry, factory)
-        assert c.get_default_symbol() == "MNQ"
-
     def test_require_session_creates_when_missing(self, coordinator):
         session = coordinator.require_session("ES")
         assert session.symbol == "ES"
         assert coordinator.get_session("ES") is session
+
+    def test_require_session_rejects_missing_symbol(self, coordinator):
+        with pytest.raises(ValueError):
+            coordinator.require_session(None)
+        with pytest.raises(ValueError):
+            coordinator.require_session("")
 
 
 class TestStreamActivator:
@@ -215,19 +219,17 @@ class TestStreamActivator:
         return StreamCoordinator(
             instrument_registry=registry,
             session_factory=factory,
-            default_symbol="MNQ",
-            stop_grace_sec=0.0,
             stream_activator=activator,
         )
 
-    def test_activator_fires_for_new_non_default_symbol(self, activated_coordinator, activator):
+    def test_activator_fires_for_new_symbol(self, activated_coordinator, activator):
         session = activated_coordinator.join_instrument("ES", "sid-1")
         activator.assert_called_once_with(session.instrument)
         assert session.instrument.full_name == "ES 09-26"
 
-    def test_activator_not_fired_for_default_symbol(self, activated_coordinator, activator):
+    def test_activator_fires_for_every_started_session(self, activated_coordinator, activator):
         activated_coordinator.join_instrument("MNQ", "sid-1")
-        activator.assert_not_called()
+        activator.assert_called_once()
 
     def test_activator_not_fired_when_session_already_started(self, activated_coordinator, activator):
         activated_coordinator.join_instrument("ES", "sid-1")
@@ -239,8 +241,6 @@ class TestStreamActivator:
         coordinator = StreamCoordinator(
             instrument_registry=registry,
             session_factory=factory,
-            default_symbol="MNQ",
-            stop_grace_sec=0.0,
             stream_activator=failing,
         )
         session = coordinator.join_instrument("ES", "sid-1")

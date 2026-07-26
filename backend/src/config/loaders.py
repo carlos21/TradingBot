@@ -17,7 +17,6 @@ from __future__ import annotations
 import argparse
 import contextlib
 import dataclasses
-import json
 import os
 import sys
 from typing import Protocol
@@ -71,7 +70,6 @@ class EnvConfigLoader:
     # Mapping: env_var_name -> (appconfig_attr, parser_func)
     _MAPPING = {
         "MODE": ("mode", str),
-        "PAIR": ("pair", str),
         "CSV_FILE": ("csv_file", str),
         "BARS_PER_SECOND": ("bars_per_second", float),
         "INPUT_TZ": ("input_tz", str),
@@ -154,7 +152,6 @@ class CliConfigLoader:
 
         _add("--mode", choices=["live", "backtest"], help="Run mode")
         _add("--strategy-name", dest="strategy_name", choices=["liquidity_v2", "tsi_cross"], help="Strategy to run")
-        _add("--pair", help="Trading pair (e.g. MNQ)")
         _add("--csv-file", dest="csv_file", help="CSV file for backtest")
         _add("--bars-per-second", dest="bars_per_second", type=float, help="Replay speed")
         _add("--input-tz", dest="input_tz", help="Timezone for input dates")
@@ -259,7 +256,6 @@ class CompositeConfigLoader:
 # Mapping: settings key -> AppConfig attribute name.
 _KEY_TO_ATTR = {
     "pair": "pair",
-    "instrument": "instrument",
     "risk_per_trade": "risk_per_trade",
     "risk_pct_per_trade": "risk_pct_per_trade",
     "rr_ratio": "rr_ratio",
@@ -331,10 +327,6 @@ class DbConfigLoader:
                 with contextlib.suppress(ValueError):
                     cfg.history_hours = int(settings_dict["history_days"]) * 24
 
-            # Multi-instrument registry: derive global pair/instrument values from the first instrument.
-            if "instruments" in settings_dict:
-                self._apply_first_instrument(cfg, settings_dict["instruments"])
-
             accounts = session.query(NtAccount).all()
             if accounts:
                 cfg.nt_accounts = [
@@ -362,26 +354,6 @@ class DbConfigLoader:
             import logging
             logging.getLogger(__name__).warning(f"DB config load failed: {e}. Falling back to env/CLI defaults.")
         return cfg
-
-    @staticmethod
-    def _apply_first_instrument(cfg: AppConfig, raw_instruments: str) -> None:
-        """Override AppConfig pair/instrument fields from the first registered instrument."""
-        try:
-            instruments = json.loads(raw_instruments)
-            if not isinstance(instruments, list) or not instruments:
-                return
-            first = instruments[0]
-            if not isinstance(first, dict):
-                return
-            if "symbol" in first and first["symbol"]:
-                cfg.pair = first["symbol"]
-            if "full_name" in first and first["full_name"]:
-                cfg.instrument = first["full_name"]
-            if "point_value" in first and first["point_value"] not in (None, ""):
-                with contextlib.suppress(ValueError, TypeError):
-                    cfg.point_value = float(first["point_value"])
-        except json.JSONDecodeError:
-            return
 
     @staticmethod
     def _key_to_attr(key: str) -> str | None:

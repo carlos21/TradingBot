@@ -272,7 +272,7 @@ def _start_session(harness: E2EHarness):
     _install_test_windows(app.strategy, live_bars)
 
     nt.send_history_batch(warmup_bars)
-    nt.send_history_end()
+    nt.send_history_end(pair="MNQ")
     _wait_until(lambda: app.data_source.is_streaming,
                 "Data source never switched to LIVE after history_end", timeout=5.0)
     _force_ready(app)

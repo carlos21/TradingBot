@@ -16,12 +16,12 @@ import pytest
 
 from app_factory import AppWiring, Repositories, create_app
 from src.config.models import AccountConfig
+from src.domain.models import Instrument
 from src.infrastructure.database import database as db_module
 from src.infrastructure.database.database_protocol import Base, get_database
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
-from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
 from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
@@ -36,6 +36,14 @@ from tests.fakes import FakeLineRepository, FakeLogger, FakeTradeRepository
 
 # Prevent Flask from needing a real secret key
 os.environ.setdefault("SECRET_KEY", "test-secret")
+
+
+def _mnq_registry():
+    """Return a single-instrument registry with the real NT full_name."""
+    class _Registry:
+        def get_all(self):
+            return [Instrument(symbol="MNQ", full_name="MNQ 09-26", point_value=2.0)]
+    return _Registry()
 
 
 @dataclass
@@ -166,8 +174,8 @@ def live_app(
         heartbeat_pub=free_ports["heartbeat"],
         platform_connects=True,
     )
-    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
-    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ", market_filter=MarketClosureFilter(instrument="MNQ"))
+    gateway = TradingGateway(e2e_logger, config=config)
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway)
     trade_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
 
     repos = Repositories(
@@ -187,10 +195,12 @@ def live_app(
         trade_executor=trade_executor,
         logger=e2e_logger,
         db=test_db,
+        instrument_registry=_mnq_registry(),
         session_end_time="23:59",  # late so tests control session-end explicitly
     )
 
     data_source.start()
+    wiring.coordinator.join_instrument("MNQ", "e2e-sid")
     try:
         yield wiring
     finally:
@@ -214,8 +224,8 @@ def live_app_scenario(
         heartbeat_pub=free_ports["heartbeat"],
         platform_connects=True,
     )
-    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
-    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ", market_filter=MarketClosureFilter(instrument="MNQ"))
+    gateway = TradingGateway(e2e_logger, config=config)
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway)
     trade_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
 
     repos = Repositories(
@@ -223,7 +233,7 @@ def live_app_scenario(
         trades=FakeTradeRepository(),
     )
 
-    numbers = get_prod_strategy_numbers(rr_ratio=5.0)
+    numbers = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
     options = get_prod_strategy_options(
         max_bounce=numbers.max_bounce,
         min_cross_depth=numbers.min_cross_depth,
@@ -231,6 +241,7 @@ def live_app_scenario(
         reentry_only=False,
         line_removal_mode=LineRemovalMode.ON_EVALUATE,
         max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
+        symbol="MNQ",
     )
 
     wiring = create_app(
@@ -245,10 +256,12 @@ def live_app_scenario(
         trade_executor=trade_executor,
         logger=e2e_logger,
         db=test_db,
+        instrument_registry=_mnq_registry(),
         session_end_time="23:59",
     )
 
     data_source.start()
+    wiring.coordinator.join_instrument("MNQ", "e2e-sid")
     try:
         yield wiring
     finally:
@@ -282,8 +295,8 @@ def live_app_multi(
         heartbeat_pub=free_ports["heartbeat"],
         platform_connects=True,
     )
-    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
-    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ", market_filter=MarketClosureFilter(instrument="MNQ"))
+    gateway = TradingGateway(e2e_logger, config=config)
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway)
 
     # Share the same gateway between data_source and trade executor
     zmq_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
@@ -311,10 +324,12 @@ def live_app_multi(
         trade_executor=multi_executor,
         logger=e2e_logger,
         db=test_db,
+        instrument_registry=_mnq_registry(),
         session_end_time="23:59",
     )
 
     data_source.start()
+    wiring.coordinator.join_instrument("MNQ", "e2e-sid")
     try:
         yield wiring
     finally:
@@ -431,8 +446,8 @@ def live_app_resilience(
         heartbeat_interval_sec=0.2,
         heartbeat_timeout_sec=1.0,
     )
-    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
-    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ", market_filter=MarketClosureFilter(instrument="MNQ"))
+    gateway = TradingGateway(e2e_logger, config=config)
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway)
     trade_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
 
     repos = Repositories(
@@ -452,10 +467,12 @@ def live_app_resilience(
         trade_executor=trade_executor,
         logger=e2e_logger,
         db=test_db,
+        instrument_registry=_mnq_registry(),
         session_end_time="23:59",
     )
 
     data_source.start()
+    wiring.coordinator.join_instrument("MNQ", "e2e-sid")
     try:
         yield wiring
     finally:

@@ -9,6 +9,7 @@ from src.application.services.price_resolver import PriceResolver
 @pytest.fixture
 def bars_loader():
     loader = MagicMock()
+    loader.pair = "MNQ"
     loader._1m_buffer = []
     loader._last_bar_close = 0
     loader.data_source = MagicMock()
@@ -32,7 +33,7 @@ class TestPriceResolver:
         ]
         resolver = PriceResolver(bars_loader)
         assert resolver.current_price() == 205.0
-        bars_loader.data_source.load_historical_bars.assert_called_once_with("1m")
+        bars_loader.data_source.load_historical_bars.assert_called_once_with("1m", pair="MNQ")
 
     def test_falls_back_to_last_bar_close(self, bars_loader):
         bars_loader._last_bar_close = 300.0

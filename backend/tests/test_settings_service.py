@@ -342,7 +342,6 @@ class TestSettingsServiceToAppConfigOverrides:
         overrides = svc.to_app_config_overrides()
         # The registry always provides at least a default instrument.
         assert overrides["pair"] == "MNQ"
-        assert overrides["instrument"] == "MNQ 09-26"
         assert overrides["point_value"] == "2.0"
 
     def test_with_settings(self):

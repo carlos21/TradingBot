@@ -22,12 +22,12 @@ import pytest
 
 from app_factory import AppWiring, Repositories, create_app
 from src.config.models import AccountConfig
+from src.domain.models import Instrument
 from src.infrastructure.database import database as db_module
 from src.infrastructure.database.database_protocol import Base, get_database
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
-from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from tests.fake_ninjatrader.fake_nt import FakeNinjaTrader
@@ -44,6 +44,14 @@ def _setup_in_memory_db() -> Any:
 def _teardown_in_memory_db(original_db: Any, test_db: Any) -> None:
     db_module.db = original_db
     test_db.get_engine().dispose()
+
+
+def _registry_for(pair: str):
+    """Single-instrument registry with the real NT full_name for *pair*."""
+    class _Registry:
+        def get_all(self):
+            return [Instrument(symbol=pair, full_name=f"{pair} 09-26", point_value=2.0)]
+    return _Registry()
 
 
 def _force_ready(app: AppWiring) -> None:
@@ -67,8 +75,8 @@ def _make_app(pair: str, free_ports: dict[str, str], e2e_logger, account_configs
         heartbeat_pub=free_ports["heartbeat"],
         platform_connects=True,
     )
-    gateway = TradingGateway(e2e_logger, config=config, pair=pair, instrument=f"{pair} 09-26")
-    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair=pair, market_filter=MarketClosureFilter(instrument=pair))
+    gateway = TradingGateway(e2e_logger, config=config)
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway)
 
     zmq_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
     multi_executor = MultiAccountExecutor(
@@ -106,6 +114,7 @@ def _make_app(pair: str, free_ports: dict[str, str], e2e_logger, account_configs
         trade_executor=multi_executor,
         logger=e2e_logger,
         db=test_db,
+        instrument_registry=_registry_for(pair),
         session_end_time="23:59",
     )
 

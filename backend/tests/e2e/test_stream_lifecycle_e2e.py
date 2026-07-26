@@ -29,12 +29,12 @@ from src.infrastructure.database import database as db_module
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.gateway.executor import ZMQTradeExecutor
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
-from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.strategies.liquidity_v2.config import CandleConfig
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from tests.e2e.conftest import (
     _default_numbers,
+    _mnq_registry,
     _setup_in_memory_db,
     _teardown_in_memory_db,
 )
@@ -138,8 +138,8 @@ def live_app_idle(
         heartbeat_pub=free_ports["heartbeat"],
         platform_connects=True,
     )
-    gateway = TradingGateway(e2e_logger, config=config, pair="MNQ", instrument="MNQ 09-26")
-    data_source = ZMQDataSource(e2e_logger, gateway=gateway, pair="MNQ", market_filter=MarketClosureFilter(instrument="MNQ"))
+    gateway = TradingGateway(e2e_logger, config=config)
+    data_source = ZMQDataSource(e2e_logger, gateway=gateway)
     trade_executor = ZMQTradeExecutor(gateway, e2e_logger, risk_usd=500)
 
     repos = Repositories(
@@ -159,6 +159,7 @@ def live_app_idle(
         trade_executor=trade_executor,
         logger=e2e_logger,
         db=test_db,
+        instrument_registry=_mnq_registry(),
         session_end_time="23:59",  # late so tests control session-end explicitly
     )
 
@@ -240,7 +241,7 @@ def _push_history(
 ) -> None:
     """Push a history batch + end marker and wait for STREAMING state."""
     nt.send_history_batch(bars)
-    nt.send_history_end()
+    nt.send_history_end(pair="MNQ")
     _wait_until(
         lambda: data_source.is_streaming,
         timeout=timeout,
@@ -358,7 +359,7 @@ def test_stop_then_restart_streams_bars_exactly_once(
         "callbacks were registered more than once"
     )
     assert data_source._duplicate_count == 0
-    matching = [b for b in data_source._historical_bars if b["time"] == live_bar["time"]]
+    matching = [b for b in data_source._bars_by_pair.get("MNQ", []) if b["time"] == live_bar["time"]]
     assert len(matching) == 1
 
     # (e) No ERROR records throughout the whole lifecycle.
@@ -390,7 +391,7 @@ def test_audit_runs_while_streaming(
         fake_nt.send_bar(bar)
         time.sleep(0.1)
     _wait_until(
-        lambda: len(data_source.load_historical_bars("1m")) == len(bars),
+        lambda: len(data_source.load_historical_bars("1m", pair="MNQ")) == len(bars),
         timeout=3.0,
         description="streamed bars to reach the data source cache",
     )

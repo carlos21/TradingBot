@@ -689,7 +689,7 @@ class TestCommandSending:
 
     def test_send_open_order(self):
         logger = FakeLogger()
-        gw = TradingGateway(logger, instrument="MNQ 09-26")
+        gw = TradingGateway(logger)
         gw._running = True
         gw.send_open_order(
             trade_id="T1",
@@ -699,6 +699,8 @@ class TestCommandSending:
             take_profit=110.0,
             risk_points=10.0,
             rr_ratio=1.0,
+            pair="MNQ",
+            instrument="MNQ 09-26",
         )
         assert len(gw._pending_commands) == 1
         assert gw._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
@@ -706,7 +708,7 @@ class TestCommandSending:
 
     def test_send_open_order_with_account(self):
         logger = FakeLogger()
-        gw = TradingGateway(logger, instrument="MNQ 09-26")
+        gw = TradingGateway(logger)
         gw._running = True
         gw.send_open_order(
             trade_id="T1",
@@ -738,31 +740,32 @@ class TestCommandSending:
                 take_profit=110.0,
                 risk_points=10.0,
                 rr_ratio=1.0,
+                pair="MNQ",
             )
 
     def test_send_close_order(self):
         logger = FakeLogger()
-        gw = TradingGateway(logger, instrument="MNQ 09-26")
+        gw = TradingGateway(logger)
         gw._running = True
-        gw.send_close_order("T1", reason="manual", account="Sim101")
+        gw.send_close_order("T1", reason="manual", account="Sim101", instrument="MNQ 09-26")
         assert len(gw._pending_commands) == 1
         assert gw._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("CLOSE order" in m for m in logger.messages)
 
     def test_send_modify_order(self):
         logger = FakeLogger()
-        gw = TradingGateway(logger, instrument="MNQ 09-26")
+        gw = TradingGateway(logger)
         gw._running = True
-        gw.send_modify_order("T1", stop_loss=95.0, take_profit=115.0, account="Sim101")
+        gw.send_modify_order("T1", stop_loss=95.0, take_profit=115.0, account="Sim101", instrument="MNQ 09-26")
         assert len(gw._pending_commands) == 1
         assert gw._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("MODIFY order" in m for m in logger.messages)
 
     def test_send_refresh_request(self):
         logger = FakeLogger()
-        gw = TradingGateway(logger, instrument="MNQ 09-26")
+        gw = TradingGateway(logger)
         gw._running = True
-        gw.send_refresh_request(days=5)
+        gw.send_refresh_request(days=5, instrument="MNQ 09-26")
         assert len(gw._pending_commands) == 1
         assert gw._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("REFRESH" in m for m in logger.messages)
@@ -909,7 +912,7 @@ class TestHandleTestStartSingleAccount:
 
     def test_handle_test_start_default_scenario(self):
         logger = FakeLogger()
-        gw = TradingGateway(logger, instrument="MNQ 09-26")
+        gw = TradingGateway(logger)
         gw._running = True
         gw._command_queue = MagicMock()
         gw._command_queue.maxlen = 10000
@@ -919,13 +922,15 @@ class TestHandleTestStartSingleAccount:
             "entry_price": 100.0,
             "risk_points": 10.0,
             "rr_ratio": 2.0,
+            "pair": "MNQ",
+            "instrument": "MNQ 09-26",
         })
         assert len(gw._test_sequences) >= 1
         assert any("E2E TEST START" in m for m in logger.messages)
 
     def test_handle_test_start_non_multi_account(self):
         logger = FakeLogger()
-        gw = TradingGateway(logger, instrument="MNQ 09-26")
+        gw = TradingGateway(logger)
         gw._running = True
         gw._command_queue = MagicMock()
         gw._command_queue.maxlen = 10000
@@ -935,6 +940,8 @@ class TestHandleTestStartSingleAccount:
             "entry_price": 200.0,
             "risk_points": 20.0,
             "rr_ratio": 1.5,
+            "pair": "MNQ",
+            "instrument": "MNQ 09-26",
         })
         # Find the trade sequence (skip group key if present)
         seq_keys = [k for k in gw._test_sequences if not k.startswith("__")]

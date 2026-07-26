@@ -31,6 +31,18 @@ def register_trades_routes(
     def _trades_controller(req_pair: str | None) -> TradesController:
         if coordinator is not None and req_pair:
             return coordinator.require_session(req_pair).trades_controller
+        if trades_controller is None:
+            abort(400, "A non-empty 'pair' is required")
+        return trades_controller
+
+    def _by_id_controller(trade_id: str) -> TradesController:
+        """Resolve the controller owning *trade_id* via its stored pair."""
+        if coordinator is not None:
+            trade = trades_repo.get_trade(trade_id)
+            if trade is not None and trade.pair:
+                return coordinator.require_session(trade.pair).trades_controller
+        if trades_controller is None:
+            abort(404, "Trade not found")
         return trades_controller
 
     @app.route('/api/trades', methods=['GET'])
@@ -65,7 +77,7 @@ def register_trades_routes(
 
     @app.route('/api/trades/<string:trade_id>/close', methods=['POST'])
     def close_trade(trade_id):
-        return _trades_controller(None).close_trade(trade_id)
+        return _by_id_controller(trade_id).close_trade(trade_id)
 
     @app.route('/api/trades/<string:trade_id>/stop-loss', methods=['POST'])
     def modify_stop_loss(trade_id):
@@ -75,7 +87,7 @@ def register_trades_routes(
             stop_loss = float(stop_loss)
         except (TypeError, ValueError):
             abort(400, '"stop_loss" must be a number')
-        return _trades_controller(None).modify_stop_loss(trade_id, stop_loss)
+        return _by_id_controller(trade_id).modify_stop_loss(trade_id, stop_loss)
 
     @app.route('/api/trades/close-all', methods=['POST'])
     def close_all_trades():

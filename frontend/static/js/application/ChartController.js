@@ -218,6 +218,12 @@ export class ChartController {
       console.log('[ChartController] initBars: already busy, skipping');
       return;
     }
+    if (!this.pair) {
+      // No pinned instrument (no valid ?pair=): nothing to load — the tab
+      // stays empty until the user picks an instrument and the tab reloads.
+      console.log('[ChartController] initBars: no pinned pair, skipping');
+      return;
+    }
     this._seriesBusy = true;
     try {
       const bars = await this._fetchBars(this.currentTF, this.options.startTime);

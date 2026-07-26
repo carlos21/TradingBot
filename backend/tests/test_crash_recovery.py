@@ -115,6 +115,7 @@ def make_recovery_strategy(
             reentry_only=False,
             line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
             max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
+            symbol="MNQ",
         )
         options.breakeven = None
 
@@ -549,6 +550,7 @@ class TestCrashRecoveryEdgeCases:
             reentry_only=False,
             line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
             max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
+            symbol="MNQ",
         )
         opts.breakeven = None
         opts.reentry_after_sl = False

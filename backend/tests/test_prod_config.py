@@ -12,27 +12,27 @@ from src.strategies.liquidity_v2.prod_config import (
 class TestGetProdStrategyNumbers:
 
     def test_returns_strategy_numbers(self):
-        sn = get_prod_strategy_numbers(rr_ratio=5.0)
+        sn = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
         assert isinstance(sn, StrategyNumbers)
 
     def test_rr_ratio_required(self):
-        sn = get_prod_strategy_numbers(rr_ratio=3.3)
+        sn = get_prod_strategy_numbers(rr_ratio=3.3, symbol="MNQ")
         assert sn.rr_ratio == 3.3
 
     def test_custom_rr_ratio(self):
-        sn = get_prod_strategy_numbers(rr_ratio=5.0)
+        sn = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
         assert sn.rr_ratio == 5.0
 
     def test_sl_levels_sorted(self):
-        sn = get_prod_strategy_numbers(rr_ratio=5.0)
+        sn = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
         assert sn.sl_levels == sorted(sn.sl_levels)
 
     def test_min_stop_loss_positive(self):
-        sn = get_prod_strategy_numbers(rr_ratio=5.0)
+        sn = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
         assert sn.min_stop_loss > 0
 
     def test_max_bounce_positive(self):
-        sn = get_prod_strategy_numbers(rr_ratio=5.0)
+        sn = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
         assert sn.max_bounce > 0
 
 
@@ -51,22 +51,22 @@ class TestGetProdCandleConfig:
 class TestGetProdStrategyOptions:
 
     def test_returns_strategy_options(self):
-        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1)
+        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1, symbol="MNQ")
         assert isinstance(opts, StrategyOptions)
 
     def test_has_filters(self):
-        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1)
+        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1, symbol="MNQ")
         assert len(opts.entry_filters) > 0
 
     def test_has_triggers(self):
-        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1)
+        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1, symbol="MNQ")
         assert len(opts.triggers) > 0
 
     def test_reentry_after_sl_enabled(self):
-        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1)
+        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1, symbol="MNQ")
         assert opts.reentry_after_sl is True
 
     def test_reentry_breakeven_configured(self):
-        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1)
+        opts = get_prod_strategy_options(max_bounce=90.0, min_cross_depth=5.0, skip_rollover_days=False, reentry_only=False, line_removal_mode=LineRemovalMode.ON_EVALUATE, max_reentry_attempts=1, symbol="MNQ")
         assert opts.reentry_breakeven is not None
         assert opts.reentry_breakeven.trigger_rr == 2.0

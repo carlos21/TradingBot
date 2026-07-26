@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import os
-import time
 import traceback
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 if TYPE_CHECKING:
     from src.strategies.liquidity_v2.base_strategy import StrategyOptions
@@ -15,15 +15,6 @@ from flask_cors import CORS
 from flask_socketio import SocketIO
 
 from src.analytics import AnalyticsReporter, NoOpReporter
-from src.application.live_readiness import (
-    AlwaysEnabledTradingContext,
-    LiveBarBuffer,
-    MinimumBarsWarmupPolicy,
-    ReadinessMonitor,
-    ReadinessTradingContext,
-    WarmupOrchestrator,
-)
-from src.application.parity_service import ParityCheckService
 from src.application.stream_coordinator import StreamCoordinator
 from src.application.streaming_session import StreamingSession
 from src.bars_loader import BarsLoader
@@ -31,7 +22,6 @@ from src.config.models import AppConfig
 from src.controllers.admin_controller import AdminController
 from src.controllers.trades_controller import TradesController
 from src.domain.models import Instrument
-from src.domain.readiness import ReadinessStateMachine
 from src.domain.repositories import (
     LineRepository,
     LineTriggerStateRepository,
@@ -39,7 +29,6 @@ from src.domain.repositories import (
 )
 from src.events.event_bus import EventBus
 from src.financial_calc import FinancialCalc
-from src.infrastructure.bar_auditor import NinjaTraderBarAuditor
 from src.infrastructure.data_sources.combined_datasource import CombinedDataSource
 from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.infrastructure.event_publisher import (
@@ -47,11 +36,6 @@ from src.infrastructure.event_publisher import (
 )
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
-from src.infrastructure.readiness_progress_adapter import (
-    SocketIOReadinessProgressAdapter,
-)
-from src.infrastructure.market_closure_filter import MarketClosureFilter
-from src.infrastructure.parity_checker import NinjaTraderParityChecker
 from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.infrastructure.repositories.credentials_repository import CredentialRepository
 from src.infrastructure.repositories.decision_log_repository import (
@@ -78,7 +62,6 @@ from src.routes import (
 )
 from src.routes.socketio_handlers import SocketIOLogForwarder, make_system_log_forwarder
 from src.services.analytics_service import AnalyticsService
-from src.services.instrument_registry import InstrumentRegistry
 from src.services.trade_executor import TradeExecutor
 from src.services.trade_logger import TradeLogger
 from src.services.trade_manager import TradeManager
@@ -86,7 +69,6 @@ from src.strategies.liquidity_v2.base_strategy import StrategyOptions
 from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from src.strategies.liquidity_v2.controllers.lines_controller import LinesController
 from src.strategies.protocols import LiquidityStrategy
-from src.strategies.strategy_factory import StrategyFactory
 from src.utils.app_logger import (
     ConsoleLogger,
     FileAndConsoleLogger,
@@ -114,18 +96,56 @@ class Repositories:
 class AppWiring:
     app: Flask
     socketio: SocketIO
-    loader: BarsLoader
-    strategy: LiquidityStrategy
-    trade_manager: TradeManager
-    lines_controller: LinesController
-    trades_controller: TradesController
     admin_controller: AdminController
     data_source: CombinedDataSource
     pair: str
     live_mode: bool = False
     logger: Optional[ILogger] = None
-    bar_auditor: Any | None = None
     coordinator: StreamCoordinator | None = None
+
+    def _session(self) -> StreamingSession:
+        """Resolve this wiring's explicit pair to its streaming session.
+
+        The legacy single-instrument accessors below are thin shims over the
+        coordinator; the session is created lazily on first access.  Nothing
+        here subscribes the instrument — subscriptions happen only via
+        ``join_instrument``.
+        """
+        if self.coordinator is None:
+            raise RuntimeError("AppWiring has no StreamCoordinator")
+        return self.coordinator.require_session(self.pair)
+
+    @property
+    def loader(self) -> BarsLoader:
+        return self._session().bars_loader
+
+    @property
+    def strategy(self) -> LiquidityStrategy:
+        return self._session().strategy
+
+    @property
+    def trade_manager(self) -> TradeManager:
+        return self._session().trade_manager
+
+    @property
+    def lines_controller(self) -> LinesController:
+        return self._session().lines_controller
+
+    @property
+    def trades_controller(self) -> TradesController:
+        return self._session().trades_controller
+
+    @property
+    def readiness_monitor(self):
+        return self._session().readiness_monitor
+
+    @property
+    def parity_service(self):
+        return self._session().parity_service
+
+    @property
+    def bar_auditor(self) -> Any | None:
+        return self._session().bar_auditor
 
 
 def _setup_logging(app: Flask):
@@ -137,139 +157,6 @@ def _setup_logging(app: Flask):
             msg = record.getMessage()
             return not any(p in msg for p in self._NOISY)
     logging.getLogger('werkzeug').addFilter(_QuietFilter())
-
-
-def _create_bar_callbacks(
-    live_mode: bool,
-    trade_manager: TradeManager,
-    strategy: LiquidityStrategy,
-    loader: BarsLoader,
-    data_source: CombinedDataSource,
-    repos: Repositories,
-    pair: str,
-    logger: ILogger,
-):
-    """Create bar processing callbacks based on mode.
-    
-    Returns (bar_callback, stream_end_callback) tuple.
-    """
-    if live_mode:
-        _close_commands_sent: set = set()
-
-        def _check_live_session_end(bar):
-            """Send close commands to NinjaTrader when session ends."""
-            if not trade_manager._session_end_time or not trade_manager._session_tz:
-                return
-            from datetime import datetime
-            bar_dt = datetime.fromtimestamp(bar['time'], tz=trade_manager._session_tz)
-            if bar_dt.time() < trade_manager._session_end_time:
-                return
-            for t in list(trade_manager.open_trades):
-                if t['pair'] != bar['pair'] or t['entry_time'] > bar['time']:
-                    continue
-                if t.get('source') in trade_manager.USER_CONTROLLED_SOURCES:
-                    continue
-                tid = t['trade_id']
-                if tid not in _close_commands_sent:
-                    logger.info(f"[LiveMode] SESSION END — sending close_order to NT for {tid}")
-                    trade_manager.trade_logger.log(tid, "SESSION_END", "Sending close_order to NinjaTrader")
-                    trade_manager.trade_logger.log(tid, "CMD_SENT", "close_order → NinjaTrader")
-                    trade_manager.trade_executor.on_trade_close(tid, bar['close'])
-                    _close_commands_sent.add(tid)
-
-        def combined_bar_callback(bar):
-            # No trade_manager.handle_new_1m_bar — NinjaTrader handles SL/TP
-            strategy.on_raw_bar(bar)
-            if strategy.options.breakeven or strategy.options.reentry_breakeven:
-                strategy.check_breakeven(bar)
-            _check_live_session_end(bar)
-
-        def stream_end_callback(close_price: float, final_time: float):
-            # Send close commands to NT, don't close locally
-            for t in list(trade_manager.open_trades):
-                tid = t['trade_id']
-                if tid not in _close_commands_sent:
-                    logger.info(f"[LiveMode] STREAM END — sending close_order to NT for {tid}")
-                    trade_manager.trade_logger.log(tid, "SESSION_END", "Stream end — sending close_order to NinjaTrader")
-                    trade_manager.trade_logger.log(tid, "CMD_SENT", "close_order → NinjaTrader")
-                    trade_manager.trade_executor.on_trade_close(tid, close_price)
-                    _close_commands_sent.add(tid)
-    else:
-        def combined_bar_callback(bar):
-            # Strategy runs first (entry triggers, phantom exits, line management)
-            strategy.on_raw_bar(bar)
-            # TradeManager checks real trades for SL/TP and emits TRADE_CLOSED events
-            trade_manager.handle_new_1m_bar(bar)
-            # Breakeven is applied only after SL/TP is resolved for the bar
-            if strategy.options.breakeven or strategy.options.reentry_breakeven:
-                strategy.check_breakeven(bar)
-            # Reentries are handled inside strategy.on_raw_bar() on subsequent bars
-            # after the SL hit. Same-bar reentries are blocked by sl_bar_time guard.
-
-        def stream_end_callback(close_price: float, final_time: float):
-            trade_manager.close_remaining_trades_at_stream_end(close_price, final_time)
-
-    return combined_bar_callback, stream_end_callback
-
-
-def _setup_live_mode_callbacks(
-    data_source: CombinedDataSource,
-    strategy: LiquidityStrategy,
-    loader: BarsLoader,
-    repos: Repositories,
-    pair: str,
-    logger: ILogger,
-    socketio: SocketIO,
-    readiness_state_machine: ReadinessStateMachine,
-    history_loaded_deduper: HistoryLoadedDeduper,
-):
-    """Wire the data source into the readiness state machine."""
-    progress_emitter = SocketIOReadinessProgressAdapter(socketio)
-    warmup_orchestrator = WarmupOrchestrator(strategy, logger=logger)
-    warmup_policy = MinimumBarsWarmupPolicy(min_bars=30)
-    bar_buffer = LiveBarBuffer(processor=loader.on_live_bar)
-    monitor = ReadinessMonitor(
-        state_machine=readiness_state_machine,
-        warmup_orchestrator=warmup_orchestrator,
-        warmup_policy=warmup_policy,
-        bar_buffer=bar_buffer,
-        live_bar_processor=loader.on_live_bar,
-        data_source=data_source,
-        socketio_publisher=socketio,
-        history_loaded_emitter=history_loaded_deduper.emit,
-        progress_emitter=progress_emitter,
-        logger=logger,
-    )
-    monitor.set_pair(pair)
-
-    def _on_before_refresh():
-        """Reset strategy and re-add DB lines before fresh bars arrive."""
-        logger.info("[LiveMode] Refresh: resetting strategy...")
-        strategy.reset(preserve_trigger_state=True, preserve_histories=True)
-        loader.reset()
-        for l in repos.lines.list_lines(pair):
-            strategy.add_strategy_line(l.line_id, l.price, creation_timestamp=l.creation_date.timestamp())
-        logger.info("[LiveMode] Refresh: strategy reset, ready for fresh bars.")
-
-    if isinstance(data_source, ZMQDataSource):
-        data_source.on_before_refresh = _on_before_refresh
-        data_source.on_refresh_start = monitor.on_refresh_start
-        data_source.on_history_complete = monitor.on_history_complete
-        data_source.on_live_bar = monitor.on_live_bar
-        data_source.on_gap_detected = monitor.on_gap_detected
-        data_source.on_heartbeat_stale = monitor.on_heartbeat_stale
-        data_source.on_late_history_batch = monitor.on_late_history_batch
-        data_source.set_readiness_monitor(monitor)
-
-        if data_source.gateway is not None:
-            def _on_gateway_connection_change(connected: bool):
-                if connected:
-                    readiness_state_machine.connect()
-                else:
-                    readiness_state_machine.disconnect()
-            data_source.gateway.on_connection_change(_on_gateway_connection_change)
-
-    return monitor
 
 
 class _SessionFactory:
@@ -403,13 +290,7 @@ def create_app(
     # Resolve the instrument registry.  For backward compatibility, fall back to a
     # single-instrument registry built from the configured pair.
     if instrument_registry is None:
-        gateway_instrument = None
-        if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
-            gateway_instrument = data_source.gateway.instrument
-        registry = _SingleInstrumentRegistry(
-            symbol=pair,
-            full_name=gateway_instrument or pair,
-        )
+        registry = _SingleInstrumentRegistry(symbol=pair, full_name=pair)
     else:
         registry = instrument_registry
 
@@ -450,7 +331,6 @@ def create_app(
     coordinator = StreamCoordinator(
         instrument_registry=registry,
         session_factory=session_factory,
-        default_symbol=pair,
         stream_activator=(
             data_source.ensure_instrument_streaming
             if isinstance(data_source, ZMQDataSource)
@@ -462,26 +342,60 @@ def create_app(
     if isinstance(data_source, ZMQDataSource):
         data_source.set_coordinator(coordinator)
 
-    # Create the default session eagerly so legacy AppWiring fields are populated.
-    default_session = coordinator.get_or_create_session(pair)
+    # ------------------------------------------------------------------
+    # Cross-session trade resolution for the shared trade executor.
+    # One executor serves every instrument session, so close/modify/cancel
+    # commands resolve their trade (instrument, account) across all active
+    # sessions instead of a per-session TradeManager reference.
+    # ------------------------------------------------------------------
+    def _full_name_for_symbol(symbol: str | None) -> str | None:
+        if not symbol:
+            return None
+        for instrument in registry.get_all():
+            if instrument.symbol == symbol:
+                return instrument.full_name
+        return None
 
-    # Backward compatibility: expose the default session's readiness monitor on
-    # the data source so legacy tests and callers can introspect it.
-    if isinstance(data_source, ZMQDataSource):
-        data_source.set_readiness_monitor(default_session.readiness_monitor)
+    def _resolve_trade_across_sessions(trade_id: str) -> dict | None:
+        for session in coordinator.get_active_sessions():
+            for trade in session.trade_manager.open_trades:
+                if trade.get("trade_id") == trade_id:
+                    return trade
+        record = repos.trades.get_trade(trade_id)
+        if record is None:
+            return None
+        return {
+            "trade_id": record.trade_id,
+            "pair": record.pair,
+            "account": record.account,
+            "instrument": _full_name_for_symbol(record.pair),
+        }
 
-    # Convenience references for the legacy single-instrument API surface.
-    trade_manager = default_session.trade_manager
-    tstrategy = default_session.strategy
-    loader = default_session.bars_loader
-    bar_auditor = default_session.bar_auditor
-    parity_service = default_session.parity_service
-    readiness_monitor = default_session.readiness_monitor
+    def _cancel_trade_across_sessions(trade_id: str, reason: str) -> None:
+        for session in coordinator.get_active_sessions():
+            trade_manager = session.trade_manager
+            if any(t.get("trade_id") == trade_id for t in trade_manager.open_trades):
+                trade_manager.cancel_trade(trade_id, reason=reason)
+                return
+        # Not found in any session — cancel via an arbitrary session's manager
+        # (cancellation is repository-backed, so any session works).
+        sessions = coordinator.get_active_sessions()
+        if sessions:
+            sessions[0].trade_manager.cancel_trade(trade_id, reason=reason)
+
+    gateway_executor = (
+        trade_executor.gateway_executor
+        if isinstance(trade_executor, MultiAccountExecutor)
+        else trade_executor
+    )
+    if isinstance(gateway_executor, ZMQTradeExecutor):
+        gateway_executor.trade_resolver = _resolve_trade_across_sessions
+        gateway_executor.trade_canceler = _cancel_trade_across_sessions
 
     # Wire async NACK/timeout cleanup back to the executor.
-    if isinstance(trade_executor, ZMQTradeExecutor):
+    if isinstance(gateway_executor, ZMQTradeExecutor):
         if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
-            data_source.gateway.on_command_failed(trade_executor.on_command_failed)
+            data_source.gateway.on_command_failed(gateway_executor.on_command_failed)
 
     # Forward gateway connection changes to every session's readiness state machine.
     if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
@@ -494,9 +408,35 @@ def create_app(
         data_source.gateway.on_connection_change(_on_gateway_connection_change)
 
     # Wire up position sync / broker fill handlers (ZeroMQ only).
-    # These use the default session's trade manager; in a future iteration they
-    # can be routed by the pair reported in the payload.
+    # Fills are routed to the session that owns the trade: first by the
+    # instrument/pair reported in the payload, then by searching every active
+    # session for the trade id.
     if isinstance(data_source, ZMQDataSource) and data_source.gateway is not None:
+        def _symbol_for_payload(payload) -> str | None:
+            """Resolve a payload's instrument full_name or pair to a registry symbol."""
+            reported = payload.get("instrument") or payload.get("pair")
+            if not reported:
+                return None
+            for instrument in registry.get_all():
+                if reported in (instrument.full_name, instrument.symbol):
+                    return instrument.symbol
+            return reported if coordinator.get_session(reported) is not None else None
+
+        def _session_for_trade(payload, trade_id) -> StreamingSession | None:
+            symbol = _symbol_for_payload(payload)
+            if symbol is not None:
+                session = coordinator.get_session(symbol)
+                if session is not None:
+                    return session
+            for session in coordinator.get_active_sessions():
+                if any(t.get("trade_id") == trade_id for t in session.trade_manager.open_trades):
+                    return session
+            # Last resort: the DB record knows which pair the trade belongs to.
+            record = repos.trades.get_trade(trade_id)
+            if record is not None and record.pair:
+                return coordinator.get_or_create_session(record.pair)
+            return None
+
         def _handle_position_sync(payload):
             """Log broker-reported positions after reconnect."""
             positions = payload.get('positions', [])
@@ -527,7 +467,13 @@ def create_app(
             quantity = payload.get('quantity')
             account_balance = payload.get('account_balance')
             if trade_id and entry_price is not None:
-                trade_manager.handle_broker_entry_fill(
+                session = _session_for_trade(payload, trade_id)
+                if session is None:
+                    logger.error(
+                        f"[BrokerFill] Entry fill for unknown trade {trade_id} — no session owns it; dropped"
+                    )
+                    return
+                session.trade_manager.handle_broker_entry_fill(
                     trade_id, entry_price, stop_loss, take_profit, quantity,
                     account_balance=account_balance,
                 )
@@ -544,7 +490,13 @@ def create_app(
             broker_fees = payload.get('commission')
             account_balance = payload.get('account_balance')
             if trade_id and exit_price is not None:
-                trade_manager.handle_broker_fill(
+                session = _session_for_trade(payload, trade_id)
+                if session is None:
+                    logger.error(
+                        f"[BrokerFill] Exit fill for unknown trade {trade_id} — no session owns it; dropped"
+                    )
+                    return
+                session.trade_manager.handle_broker_fill(
                     trade_id,
                     exit_price,
                     result_type,
@@ -560,10 +512,6 @@ def create_app(
         data_source.gateway.on_entry_fill(_handle_entry_fill)
         data_source.gateway.on_exit_fill(_handle_exit_fill)
         logger.info("[ZMQ] Broker fill handlers registered")
-
-    # Create controllers from the default session.
-    lines_controller = default_session.lines_controller
-    trades_controller = default_session.trades_controller
 
     # Initialize analytics service and admin controller
     analytics_service = AnalyticsService(repos.trades)
@@ -610,7 +558,9 @@ def create_app(
         mt_service = MetaTraderManagerService()
         platform_lifecycle = MetaTraderLifecycleService(mt_service, logger, settings_service=settings_service)
 
-    # Register routes
+    # Register routes.  Per-instrument controllers are resolved from the
+    # coordinator by explicit pair (see lines/trades/debug routes); there is
+    # no default session to fall back to.
     register_core_routes(
         app, pair, data_source, logger=logger,
         frontend_dir=frontend_dir,
@@ -618,8 +568,8 @@ def create_app(
         platform_label=_platform_label,
         settings_service=settings_service,
     )
-    register_lines_routes(app, lines_controller, logger, coordinator=coordinator)
-    register_trades_routes(app, trades_controller, repos.trades, pair, trade_logger, logger, coordinator=coordinator)
+    register_lines_routes(app, None, logger, coordinator=coordinator, lines_repo=repos.lines)
+    register_trades_routes(app, None, repos.trades, pair, trade_logger, logger, coordinator=coordinator)
     register_admin_routes(app, admin_controller, logger, frontend_dir=frontend_dir)
     register_settings_routes(app, settings_controller, logger)
     register_nt_routes(app, nt_service, deploy_service, logger)
@@ -627,12 +577,12 @@ def create_app(
         register_mt_routes(app, mt_service, deploy_service, logger)
     register_stream_routes(app, data_source, platform_lifecycle, socketio, logger, coordinator=coordinator)
     register_debug_routes(
-        app, tstrategy, loader, trade_manager, repos.lines, repos.trades,
-        data_source, pair, notifier, analytics, logger=logger
+        app, None, None, None, repos.lines, repos.trades,
+        data_source, pair, notifier, analytics, logger=logger, coordinator=coordinator,
     )
     register_socketio_handlers(
-        socketio, loader, data_source, live_mode, logger, parity_service,
-        readiness_monitor=readiness_monitor,
+        socketio, None, data_source, live_mode, logger, None,
+        readiness_monitor=None,
         history_loaded_deduper=history_loaded_deduper,
         coordinator=coordinator,
     )
@@ -662,16 +612,10 @@ def create_app(
     return AppWiring(
         app=app,
         socketio=socketio,
-        loader=loader,
-        strategy=tstrategy,
-        trade_manager=trade_manager,
-        lines_controller=lines_controller,
-        trades_controller=trades_controller,
         admin_controller=admin_controller,
         data_source=data_source,
         pair=pair,
         live_mode=live_mode,
         logger=logger,
-        bar_auditor=bar_auditor,
         coordinator=coordinator,
     )

@@ -7,33 +7,26 @@ const instruments = [
 ];
 
 describe('resolvePinnedPair', () => {
-  it('URL pair wins when it matches a known instrument symbol', () => {
-    expect(resolvePinnedPair('MES', instruments, 'MNQ')).toBe('MES');
+  it('returns the URL pair when it matches a known instrument symbol', () => {
+    expect(resolvePinnedPair('MES', instruments)).toBe('MES');
+    expect(resolvePinnedPair('MNQ', instruments)).toBe('MNQ');
   });
 
-  it('falls back to the default pair when the URL pair is unknown', () => {
-    expect(resolvePinnedPair('ES', instruments, 'MNQ')).toBe('MNQ');
+  it('returns null when the URL pair is unknown — no fallback', () => {
+    expect(resolvePinnedPair('ES', instruments)).toBe(null);
   });
 
-  it('falls back to the default pair when there is no URL pair', () => {
-    expect(resolvePinnedPair(null, instruments, 'MNQ')).toBe('MNQ');
+  it('returns null when there is no URL pair — no fallback', () => {
+    expect(resolvePinnedPair(null, instruments)).toBe(null);
   });
 
-  it('falls back to the first instrument when there is no URL pair or default', () => {
-    expect(resolvePinnedPair(null, instruments, null)).toBe('MNQ');
-  });
-
-  it('returns null when the catalog is empty and there is no default', () => {
-    expect(resolvePinnedPair(null, [], null)).toBe(null);
-    expect(resolvePinnedPair('MNQ', [], undefined)).toBe(null);
-  });
-
-  it('returns the default pair even when the catalog is empty', () => {
-    expect(resolvePinnedPair(null, [], 'MNQ')).toBe('MNQ');
+  it('returns null when the catalog is empty', () => {
+    expect(resolvePinnedPair(null, [])).toBe(null);
+    expect(resolvePinnedPair('MNQ', [])).toBe(null);
   });
 
   it('treats a non-array catalog as empty', () => {
-    expect(resolvePinnedPair('MNQ', undefined, null)).toBe(null);
+    expect(resolvePinnedPair('MNQ', undefined)).toBe(null);
   });
 });
 

@@ -100,7 +100,7 @@ def _send_history_and_go_live(nt, app, bars: list[dict[str, Any]] | None = None)
     if bars is None:
         bars = _build_history()
     nt.send_history_batch(bars)
-    nt.send_history_end()
+    nt.send_history_end(pair="MNQ")
     _wait_for_state(app, ReadinessState.READY)
     # The state machine only moves READY -> LIVE when a completed live bar arrives.
     live_bar = _make_bar(int(time.time()), 101.0, 102.0, 100.5, 101.5, 10)
@@ -142,7 +142,7 @@ class TestReconnectResilience:
         _wait_for_state(app, ReadinessState.LIVE, timeout=3.0)
 
         # Live bars must flow again.
-        cached = app.data_source.load_historical_bars("1m")
+        cached = app.data_source.load_historical_bars("1m", pair="MNQ")
         assert any(b["time"] == live_bar["time"] for b in cached)
 
     def test_real_reconnect_refreshes_history(self, e2e_harness_resilience: E2EHarness) -> None:
@@ -164,7 +164,7 @@ class TestReconnectResilience:
 
         # Send fresh history and end; feed a new live bar to reach LIVE again.
         nt.send_history_batch(_build_history())
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         _wait_for_state(app, ReadinessState.READY, timeout=5.0)
         live_bar = _make_bar(int(time.time()), 101.5, 102.0, 101.0, 101.8, 50)
         _feed_bar(nt, live_bar)
@@ -183,7 +183,7 @@ class TestHistoryEdgeCases:
 
         # Send history immediately after connect, before the delayed refresh timer fires.
         nt.send_history_batch(_build_history())
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         _wait_for_state(app, ReadinessState.READY, timeout=5.0)
         live_bar = _make_bar(int(time.time()), 101.0, 102.0, 100.5, 101.5, 10)
         _feed_bar(nt, live_bar)
@@ -200,14 +200,14 @@ class TestHistoryEdgeCases:
         app = e2e_harness_resilience.app
 
         nt.send_history_batch([])
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
 
         # The monitor should schedule a retry and request a refresh.
         nt.wait_for_command("refresh_request", timeout=5.0)
 
         # Now supply history and a new completed live bar to reach LIVE.
         nt.send_history_batch(_build_history())
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         _wait_for_state(app, ReadinessState.READY, timeout=5.0)
         live_bar = _make_bar(int(time.time()), 101.0, 102.0, 100.5, 101.5, 10)
         _feed_bar(nt, live_bar)
@@ -255,7 +255,7 @@ class TestHistoryEdgeCases:
         monkeypatch.setattr(app.strategy, "on_raw_bar", raising_on_raw_bar)
 
         nt.send_history_batch(history)
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
 
         # Give warmup time to fail.
         time.sleep(0.5)

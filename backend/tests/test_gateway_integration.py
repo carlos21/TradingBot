@@ -21,17 +21,15 @@ from tests.fakes import FakeLogger
 class TestCreateLiveComponents:
     def test_basic_creation(self):
         logger = FakeLogger()
-        data_source, trade_executor = create_live_components(pair="MNQ", logger=logger)
+        data_source, trade_executor = create_live_components(logger=logger)
 
         assert isinstance(data_source, ZMQDataSource)
         assert isinstance(trade_executor, ZMQTradeExecutor)
-        assert data_source.pair == "MNQ"
         assert trade_executor._gateway is data_source.gateway
 
     def test_account_names_set_on_gateway(self):
         logger = FakeLogger()
         data_source, _ = create_live_components(
-            pair="MNQ",
             logger=logger,
             account_names=["Sim101", "Sim102"],
         )
@@ -40,7 +38,6 @@ class TestCreateLiveComponents:
     def test_risk_params_passed_to_executor(self):
         logger = FakeLogger()
         _, trade_executor = create_live_components(
-            pair="MNQ",
             logger=logger,
             risk_usd=100.0,
             risk_pct=1.5,
@@ -51,7 +48,6 @@ class TestCreateLiveComponents:
     def test_custom_host_and_ports(self):
         logger = FakeLogger()
         data_source, _ = create_live_components(
-            pair="ES",
             logger=logger,
             host="0.0.0.0",
             market_port=6000,
@@ -74,7 +70,7 @@ class TestCreateLiveComponents:
         mock_ctx_cls.return_value = mock_ctx
 
         logger = FakeLogger()
-        data_source, _ = create_live_components(pair="MNQ", logger=logger)
+        data_source, _ = create_live_components(logger=logger)
 
         data_source.start()
         assert data_source.gateway._running is True
@@ -92,7 +88,6 @@ class TestCreateMultiAccountLiveComponents:
             AccountConfig(name="Sim102", risk_pct=1.0),
         ]
         data_source, executor = create_multi_account_live_components(
-            pair="MNQ",
             logger=logger,
             account_configs=account_configs,
             risk_usd=100.0,
@@ -111,7 +106,6 @@ class TestCreateMultiAccountLiveComponents:
             AccountConfig(name="A2"),
         ]
         data_source, _ = create_multi_account_live_components(
-            pair="MNQ",
             logger=logger,
             account_configs=account_configs,
         )
@@ -121,7 +115,6 @@ class TestCreateMultiAccountLiveComponents:
         logger = FakeLogger()
         account_configs = [AccountConfig(name="Sim101", risk_usd=75.0)]
         _, executor = create_multi_account_live_components(
-            pair="MNQ",
             logger=logger,
             account_configs=account_configs,
             risk_usd=200.0,
@@ -134,15 +127,13 @@ class TestCreateMultiAccountLiveComponents:
 class TestCreateGatewayOnly:
     def test_returns_trading_gateway(self):
         logger = FakeLogger()
-        gateway = create_gateway_only(pair="ES", logger=logger)
+        gateway = create_gateway_only(logger=logger)
         assert isinstance(gateway, TradingGateway)
-        assert gateway.pair == "ES"
         assert gateway.config.platform_connects is True
 
     def test_custom_config(self):
         logger = FakeLogger()
         gateway = create_gateway_only(
-            pair="MNQ",
             logger=logger,
             host="192.168.1.1",
             market_port=7000,
@@ -164,7 +155,7 @@ class TestCreateGatewayOnly:
         mock_ctx_cls.return_value = mock_ctx
 
         logger = FakeLogger()
-        gateway = create_gateway_only(pair="MNQ", logger=logger)
+        gateway = create_gateway_only(logger=logger)
         gateway.start()
         assert gateway._running is True
         gateway.stop()

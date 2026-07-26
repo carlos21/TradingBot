@@ -18,7 +18,7 @@ class PriceResolver:
         if self._bars_loader._1m_buffer:
             return self._bars_loader._1m_buffer[-1]['close']
 
-        bars = self._bars_loader.data_source.load_historical_bars('1m')
+        bars = self._bars_loader.data_source.load_historical_bars('1m', pair=self._bars_loader.pair)
         if bars:
             return bars[-1]['close']
 

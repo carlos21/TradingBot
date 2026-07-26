@@ -19,6 +19,7 @@ class BarsLoader:
         stream_end_callback: Callable[[float, float], None] = None,
         bars_per_second: float = 10.0,
         room: str | None = None,
+        pair: str | None = None,
     ):
         self.data_source     = data_source
         self.socketio        = socketio
@@ -28,6 +29,9 @@ class BarsLoader:
         self.bars_per_second = bars_per_second if bars_per_second > 0 else 1.0
         self._emit_delay     = 1.0 / self.bars_per_second
         self._room = room
+        # Instrument this loader serves; scopes every bar-cache read.  May be
+        # None for single-pair data sources (e.g. CSV replay) that ignore it.
+        self.pair = pair
 
         self._from_time    = 0
         self.streaming     = False
@@ -333,7 +337,7 @@ class BarsLoader:
                 self._fast_jump_mode = False
 
     def _get_source_bars(self):
-        return self.data_source.load_historical_bars('1m')
+        return self.data_source.load_historical_bars('1m', pair=self.pair)
 
     def _get_all_bars(self):
         bars = self._get_source_bars()
@@ -362,7 +366,7 @@ class BarsLoader:
             return self._last_played_ts or self._from_time
 
         base_ts = 0
-        bars = self.data_source.load_historical_bars('1m')
+        bars = self.data_source.load_historical_bars('1m', pair=self.pair)
         if bars:
             base_ts = bars[-1]["time"]
         elif self._last_played_ts:

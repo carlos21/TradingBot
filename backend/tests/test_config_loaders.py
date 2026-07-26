@@ -30,7 +30,9 @@ class TestDbConfigLoader:
         assert cfg.zmq_host == "0.0.0.0"
         assert cfg.flask_port == 5002
 
-    def test_loads_instruments(self, tmp_path):
+    def test_instruments_setting_does_not_override_config(self, tmp_path):
+        """The ``instruments`` setting belongs to the instrument registry;
+        DbConfigLoader must not apply it to AppConfig (no default instrument)."""
         db_path = f"sqlite:///{tmp_path / 'instruments_loader.db'}"
         setup_database(db_url=db_path)
         from src.infrastructure.database.database import get_db_session
@@ -45,9 +47,8 @@ class TestDbConfigLoader:
 
         loader = DbConfigLoader(db_path=db_path)
         cfg = loader.load()
-        assert cfg.pair == "NQ"
-        assert cfg.instrument == "NQ 09-26"
-        assert cfg.point_value == 5.0
+        assert cfg.pair == "MNQ"       # AppConfig default, untouched
+        assert cfg.point_value == 2.0  # AppConfig default, untouched
 
     def test_loads_accounts(self, db_loader):
         cfg = db_loader.load()

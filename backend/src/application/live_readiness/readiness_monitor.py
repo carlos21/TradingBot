@@ -53,6 +53,7 @@ class ReadinessMonitor:
         logger: ILogger | None = None,
         retry_base_delay_sec: float = 2.0,
         retry_max_delay_sec: float = 60.0,
+        history_bars_provider: Callable[[], list[dict[str, Any]]] | None = None,
     ) -> None:
         self._state_machine = state_machine
         self._warmup_orchestrator = warmup_orchestrator
@@ -71,6 +72,9 @@ class ReadinessMonitor:
             )
             self._warmup_orchestrator.set_progress_listener(multicaster)
         self._logger = logger
+        # Returns the cached bars of this monitor's own instrument; used for
+        # the history-completeness check so no default cache is consulted.
+        self._history_bars_provider = history_bars_provider
 
         # Observe the state machine so progress tracking stays in sync with
         # every transition, including those driven by other components.
@@ -155,6 +159,7 @@ class ReadinessMonitor:
                 "readiness_reason": self._state_machine.reason,
                 "bar_count": len(bars),
                 "last_bar_time": bars[-1].get("time") if bars else None,
+                "pair": self._pair,
             }
             with contextlib.suppress(Exception):
                 if self._history_loaded_emitter is not None:
@@ -357,7 +362,12 @@ class ReadinessMonitor:
                 self._bar_buffer.flush()
 
             if self._data_source is not None:
-                complete, reason = self._data_source.check_history_completeness()
+                if self._history_bars_provider is not None:
+                    complete, reason = self._data_source.check_history_completeness(
+                        bars=self._history_bars_provider()
+                    )
+                else:
+                    complete, reason = self._data_source.check_history_completeness()
                 if not complete:
                     if self._logger:
                         self._logger.info(f"[Readiness] History not ready: {reason}")
