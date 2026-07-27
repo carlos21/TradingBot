@@ -74,7 +74,13 @@ class StreamCoordinator:
             return self._sessions.get(symbol)
 
     def join_instrument(self, symbol: str, sid: str) -> StreamingSession:
-        """Add a client to an instrument room and start streaming if needed."""
+        """Add a client to an instrument room and start streaming.
+
+        The session is created (if needed) and the data source is asked to
+        subscribe the instrument so chart data loads. Trading eligibility is
+        handled separately by the strategy/trade manager based on account
+        instrument assignments.
+        """
         with self._session_lock:
             session = self.get_or_create_session(symbol)
             session.join_client(sid)

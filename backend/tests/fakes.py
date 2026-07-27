@@ -54,7 +54,7 @@ class DummySocketIO:
     def __init__(self):
         self.events = []
 
-    def emit(self, event, payload):
+    def emit(self, event, payload, **kwargs):
         self.events.append((event, payload))
 
     def start_background_task(self, target, *args, **kwargs):

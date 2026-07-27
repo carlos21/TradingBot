@@ -13,7 +13,10 @@ describe('NtAccountsDisplay', () => {
   beforeEach(() => {
     document.body.innerHTML = `
       <div id="ntAccountsDisplay"></div>
-      <div id="ntAccountsWarning" class="hidden"><a href="#">Settings</a></div>
+      <div id="ntAccountsWarning" class="hidden">
+        <span id="ntAccountsWarningMessage">⚠️ No NT accounts configured — live trading is disabled.</span>
+        <a href="#">Settings</a>
+      </div>
       <div id="testTradeControls"></div>
     `;
     vi.restoreAllMocks();
@@ -273,5 +276,71 @@ describe('NtAccountsDisplay', () => {
     expect(document.getElementById('ntAccountsDisplay').textContent).toContain('No accounts');
     expect(document.getElementById('ntAccountsWarning').classList.contains('hidden')).toBe(false);
     expect(document.getElementById('testTradeControls').classList.contains('hidden')).toBe(true);
+  });
+
+  it('shows warning when active symbol is not assigned to any live account', async () => {
+    mockFetch([
+      { name: 'AccountA', live_enabled: true, instrument_symbols: ['MNQ'] },
+      { name: 'AccountB', live_enabled: true, instrument_symbols: ['ES'] },
+    ]);
+
+    const display = new NtAccountsDisplay({ on: () => {}, emit: () => {} }, 'MES');
+    await display.loadAccounts();
+
+    expect(document.getElementById('ntAccountsWarning').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('ntAccountsWarningMessage').textContent).toContain('MES');
+    expect(document.getElementById('testTradeControls').classList.contains('hidden')).toBe(true);
+  });
+
+  it('hides warning when active symbol is assigned to a live account', async () => {
+    mockFetch([
+      { name: 'AccountA', live_enabled: true, instrument_symbols: ['MNQ'] },
+      { name: 'AccountB', live_enabled: true, instrument_symbols: ['MES'] },
+    ]);
+
+    const display = new NtAccountsDisplay({ on: () => {}, emit: () => {} }, 'MES');
+    await display.loadAccounts();
+
+    expect(document.getElementById('ntAccountsWarning').classList.contains('hidden')).toBe(true);
+    expect(document.getElementById('testTradeControls').classList.contains('hidden')).toBe(false);
+  });
+
+  it('shows warning when active symbol is assigned only to non-live accounts', async () => {
+    mockFetch([
+      { name: 'AccountA', live_enabled: false, instrument_symbols: ['MES'] },
+    ]);
+
+    const display = new NtAccountsDisplay({ on: () => {}, emit: () => {} }, 'MES');
+    await display.loadAccounts();
+
+    expect(document.getElementById('ntAccountsWarning').classList.contains('hidden')).toBe(false);
+    expect(document.getElementById('ntAccountsWarningMessage').textContent).toContain('MES');
+  });
+
+  it('ignores activeSymbol when null and falls back to live account count', async () => {
+    mockFetch([
+      { name: 'AccountA', live_enabled: true, instrument_symbols: ['MNQ'] },
+    ]);
+
+    const display = new NtAccountsDisplay({ on: () => {}, emit: () => {} }, null);
+    await display.loadAccounts();
+
+    expect(document.getElementById('ntAccountsWarning').classList.contains('hidden')).toBe(true);
+  });
+
+  it('renders only accounts assigned to the active symbol', async () => {
+    mockFetch([
+      { name: 'MNQAccount', live_enabled: true, instrument_symbols: ['MNQ'] },
+      { name: 'MESAccount', live_enabled: true, instrument_symbols: ['MES'] },
+      { name: 'BothAccount', live_enabled: true, instrument_symbols: ['MNQ', 'MES'] },
+    ]);
+
+    const display = new NtAccountsDisplay({ on: () => {}, emit: () => {} }, 'MES');
+    await display.loadAccounts();
+
+    const container = document.getElementById('ntAccountsDisplay');
+    expect(container.textContent).toContain('MESAccount');
+    expect(container.textContent).toContain('BothAccount');
+    expect(container.textContent).not.toContain('MNQAccount');
   });
 });

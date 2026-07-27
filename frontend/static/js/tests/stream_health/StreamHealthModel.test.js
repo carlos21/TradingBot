@@ -78,6 +78,11 @@ describe('StreamHealthModel', () => {
     expect(model.alertLevel).toBe('error');
   });
 
+  it('sets error alert when degraded', () => {
+    model.updateFromHealth({ readiness_state: 'DEGRADED', platform_connected: true });
+    expect(model.alertLevel).toBe('error');
+  });
+
   it('sets error alert when platform is not connected', () => {
     model.updateFromHealth({ readiness_state: 'READY', platform_connected: false });
     expect(model.alertLevel).toBe('error');

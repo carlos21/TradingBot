@@ -22,6 +22,7 @@ from src.infrastructure.database.database_protocol import Base, get_database
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
+from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
 from src.strategies.liquidity_v2.config import CandleConfig, StrategyNumbers
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
@@ -81,6 +82,16 @@ def _setup_in_memory_db() -> Any:
 def _teardown_in_memory_db(original_db: Any, test_db: Any) -> None:
     db_module.db = original_db
     test_db.get_engine().dispose()
+
+
+def _seed_accounts_for_mnq(db: Any) -> None:
+    """Persist a live-enabled account assigned to MNQ so streaming is eligible."""
+    repo = NtAccountRepository(db=db)
+    repo.upsert(
+        name="Sim101",
+        live_enabled=True,
+        instrument_symbols=["MNQ"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +194,8 @@ def live_app(
         trades=FakeTradeRepository(),
     )
 
+    _seed_accounts_for_mnq(test_db)
+
     wiring = create_app(
         pair="MNQ",
         data_source=data_source,
@@ -232,6 +245,8 @@ def live_app_scenario(
         lines=FakeLineRepository(),
         trades=FakeTradeRepository(),
     )
+
+    _seed_accounts_for_mnq(test_db)
 
     numbers = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
     options = get_prod_strategy_options(
@@ -311,6 +326,8 @@ def live_app_multi(
         lines=FakeLineRepository(),
         trades=FakeTradeRepository(),
     )
+
+    _seed_accounts_for_mnq(test_db)
 
     wiring = create_app(
         pair="MNQ",
@@ -454,6 +471,8 @@ def live_app_resilience(
         lines=FakeLineRepository(),
         trades=FakeTradeRepository(),
     )
+
+    _seed_accounts_for_mnq(test_db)
 
     wiring = create_app(
         pair="MNQ",

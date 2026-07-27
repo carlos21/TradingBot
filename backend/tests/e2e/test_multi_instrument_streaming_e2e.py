@@ -24,6 +24,7 @@ from src.infrastructure.database import database as db_module
 from src.infrastructure.gateway.datasource import ZMQDataSource
 from src.infrastructure.gateway.executor import ZMQTradeExecutor
 from src.infrastructure.gateway.gateway import GatewayConfig, TradingGateway
+from src.infrastructure.repositories.accounts_repository import NtAccountRepository
 from src.strategies.liquidity_v2.config import CandleConfig
 from src.strategies.liquidity_v2.constants import DEFAULT_STRATEGY_OPTIONS
 from tests.e2e.conftest import (
@@ -48,12 +49,12 @@ class _TwoInstrumentRegistry:
         pass
 
 
-@pytest.fixture
-def live_app_two_instruments(
+def _make_two_instrument_app(
     free_ports: dict[str, str],
     e2e_logger: FakeLogger,
+    warmup_min_bars: int = 30,
 ):
-    """Full live wiring whose registry contains MNQ + MES."""
+    """Build the live wiring whose registry contains MNQ + MES."""
     original_db = db_module.db
     test_db = _setup_in_memory_db()
 
@@ -73,6 +74,14 @@ def live_app_two_instruments(
         trades=FakeTradeRepository(),
     )
 
+    # Seed accounts so both instruments are eligible for streaming.
+    accounts_repo = NtAccountRepository(db=test_db)
+    accounts_repo.upsert(
+        name="Sim101",
+        live_enabled=True,
+        instrument_symbols=["MNQ", "MES"],
+    )
+
     wiring = create_app(
         pair="MNQ",
         data_source=data_source,
@@ -87,8 +96,44 @@ def live_app_two_instruments(
         db=test_db,
         session_end_time="23:59",
         instrument_registry=_TwoInstrumentRegistry(),
+        warmup_min_bars=warmup_min_bars,
     )
 
+    return wiring, original_db, test_db
+
+
+@pytest.fixture
+def live_app_two_instruments(
+    free_ports: dict[str, str],
+    e2e_logger: FakeLogger,
+):
+    """Full live wiring whose registry contains MNQ + MES."""
+    wiring, original_db, test_db = _make_two_instrument_app(
+        free_ports, e2e_logger, warmup_min_bars=30
+    )
+    data_source = wiring.data_source
+    data_source.start()
+    try:
+        yield wiring
+    finally:
+        data_source.stop()
+        _teardown_in_memory_db(original_db, test_db)
+
+
+@pytest.fixture
+def live_app_two_instruments_low_warmup(
+    free_ports: dict[str, str],
+    e2e_logger: FakeLogger,
+):
+    """Same as live_app_two_instruments but with a low warmup bar count.
+
+    Lets a second instrument reach READY/LIVE in tests without needing hundreds
+    of historical bars.
+    """
+    wiring, original_db, test_db = _make_two_instrument_app(
+        free_ports, e2e_logger, warmup_min_bars=10
+    )
+    data_source = wiring.data_source
     data_source.start()
     try:
         yield wiring
@@ -119,9 +164,13 @@ def _make_bar(t: int, open_: float, high: float, low: float, close: float,
     }
 
 
-def _build_history(bar_count: int, pair: str) -> list[dict[str, Any]]:
-    """Contiguous fresh 1m bars ending at the current minute boundary."""
-    end = (int(time.time()) // 60) * 60
+def _build_history(bar_count: int, pair: str, future_minutes: int = 0) -> list[dict[str, Any]]:
+    """Contiguous fresh 1m bars ending at the current minute boundary.
+
+    ``future_minutes`` shifts the whole window into the future so the last bar
+    stays fresh (<60s old) while long warm-up replays run in tests.
+    """
+    end = ((int(time.time()) // 60) + future_minutes) * 60
     start = end - (bar_count - 1) * 60
     return [
         _make_bar(start + i * 60, 21000.0 + i, 21010.0 + i, 20990.0 + i, 21005.0 + i, pair=pair)
@@ -315,3 +364,192 @@ def test_second_instrument_refresh_flow_isolated_from_first(
     finally:
         app.socketio.emit = orig_emit
         coordinator.route_bar = orig_route_bar
+
+
+def test_mes_first_mnq_second_advances_past_connected(
+    fake_nt: FakeNinjaTrader,
+    live_app_two_instruments: AppWiring,
+) -> None:
+    """Regression: a second instrument joining mid-stream must not stay CONNECTED.
+
+    Scenario: MES is already streaming; the user opens MNQ in another tab.
+    The MNQ session must receive its own history, advance past CONNECTED to
+    WARMING_UP, emit history_loaded to the MNQ room, and process live MNQ bars.
+    Reaching READY/LIVE requires enough historical bars to warm every strategy
+    timeframe (hundreds of 1m bars), so this test verifies the pipeline advances
+    far enough that the Stream Health panel is no longer stuck on CONNECTED.
+    """
+    app = live_app_two_instruments
+    data_source = app.data_source
+    coordinator = app.coordinator
+
+    history_loaded_payloads: list[dict] = []
+    readiness_payloads: list[dict] = []
+    orig_emit = app.socketio.emit
+
+    def _emit_catcher(event, *args, **kwargs):
+        if event == "history_loaded":
+            history_loaded_payloads.append(args[0] if args else kwargs.get("data"))
+        if event == "readiness_changed":
+            readiness_payloads.append(args[0] if args else kwargs.get("data"))
+        return orig_emit(event, *args, **kwargs)
+
+    app.socketio.emit = _emit_catcher
+
+    try:
+        # (a) Start MES first and let it reach STREAMING.
+        coordinator.join_instrument("MES", "fake-sid-mes")
+        time.sleep(0.3)
+        fake_nt.send_connect(pair="MES")
+        _wait_until(
+            lambda: _command_seen(fake_nt, "subscribe", "MES 09-26"),
+            description="MES subscribe command",
+        )
+        mes_history = _build_history(60, "MES")
+        fake_nt.send_history_batch(mes_history, pair="MES")
+        fake_nt.send_history_end(pair="MES")
+        _wait_until(lambda: data_source.is_streaming, description="MES STREAMING")
+        _wait_until(
+            lambda: any(p and p.get("pair") == "MES" for p in history_loaded_payloads),
+            description="history_loaded for MES",
+        )
+
+        # (b) MNQ joins while MES is streaming.
+        coordinator.join_instrument("MNQ", "fake-sid-mnq")
+        mnq_session = coordinator.get_session("MNQ")
+        assert mnq_session is not None
+        assert mnq_session.readiness_monitor._state_machine.state.name == "CONNECTED"
+        _wait_until(
+            lambda: _command_seen(fake_nt, "subscribe", "MNQ 09-26"),
+            description="MNQ subscribe command",
+        )
+        _wait_until(
+            lambda: _command_seen(fake_nt, "refresh_request", "MNQ 09-26"),
+            description="MNQ refresh_request command",
+        )
+
+        # (c) Platform starts the MNQ refresh and sends its history.
+        fake_nt.send_refresh_start(pair="MNQ")
+        mnq_history = _build_history(60, "MNQ")
+        fake_nt.send_history_batch(mnq_history, pair="MNQ")
+        fake_nt.send_history_end(pair="MNQ")
+
+        # (d) MNQ readiness monitor must advance past CONNECTED so the Stream
+        # Health panel is not stuck on the Connected step.
+        _wait_until(
+            lambda: mnq_session.readiness_monitor._state_machine.state.name
+            in ("WARMING_UP", "READY", "LIVE"),
+            description="MNQ readiness to advance past CONNECTED",
+        )
+        _wait_until(
+            lambda: any(p and p.get("pair") == "MNQ" for p in history_loaded_payloads),
+            description="history_loaded for MNQ",
+        )
+
+        # Readiness events for MNQ must be scoped to the MNQ instrument room.
+        mnq_readiness = [p for p in readiness_payloads if p.get("pair") == "MNQ"]
+        assert any(p["state"] != "CONNECTED" for p in mnq_readiness)
+
+        # (e) A live MNQ bar is processed and stored in the MNQ cache only.
+        mnq_live = _make_bar(
+            mnq_history[-1]["time"] + 60,
+            22000.0, 22010.0, 21990.0, 22005.0, 400, pair="MNQ",
+        )
+        fake_nt.send_bar(mnq_live)
+        _wait_until(
+            lambda: any(b["time"] == mnq_live["time"] for b in data_source._bars_by_pair["MNQ"]),
+            description="live MNQ bar in MNQ cache",
+        )
+        assert all(b["pair"] == "MES" for b in data_source._bars_by_pair.get("MES", []))
+    finally:
+        app.socketio.emit = orig_emit
+
+
+def test_second_instrument_reaches_ready_and_live(
+    fake_nt: FakeNinjaTrader,
+    live_app_two_instruments_low_warmup: AppWiring,
+) -> None:
+    """Regression: a second instrument must reach READY/LIVE, not stay CONNECTED.
+
+    Scenario: MES is already streaming; the user opens MNQ in another tab.
+    With a low warmup minimum, MNQ receives enough historical bars to warm
+    every timeframe, pass the completeness check, reach READY, and then move
+    to LIVE when the first live bar arrives.
+    """
+    app = live_app_two_instruments_low_warmup
+    data_source = app.data_source
+    coordinator = app.coordinator
+
+    readiness_payloads: list[dict] = []
+    orig_emit = app.socketio.emit
+
+    def _emit_catcher(event, *args, **kwargs):
+        if event == "readiness_changed":
+            readiness_payloads.append(args[0] if args else kwargs.get("data"))
+        return orig_emit(event, *args, **kwargs)
+
+    app.socketio.emit = _emit_catcher
+
+    try:
+        # (a) Start MES first and let it reach STREAMING.
+        coordinator.join_instrument("MES", "fake-sid-mes")
+        time.sleep(0.3)
+        fake_nt.send_connect(pair="MES")
+        _wait_until(
+            lambda: _command_seen(fake_nt, "subscribe", "MES 09-26"),
+            description="MES subscribe command",
+        )
+        mes_history = _build_history(60, "MES")
+        fake_nt.send_history_batch(mes_history, pair="MES")
+        fake_nt.send_history_end(pair="MES")
+        _wait_until(lambda: data_source.is_streaming, description="MES STREAMING")
+
+        # (b) MNQ joins while MES is streaming.
+        coordinator.join_instrument("MNQ", "fake-sid-mnq")
+        mnq_session = coordinator.get_session("MNQ")
+        assert mnq_session is not None
+        _wait_until(
+            lambda: _command_seen(fake_nt, "subscribe", "MNQ 09-26"),
+            description="MNQ subscribe command",
+        )
+        _wait_until(
+            lambda: _command_seen(fake_nt, "refresh_request", "MNQ 09-26"),
+            description="MNQ refresh_request command",
+        )
+
+        # (c) Platform starts the MNQ refresh and sends enough history to warm
+        # every internal timeframe (including 15m).
+        fake_nt.send_refresh_start(pair="MNQ")
+        mnq_history = _build_history(180, "MNQ", future_minutes=1)
+        fake_nt.send_history_batch(mnq_history, pair="MNQ")
+        fake_nt.send_history_end(pair="MNQ")
+
+        # (d) MNQ must reach READY (indicators warm and history complete).
+        _wait_until(
+            lambda: mnq_session.readiness_monitor._state_machine.state.name == "READY",
+            timeout=10.0,
+            description="MNQ readiness to reach READY",
+        )
+
+        # (e) Send a live MNQ bar so READY -> LIVE.
+        mnq_live = _make_bar(
+            mnq_history[-1]["time"] + 60,
+            22000.0, 22010.0, 21990.0, 22005.0, 400, pair="MNQ",
+        )
+        fake_nt.send_bar(mnq_live)
+
+        _wait_until(
+            lambda: mnq_session.readiness_monitor._state_machine.state.name == "LIVE",
+            timeout=10.0,
+            description="MNQ readiness to reach LIVE",
+        )
+
+        # Readiness events for MNQ must be scoped to the MNQ instrument room.
+        mnq_readiness = [p for p in readiness_payloads if p.get("pair") == "MNQ"]
+        assert any(p["state"] == "READY" for p in mnq_readiness)
+        assert any(p["state"] == "LIVE" for p in mnq_readiness)
+
+        # MES events must not leak into MNQ readiness payloads.
+        assert all(p.get("pair") != "MES" for p in mnq_readiness)
+    finally:
+        app.socketio.emit = orig_emit

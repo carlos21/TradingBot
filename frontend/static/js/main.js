@@ -105,10 +105,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (activePair) socket.emit('leave_instrument', { pair: activePair });
   });
 
-  const accountsDisplay = new NtAccountsDisplay(socket);
+  const accountsDisplay = new NtAccountsDisplay(socket, activePair);
   accountsDisplay.init();
 
-  const healthPanel = new StreamHealthPanel(socket);
+  const healthPanel = new StreamHealthPanel(socket, activePair);
   window.healthPanel = healthPanel;
 
   // The stream health panel only makes sense while the platform is actually

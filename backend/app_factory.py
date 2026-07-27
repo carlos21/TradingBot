@@ -218,6 +218,7 @@ def create_app(
     session_params_provider: "Callable[[str], tuple[StrategyNumbers, StrategyOptions]] | None" = None,
     session_end_time: str | None = None,
     session_tz: str = "America/New_York",
+    warmup_min_bars: int = 30,
 ) -> AppWiring:
     """
     Build the whole application with injected dependencies.
@@ -326,6 +327,7 @@ def create_app(
         event_bus=event_bus,
         bootstrap_existing_lines=bootstrap_existing_lines,
         history_loaded_deduper=history_loaded_deduper,
+        warmup_min_bars=warmup_min_bars,
     )
 
     coordinator = StreamCoordinator(

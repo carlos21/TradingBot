@@ -12,6 +12,8 @@ from typing import Any
 from src.application.live_readiness.live_bar_buffer import LiveBarBuffer
 from src.application.live_readiness.readiness_monitor import ReadinessMonitor
 from src.domain.readiness import ReadinessStateMachine
+from src.events.event_bus import EventBus
+from src.infrastructure.event_publisher import DomainEventBusPublisher
 from src.strategies.liquidity_v2.base_strategy import LineRemovalMode
 from tests.fakes import DummySocketIO, FakeLogger
 
@@ -118,9 +120,10 @@ def _make_monitor(
     socketio: DummySocketIO,
     ds: Any,
     warm_policy: _FakeWarmupPolicy,
-) -> tuple[ReadinessMonitor, _FakeStrategy]:
+) -> tuple[ReadinessMonitor, _FakeStrategy, EventBus]:
     strategy = _FakeStrategy()
-    sm = ReadinessStateMachine()
+    event_bus = EventBus()
+    sm = ReadinessStateMachine(event_publisher=DomainEventBusPublisher(event_bus))
     monitor = ReadinessMonitor(
         state_machine=sm,
         warmup_orchestrator=_FakeWarmupOrchestrator(strategy),
@@ -130,9 +133,10 @@ def _make_monitor(
         data_source=ds,
         socketio_publisher=socketio,
         logger=FakeLogger(),
+        event_bus=event_bus,
     )
     monitor.set_pair("MNQ")
-    return monitor, strategy
+    return monitor, strategy, event_bus
 
 
 class _RecordingDataSource:
@@ -174,7 +178,7 @@ def _join_warmup(monitor) -> None:
 class TestReadinessMonitorEvents:
     def test_history_loaded_emitted_on_complete(self) -> None:
         socketio = DummySocketIO()
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             socketio, _FreshDataSource(), _FakeWarmupPolicy(warm=False)
         )
         monitor._state_machine.connect()
@@ -188,7 +192,7 @@ class TestReadinessMonitorEvents:
 
     def test_trading_ready_emitted_when_fresh_and_warm(self) -> None:
         socketio = DummySocketIO()
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             socketio, _FreshDataSource(), _FakeWarmupPolicy(warm=True)
         )
         monitor._state_machine.connect()
@@ -204,7 +208,7 @@ class TestReadinessMonitorEvents:
     def test_trading_ready_not_emitted_when_stale(self) -> None:
         """Market-closed case: bars exist but are too stale for trading."""
         socketio = DummySocketIO()
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             socketio, _StaleDataSource(), _FakeWarmupPolicy(warm=True)
         )
         monitor._state_machine.connect()
@@ -217,11 +221,36 @@ class TestReadinessMonitorEvents:
         assert "history_loaded" in events
         assert "trading_ready" not in events
 
+    def test_progress_tracker_updated_from_event_bus(self) -> None:
+        """ReadinessMonitor must keep its progress tracker in sync via EventBus."""
+        monitor, _strategy, _event_bus = _make_monitor(
+            DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=False)
+        )
+        monitor.set_pair("MNQ")
+        monitor._state_machine.connect()
+
+        assert monitor.get_health()["readiness_state"] == "CONNECTED"
+        assert monitor.get_health()["readiness_percent"] == 15
+
+    def test_monitor_no_longer_emits_readiness_changed_directly(self) -> None:
+        """ReadinessMonitor must not emit readiness_changed to SocketIO itself."""
+        socketio = DummySocketIO()
+        monitor, _strategy, _event_bus = _make_monitor(
+            socketio, _FreshDataSource(), _FakeWarmupPolicy(warm=False)
+        )
+        monitor.set_pair("MNQ")
+        monitor._state_machine.connect()
+        monitor.on_history_complete(_make_bars())
+        _join_warmup(monitor)
+
+        events = [event for event, _payload in socketio.events]
+        assert "readiness_changed" not in events
+
 
 class TestLiveBarRouting:
     def test_live_bar_dropped_before_history_complete(self) -> None:
         processed: list[dict[str, Any]] = []
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
         )
         monitor._live_bar_processor = processed.append
@@ -233,7 +262,7 @@ class TestLiveBarRouting:
 
     def test_live_bar_buffered_during_refresh(self) -> None:
         processed: list[dict[str, Any]] = []
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
         )
         monitor._live_bar_processor = processed.append
@@ -247,7 +276,7 @@ class TestLiveBarRouting:
 
     def test_live_bar_processed_during_warmup_stays_warming(self) -> None:
         processed: list[dict[str, Any]] = []
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=False)
         )
         monitor._live_bar_processor = processed.append
@@ -266,7 +295,7 @@ class TestLiveBarRouting:
 
     def test_buffered_bars_flushed_when_ready(self) -> None:
         processed: list[dict[str, Any]] = []
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=False)
         )
         monitor._live_bar_processor = processed.append
@@ -292,7 +321,7 @@ class TestLiveBarRouting:
 
     def test_refresh_start_clears_buffer(self) -> None:
         processed: list[dict[str, Any]] = []
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
         )
         monitor._live_bar_processor = processed.append
@@ -312,7 +341,7 @@ class TestEmptyHistoryRetry:
     def test_empty_history_schedules_retry(self) -> None:
         ds = _RetryCancellingDataSource()
         socketio = DummySocketIO()
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             socketio, ds, _FakeWarmupPolicy(warm=True)
         )
         monitor._retry_base_delay_sec = 0.01
@@ -330,7 +359,7 @@ class TestEmptyHistoryRetry:
     def test_real_history_cancels_retry(self) -> None:
         ds = _RetryCancellingDataSource()
         socketio = DummySocketIO()
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             socketio, ds, _FakeWarmupPolicy(warm=True)
         )
         monitor._retry_base_delay_sec = 0.01
@@ -383,7 +412,8 @@ class TestWarmupCancellation:
                 blocked.wait(timeout=5.0)  # stall until test signals it
 
         strategy = _FakeStrategy()
-        sm = ReadinessStateMachine()
+        event_bus = EventBus()
+        sm = ReadinessStateMachine(event_publisher=DomainEventBusPublisher(event_bus))
         orchestrator = _SlowOrchestrator(strategy)
         monitor = ReadinessMonitor(
             state_machine=sm,
@@ -393,6 +423,7 @@ class TestWarmupCancellation:
             live_bar_processor=lambda _: None,
             data_source=_FreshDataSource(),
             logger=FakeLogger(),
+            event_bus=event_bus,
         )
         monitor.set_pair("MNQ")
         sm.connect()
@@ -445,7 +476,8 @@ class TestWarmupCancellation:
                     first_blocked.wait(timeout=5.0)
 
         strategy = _FakeStrategy()
-        sm = ReadinessStateMachine()
+        event_bus = EventBus()
+        sm = ReadinessStateMachine(event_publisher=DomainEventBusPublisher(event_bus))
         orchestrator = _SlowOrchestrator2(strategy)
         monitor = ReadinessMonitor(
             state_machine=sm,
@@ -455,6 +487,7 @@ class TestWarmupCancellation:
             live_bar_processor=lambda _: None,
             data_source=_FreshDataSource(),
             logger=FakeLogger(),
+            event_bus=event_bus,
         )
         monitor.set_pair("MNQ")
         sm.connect()
@@ -474,7 +507,7 @@ class TestWarmupCancellation:
 class TestDegradeAndRecover:
     def test_gap_detected_degrades_ready_state(self) -> None:
         socketio = DummySocketIO()
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             socketio, _FreshDataSource(), _FakeWarmupPolicy(warm=True)
         )
         monitor._state_machine.connect()
@@ -486,7 +519,7 @@ class TestDegradeAndRecover:
 
     def test_heartbeat_stale_degrades_live_state(self) -> None:
         socketio = DummySocketIO()
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             socketio, _FreshDataSource(), _FakeWarmupPolicy(warm=True)
         )
         monitor._state_machine.connect()
@@ -499,7 +532,7 @@ class TestDegradeAndRecover:
 
     def test_recover_when_warm(self) -> None:
         processed: list[dict[str, Any]] = []
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             socketio=DummySocketIO(),
             ds=_FreshDataSource(),
             warm_policy=_FakeWarmupPolicy(warm=True),
@@ -517,7 +550,7 @@ class TestDegradeAndRecover:
 
     def test_no_recover_when_not_warm(self) -> None:
         socketio = DummySocketIO()
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             socketio, _FreshDataSource(), _FakeWarmupPolicy(warm=True)
         )
         monitor._state_machine.connect()
@@ -548,8 +581,8 @@ class _FakeProgressEmitter:
 
 
 class TestReadinessMonitorProgress:
-    def test_progress_tracker_updated_by_state_machine_observer(self) -> None:
-        monitor, _strategy = _make_monitor(
+    def test_progress_tracker_updated_from_event_bus(self) -> None:
+        monitor, _strategy, _event_bus = _make_monitor(
             DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
         )
         monitor._state_machine.connect()
@@ -565,7 +598,7 @@ class TestReadinessMonitorProgress:
 
     def test_phase_started_emitted_on_refresh_and_history(self) -> None:
         emitter = _FakeProgressEmitter()
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
         )
         monitor._progress_emitter = emitter
@@ -581,7 +614,7 @@ class TestReadinessMonitorProgress:
         assert phases.count("phase_started") == 2
 
     def test_stale_history_surfaces_reason_in_health(self) -> None:
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             DummySocketIO(), _StaleDataSource(), _FakeWarmupPolicy(warm=True)
         )
         monitor._state_machine.connect()
@@ -595,7 +628,7 @@ class TestReadinessMonitorProgress:
 
 class TestConnectionChange:
     def test_on_connection_change_drives_state_machine(self) -> None:
-        monitor, _strategy = _make_monitor(
+        monitor, _strategy, _event_bus = _make_monitor(
             DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
         )
         assert monitor._state_machine.state.name == "DISCONNECTED"
@@ -635,7 +668,7 @@ class TestGapFill:
 
     def test_gap_reason_requests_refresh_once(self) -> None:
         ds = _BlockingDataSource("Gap detected: 40m hole in last 2h")
-        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+        monitor, _strategy, _event_bus = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
 
         self._drive_to_warming_up(monitor)
 
@@ -644,7 +677,7 @@ class TestGapFill:
 
     def test_no_duplicate_request_while_fill_in_flight(self) -> None:
         ds = _BlockingDataSource("Gap detected: 40m hole in last 2h")
-        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+        monitor, _strategy, _event_bus = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
         self._drive_to_warming_up(monitor)
 
         # More live-bar-driven checks while the fill refresh is still running.
@@ -655,7 +688,7 @@ class TestGapFill:
 
     def test_refresh_start_clears_in_flight_and_allows_next_attempt(self) -> None:
         ds = _BlockingDataSource("Gap detected: 40m hole in last 2h")
-        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+        monitor, _strategy, _event_bus = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
         self._drive_to_warming_up(monitor)
 
         monitor.on_refresh_start()
@@ -669,7 +702,7 @@ class TestGapFill:
 
     def test_gap_fill_capped_at_three_attempts(self) -> None:
         ds = _BlockingDataSource("Gap detected: 40m hole in last 2h")
-        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+        monitor, _strategy, _event_bus = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
         self._drive_to_warming_up(monitor)
         assert len(ds.requests) == 1
 
@@ -687,7 +720,7 @@ class TestGapFill:
 
     def test_stale_reason_never_requests_refresh(self) -> None:
         ds = _BlockingDataSource("Last bar is 120m old (need < 1m)")
-        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+        monitor, _strategy, _event_bus = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
 
         self._drive_to_warming_up(monitor)
         monitor._try_warmup_complete()
@@ -696,7 +729,7 @@ class TestGapFill:
 
     def test_fresh_connection_resets_gap_fill_episode(self) -> None:
         ds = _BlockingDataSource("Gap detected: 40m hole in last 2h")
-        monitor, _ = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
+        monitor, _strategy, _event_bus = _make_monitor(DummySocketIO(), ds, _FakeWarmupPolicy(warm=True))
         self._drive_to_warming_up(monitor)
         assert monitor._gap_fill_attempts == 1
 

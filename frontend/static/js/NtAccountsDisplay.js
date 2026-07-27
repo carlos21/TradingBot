@@ -16,12 +16,14 @@ const BORDER_SURFACE_600 = 'border-surface-600';
 const BORDER_SURFACE_700 = 'border-surface-700';
 
 export class NtAccountsDisplay {
-  constructor(socket) {
+  constructor(socket, activeSymbol = null) {
     this.socket = socket;
+    this.activeSymbol = activeSymbol;
     this.accounts = [];
     this.el = {
       display: document.getElementById('ntAccountsDisplay'),
       warning: document.getElementById('ntAccountsWarning'),
+      warningMessage: document.getElementById('ntAccountsWarningMessage'),
       testTradeControls: document.getElementById('testTradeControls'),
     };
     this._popover = null;
@@ -32,13 +34,34 @@ export class NtAccountsDisplay {
     this.loadAccounts();
   }
 
+  _eligibleAccounts(accounts) {
+    let result = (accounts || []).filter(a => a.live_enabled !== false);
+    if (this.activeSymbol) {
+      const symbol = String(this.activeSymbol).toUpperCase();
+      result = result.filter(a =>
+        (a.instrument_symbols || []).some(s => String(s).toUpperCase() === symbol)
+      );
+    }
+    return result;
+  }
+
+  _disabledReason(eligibleAccounts) {
+    if (this.activeSymbol && eligibleAccounts.length === 0) {
+      return `No live NT account assigned to ${this.activeSymbol}`;
+    }
+    if (!this.activeSymbol && eligibleAccounts.length === 0) {
+      return 'No NT accounts configured';
+    }
+    return null;
+  }
+
   async loadAccounts() {
     try {
       const res = await fetch('/api/accounts');
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const accounts = await res.json();
-      const liveAccounts = (accounts || []).filter(a => a.live_enabled !== false);
-      this.render(liveAccounts, liveAccounts.length === 0 ? 'No NT accounts configured' : null);
+      const eligibleAccounts = this._eligibleAccounts(accounts);
+      this.render(eligibleAccounts, this._disabledReason(eligibleAccounts));
     } catch (e) {
       console.error('[NtAccountsDisplay] Failed to load accounts:', e);
       this.render([], 'Failed to load accounts');
@@ -99,6 +122,9 @@ export class NtAccountsDisplay {
     // Toggle warning banner
     if (this.el.warning) {
       if (disabledReason) {
+        if (this.el.warningMessage) {
+          this.el.warningMessage.textContent = `⚠️ ${disabledReason} — live trading is disabled.`;
+        }
         this.el.warning.classList.remove('hidden');
         this.el.warning.querySelector('a')?.setAttribute('href', '/admin/settings');
       } else {

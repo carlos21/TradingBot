@@ -25,8 +25,9 @@ const ROW_OPEN = 'text-slate-300';
  * composition root and does not contain DOM or policy details.
  */
 export class StreamHealthPanel {
-  constructor(socket) {
+  constructor(socket, pair = null) {
     this.socket = socket;
+    this.pair = pair;
     this.model = new StreamHealthModel();
     this.calculator = new ReadinessProgressCalculator();
     this.renderer = new StreamHealthRenderer();
@@ -42,6 +43,16 @@ export class StreamHealthPanel {
     this._bindEvents();
     this._loadPreference();
     this._restorePosition();
+  }
+
+  /**
+   * Ignore readiness events that belong to a different instrument.
+   * In a multi-tab setup each panel must only reflect its own symbol.
+   */
+  _isForThisPanel(data) {
+    if (!data || !data.pair) return true;
+    if (!this.pair) return true;
+    return data.pair === this.pair;
   }
 
   /**
@@ -171,21 +182,25 @@ export class StreamHealthPanel {
   }
 
   _onHealthUpdate(data) {
+    if (!this._isForThisPanel(data)) return;
     this.model.updateFromHealth(data);
     this._render();
   }
 
   _onReadinessChanged(data) {
+    if (!this._isForThisPanel(data)) return;
     this.model.updateFromTransition(data);
     this._render();
   }
 
   _onWarmupProgress(data) {
+    if (!this._isForThisPanel(data)) return;
     this.model.updateWarmupProgress(data);
     this._render();
   }
 
   _onPhaseStarted(data) {
+    if (!this._isForThisPanel(data)) return;
     this.model.updatePhaseStarted(data);
     this._render();
   }

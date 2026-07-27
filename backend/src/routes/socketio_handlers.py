@@ -233,13 +233,33 @@ def register_socketio_handlers(
         }
 
     def _emit_health():
-        """Emit current health snapshot if ZMQDataSource is available."""
-        if isinstance(data_source, ZMQDataSource):
-            with contextlib.suppress(Exception):
-                health = data_source.get_health()
-                if readiness_monitor is not None:
-                    health.update(readiness_monitor.get_health())
-                socketio.emit("health_update", health)
+        """Emit current health snapshot if ZMQDataSource is available.
+
+        Emits a global snapshot for backward compatibility and per-room
+        snapshots for each active streaming session so the stream health panel
+        reflects the readiness state of the instrument the user is actually
+        viewing.
+        """
+        if not isinstance(data_source, ZMQDataSource):
+            return
+        with contextlib.suppress(Exception):
+            base_health = data_source.get_health()
+            if readiness_monitor is not None:
+                base_health.update(readiness_monitor.get_health())
+            socketio.emit("health_update", base_health)
+
+            # Per-instrument health: clients in a room see their session's
+            # readiness state instead of the legacy default session state.
+            if coordinator is not None:
+                for session in coordinator.get_active_sessions():
+                    symbol = session.instrument.symbol
+                    monitor = getattr(session, "readiness_monitor", None)
+                    if monitor is None:
+                        continue
+                    session_health = dict(base_health)
+                    session_health.update(monitor.get_health())
+                    session_health["pair"] = symbol
+                    socketio.emit("health_update", session_health, room=symbol)
 
     @socketio.on("connect")
     @_safe_handler
@@ -293,6 +313,16 @@ def register_socketio_handlers(
                         history_loaded_deduper.emit(socketio, sig)
                     else:
                         socketio.emit("history_loaded", sig, room=symbol)
+                    # In live mode, seed the session's readiness monitor with
+                    # the cached bars so the Stream Health panel does not stay
+                    # stuck on CONNECTED when history is already available.
+                    if (
+                        live_mode
+                        and session is not None
+                        and getattr(session, "readiness_monitor", None) is not None
+                    ):
+                        with contextlib.suppress(Exception):
+                            session.on_history_loaded(list(cached))
             except Exception as exc:
                 _logger.error(f"[SocketIO] failed to load cached bars on join: {exc}")
                 with contextlib.suppress(Exception):

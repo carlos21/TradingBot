@@ -74,6 +74,22 @@ class FakeBarsLoader:
         return self._from_time + direction * 86400
 
 
+class FakeReadinessMonitor:
+    def __init__(self, state="CONNECTED", reason="Platform connected", percent=15):
+        self._health = {
+            "readiness_state": state,
+            "readiness_reason": reason,
+            "readiness_percent": percent,
+        }
+        self.history_complete_calls: list[list[dict]] = []
+
+    def on_history_complete(self, bars: list[dict]) -> None:
+        self.history_complete_calls.append(list(bars))
+
+    def get_health(self):
+        return dict(self._health)
+
+
 class FakeCoordinator:
     def __init__(self):
         self._sessions: dict[str, FakeSession] = {}
@@ -89,6 +105,9 @@ class FakeCoordinator:
 
     def get_session(self, symbol):
         return self._sessions.get(symbol)
+
+    def get_active_sessions(self):
+        return list(self._sessions.values())
 
     def join_instrument(self, symbol: str, sid: str):
         self._join_calls.append((symbol, sid))
@@ -108,8 +127,10 @@ class FakeCoordinator:
 class FakeSession:
     def __init__(self, symbol: str):
         self.symbol = symbol
+        self.instrument = MagicMock()
+        self.instrument.symbol = symbol
         self.bars_loader = FakeBarsLoader()
-        self.readiness_monitor = None
+        self.readiness_monitor = FakeReadinessMonitor()
         self._clients: set[str] = set()
         self._started = False
 
@@ -121,6 +142,9 @@ class FakeSession:
 
     def start(self):
         self._started = True
+
+    def on_history_loaded(self, bars: list[dict]) -> None:
+        self.readiness_monitor.on_history_complete(bars)
 
 
 class FakeGateway:
@@ -155,6 +179,20 @@ class FakeZMQDataSource(ZMQDataSource):
         if self._state == DataSourceState.REFRESHING:
             return
         self._refresh_calls.append(days or self.history_hours)
+
+    def get_health(self):
+        return {
+            "state": self._state.name,
+            "pairs": {},
+            "instruments": [],
+            "heartbeat_age_sec": None,
+            "duplicate_count": 0,
+            "gap_count": 0,
+            "ticks_received": 0,
+            "bars_received": 0,
+            "history_batches": 0,
+            "platform_connected": self._gateway is not None and getattr(self._gateway, "is_connected", False),
+        }
 
 
 @pytest.fixture
@@ -650,6 +688,41 @@ class TestCheckParityHandler:
         assert "audit failed" in result_call[0][1]["error"]
 
 
+class TestHealthEmission:
+    def test_emit_health_is_per_session_room(self, socketio, loader, logger):
+        gateway = FakeGateway(running=True, connected=True)
+        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.STREAMING)
+        coordinator = FakeCoordinator()
+        coordinator.require_session("MES")
+        coordinator._sessions["MES"].readiness_monitor = FakeReadinessMonitor(
+            state="LIVE", reason="Live bar stream active", percent=100
+        )
+
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=True,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+
+        handler = socketio.handlers["request_health"]
+        handler()
+
+        health_events = [e for e in socketio.emitted if e[0] == "health_update"]
+        assert len(health_events) == 2
+
+        # Global broadcast (backward compatibility)
+        global_event = next(e for e in health_events if "room" not in e[2])
+        assert global_event[1][0]["state"] == "STREAMING"
+
+        # Per-room emission uses the session readiness monitor
+        room_event = next(e for e in health_events if e[2].get("room") == "MES")
+        assert room_event[1][0]["readiness_state"] == "LIVE"
+        assert room_event[1][0]["pair"] == "MES"
+
+
 class TestConnectionChangeCallback:
     def test_registers_and_fires_connected(self, socketio, loader, logger):
         gateway = FakeGateway()
@@ -666,7 +739,9 @@ class TestConnectionChangeCallback:
         callback = gateway._conn_listeners[0]
 
         callback(True)
-        assert socketio.emitted == [("platform_connected", (), {})]
+        events = [e[0] for e in socketio.emitted]
+        assert "platform_connected" in events
+        assert "health_update" in events
 
     def test_registers_and_fires_disconnected(self, socketio, loader, logger):
         gateway = FakeGateway()
@@ -681,7 +756,9 @@ class TestConnectionChangeCallback:
 
         callback = gateway._conn_listeners[0]
         callback(False)
-        assert socketio.emitted == [("platform_disconnected", (), {})]
+        events = [e[0] for e in socketio.emitted]
+        assert "platform_disconnected" in events
+        assert "health_update" in events
 
     def test_no_callback_for_non_zmq_datasource(self, socketio, loader, logger):
         data_source = FakeDataSource()
@@ -930,6 +1007,36 @@ class TestJoinLeaveInstrument:
             handler({"pair": "ES"})
 
         assert coordinator._leave_calls == [("ES", "sid-1")]
+
+    @patch("src.routes.socketio_handlers.join_room")
+    @patch("src.routes.socketio_handlers.request", new=MagicMock())
+    def test_join_instrument_seeds_readiness_with_cached_bars_in_live_mode(
+        self, mock_join_room, socketio, loader, logger
+    ):
+        from unittest.mock import patch
+        coordinator = FakeCoordinator()
+        cached = [
+            {"time": 1, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"},
+            {"time": 2, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"},
+        ]
+        data_source = FakeZMQDataSource(gateway=FakeGateway(), cached_bars=cached)
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=True,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+        handler = socketio.handlers["join_instrument"]
+        with patch("src.routes.socketio_handlers.request", new=MagicMock()) as mock_request:
+            mock_request.sid = "sid-1"
+            handler({"pair": "MNQ"})
+
+        session = coordinator.get_session("MNQ")
+        assert session is not None
+        assert len(session.readiness_monitor.history_complete_calls) == 1
+        assert session.readiness_monitor.history_complete_calls[0] == cached
 
 
 class TestPerInstrumentCommands:

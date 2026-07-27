@@ -89,9 +89,11 @@ class StreamingSession:
         event_bus: EventBus | None = None,
         bootstrap_existing_lines: bool = True,
         history_loaded_deduper: HistoryLoadedDeduper | None = None,
+        warmup_min_bars: int = 30,
     ):
         self.instrument = instrument
         self.symbol = instrument.symbol
+        self._warmup_min_bars = warmup_min_bars
         self._socketio = socketio
         self._data_source = data_source
         self._repos = repos
@@ -296,9 +298,9 @@ class StreamingSession:
             )
             self._readiness_state_machine = readiness_state_machine
 
-        progress_emitter = SocketIOReadinessProgressAdapter(self._socketio)
+        progress_emitter = SocketIOReadinessProgressAdapter(self._socketio, room=self.symbol)
         warmup_orchestrator = WarmupOrchestrator(self.strategy, logger=self._logger)
-        warmup_policy = MinimumBarsWarmupPolicy(min_bars=30)
+        warmup_policy = MinimumBarsWarmupPolicy(min_bars=self._warmup_min_bars)
         bar_buffer = LiveBarBuffer(processor=self.bars_loader.on_live_bar)
 
         monitor = ReadinessMonitor(
@@ -313,6 +315,7 @@ class StreamingSession:
             progress_emitter=progress_emitter,
             logger=self._logger,
             history_bars_provider=lambda: self._data_source.load_historical_bars(pair=self.symbol),
+            event_bus=self._event_bus,
         )
         monitor.set_pair(self.symbol)
         return monitor

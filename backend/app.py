@@ -76,9 +76,9 @@ def main():
                 f"[{instance}] No NT accounts configured. Live streaming will be unavailable until accounts are added."
             )
         else:
-            app_logger.info(f"[{instance}] Starting ZeroMQ gateway...")
-            ds.start()
-            app_logger.info(f"[{instance}] ZeroMQ gateway started")
+            app_logger.info(
+                f"[{instance}] ZeroMQ gateway ready. Start streaming from the UI to connect {platform_label}."
+            )
 
         app_logger.info(
             f"[{instance}] Starting LIVE mode server on port {config.flask_port} (threaded, debug=False)"

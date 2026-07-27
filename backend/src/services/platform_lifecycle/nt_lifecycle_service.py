@@ -46,6 +46,7 @@ class NinjaTraderLifecycleService:
                 )
         except Exception as e:
             self._logger.error(f"[NT Lifecycle] Failed to check instrument: {e}")
+            return True, None
 
         return True, None
 

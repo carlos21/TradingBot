@@ -305,8 +305,8 @@ class TestSocketIOBridge:
             def __init__(self):
                 self.emitted = []
 
-            def emit(self, event, payload):
-                self.emitted.append((event, payload))
+            def emit(self, event, payload, **kwargs):
+                self.emitted.append((event, payload, kwargs))
 
         bus = EventBus()
         socketio = _RecordingSocketIO()
@@ -321,3 +321,62 @@ class TestSocketIOBridge:
         assert "trade_open" in events
         assert "trade_close" in events
         assert "line_added" in events
+
+    def test_readiness_changed_emits_to_instrument_room(self):
+        from src.events.event_bus import SocketIOBridge
+
+        class _RecordingSocketIO:
+            def __init__(self):
+                self.emitted = []
+
+            def emit(self, event, payload, **kwargs):
+                self.emitted.append((event, payload, kwargs))
+
+        bus = EventBus()
+        socketio = _RecordingSocketIO()
+        bridge = SocketIOBridge(socketio, bus)
+        bridge.start()
+
+        bus.publish(DomainEvent(
+            EventType.READINESS_CHANGED,
+            payload={
+                "previous_state": "DISCONNECTED",
+                "state": "CONNECTED",
+                "reason": "Platform connected",
+                "pair": "MES",
+            },
+        ))
+
+        readiness = [e for e in socketio.emitted if e[0] == "readiness_changed"]
+        assert len(readiness) == 1
+        event, payload, kwargs = readiness[0]
+        assert payload["pair"] == "MES"
+        assert kwargs.get("room") == "MES"
+
+    def test_readiness_changed_without_pair_emits_globally(self):
+        from src.events.event_bus import SocketIOBridge
+
+        class _RecordingSocketIO:
+            def __init__(self):
+                self.emitted = []
+
+            def emit(self, event, payload, **kwargs):
+                self.emitted.append((event, payload, kwargs))
+
+        bus = EventBus()
+        socketio = _RecordingSocketIO()
+        bridge = SocketIOBridge(socketio, bus)
+        bridge.start()
+
+        bus.publish(DomainEvent(
+            EventType.READINESS_CHANGED,
+            payload={
+                "previous_state": "DISCONNECTED",
+                "state": "CONNECTED",
+                "reason": "Platform connected",
+            },
+        ))
+
+        readiness = [e for e in socketio.emitted if e[0] == "readiness_changed"]
+        assert len(readiness) == 1
+        assert readiness[0][2].get("room") is None
