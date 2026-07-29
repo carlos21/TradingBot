@@ -34,6 +34,15 @@ export class NtAccountsDisplay {
     this.loadAccounts();
   }
 
+  /**
+   * Re-filter the account pills for a different instrument (in-place
+   * instrument switch). Refetches so eligibility reflects the new symbol.
+   */
+  setActiveSymbol(symbol) {
+    this.activeSymbol = symbol;
+    this.loadAccounts();
+  }
+
   _eligibleAccounts(accounts) {
     let result = (accounts || []).filter(a => a.live_enabled !== false);
     if (this.activeSymbol) {

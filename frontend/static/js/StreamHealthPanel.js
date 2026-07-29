@@ -56,6 +56,18 @@ export class StreamHealthPanel {
   }
 
   /**
+   * Point the panel at a different instrument (in-place instrument switch).
+   * Readiness events for the old symbol are ignored from now on, and the
+   * model resets so stale readiness from the previous instrument cannot
+   * leak into the new one.
+   */
+  setPair(pair) {
+    this.pair = pair;
+    this.model = new StreamHealthModel();
+    this._render();
+  }
+
+  /**
    * Show/hide the whole panel. When inactive, renders are suppressed and the
    * wrapper stays hidden no matter what the readiness model says (the model
    * can hold a stale READY state after the stream stops).

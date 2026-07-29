@@ -111,7 +111,7 @@ describe('OverlayInstrumentController', () => {
   });
 
   describe('instrument change', () => {
-    it('reloads the tab pinned to the selected instrument', () => {
+    it('stores the selection without reloading the tab', () => {
       const location = { search: '' };
       const { controller } = buildController(location);
       controller.setInstruments(instruments, 'MNQ');
@@ -120,34 +120,35 @@ describe('OverlayInstrumentController', () => {
       select.value = 'MES';
       select.dispatchEvent(new Event('change'));
 
-      expect(location.search).toBe('pair=MES');
+      expect(controller.getSelectedSymbol()).toBe('MES');
+      expect(location.search).toBe('');
     });
 
-    it('pins the tab when choosing from the unpinned placeholder', () => {
-      const location = { search: '' };
-      const { controller } = buildController(location);
+    it('notifies onSelectionChange with the picked symbol', () => {
+      const { controller } = buildController();
+      controller.setInstruments(instruments, null);
+      const picked = [];
+      controller.onSelectionChange = (symbol) => picked.push(symbol);
+
+      const select = document.getElementById('overlayInstrumentSelect');
+      select.value = 'MES';
+      select.dispatchEvent(new Event('change'));
+
+      expect(picked).toEqual(['MES']);
+    });
+
+    it('defaults the selection to the pinned pair', () => {
+      const { controller } = buildController();
+      controller.setInstruments(instruments, 'MES');
+
+      expect(controller.getSelectedSymbol()).toBe('MES');
+    });
+
+    it('has no selection when unpinned', () => {
+      const { controller } = buildController();
       controller.setInstruments(instruments, null);
 
-      const select = document.getElementById('overlayInstrumentSelect');
-      select.value = 'MES';
-      select.dispatchEvent(new Event('change'));
-
-      expect(location.search).toBe('pair=MES');
-    });
-
-    it('preserves other query params when replacing pair', () => {
-      const location = { search: '?tf=5m&pair=MNQ&show_tsi=true' };
-      const { controller } = buildController(location);
-      controller.setInstruments(instruments, 'MNQ');
-
-      const select = document.getElementById('overlayInstrumentSelect');
-      select.value = 'MES';
-      select.dispatchEvent(new Event('change'));
-
-      const params = new URLSearchParams(location.search);
-      expect(params.get('pair')).toBe('MES');
-      expect(params.get('tf')).toBe('5m');
-      expect(params.get('show_tsi')).toBe('true');
+      expect(controller.getSelectedSymbol()).toBeNull();
     });
   });
 

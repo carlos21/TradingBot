@@ -20,6 +20,12 @@ export class StreamingControlsController {
     this.startStreamingBtn = null;
     this.reconnectBtn = null;
     this.stopStreamingBtn = null;
+
+    /**
+     * Optional hook called at the top of _startStreaming(). Return false to
+     * abort the start (e.g. to navigate to another instrument instead).
+     */
+    this.beforeStart = null;
   }
 
   init() {
@@ -36,6 +42,7 @@ export class StreamingControlsController {
   }
 
   async _startStreaming() {
+    if (typeof this.beforeStart === 'function' && this.beforeStart() === false) return;
     this._setConnectionStatus('Starting ZeroMQ gateway…');
     this.lifecycle.dispatch({ type: StreamingEventType.START_CLICKED });
     try {

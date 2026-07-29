@@ -99,6 +99,38 @@ describe('StreamingControlsController', () => {
     });
   });
 
+  describe('beforeStart hook', () => {
+    it('aborts the start when the hook returns false (no fetch, no dispatch)', async () => {
+      global.fetch = vi.fn();
+
+      const { controls, lifecycle } = buildControls();
+      controls.init();
+      controls.beforeStart = () => false;
+
+      document.getElementById('startStreamingBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      expect(global.fetch).not.toHaveBeenCalled();
+      expect(lifecycle.getState()).toBe('idle');
+    });
+
+    it('proceeds with the normal start when the hook returns true', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ message: 'Stream started' }),
+      });
+
+      const { controls } = buildControls();
+      controls.init();
+      controls.beforeStart = () => true;
+
+      document.getElementById('startStreamingBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', { method: 'POST' });
+    });
+  });
+
   describe('reconnect', () => {
     function driveToDisconnected(lifecycle) {
       lifecycle.dispatch({ type: StreamingEventType.PLATFORM_CONNECTED });

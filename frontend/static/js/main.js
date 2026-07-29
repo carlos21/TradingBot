@@ -5,6 +5,7 @@ import { StreamingEventType, StreamingState } from './domain/streamingLifecycle.
 import { resolvePinnedPair, findInstrument } from './domain/instruments.js';
 import { InstrumentsMenuController } from './application/InstrumentsMenuController.js';
 import { OverlayInstrumentController } from './application/OverlayInstrumentController.js';
+import { InstrumentSwitchController } from './application/InstrumentSwitchController.js';
 import { BrowserDomService } from './adapters/browser/BrowserDomService.js';
 
 function setConnectionStatus(text) {
@@ -49,7 +50,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const showTSIParam = urlParams.get('show_tsi');
   const showTSI = showTSIParam === null ? undefined : showTSIParam === 'true';
 
-  const { controller, socket, streamingLifecycle } = createChartApp({
+  const { controller, socket, streamingLifecycle, streamingControls } = createChartApp({
     options: {
       startTime,
       keepStrategyLines,
@@ -81,14 +82,22 @@ document.addEventListener('DOMContentLoaded', async () => {
   instrumentsMenu.setInstruments(config?.instruments || [], activePair);
 
   // "Ready to Trade" overlay instrument picker: shown whenever the tab is
-  // unpinned (no valid ?pair=) or several instruments exist; choosing one
-  // reloads this tab pinned to the choice.
+  // unpinned (no valid ?pair=) or several instruments exist. Picking an
+  // instrument only updates the Start button — the tab switches to it in
+  // place (no reload) when Start Streaming is clicked (see beforeStart below).
   const overlaySelector = new OverlayInstrumentController(new BrowserDomService());
   overlaySelector.init();
   overlaySelector.setInstruments(config?.instruments || [], activePair);
 
+  overlaySelector.onSelectionChange = (symbol) => {
+    streamingLifecycle.setStartSymbol(symbol);
+    const startBtn = document.getElementById('startStreamingBtn');
+    if (startBtn) startBtn.disabled = false;
+    setConnectionStatus(`Ready to stream ${symbol}`);
+  };
+
   // Without a pinned instrument there is nothing to stream yet: keep Start
-  // disabled until the user picks an instrument (which reloads the tab pinned).
+  // disabled until the user picks an instrument in the overlay selector.
   if (!activePair) {
     const startBtn = document.getElementById('startStreamingBtn');
     if (startBtn) startBtn.disabled = true;
@@ -111,13 +120,37 @@ document.addEventListener('DOMContentLoaded', async () => {
   const healthPanel = new StreamHealthPanel(socket, activePair);
   window.healthPanel = healthPanel;
 
+  const instrumentSwitcher = new InstrumentSwitchController({
+    socket,
+    chartController: controller,
+    lifecycle: streamingLifecycle,
+    healthPanel,
+    accountsDisplay,
+    dom: new BrowserDomService(),
+  });
+
+  // If the picker points at an instrument other than the one this tab is
+  // pinned to, Start Streaming first switches the tab to it in place (room,
+  // chart data, labels, URL), then proceeds with the normal start flow — the
+  // state machine stays in STARTING (busy) until the platform connects.
+  streamingControls.beforeStart = () => {
+    const selected = overlaySelector.getSelectedSymbol();
+    if (selected && selected !== activePair) {
+      const instrument = findInstrument(config?.instruments || [], selected);
+      instrumentSwitcher.switchTo(selected, instrument, activePair);
+      activePair = selected;
+      activeInstrument = instrument;
+    }
+    return true;
+  };
+
   // The stream health panel only makes sense while the platform is actually
   // streaming — drive its visibility from the streaming lifecycle machine.
   healthPanel.setActive(streamingLifecycle.getState() === StreamingState.STREAMING);
   streamingLifecycle.onStateChange = (state) => {
     healthPanel.setActive(state === StreamingState.STREAMING);
     // Don't allow changing the instrument only while a start is in flight;
-    // IDLE/GATEWAY_UP/DISCONNECTED all still let the user pick and reload.
+    // IDLE/GATEWAY_UP/DISCONNECTED all still let the user pick and switch.
     overlaySelector.setEnabled(state !== StreamingState.STARTING);
   };
 
@@ -127,11 +160,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     .then(r => r.json())
     .then(data => {
       streamingLifecycle.dispatch({ type: StreamingEventType.STATUS_SYNC, ...data });
-      // The dispatch re-renders the start button; re-apply the unpinned gate.
+      // The dispatch re-renders the start button; re-apply the unpinned gate
+      // unless the user has already picked an instrument.
       if (!activePair) {
-        const startBtn = document.getElementById('startStreamingBtn');
-        if (startBtn) startBtn.disabled = true;
-        setConnectionStatus('Select an instrument to stream');
+        if (!overlaySelector.getSelectedSymbol()) {
+          const startBtn = document.getElementById('startStreamingBtn');
+          if (startBtn) startBtn.disabled = true;
+          setConnectionStatus('Select an instrument to stream');
+        }
         return;
       }
       if (data.platform_connected) {
