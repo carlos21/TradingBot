@@ -67,6 +67,10 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
         public BrokerOrder WithFill(double averageFillPrice, int filled) =>
             new BrokerOrder(Name, AccountName, Instrument, OrderType, OrderSide, OrderState, Quantity, filled,
                 averageFillPrice, StopPrice, LimitPrice, OcoId, Time);
+
+        public BrokerOrder WithBracket(double stopPrice, double limitPrice, int quantity) =>
+            new BrokerOrder(Name, AccountName, Instrument, OrderType, OrderSide, OrderState, quantity, Filled,
+                AverageFillPrice, stopPrice, limitPrice, OcoId, Time);
     }
 
     public enum OrderType

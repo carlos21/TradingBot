@@ -1024,40 +1024,71 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 return;
             }
 
-            // If a bracket already exists (e.g., from a previous partial-fill attempt), replace it
-            // so the quantity matches the final filled amount and prices match the actual fill.
-            CancelWorkingBracketOrders(tradeId, account.Name);
-
-            try
+            // Exactly ONE bracket per trade at all times. If a bracket already exists
+            // (e.g., attached by an earlier partial fill), modify it in place instead of
+            // cancel+recreate — the recreate path races with NT state updates and once
+            // left duplicate stops against the position (2026-07-29 incident).
+            bool bracketAttached = false;
+            if (_orderTracker.TryGetStopLoss(tradeId, out var existingStop) &&
+                _orderTracker.TryGetTakeProfit(tradeId, out var existingTarget))
             {
-                bool isLong = entry.Direction == "long";
-                var closeSide = isLong ? OrderSide.Sell : OrderSide.BuyToCover;
-                int qty = order.Filled > 0 ? order.Filled : order.Quantity;
-
-                var stopOrder = _orderExecutionService.CreateStopLossOrder(order.Instrument, account, closeSide, qty, sl, tradeId);
-                var targetOrder = _orderExecutionService.CreateTakeProfitOrder(order.Instrument, account, closeSide, qty, tp, tradeId);
-
-                if (stopOrder == null || targetOrder == null)
+                int modifyQty = order.Filled > 0 ? order.Filled : order.Quantity;
+                try
                 {
-                    _logger.Error($"CRITICAL: Failed to create complete bracket for {tradeId} (stop={stopOrder != null}, target={targetOrder != null}). Flattening position immediately.");
-                    _network.SendError("ninjatrader", "bracket_creation_failed", $"Incomplete bracket for {tradeId} — flattening");
-                    FlattenPosition(order, entry, tradeId, "Incomplete bracket — stop/target creation failed");
+                    _orderExecutionService.ModifyOrder(existingStop, stopPrice: sl, limitPrice: null, quantity: modifyQty);
+                    _orderExecutionService.ModifyOrder(existingTarget, stopPrice: null, limitPrice: tp, quantity: modifyQty);
+
+                    _orderTracker.TrackStopLoss(tradeId, existingStop.WithBracket(sl, existingStop.LimitPrice, modifyQty));
+                    _orderTracker.TrackTakeProfit(tradeId, existingTarget.WithBracket(existingTarget.StopPrice, tp, modifyQty));
+
+                    _logger.Success($"BRACKET UPDATED: {tradeId} SL={sl} TP={tp} qty={modifyQty} account={account.Name}");
+                    _network.SendTradeLog(tradeId, "NT:ORDER", $"Bracket updated: SL={sl} TP={tp} qty={modifyQty}");
+                    bracketAttached = true;
+                }
+                catch (Exception modifyEx)
+                {
+                    _logger.Warning($"Failed to modify existing bracket for {tradeId} ({modifyEx.Message}) — falling back to cancel+recreate");
+                }
+            }
+
+            if (!bracketAttached)
+            {
+                // If a bracket already exists in a broken state (or the in-place modify
+                // just failed), replace it so the quantity matches the final filled
+                // amount and prices match the actual fill.
+                CancelWorkingBracketOrders(tradeId, account.Name);
+
+                try
+                {
+                    bool isLong = entry.Direction == "long";
+                    var closeSide = isLong ? OrderSide.Sell : OrderSide.BuyToCover;
+                    int qty = order.Filled > 0 ? order.Filled : order.Quantity;
+
+                    var stopOrder = _orderExecutionService.CreateStopLossOrder(order.Instrument, account, closeSide, qty, sl, tradeId);
+                    var targetOrder = _orderExecutionService.CreateTakeProfitOrder(order.Instrument, account, closeSide, qty, tp, tradeId);
+
+                    if (stopOrder == null || targetOrder == null)
+                    {
+                        _logger.Error($"CRITICAL: Failed to create complete bracket for {tradeId} (stop={stopOrder != null}, target={targetOrder != null}). Flattening position immediately.");
+                        _network.SendError("ninjatrader", "bracket_creation_failed", $"Incomplete bracket for {tradeId} — flattening");
+                        FlattenPosition(order, entry, tradeId, "Incomplete bracket — stop/target creation failed");
+                        return;
+                    }
+
+                    _orderExecutionService.SubmitOrders(new List<BrokerOrder> { stopOrder, targetOrder });
+                    _orderTracker.TrackStopLoss(tradeId, stopOrder);
+                    _orderTracker.TrackTakeProfit(tradeId, targetOrder);
+
+                    _logger.Success($"BRACKET CREATED: {tradeId} SL={sl} TP={tp} qty={qty} account={account.Name}");
+                    _network.SendTradeLog(tradeId, "NT:ORDER", $"Bracket created: SL={sl} TP={tp} qty={qty}");
+                }
+                catch (Exception bracketEx)
+                {
+                    _logger.Error($"CRITICAL: Failed to create bracket orders for {tradeId}. Flattening position immediately.", bracketEx);
+                    _network.SendError("ninjatrader", "bracket_creation_failed", $"Failed to create SL/TP for {tradeId}: {bracketEx.Message}");
+                    FlattenPosition(order, entry, tradeId, $"Bracket creation exception: {bracketEx.Message}");
                     return;
                 }
-
-                _orderExecutionService.SubmitOrders(new List<BrokerOrder> { stopOrder, targetOrder });
-                _orderTracker.TrackStopLoss(tradeId, stopOrder);
-                _orderTracker.TrackTakeProfit(tradeId, targetOrder);
-
-                _logger.Success($"BRACKET CREATED: {tradeId} SL={sl} TP={tp} qty={qty} account={account.Name}");
-                _network.SendTradeLog(tradeId, "NT:ORDER", $"Bracket created: SL={sl} TP={tp} qty={qty}");
-            }
-            catch (Exception bracketEx)
-            {
-                _logger.Error($"CRITICAL: Failed to create bracket orders for {tradeId}. Flattening position immediately.", bracketEx);
-                _network.SendError("ninjatrader", "bracket_creation_failed", $"Failed to create SL/TP for {tradeId}: {bracketEx.Message}");
-                FlattenPosition(order, entry, tradeId, $"Bracket creation exception: {bracketEx.Message}");
-                return;
             }
 
             _logger.Success($"ENTRY FILL: {tradeId} @ {order.AverageFillPrice} SL={sl} TP={tp} qty={order.Filled} account={account.Name} balance={account.CashValue:C2}");
@@ -1284,6 +1315,9 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
         private bool HasWorkingStopForPosition(BrokerPosition position, IReadOnlyList<BrokerOrder> workingOrders)
         {
+            // A position is only protected when the working stops in the closing
+            // direction cover its full quantity — a qty=1 stop does not protect a 3-lot.
+            int totalStopQty = 0;
             foreach (var order in workingOrders)
             {
                 if (!order.IsWorking)
@@ -1297,9 +1331,9 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 bool closesShort = position.IsShort && (order.OrderSide == OrderSide.Buy || order.OrderSide == OrderSide.BuyToCover);
 
                 if (closesLong || closesShort)
-                    return true;
+                    totalStopQty += Math.Max(0, order.Quantity - order.Filled);
             }
-            return false;
+            return totalStopQty >= position.Quantity;
         }
 
         private bool ShouldSkipOrphanFlatten(string accountName, string instrumentName)
