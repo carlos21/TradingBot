@@ -105,10 +105,10 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 ntAccount.Cancel(new[] { ntOrder });
         }
 
-        public void ModifyOrder(Domain.BrokerOrder order, double? stopPrice, double? limitPrice)
+        public void ModifyOrder(Domain.BrokerOrder order, double? stopPrice, double? limitPrice, int? quantity = null)
         {
             if (order == null) throw new ArgumentNullException(nameof(order));
-            if (!stopPrice.HasValue && !limitPrice.HasValue) return;
+            if (!stopPrice.HasValue && !limitPrice.HasValue && !quantity.HasValue) return;
 
             var ntAccount = GetNtAccount(_accountProvider.GetAccount(order.AccountName));
             var ntOrder = FindActiveNtOrderByName(ntAccount, order.Name);
@@ -119,6 +119,8 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 ntOrder.StopPriceChanged = stopPrice.Value;
             if (limitPrice.HasValue)
                 ntOrder.LimitPriceChanged = limitPrice.Value;
+            if (quantity.HasValue)
+                ntOrder.QuantityChanged = quantity.Value;
 
             ntAccount.Change(new[] { ntOrder });
         }

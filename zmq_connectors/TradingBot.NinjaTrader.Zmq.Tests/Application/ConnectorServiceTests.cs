@@ -715,7 +715,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             service.SafetyGuardEnabled = true;
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
-            var stop = TestDataFactory.Order(name: "Stop_manual", side: OrderSide.Sell, orderType: OrderType.StopMarket, state: OrderState.Working, stopPrice: 19900);
+            var stop = TestDataFactory.Order(name: "Stop_manual", side: OrderSide.Sell, orderType: OrderType.StopMarket, state: OrderState.Working, quantity: 5, stopPrice: 19900);
 
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
             _accountProvider.GetAccount("Sim101").Returns(account);

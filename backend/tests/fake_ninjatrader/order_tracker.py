@@ -97,7 +97,10 @@ class FakeOrderTracker:
         if entry.filled_quantity >= entry.quantity:
             entry.status = "filled"
 
-        # Create/update bracket orders to cover the currently filled quantity.
+        # Replace the bracket with the cumulative filled quantity, mirroring
+        # the real connector's modify-in-place bracket update behavior: each
+        # (partial) fill re-sizes the existing SL/TP orders rather than
+        # stacking additional brackets.
         bracket_qty = entry.filled_quantity
         self._stops[trade_id] = _TrackedOrder(
             trade_id=trade_id,
