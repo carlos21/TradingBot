@@ -39,6 +39,61 @@ describe('ReadinessProgressCalculator', () => {
       const stepper = calc.computeStepper(model);
       expect(stepper.every(s => s.status === 'pending')).toBe(true);
     });
+
+    it('maps backend STREAMING state to the LIVE step', () => {
+      model.currentState = 'STREAMING';
+      model.alertLevel = 'ok';
+      const stepper = calc.computeStepper(model);
+
+      expect(stepper[6]).toEqual({ key: 'LIVE', label: 'Live', status: 'active' });
+      expect(stepper.slice(0, 6).every(s => s.status === 'completed')).toBe(true);
+    });
+
+    it('maps backend STREAMING state to error when alertLevel is error', () => {
+      model.currentState = 'STREAMING';
+      model.alertLevel = 'error';
+      const stepper = calc.computeStepper(model);
+
+      expect(stepper[6]).toEqual({ key: 'LIVE', label: 'Live', status: 'error' });
+    });
+
+    it('maps backend DEGRADED state to the LIVE step', () => {
+      model.currentState = 'DEGRADED';
+      model.alertLevel = 'warn';
+      const stepper = calc.computeStepper(model);
+
+      expect(stepper[6]).toEqual({ key: 'LIVE', label: 'Live', status: 'active' });
+      expect(stepper.slice(0, 6).every(s => s.status === 'completed')).toBe(true);
+    });
+
+    it('maps backend DEGRADED state to error when alertLevel is error', () => {
+      model.currentState = 'DEGRADED';
+      model.alertLevel = 'error';
+      const stepper = calc.computeStepper(model);
+
+      expect(stepper[6]).toEqual({ key: 'LIVE', label: 'Live', status: 'error' });
+    });
+
+    it('never leaves all steps pending for any canonical backend state', () => {
+      const canonicalStates = [
+        'DISCONNECTED',
+        'CONNECTED',
+        'WAITING_FOR_HISTORY',
+        'REFRESHING',
+        'WARMING_UP',
+        'READY',
+        'LIVE',
+        'STREAMING',
+        'DEGRADED',
+      ];
+
+      canonicalStates.forEach((state) => {
+        model.currentState = state;
+        model.alertLevel = 'ok';
+        const stepper = calc.computeStepper(model);
+        expect(stepper.some(s => s.status !== 'pending')).toBe(true);
+      });
+    });
   });
 
   describe('computePhaseDisplay', () => {

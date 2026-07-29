@@ -21,13 +21,22 @@ export class ReadinessProgressCalculator {
 
   /**
    * Return stepper items with status: pending | active | completed | error.
+   *
+   * The backend data source reports a ``STREAMING`` state once live market data
+   * is flowing.  That is equivalent to the pipeline's final ``LIVE`` step from
+   * the UI's point of view.
    */
   computeStepper(model) {
-    const currentIdx = this.stepIndex.get(model.currentState) ?? -1;
+    // Backend states that are not themselves stepper steps are collapsed into
+    // the final LIVE step. STREAMING means live data is flowing; DEGRADED means
+    // the system was live/ready but data quality dropped.
+    const collapsedLiveStates = new Set(['STREAMING', 'DEGRADED']);
+    const effectiveState = collapsedLiveStates.has(model.currentState) ? 'LIVE' : model.currentState;
+    const currentIdx = this.stepIndex.get(effectiveState) ?? -1;
 
     return this.steps.map((step, idx) => {
       let status = 'pending';
-      if (step.key === model.currentState) {
+      if (step.key === effectiveState) {
         status = model.alertLevel === 'error' ? 'error' : 'active';
       } else if (idx < currentIdx) {
         status = 'completed';

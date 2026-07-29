@@ -25,6 +25,7 @@ def register_debug_routes(
     notifier: Notifier,
     analytics: AnalyticsReporter,
     logger: ILogger,
+    coordinator=None,
 ):
     """Register debug and test helper routes.
 
@@ -39,19 +40,29 @@ def register_debug_routes(
         pair: Trading pair
         notifier: Notification service
         analytics: Analytics service
+        coordinator: Optional StreamCoordinator for per-instrument components
     """
+
+    def _components():
+        """Resolve (strategy, loader, trade_manager) for the configured pair."""
+        if coordinator is not None:
+            session = coordinator.require_session(pair)
+            return session.strategy, session.bars_loader, session.trade_manager
+        return strategy, loader, trade_manager
 
     @app.route('/api/debug/logs', methods=['GET'])
     def get_debug_logs():
         """Return the decision logs from the strategy."""
-        return jsonify(strategy.decision_logs)
+        strat, _, _ = _components()
+        return jsonify(strat.decision_logs)
 
     @app.route('/__reset_all', methods=['POST'])
     def reset_all():
         """Clears all state, resets DataSource range, AND warms up strategy."""
+        strat, loader, trade_mgr = _components()
         try:
             # 1. Clear in-memory strategy state (Deep Reset)
-            strategy.reset()
+            strat.reset()
 
             # 2. Reset Loader State (so _last_played_ts goes back to 0)
             loader.reset()
@@ -69,8 +80,8 @@ def register_debug_routes(
             trades_repo.clear_in_memory()
 
             # 5. Clear trade_manager open trades to prevent leaks between scenarios
-            trade_manager.open_trades.clear()
-            trade_manager._monitored_trades.clear()
+            trade_mgr.open_trades.clear()
+            trade_mgr._monitored_trades.clear()
 
             # 6. Reset DataSource history
             data = request.get_json() or {}
@@ -86,7 +97,7 @@ def register_debug_routes(
             # 7. SEED LINES (if provided) so they are present during warmup
             seed_lines = data.get('seed_lines', [])
             for sl in seed_lines:
-                strategy.add_strategy_line(
+                strat.add_strategy_line(
                     sl['id'],
                     float(sl['price']),
                     creation_timestamp=float(sl.get('creation_ts', 0.0))
@@ -94,11 +105,11 @@ def register_debug_routes(
                 lines_repo.insert_line(pair, float(sl['price']))
 
             # 8. WARM UP STRATEGY (with lines present)
-            played = data_source.load_historical_bars('1m')
+            played = data_source.load_historical_bars('1m', pair=pair)
             if played:
                 logger.info(f"[Reset] Warming up strategy with {len(played)} bars ({len(seed_lines)} lines)...")
                 for bar in played:
-                    strategy.on_raw_bar(bar)
+                    strat.on_raw_bar(bar)
                 logger.info("[Reset] Warmup complete.")
 
             return jsonify({"status": "OK"})

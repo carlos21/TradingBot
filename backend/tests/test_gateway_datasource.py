@@ -36,8 +36,6 @@ def mock_gateway():
     """Return a mocked TradingGateway with callback storage."""
     gateway = MagicMock(spec=TradingGateway)
     gateway.is_connected = True
-    gateway.pair = "MNQ"
-    gateway.instrument = "MNQ 06-26"
 
     # Store registered callbacks by message type
     gateway._callbacks = {}
@@ -56,8 +54,13 @@ def mock_gateway():
 @pytest.fixture
 def data_source(logger, mock_gateway):
     """Return a ZMQDataSource wired to a mocked gateway."""
-    ds = ZMQDataSource(logger=logger, gateway=mock_gateway, pair="MNQ")
+    ds = ZMQDataSource(logger=logger, gateway=mock_gateway)
     return ds
+
+
+def hist_bars(ds, pair="MNQ"):
+    """Access the per-pair bar cache (replaces the old default _historical_bars)."""
+    return ds._bars_by_pair.setdefault(pair, [])
 
 
 def make_tick(time_val: int, price: float, volume: int = 1, pair: str = "MNQ") -> dict:
@@ -93,15 +96,15 @@ class TestInitialization:
 
     def test_init_defaults(self, logger):
         ds = ZMQDataSource(logger=logger)
-        assert ds.pair == "MNQ"
         assert ds.history_hours == DEFAULT_HISTORY_HOURS
         assert ds.logger is logger
         assert ds._gateway is None
         assert ds._owns_gateway is True
-        assert ds._historical_bars == []
+        assert ds._bars_by_pair == {}
+        assert ds._requested_instruments == {}
         assert ds.state == DataSourceState.DISCONNECTED
-        assert ds._last_history_time == 0
-        assert ds._refresh_buffer == []
+        assert ds._refreshing_pairs == set()
+        assert ds._refresh_buffer == {}
         assert ds.on_history_complete is None
         assert ds.on_live_bar is None
         assert ds.on_before_refresh is None
@@ -118,8 +121,7 @@ class TestInitialization:
         assert ds._gap_threshold == 60
 
     def test_init_with_gateway(self, logger, mock_gateway):
-        ds = ZMQDataSource(logger=logger, gateway=mock_gateway, pair="ES")
-        assert ds.pair == "ES"
+        ds = ZMQDataSource(logger=logger, gateway=mock_gateway)
         assert ds._gateway is mock_gateway
         assert ds._owns_gateway is False
 
@@ -147,7 +149,6 @@ class TestInitialization:
             MockGW.assert_called_once_with(
                 logger,
                 config=ds._gateway_config,
-                pair="MNQ",
             )
 
     def test_ensure_gateway_returns_existing(self, data_source, mock_gateway):
@@ -203,6 +204,9 @@ class TestProperties:
 class TestPlatformConnection:
 
     def test_on_platform_connected_schedules_delayed_refresh(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
         data_source._history_request_delay_sec = 0.1  # 100ms for test speed
         data_source.on_platform_connected()
         assert data_source.state == DataSourceState.CONNECTED
@@ -210,7 +214,8 @@ class TestPlatformConnection:
         assert data_source._pending_refresh_timer is not None
         # Wait for the timer to fire
         data_source._pending_refresh_timer.join()
-        mock_gateway.send_refresh_request.assert_called_once()
+        mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MNQ 06-26")
+        data_source._cancel_history_retry_timer()
 
     def test_on_platform_connected_ignored_if_not_disconnected(self, data_source, mock_gateway):
         data_source._state = DataSourceState.CONNECTED
@@ -218,11 +223,14 @@ class TestPlatformConnection:
         mock_gateway.send_refresh_request.assert_not_called()
 
     def test_on_platform_connected_skips_refresh_after_brief_blip(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
         data_source._first_platform_connect = False
         mock_gateway.was_last_disconnect_real = False
         # Cached history must be fresh/complete for the brief-blip fast path.
         now = int(time.time())
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             {"time": now - 180, "open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 1, "pair": "MNQ"},
             {"time": now - 120, "open": 1.5, "high": 2.5, "low": 1.0, "close": 2.0, "volume": 1, "pair": "MNQ"},
             {"time": now - 60, "open": 2.0, "high": 3.0, "low": 1.5, "close": 2.5, "volume": 1, "pair": "MNQ"},
@@ -234,6 +242,9 @@ class TestPlatformConnection:
         mock_gateway.send_refresh_request.assert_not_called()
 
     def test_on_platform_connected_refreshes_after_real_disconnect(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
         data_source._history_request_delay_sec = 0.1
         data_source._first_platform_connect = False
         mock_gateway.was_last_disconnect_real = True
@@ -241,9 +252,13 @@ class TestPlatformConnection:
         mock_gateway.send_subscribe.assert_called_once_with("MNQ 06-26")
         assert data_source._pending_refresh_timer is not None
         data_source._pending_refresh_timer.join()
-        mock_gateway.send_refresh_request.assert_called_once()
+        mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MNQ 06-26")
+        data_source._cancel_history_retry_timer()
 
     def test_on_platform_disconnected_cancels_pending_timer(self, data_source):
+        from src.domain.models import Instrument
+
+        data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
         data_source._history_request_delay_sec = 10.0
         data_source.on_platform_connected()
         assert data_source._pending_refresh_timer is not None
@@ -252,6 +267,9 @@ class TestPlatformConnection:
         assert data_source.state == DataSourceState.DISCONNECTED
 
     def test_delayed_refresh_aborted_if_disconnected(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
         data_source._history_request_delay_sec = 0.1
         data_source.on_platform_connected()
         timer = data_source._pending_refresh_timer
@@ -262,27 +280,27 @@ class TestPlatformConnection:
         timer.join(timeout=0.5)
         mock_gateway.send_refresh_request.assert_not_called()
 
-    def test_on_platform_connected_no_instrument_does_not_subscribe(self, data_source, mock_gateway):
-        mock_gateway.instrument = ""
+    def test_on_platform_connected_without_instruments_stays_connected(self, data_source, mock_gateway):
+        """No default instrument: with nothing requested, connect subscribes
+        nothing and stays CONNECTED, waiting for instrument selection."""
         data_source.on_platform_connected()
-        # Unconfigured instrument must not strand the machine in CONNECTED —
-        # it returns to DISCONNECTED so a later connect can retry.
-        assert data_source.state == DataSourceState.DISCONNECTED
+        assert data_source.state == DataSourceState.CONNECTED
         mock_gateway.send_subscribe.assert_not_called()
         mock_gateway.send_refresh_request.assert_not_called()
         assert data_source._pending_refresh_timer is None
 
-    def test_on_platform_connected_retries_after_instrument_configured(self, data_source, mock_gateway):
-        mock_gateway.instrument = ""
-        data_source.on_platform_connected()
-        assert data_source.state == DataSourceState.DISCONNECTED
+    def test_instrument_requested_while_connected_subscribes_immediately(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
 
-        mock_gateway.instrument = "MNQ 06-26"
-        data_source._history_request_delay_sec = 10.0  # keep the timer from firing
+        # Nothing requested yet — connect subscribes nothing and stays CONNECTED.
         data_source.on_platform_connected()
         assert data_source.state == DataSourceState.CONNECTED
+        mock_gateway.send_subscribe.assert_not_called()
+
+        # A request arriving while CONNECTED is subscribed + refreshed at once.
+        data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
         mock_gateway.send_subscribe.assert_called_once_with("MNQ 06-26")
-        data_source._cancel_pending_refresh_timer()
+        mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MNQ 06-26")
 
 
 # ---------------------------------------------------------------------------
@@ -293,6 +311,9 @@ class TestPlatformConnection:
 class TestHistoryRetry:
 
     def _connect_and_send_first_refresh(self, data_source):
+        from src.domain.models import Instrument
+
+        data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
         data_source._history_request_delay_sec = 0.02
         data_source._history_retry_base_delay_sec = 0.02
         data_source.on_platform_connected()
@@ -329,6 +350,9 @@ class TestHistoryRetry:
         assert data_source._history_retry_timer is None
 
     def test_notifier_alert_after_repeated_retry_failures(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
         data_source._state = DataSourceState.CONNECTED
         data_source._notifier = MagicMock()
 
@@ -461,10 +485,11 @@ class TestTickHandling:
         assert cb["open"] == 200.0
         assert cb["high"] == 200.0
 
-    def test_on_tick_uses_pair_from_source_when_missing(self, data_source):
+    def test_on_tick_dropped_without_pair(self, data_source):
+        """Pair-less payloads are logged and dropped — no default instrument."""
         tick = {"time": 1000, "price": 5000.0, "volume": 1}
         data_source._on_tick(tick)
-        assert data_source._current_bars["MNQ"]["pair"] == "MNQ"
+        assert data_source._current_bars == {}
 
     def test_on_tick_emits_partial_after_one_second(self, data_source):
         live_bars = []
@@ -517,31 +542,32 @@ class TestBarHandling:
     def test_on_bar_appends_in_order(self, data_source):
         data_source._on_bar(make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5))
         data_source._on_bar(make_bar(time_val=200, open_=10.5, high=12.0, low=10.0, close=11.0))
-        assert len(data_source._historical_bars) == 2
-        assert data_source._historical_bars[0]["time"] == 100
-        assert data_source._historical_bars[1]["time"] == 200
+        assert len(hist_bars(data_source)) == 2
+        assert hist_bars(data_source)[0]["time"] == 100
+        assert hist_bars(data_source)[1]["time"] == 200
         assert data_source._stats["bars_received"] == 2
 
     def test_on_bar_inserts_out_of_order(self, data_source, logger):
         data_source._on_bar(make_bar(time_val=200, open_=10.5, high=12.0, low=10.0, close=11.0))
         data_source._on_bar(make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5))
-        assert len(data_source._historical_bars) == 2
-        assert data_source._historical_bars[0]["time"] == 100
-        assert data_source._historical_bars[1]["time"] == 200
+        assert len(hist_bars(data_source)) == 2
+        assert hist_bars(data_source)[0]["time"] == 100
+        assert hist_bars(data_source)[1]["time"] == 200
 
     def test_on_bar_skips_duplicate(self, data_source):
         bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
         data_source._on_bar(bar)
         data_source._on_bar(bar)
-        assert len(data_source._historical_bars) == 1
+        assert len(hist_bars(data_source)) == 1
 
     def test_on_bar_during_refresh_buffers(self, data_source):
         data_source._state = DataSourceState.REFRESHING
+        data_source._refreshing_pairs.add("MNQ")
         bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
         data_source._on_bar(bar)
-        assert len(data_source._historical_bars) == 0
-        assert len(data_source._refresh_buffer) == 1
-        assert data_source._refresh_buffer[0]["time"] == 100
+        assert len(hist_bars(data_source)) == 0
+        assert len(data_source._refresh_buffer["MNQ"]) == 1
+        assert data_source._refresh_buffer["MNQ"][0]["time"] == 100
 
     def test_on_bar_during_connected_is_buffered(self, data_source):
         data_source._state = DataSourceState.CONNECTED
@@ -549,26 +575,26 @@ class TestBarHandling:
         data_source.on_live_bar = lambda bar: received.append(bar)
         bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
         data_source._on_bar(bar)
-        assert len(data_source._historical_bars) == 0
-        assert len(data_source._refresh_buffer) == 1
-        assert data_source._refresh_buffer[0]["time"] == 100
+        assert len(hist_bars(data_source)) == 0
+        assert len(data_source._refresh_buffer["MNQ"]) == 1
+        assert data_source._refresh_buffer["MNQ"][0]["time"] == 100
         assert len(received) == 0
 
     def test_on_bar_during_connected_and_refreshing_flushed_on_history_end(self, data_source):
         now = int(time.time())
         data_source._state = DataSourceState.CONNECTED
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=now - 300, open_=10.0, high=11.0, low=9.0, close=10.5),
         ]
         # Bar arrives during CONNECTED (will be covered by history)
         data_source._on_bar(make_bar(time_val=now - 200, open_=11.0, high=12.0, low=10.0, close=11.5))
         # Transition to REFRESHING — buffer should be preserved
-        data_source._on_refresh_start()
+        data_source._on_refresh_start({"pair": "MNQ"})
         assert data_source._state == DataSourceState.REFRESHING
-        assert len(data_source._refresh_buffer) == 1
+        assert len(data_source._refresh_buffer["MNQ"]) == 1
         # Bar arrives during REFRESHING (genuinely new)
         data_source._on_bar(make_bar(time_val=now - 100, open_=12.0, high=13.0, low=11.0, close=12.5))
-        assert len(data_source._refresh_buffer) == 2
+        assert len(data_source._refresh_buffer["MNQ"]) == 2
         # History batch includes the first two bars
         data_source._on_history_batch({
             "bars": [
@@ -580,13 +606,14 @@ class TestBarHandling:
         })
         live_bars = []
         data_source.on_live_bar = lambda bar: live_bars.append(bar)
-        data_source._on_history_end()
+        data_source._on_history_end({"pair": "MNQ"})
         assert data_source.state == DataSourceState.STREAMING
-        # now-200 is a duplicate (in history) — skipped. now-100 is new — emitted.
-        assert len(data_source._historical_bars) == 3
-        assert len(live_bars) == 1
-        assert live_bars[0]["time"] == now - 100
-        assert data_source._refresh_buffer == []
+        # Both buffered bars are flushed to on_live_bar. now-200 is a duplicate
+        # of a bar already in history; now-100 is genuinely new.
+        assert len(hist_bars(data_source)) == 3
+        assert len(live_bars) == 2
+        assert live_bars[1]["time"] == now - 100
+        assert data_source._refresh_buffer == {}
 
     def test_on_bar_triggers_live_bar_callback(self, data_source):
         received = []
@@ -603,7 +630,7 @@ class TestBarHandling:
         data_source._on_bar(make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5))
         # The logger should have received a gap warning (we don't assert exact message,
         # just that the code path ran without error and bars are stored)
-        assert len(data_source._historical_bars) == 2
+        assert len(hist_bars(data_source)) == 2
 
     def test_on_bar_updates_existing_bar_when_values_differ(self, data_source):
         """A live bar with different OHLCV values should update the cache entry."""
@@ -615,17 +642,17 @@ class TestBarHandling:
         live_bar = make_bar(time_val=100, open_=10.0, high=12.0, low=8.5, close=11.0, volume=200)
 
         # History batch arrives first
-        data_source._on_history_batch({"bars": [hist_bar], "days": 1})
-        assert data_source._historical_bars[0]["close"] == 10.5
-        assert data_source._historical_bars[0]["volume"] == 100
+        data_source._on_history_batch({"bars": [hist_bar], "days": 1, "pair": "MNQ"})
+        assert hist_bars(data_source)[0]["close"] == 10.5
+        assert hist_bars(data_source)[0]["volume"] == 100
 
         # Live bar arrives with different values — should update cache
         data_source._on_bar(live_bar)
-        assert len(data_source._historical_bars) == 1
-        assert data_source._historical_bars[0]["high"] == 12.0
-        assert data_source._historical_bars[0]["low"] == 8.5
-        assert data_source._historical_bars[0]["close"] == 11.0
-        assert data_source._historical_bars[0]["volume"] == 200
+        assert len(hist_bars(data_source)) == 1
+        assert hist_bars(data_source)[0]["high"] == 12.0
+        assert hist_bars(data_source)[0]["low"] == 8.5
+        assert hist_bars(data_source)[0]["close"] == 11.0
+        assert hist_bars(data_source)[0]["volume"] == 200
         assert data_source._duplicate_count == 0
         assert any("[LiveUpdate]" in m for m in logger.messages)
         assert not any("Duplicate bar" in m for m in logger.messages)
@@ -637,11 +664,11 @@ class TestBarHandling:
         data_source._market_is_open = True
 
         bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
-        data_source._on_history_batch({"bars": [bar], "days": 1})
+        data_source._on_history_batch({"bars": [bar], "days": 1, "pair": "MNQ"})
 
         # Identical live bar — duplicate warning (market is open)
         data_source._on_bar(bar)
-        assert len(data_source._historical_bars) == 1
+        assert len(hist_bars(data_source)) == 1
         assert data_source._duplicate_count == 1
         assert not any("[LiveUpdate]" in m for m in logger.messages)
         assert any("Duplicate bar" in m for m in logger.messages)
@@ -653,11 +680,11 @@ class TestBarHandling:
         data_source._market_is_open = False
 
         bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
-        data_source._on_history_batch({"bars": [bar], "days": 1})
+        data_source._on_history_batch({"bars": [bar], "days": 1, "pair": "MNQ"})
 
         # Identical live bar — silently skipped (market is closed)
         data_source._on_bar(bar)
-        assert len(data_source._historical_bars) == 1
+        assert len(hist_bars(data_source)) == 1
         assert data_source._duplicate_count == 1
         assert not any("[LiveUpdate]" in m for m in logger.messages)
         assert not any("Duplicate bar" in m for m in logger.messages)
@@ -673,13 +700,13 @@ class TestPartialBarHandling:
     def test_on_partial_bar_updates_native_time(self, data_source):
         base_time = 1000000.0
         with patch("src.infrastructure.gateway.datasource.time.monotonic", return_value=base_time):
-            data_source._on_partial_bar({"time": 100, "open": 10.0, "close": 10.5})
+            data_source._on_partial_bar({"time": 100, "open": 10.0, "close": 10.5, "pair": "MNQ"})
             assert data_source._last_native_partial_time == base_time
 
     def test_on_partial_bar_emits_to_callback(self, data_source):
         received = []
         data_source.on_live_bar = lambda bar: received.append(bar)
-        payload = {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 50}
+        payload = {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 50, "pair": "MNQ"}
         data_source._on_partial_bar(payload)
         assert len(received) == 1
         assert received[0]["partial"] is True
@@ -695,9 +722,10 @@ class TestPartialBarHandling:
 
     def test_on_partial_bar_during_refreshing_is_dropped(self, data_source):
         data_source._state = DataSourceState.REFRESHING
+        data_source._refreshing_pairs.add("MNQ")
         received = []
         data_source.on_live_bar = lambda bar: received.append(bar)
-        data_source._on_partial_bar({"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 50})
+        data_source._on_partial_bar({"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 50, "pair": "MNQ"})
         assert len(received) == 0
         assert data_source._last_native_partial_time == 0.0
 
@@ -719,10 +747,10 @@ class TestHistoryBatchHandling:
             "pair": "MNQ",
         }
         data_source._on_history_batch(payload)
-        assert len(data_source._historical_bars) == 2
+        assert len(hist_bars(data_source)) == 2
         assert data_source._stats["history_batches"] == 1
-        assert data_source._historical_bars[0]["time"] == 100
-        assert data_source._historical_bars[1]["time"] == 200
+        assert hist_bars(data_source)[0]["time"] == 100
+        assert hist_bars(data_source)[1]["time"] == 200
 
     def test_on_history_batch_deduplicates(self, data_source):
         payload = {
@@ -730,10 +758,11 @@ class TestHistoryBatchHandling:
                 {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100},
             ],
             "days": 1,
+            "pair": "MNQ",
         }
         data_source._on_history_batch(payload)
         data_source._on_history_batch(payload)
-        assert len(data_source._historical_bars) == 1
+        assert len(hist_bars(data_source)) == 1
 
     def test_on_history_batch_sorts_bars(self, data_source):
         payload = {
@@ -742,12 +771,14 @@ class TestHistoryBatchHandling:
                 {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100},
             ],
             "days": 1,
+            "pair": "MNQ",
         }
         data_source._on_history_batch(payload)
-        assert data_source._historical_bars[0]["time"] == 100
-        assert data_source._historical_bars[1]["time"] == 300
+        assert hist_bars(data_source)[0]["time"] == 100
+        assert hist_bars(data_source)[1]["time"] == 300
 
-    def test_on_history_batch_uses_default_pair(self, data_source):
+    def test_on_history_batch_dropped_without_pair(self, data_source):
+        """Pair-less payloads are logged and dropped — no default instrument."""
         payload = {
             "bars": [
                 {"time": 100, "open": 10.0, "high": 11.0, "low": 9.0, "close": 10.5, "volume": 100},
@@ -755,7 +786,7 @@ class TestHistoryBatchHandling:
             "days": 1,
         }
         data_source._on_history_batch(payload)
-        assert data_source._historical_bars[0]["pair"] == "MNQ"
+        assert hist_bars(data_source) == []
 
 
 # ---------------------------------------------------------------------------
@@ -766,62 +797,61 @@ class TestHistoryBatchHandling:
 class TestHistoryEndHandling:
 
     def test_on_history_end_sets_live_mode(self, data_source):
-        data_source._on_history_end()
+        data_source._on_history_end({"pair": "MNQ"})
         assert data_source.state == DataSourceState.STREAMING
 
     def test_on_history_end_calls_callback(self, data_source):
         called_with = []
         data_source.on_history_complete = lambda bars: called_with.append(bars)
-        data_source._historical_bars = [make_bar(time_val=int(time.time()) - 300, open_=10.0, high=11.0, low=9.0, close=10.5)]
-        data_source._on_history_end()
+        data_source._bars_by_pair["MNQ"] = [make_bar(time_val=int(time.time()) - 300, open_=10.0, high=11.0, low=9.0, close=10.5)]
+        data_source._on_history_end({"pair": "MNQ"})
         assert len(called_with) == 1
         assert len(called_with[0]) == 1
 
     def test_on_history_end_callback_error_logged(self, data_source, logger):
         data_source.on_history_complete = lambda bars: (_ for _ in ()).throw(RuntimeError("boom"))
-        data_source._historical_bars = [make_bar(time_val=int(time.time()) - 300, open_=10.0, high=11.0, low=9.0, close=10.5)]
+        data_source._bars_by_pair["MNQ"] = [make_bar(time_val=int(time.time()) - 300, open_=10.0, high=11.0, low=9.0, close=10.5)]
         # Should not raise
-        data_source._on_history_end()
+        data_source._on_history_end({"pair": "MNQ"})
         assert data_source.is_streaming is True
 
     def test_on_history_end_flushes_refresh_buffer(self, data_source):
         data_source._state = DataSourceState.REFRESHING
-        data_source._refresh_buffer = [
+        data_source._refreshing_pairs.add("MNQ")
+        data_source._refresh_buffer = {"MNQ": [
             make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
-        ]
+        ]}
         live_bars = []
         data_source.on_live_bar = lambda bar: live_bars.append(bar)
-        data_source._on_history_end()
-        assert len(data_source._historical_bars) == 2
-        assert data_source._refresh_buffer == []
+        data_source._on_history_end({"pair": "MNQ"})
+        assert len(hist_bars(data_source)) == 2
+        assert data_source._refresh_buffer == {}
         assert len(live_bars) == 2
-
-    def test_on_history_end_sets_last_history_time(self, data_source):
-        now = int(time.time())
-        data_source._historical_bars = [
-            make_bar(time_val=now - 400, open_=10.0, high=11.0, low=9.0, close=10.5),
-            make_bar(time_val=now - 300, open_=11.0, high=12.0, low=10.0, close=11.5),
-        ]
-        data_source._on_history_end()
-        assert data_source._last_history_time == now - 300
 
     def test_on_history_end_scans_for_gaps(self, data_source):
         now = int(time.time())
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=now - 400, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=now - 200, open_=11.0, high=12.0, low=10.0, close=11.5),
         ]
-        data_source._on_history_end()
+        data_source._on_history_end({"pair": "MNQ"})
+        assert data_source.is_streaming is True
+        now = int(time.time())
+        data_source._bars_by_pair["MNQ"] = [
+            make_bar(time_val=now - 400, open_=10.0, high=11.0, low=9.0, close=10.5),
+            make_bar(time_val=now - 200, open_=11.0, high=12.0, low=10.0, close=11.5),
+        ]
+        data_source._on_history_end({"pair": "MNQ"})
         assert data_source.is_streaming is True
 
     def test_on_history_end_stale_switches_to_live_without_retry(self, data_source, mock_gateway):
         """Stale history should switch to STREAMING without sending retry refresh requests."""
         now = int(time.time())
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=now - 1000, open_=10.0, high=11.0, low=9.0, close=10.5),
         ]
-        data_source._on_history_end()
+        data_source._on_history_end({"pair": "MNQ"})
         assert data_source.state == DataSourceState.STREAMING
         mock_gateway.send_refresh_request.assert_not_called()
 
@@ -833,7 +863,7 @@ class TestHistoryEndHandling:
         data_source._state = DataSourceState.STREAMING
 
         # Seed with bars that have a continuous recent sequence but the last bar is old
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=now - 180, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=now - 120, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=now - 60, open_=10.0, high=11.0, low=9.0, close=10.5),
@@ -853,12 +883,12 @@ class TestHistoryEndHandling:
             'pair': 'MNQ',
         })
 
-        complete, reason = data_source.check_history_completeness()
+        complete, reason = data_source.check_history_completeness(hist_bars(data_source))
         assert complete is True, reason
         # Readiness decisions are now made by the ReadinessMonitor; the data source
         # no longer emits trading_ready from history_batch/live_bar handlers.
         assert len(called_with) == 0
-        assert len(data_source._historical_bars) == 4
+        assert len(hist_bars(data_source)) == 4
 
     def test_on_bar_in_live_adds_bar_without_emitting_history_complete(self, data_source):
         """Live bar in STREAMING state updates the cache and notifies live_bar, but does not decide readiness."""
@@ -870,7 +900,7 @@ class TestHistoryEndHandling:
         data_source._state = DataSourceState.STREAMING
 
         # Seed with continuous recent bars but missing the very last one
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=now - 180, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=now - 120, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=now - 60, open_=10.0, high=11.0, low=9.0, close=10.5),
@@ -887,11 +917,11 @@ class TestHistoryEndHandling:
             'pair': 'MNQ',
         })
 
-        complete, reason = data_source.check_history_completeness()
+        complete, reason = data_source.check_history_completeness(hist_bars(data_source))
         assert complete is True, reason
         assert len(live_called_with) == 1
         assert len(history_called_with) == 0
-        assert len(data_source._historical_bars) == 4
+        assert len(hist_bars(data_source)) == 4
 
     def test_on_history_batch_does_not_emit_during_refreshing(self, data_source):
         """History batches during REFRESHING state should not emit trading_ready."""
@@ -929,9 +959,9 @@ class TestHistoryEndHandling:
         data_source._state = DataSourceState.REFRESHING
 
         # First history load completes with zero bars -> switches to STREAMING.
-        data_source._on_history_end()
+        data_source._on_history_end({"pair": "MNQ"})
         assert data_source.state == DataSourceState.STREAMING
-        assert len(data_source._historical_bars) == 0
+        assert len(hist_bars(data_source)) == 0
 
         # Later, the adaptive lookback on the NT side finds older bars and
         # sends them as a gap-fill batch while we are already streaming.
@@ -946,8 +976,8 @@ class TestHistoryEndHandling:
 
         # Bars must be cached and returned by the public query so the chart
         # can display historical data even though the market is closed.
-        assert len(data_source._historical_bars) == 2
-        loaded = data_source.load_historical_bars()
+        assert len(hist_bars(data_source)) == 2
+        loaded = data_source.load_historical_bars(pair="MNQ")
         assert len(loaded) == 2
         assert loaded[0]['time'] == old_bars[0]['time']
         assert loaded[-1]['time'] == old_bars[-1]['time']
@@ -964,48 +994,41 @@ class TestRefreshStartHandling:
         now = int(time.time())
         old_bar = make_bar(time_val=now - 90000, open_=10.0, high=11.0, low=9.0, close=10.5)
         new_bar = make_bar(time_val=now - 100, open_=11.0, high=12.0, low=10.0, close=11.5)
-        data_source._historical_bars = [old_bar, new_bar]
+        data_source._bars_by_pair["MNQ"] = [old_bar, new_bar]
         data_source._state = DataSourceState.STREAMING
         data_source._current_bars["MNQ"] = {"time": now}
 
-        data_source._on_refresh_start()
+        data_source._on_refresh_start({"pair": "MNQ"})
 
-        assert len(data_source._historical_bars) == 1
-        assert data_source._historical_bars[0]["time"] == old_bar["time"]
+        assert len(hist_bars(data_source)) == 1
+        assert hist_bars(data_source)[0]["time"] == old_bar["time"]
         assert data_source.state == DataSourceState.REFRESHING
         assert data_source._current_bars == {}
 
     def test_on_refresh_start_calls_before_refresh_callback(self, data_source):
         called = []
         data_source.on_before_refresh = lambda: called.append(1)
-        data_source._on_refresh_start()
+        data_source._on_refresh_start({"pair": "MNQ"})
         assert called == [1]
 
     def test_on_refresh_start_callback_error_logged(self, data_source, logger):
         data_source.on_before_refresh = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
         # Should not raise
-        data_source._on_refresh_start()
+        data_source._on_refresh_start({"pair": "MNQ"})
         assert data_source.state == DataSourceState.REFRESHING
 
-    def test_on_refresh_start_sets_last_history_time(self, data_source):
-        now = int(time.time())
-        old_bar = make_bar(time_val=now - 90000, open_=10.0, high=11.0, low=9.0, close=10.5)
-        data_source._historical_bars = [old_bar]
-        data_source._on_refresh_start()
-        assert data_source._last_history_time == old_bar["time"]
-
     def test_on_refresh_start_empty_history(self, data_source):
-        data_source._historical_bars = []
-        data_source._on_refresh_start()
-        assert data_source._last_history_time == 0
+        data_source._bars_by_pair["MNQ"] = []
+        data_source._on_refresh_start({"pair": "MNQ"})
+        assert data_source.state == DataSourceState.REFRESHING
 
     def test_on_refresh_start_preserves_buffer_when_from_connected(self, data_source):
         data_source._state = DataSourceState.CONNECTED
-        data_source._refresh_buffer = [make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)]
-        data_source._on_refresh_start()
+        data_source._refresh_buffer = {"MNQ": [make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)]}
+        data_source._on_refresh_start({"pair": "MNQ"})
         assert data_source.state == DataSourceState.REFRESHING
-        assert len(data_source._refresh_buffer) == 1
-        assert data_source._refresh_buffer[0]["time"] == 100
+        assert len(data_source._refresh_buffer["MNQ"]) == 1
+        assert data_source._refresh_buffer["MNQ"][0]["time"] == 100
 
 
 # ---------------------------------------------------------------------------
@@ -1017,42 +1040,42 @@ class TestHistoricalQueries:
 
     def test_load_historical_bars_returns_copy(self, data_source):
         bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
-        data_source._historical_bars = [bar]
-        result = data_source.load_historical_bars()
+        data_source._bars_by_pair["MNQ"] = [bar]
+        result = data_source.load_historical_bars(pair="MNQ")
         assert result == [bar]
         # Mutating result should not affect internal storage
         result[0]["close"] = 999.0
-        assert data_source._historical_bars[0]["close"] == 10.5
+        assert hist_bars(data_source)[0]["close"] == 10.5
 
     def test_load_historical_bars_filters_by_start_time(self, data_source):
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
             make_bar(time_val=300, open_=12.0, high=13.0, low=11.0, close=12.5),
         ]
-        result = data_source.load_historical_bars(start_time=200)
+        result = data_source.load_historical_bars(start_time=200, pair="MNQ")
         assert len(result) == 2
         assert result[0]["time"] == 200
         assert result[1]["time"] == 300
 
     def test_load_historical_bars_deduplicates(self, data_source):
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=100, open_=10.1, high=11.1, low=9.1, close=10.6),
             make_bar(time_val=200, open_=11.0, high=12.0, low=10.0, close=11.5),
         ]
-        result = data_source.load_historical_bars()
+        result = data_source.load_historical_bars(pair="MNQ")
         assert len(result) == 2
         assert result[0]["time"] == 100
         assert result[1]["time"] == 200
 
     def test_load_historical_bars_1m_returns_dicts(self, data_source):
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
         ]
-        result = data_source.load_historical_bars(timeframe="1m")
+        result = data_source.load_historical_bars(timeframe="1m", pair="MNQ")
         assert isinstance(result, list)
-        assert result[0] == data_source._historical_bars[0]
+        assert result[0] == hist_bars(data_source)[0]
 
     def test_aggregate_bars_5m(self, data_source):
         bars = [
@@ -1095,11 +1118,11 @@ class TestHistoricalQueries:
         assert result[0]["time"] == 100
 
     def test_load_historical_bars_aggregates(self, data_source):
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=0, open_=10.0, high=11.0, low=9.0, close=10.5, volume=100),
             make_bar(time_val=60, open_=10.5, high=12.0, low=10.0, close=11.5, volume=200),
         ]
-        result = data_source.load_historical_bars(timeframe="5m")
+        result = data_source.load_historical_bars(timeframe="5m", pair="MNQ")
         assert len(result) == 1
         assert result[0]["volume"] == 300
 
@@ -1114,7 +1137,7 @@ class TestGapDetection:
     def test_detect_gap_logs_warning(self, data_source, logger):
         data_source._detect_gap(0, 200, "TEST")
         # Code path exercised; we just verify no exception is raised.
-        assert len(data_source._historical_bars) == 0  # no state change
+        assert len(hist_bars(data_source)) == 0  # no state change
 
     def test_detect_gap_no_warning_below_threshold(self, data_source, logger):
         data_source._detect_gap(0, 30, "TEST")
@@ -1209,18 +1232,24 @@ class TestSubscribePause:
 class TestRequestRefresh:
 
     def test_request_refresh(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
         data_source._state = DataSourceState.CONNECTED
         data_source.request_refresh(days=5)
-        mock_gateway.send_refresh_request.assert_called_once_with(days=5)
+        mock_gateway.send_refresh_request.assert_called_once_with(days=5, instrument="MNQ 06-26")
 
     def test_request_refresh_ensures_gateway(self, logger):
+        from src.domain.models import Instrument
+
         ds = ZMQDataSource(logger=logger)
+        ds.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
         ds._state = DataSourceState.CONNECTED
         with patch("src.infrastructure.gateway.datasource.TradingGateway") as MockGW:
             mock_gw = MagicMock(spec=TradingGateway)
             MockGW.return_value = mock_gw
             ds.request_refresh(days=3)
-            mock_gw.send_refresh_request.assert_called_once_with(days=3)
+            mock_gw.send_refresh_request.assert_called_once_with(days=3, instrument="MNQ 06-26")
 
 
 # ---------------------------------------------------------------------------
@@ -1237,40 +1266,40 @@ class TestErrorHandling:
         with pytest.raises(RuntimeError, match="boom"):
             data_source._on_bar(bar)
         # The bar is still stored before the callback runs
-        assert len(data_source._historical_bars) == 1
+        assert len(hist_bars(data_source)) == 1
 
     def test_on_history_end_callback_error_does_not_abort(self, data_source):
         data_source.on_history_complete = lambda bars: (_ for _ in ()).throw(RuntimeError("boom"))
-        data_source._historical_bars = [make_bar(time_val=int(time.time()) - 300, open_=10.0, high=11.0, low=9.0, close=10.5)]
-        data_source._on_history_end()
+        data_source._bars_by_pair["MNQ"] = [make_bar(time_val=int(time.time()) - 300, open_=10.0, high=11.0, low=9.0, close=10.5)]
+        data_source._on_history_end({"pair": "MNQ"})
         assert data_source.state == DataSourceState.STREAMING
 
     def test_on_refresh_start_callback_error_does_not_abort(self, data_source):
         data_source.on_before_refresh = lambda: (_ for _ in ()).throw(RuntimeError("boom"))
-        data_source._on_refresh_start()
+        data_source._on_refresh_start({"pair": "MNQ"})
         assert data_source.state == DataSourceState.REFRESHING
 
     def test_on_history_batch_empty_bars(self, data_source):
-        payload = {"bars": [], "days": 1}
+        payload = {"bars": [], "days": 1, "pair": "MNQ"}
         data_source._on_history_batch(payload)
-        assert len(data_source._historical_bars) == 0
+        assert len(hist_bars(data_source)) == 0
         assert data_source._stats["history_batches"] == 1
 
     def test_on_tick_missing_volume_defaults_to_zero(self, data_source):
-        tick = {"time": 1000, "price": 5000.0}
+        tick = {"time": 1000, "price": 5000.0, "pair": "MNQ"}
         data_source._on_tick(tick)
         assert data_source._current_bars["MNQ"]["volume"] == 0
 
     def test_load_historical_bars_thread_safe(self, data_source):
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5),
         ]
-        # Replace the lock with a MagicMock that tracks acquire calls
+        # Replace the per-pair lock with a MagicMock that tracks acquire calls
         mock_lock = MagicMock()
         mock_lock.__enter__ = MagicMock(return_value=None)
         mock_lock.__exit__ = MagicMock(return_value=False)
-        data_source._bars_lock = mock_lock
-        data_source.load_historical_bars()
+        data_source._bars_locks["MNQ"] = mock_lock
+        data_source.load_historical_bars(pair="MNQ")
         mock_lock.__enter__.assert_called_once()
         mock_lock.__exit__.assert_called_once()
 
@@ -1290,7 +1319,7 @@ class TestEndToEndFlow:
         data_source.on_history_complete = lambda bars: history_complete.append(bars)
 
         # 1. Refresh starts
-        data_source._on_refresh_start()
+        data_source._on_refresh_start({"pair": "MNQ"})
         assert data_source.state == DataSourceState.REFRESHING
 
         # 2. History batch arrives
@@ -1300,21 +1329,22 @@ class TestEndToEndFlow:
                 {"time": now - 300, "open": 10.5, "high": 12.0, "low": 10.0, "close": 11.5, "volume": 200},
             ],
             "days": 1,
+            "pair": "MNQ",
         })
-        assert len(data_source._historical_bars) == 2
+        assert len(hist_bars(data_source)) == 2
 
         # 3. A live bar arrives during refresh (should be buffered)
         data_source._on_bar(make_bar(time_val=now - 200, open_=11.5, high=13.0, low=11.0, close=12.5))
-        assert len(data_source._historical_bars) == 2  # not yet added
-        assert len(data_source._refresh_buffer) == 1
+        assert len(hist_bars(data_source)) == 2  # not yet added
+        assert len(data_source._refresh_buffer["MNQ"]) == 1
 
         # 4. History end arrives
-        data_source._on_history_end()
+        data_source._on_history_end({"pair": "MNQ"})
         assert data_source.state == DataSourceState.STREAMING
         assert len(history_complete) == 1
         assert len(history_complete[0]) == 2
         # Buffered bar should have been flushed
-        assert len(data_source._historical_bars) == 3
+        assert len(hist_bars(data_source)) == 3
         assert len(live_bars) == 1  # flushed bar triggers on_live_bar
 
     def test_gateway_callback_registration(self, data_source, mock_gateway):
@@ -1336,17 +1366,17 @@ class TestEndToEndFlow:
         # Simulate history batch through gateway
         fresh_time = int(time.time()) - 300
         for cb in callbacks[MessageType.HISTORY_BATCH]:
-            cb({"bars": [{"time": fresh_time, "open": 9.0, "high": 10.0, "low": 8.0, "close": 9.5, "volume": 50}], "days": 1})
+            cb({"bars": [{"time": fresh_time, "open": 9.0, "high": 10.0, "low": 8.0, "close": 9.5, "volume": 50}], "days": 1, "pair": "MNQ"})
         assert data_source._stats["history_batches"] == 1
 
         # Simulate history end through gateway
         for cb in callbacks[MessageType.HISTORY_END]:
-            cb({})
+            cb({"pair": "MNQ"})
         assert data_source.state == DataSourceState.STREAMING
 
         # Simulate refresh start through gateway
         for cb in callbacks[MessageType.REFRESH_START]:
-            cb({})
+            cb({"pair": "MNQ"})
         assert data_source.state == DataSourceState.REFRESHING
 
 
@@ -1454,7 +1484,7 @@ class TestMarketStatusHandling:
         bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
         data_source._on_bar(bar)
         data_source._on_bar(bar)
-        assert len(data_source._historical_bars) == 1
+        assert len(hist_bars(data_source)) == 1
         assert data_source._duplicate_count == 1
 
     def test_duplicate_bar_warned_when_market_open(self, data_source):
@@ -1464,7 +1494,7 @@ class TestMarketStatusHandling:
         bar = make_bar(time_val=100, open_=10.0, high=11.0, low=9.0, close=10.5)
         data_source._on_bar(bar)
         data_source._on_bar(bar)
-        assert len(data_source._historical_bars) == 1
+        assert len(hist_bars(data_source)) == 1
         assert data_source._duplicate_count == 1
         assert any("Duplicate bar" in m for m in logger.messages)
 
@@ -1547,7 +1577,6 @@ class TestHistoryCompletenessMarketClosures:
         ds = ZMQDataSource(
             logger=logger,
             gateway=mock_gateway,
-            pair="MNQ",
             market_filter=MarketClosureFilter(instrument="MNQ"),
         )
         return ds
@@ -1562,13 +1591,13 @@ class TestHistoryCompletenessMarketClosures:
         # Keep the last bar fresh (< 1m old) while both bars remain inside the 2h window.
         now = t2 + 30
 
-        filtered_data_source._historical_bars = [
+        filtered_data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=t1, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=t2, open_=10.0, high=11.0, low=9.0, close=10.5),
         ]
 
         with patch("time.time", return_value=now):
-            complete, reason = filtered_data_source.check_history_completeness()
+            complete, reason = filtered_data_source.check_history_completeness(hist_bars(filtered_data_source))
         assert complete is True, reason
 
     def test_intraday_gap_still_rejected_with_filter(self, filtered_data_source):
@@ -1580,13 +1609,13 @@ class TestHistoryCompletenessMarketClosures:
         t2 = int(datetime(2026, 7, 7, 11, 0, 0, tzinfo=chicago).timestamp())
         now = t2 + 30
 
-        filtered_data_source._historical_bars = [
+        filtered_data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=t1, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=t2, open_=10.0, high=11.0, low=9.0, close=10.5),
         ]
 
         with patch("time.time", return_value=now):
-            complete, reason = filtered_data_source.check_history_completeness()
+            complete, reason = filtered_data_source.check_history_completeness(hist_bars(filtered_data_source))
         assert complete is False
         assert "Gap detected" in reason
 
@@ -1597,13 +1626,13 @@ class TestHistoryCompletenessMarketClosures:
         t2 = int(datetime(2026, 7, 7, 17, 1, 0, tzinfo=chicago).timestamp())
         now = t2 + 30
 
-        data_source._historical_bars = [
+        data_source._bars_by_pair["MNQ"] = [
             make_bar(time_val=t1, open_=10.0, high=11.0, low=9.0, close=10.5),
             make_bar(time_val=t2, open_=10.0, high=11.0, low=9.0, close=10.5),
         ]
 
         with patch("time.time", return_value=now):
-            complete, reason = data_source.check_history_completeness()
+            complete, reason = data_source.check_history_completeness(hist_bars(data_source))
         assert complete is False
         assert "Gap detected" in reason
 
@@ -1623,7 +1652,7 @@ class TestEnsureInstrumentStreaming:
 
         mock_gateway.send_subscribe.assert_called_once_with("MES 09-26")
         mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MES 09-26")
-        assert "MES 09-26" in data_source._extra_instruments
+        assert "MES 09-26" in data_source._requested_instruments
 
     def test_second_call_is_idempotent(self, data_source, mock_gateway):
         from src.domain.models import Instrument
@@ -1636,26 +1665,56 @@ class TestEnsureInstrumentStreaming:
         assert mock_gateway.send_subscribe.call_count == 1
         assert mock_gateway.send_refresh_request.call_count == 1
 
-    def test_skips_default_instrument(self, data_source, mock_gateway):
+    def test_no_default_instrument_special_casing(self, data_source, mock_gateway):
+        """There is no default instrument: requesting MNQ 06-26 is treated
+        like any other instrument and subscribed."""
         from src.domain.models import Instrument
 
         data_source._state = DataSourceState.STREAMING
-        # gateway.instrument is "MNQ 06-26" (already subscribed at connect)
         data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
 
-        mock_gateway.send_subscribe.assert_not_called()
-        mock_gateway.send_refresh_request.assert_not_called()
-        assert data_source._extra_instruments == {}
+        mock_gateway.send_subscribe.assert_called_once_with("MNQ 06-26")
+        mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MNQ 06-26")
+        assert "MNQ 06-26" in data_source._requested_instruments
 
-    def test_noop_when_disconnected(self, data_source, mock_gateway):
+    def test_queued_when_disconnected(self, data_source, mock_gateway):
         from src.domain.models import Instrument
 
         assert data_source._state == DataSourceState.DISCONNECTED
         data_source.ensure_instrument_streaming(Instrument(symbol="MES", full_name="MES 09-26"))
 
+        # No subscribe while the platform is down, but the request is recorded
+        # so on_platform_connected picks it up (clients join rooms on page
+        # load, before streaming starts).
         mock_gateway.send_subscribe.assert_not_called()
         mock_gateway.send_refresh_request.assert_not_called()
-        assert data_source._extra_instruments == {}
+        assert "MES 09-26" in data_source._requested_instruments
+
+    def test_queued_instrument_subscribed_on_platform_connect(self, data_source, mock_gateway):
+        from src.domain.models import Instrument
+
+        assert data_source._state == DataSourceState.DISCONNECTED
+        data_source.ensure_instrument_streaming(Instrument(symbol="MES", full_name="MES 09-26"))
+
+        data_source._history_request_delay_sec = 0.05
+        data_source.on_platform_connected()
+
+        mock_gateway.send_subscribe.assert_called_once_with("MES 09-26")
+        data_source._pending_refresh_timer.join()
+        mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MES 09-26")
+        data_source._cancel_history_retry_timer()
+
+    def test_connect_subscribes_only_requested_instrument_no_default(self, data_source, mock_gateway):
+        """With only MES requested, connect subscribes only MES — no MNQ/default."""
+        from src.domain.models import Instrument
+
+        data_source.ensure_instrument_streaming(Instrument(symbol="MES", full_name="MES 09-26"))
+        data_source.on_platform_connected()
+
+        mock_gateway.send_subscribe.assert_called_once_with("MES 09-26")
+        subscribed = [c.args[0] for c in mock_gateway.send_subscribe.call_args_list]
+        assert not any("MNQ" in s for s in subscribed)
+        data_source._cancel_pending_refresh_timer()
 
     def test_noop_without_full_name(self, data_source, mock_gateway):
         from src.domain.models import Instrument
@@ -1664,9 +1723,9 @@ class TestEnsureInstrumentStreaming:
         data_source.ensure_instrument_streaming(Instrument(symbol="MES", full_name=""))
 
         mock_gateway.send_subscribe.assert_not_called()
-        assert data_source._extra_instruments == {}
+        assert data_source._requested_instruments == {}
 
-    def test_extras_resubscribed_on_platform_reconnect(self, data_source, mock_gateway):
+    def test_requested_instruments_resubscribed_on_platform_reconnect(self, data_source, mock_gateway):
         from src.domain.models import Instrument
 
         data_source._state = DataSourceState.STREAMING
@@ -1675,12 +1734,13 @@ class TestEnsureInstrumentStreaming:
         mock_gateway.send_subscribe.reset_mock()
         mock_gateway.send_refresh_request.reset_mock()
 
-        # Simulate reconnect: subscriptions die platform-side, so both the
-        # default and the extra instrument must be re-subscribed.
+        # Simulate reconnect: subscriptions die platform-side, so the requested
+        # instrument must be re-subscribed.
         data_source._state = DataSourceState.DISCONNECTED
+        data_source._history_request_delay_sec = 0.05
         data_source.on_platform_connected()
 
-        subscribed = [c.args[0] for c in mock_gateway.send_subscribe.call_args_list]
-        assert "MNQ 06-26" in subscribed
-        assert "MES 09-26" in subscribed
-        mock_gateway.send_refresh_request.assert_any_call(days=30, instrument="MES 09-26")
+        mock_gateway.send_subscribe.assert_called_once_with("MES 09-26")
+        data_source._pending_refresh_timer.join()
+        mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MES 09-26")
+        data_source._cancel_history_retry_timer()

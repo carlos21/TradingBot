@@ -148,7 +148,7 @@ class TestCSVScenarioReplay:
         # 2. Send warmup history
         # ------------------------------------------------------------------
         nt.send_history_batch(warmup_bars)
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
 
         # Wait until the data source has processed HISTORY_END and the readiness
         # monitor has moved the state machine into WARMING_UP.  ZMQ delivery can

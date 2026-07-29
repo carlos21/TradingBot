@@ -34,7 +34,6 @@ from src.infrastructure.data_sources.combined_datasource import CombinedDataSour
 from src.infrastructure.database.database_protocol import DatabaseProtocol
 from src.infrastructure.event_publisher import DomainEventBusPublisher
 from src.infrastructure.gateway.datasource import ZMQDataSource
-from src.infrastructure.gateway.executor import MultiAccountExecutor, ZMQTradeExecutor
 from src.infrastructure.market_closure_filter import MarketClosureFilter
 from src.infrastructure.parity_checker import NinjaTraderParityChecker
 from src.infrastructure.readiness_progress_adapter import (
@@ -90,9 +89,11 @@ class StreamingSession:
         event_bus: EventBus | None = None,
         bootstrap_existing_lines: bool = True,
         history_loaded_deduper: HistoryLoadedDeduper | None = None,
+        warmup_min_bars: int = 30,
     ):
         self.instrument = instrument
         self.symbol = instrument.symbol
+        self._warmup_min_bars = warmup_min_bars
         self._socketio = socketio
         self._data_source = data_source
         self._repos = repos
@@ -181,13 +182,9 @@ class StreamingSession:
             sl_tp_tolerance=self._numbers.sl_tp_tolerance,
             logger=self._logger,
             accounts_repo=accounts_repo,
+            instrument=self.instrument.full_name,
             live_mode=self._live_mode,
         )
-
-        if isinstance(self._trade_executor, MultiAccountExecutor):
-            self._trade_executor.trade_manager = tm
-        if isinstance(self._trade_executor, ZMQTradeExecutor):
-            self._trade_executor.trade_manager = tm
         return tm
 
     def _build_strategy(self) -> LiquidityStrategy:
@@ -262,6 +259,7 @@ class StreamingSession:
             stream_end_callback=stream_end_callback,
             logger=self._logger,
             room=self.symbol,
+            pair=self.symbol,
         )
         loader.live_mode = self._live_mode
 
@@ -300,9 +298,9 @@ class StreamingSession:
             )
             self._readiness_state_machine = readiness_state_machine
 
-        progress_emitter = SocketIOReadinessProgressAdapter(self._socketio)
+        progress_emitter = SocketIOReadinessProgressAdapter(self._socketio, room=self.symbol)
         warmup_orchestrator = WarmupOrchestrator(self.strategy, logger=self._logger)
-        warmup_policy = MinimumBarsWarmupPolicy(min_bars=30)
+        warmup_policy = MinimumBarsWarmupPolicy(min_bars=self._warmup_min_bars)
         bar_buffer = LiveBarBuffer(processor=self.bars_loader.on_live_bar)
 
         monitor = ReadinessMonitor(
@@ -316,6 +314,8 @@ class StreamingSession:
             history_loaded_emitter=self._history_loaded_deduper.emit if self._history_loaded_deduper else None,
             progress_emitter=progress_emitter,
             logger=self._logger,
+            history_bars_provider=lambda: self._data_source.load_historical_bars(pair=self.symbol),
+            event_bus=self._event_bus,
         )
         monitor.set_pair(self.symbol)
         return monitor
@@ -339,6 +339,8 @@ class StreamingSession:
             logger=self._logger,
             interval_minutes=5,
             bars_back=60,
+            pair=self.symbol,
+            instrument=self.instrument.full_name,
             on_drift=_on_bar_drift,
         )
         auditor.start()
@@ -362,6 +364,8 @@ class StreamingSession:
             checker=NinjaTraderParityChecker(market_filter=market_filter),
             market_filter=market_filter,
             logger=self._logger,
+            pair=self.symbol,
+            instrument=self.instrument.full_name,
         )
         if self._logger:
             self._logger.info("[LiveMode] ParityCheckService ready")
@@ -452,6 +456,17 @@ class StreamingSession:
             if self._started:
                 return
             self._started = True
+
+        # Seed the readiness monitor with the current gateway connection state:
+        # a session created mid-stream (platform already connected) must not sit
+        # in DISCONNECTED silently dropping live bars until its first refresh.
+        if (
+            self.readiness_monitor is not None
+            and isinstance(self._data_source, ZMQDataSource)
+            and self._data_source.is_connected
+        ):
+            with contextlib.suppress(Exception):
+                self.readiness_monitor.on_connection_change(True)
 
         if self._logger:
             self._logger.info(f"[StreamingSession] Started session for {self.symbol}")

@@ -91,8 +91,11 @@ class InstrumentRegistry(IInstrumentRegistry):
         instrument = self._settings.get("instrument")
         if instrument:
             pair = self._settings.get("pair")
-            symbol = pair if self._is_known(pair) else self._catalog.default_symbol()
-            return {symbol: instrument}
+            if self._is_known(pair):
+                return {pair: instrument}
+            logger.warning(
+                "Dropping legacy instrument override %r: pair %r is not a "
+                "supported instrument", instrument, pair)
         return {}
 
     def _known_overrides(self, mapping: dict) -> dict[str, str]:

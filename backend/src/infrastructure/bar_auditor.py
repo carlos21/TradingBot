@@ -204,6 +204,8 @@ class NinjaTraderBarAuditor:
         bars_back: int = 60,
         comparer: IBarComparer | None = None,
         on_drift: Callable[[AuditResult], None] | None = None,
+        pair: str | None = None,
+        instrument: str | None = None,
     ):
         self._gateway = gateway
         self._data_source = data_source
@@ -212,6 +214,10 @@ class NinjaTraderBarAuditor:
         self._bars_back = max(1, bars_back)
         self._comparer = comparer or BarComparer()
         self._on_drift = on_drift
+        # Instrument this auditor verifies: scopes the local bar cache read
+        # and the audit request.  Required — there is no default instrument.
+        self._pair = pair
+        self._instrument = instrument
 
         self._timer: threading.Timer | None = None
         self._running = False
@@ -276,7 +282,7 @@ class NinjaTraderBarAuditor:
             # Fire-and-forget async request
             self._pending_event = threading.Event()
             self._remote_bars = []
-            self._gateway.send_audit_request(self._bars_back)
+            self._gateway.send_audit_request(self._bars_back, instrument=self._instrument)
 
             # Wait up to 10s for the response
             if not self._pending_event.wait(timeout=10.0):
@@ -290,7 +296,7 @@ class NinjaTraderBarAuditor:
             time.sleep(1.5)
 
             # Re-fetch local bars AFTER the grace delay
-            local_bars = self._data_source.load_historical_bars("1m")
+            local_bars = self._data_source.load_historical_bars("1m", pair=self._pair)
             if not local_bars:
                 self._logger.warning("[BarAuditor] No local bars to audit")
                 return

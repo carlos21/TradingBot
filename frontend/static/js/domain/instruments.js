@@ -1,29 +1,26 @@
 /**
  * Pure helpers for resolving the instrument a chart tab is pinned to.
  * Each browser tab is pinned to one instrument via the `?pair=` URL param;
- * switching instruments means opening another tab, not mutating this one.
+ * switching instruments means reloading the tab with a different `pair`.
+ * There is no fallback instrument: without a valid `?pair=` the tab pins
+ * nothing and the user must pick an instrument explicitly.
  */
 
 /**
  * Resolve the pinned pair for this tab.
- * Priority: URL pair (only if it matches a known instrument symbol),
- * then the instance default pair from /api/config, then the first
- * instrument in the catalog, then null.
+ * Returns the URL pair only when it matches a known instrument symbol,
+ * otherwise null (no implicit default).
  *
  * @param {string|null} urlPair - value of the `?pair=` URL param
  * @param {Array<{symbol: string}>} instruments - instrument catalog
- * @param {string|null|undefined} defaultPair - instance default pair
  * @returns {string|null}
  */
-export function resolvePinnedPair(urlPair, instruments, defaultPair) {
+export function resolvePinnedPair(urlPair, instruments) {
   const list = Array.isArray(instruments) ? instruments : [];
   if (urlPair && list.some(i => i.symbol === urlPair)) {
     return urlPair;
   }
-  if (defaultPair) {
-    return defaultPair;
-  }
-  return list.length > 0 ? list[0].symbol : null;
+  return null;
 }
 
 /**

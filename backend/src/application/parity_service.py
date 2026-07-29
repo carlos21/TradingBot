@@ -29,12 +29,18 @@ class ParityCheckService:
         checker: IParityChecker,
         market_filter: IMarketClosureFilter,
         logger: ILogger,
+        pair: str | None = None,
+        instrument: str | None = None,
     ):
         self._data_source = data_source
         self._gateway = gateway
         self._checker = checker
         self._market_filter = market_filter
         self.logger = logger
+        # Instrument under check: scopes the local bar cache read and the
+        # audit request.  Required — there is no default instrument.
+        self._pair = pair
+        self._instrument = instrument
 
         # One-shot state for async audit response
         self._pending_event: threading.Event | None = None
@@ -52,7 +58,7 @@ class ParityCheckService:
         bars_back = hours_back * 60  # 1m bars
 
         # 1. Get local bars
-        local_bars = self._data_source.load_historical_bars("1m")
+        local_bars = self._data_source.load_historical_bars("1m", pair=self._pair)
         if not local_bars:
             return self._error_result("No local bars available")
 
@@ -64,7 +70,7 @@ class ParityCheckService:
             self._remote_bars = []
 
         # 3. Send audit request
-        self._gateway.send_audit_request(bars_back=bars_back)
+        self._gateway.send_audit_request(bars_back=bars_back, instrument=self._instrument)
 
         # 4. Wait for response
         if not self._pending_event.wait(timeout=10.0):

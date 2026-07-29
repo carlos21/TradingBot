@@ -108,6 +108,48 @@ describe('StreamHealthPanel', () => {
     expect(document.getElementById('readinessTransitionLog').textContent).toContain('CONNECTED → WAITING_FOR_HISTORY');
   });
 
+  it('deduplicates identical readiness_changed events within a short window', () => {
+    buildHealthDom();
+    const panel = new StreamHealthPanel(socket);
+    const transition = {
+      previous_state: 'CONNECTED',
+      state: 'WAITING_FOR_HISTORY',
+      reason: 'History needed',
+    };
+
+    socket.trigger('readiness_changed', transition);
+    socket.trigger('readiness_changed', transition);
+    socket.trigger('readiness_changed', transition);
+
+    expect(panel.model.transitionHistory).toHaveLength(1);
+    expect(document.getElementById('readinessTransitionLog').textContent).toContain('CONNECTED → WAITING_FOR_HISTORY');
+  });
+
+  it('keeps distinct readiness transitions that differ in state or reason', () => {
+    buildHealthDom();
+    const panel = new StreamHealthPanel(socket);
+
+    socket.trigger('readiness_changed', {
+      previous_state: 'DISCONNECTED',
+      state: 'CONNECTED',
+      reason: 'Platform connected',
+    });
+    socket.trigger('readiness_changed', {
+      previous_state: 'CONNECTED',
+      state: 'WAITING_FOR_HISTORY',
+      reason: 'History needed',
+    });
+    socket.trigger('readiness_changed', {
+      previous_state: 'CONNECTED',
+      state: 'WAITING_FOR_HISTORY',
+      reason: 'History refresh requested (attempt 2)',
+    });
+
+    expect(panel.model.transitionHistory).toHaveLength(3);
+    expect(document.getElementById('readinessTransitionLog').textContent).toContain('Platform connected');
+    expect(document.getElementById('readinessTransitionLog').textContent).toContain('attempt 2');
+  });
+
   it('updates warmup progress', () => {
     buildHealthDom();
     const panel = new StreamHealthPanel(socket);
@@ -343,6 +385,221 @@ describe('StreamHealthPanel', () => {
     const body = document.getElementById('parityModalGapsBody');
     expect(body.children.length).toBe(1);
     expect(body.textContent).toContain('Mismatch');
+  });
+
+  describe('readiness stepper rendering for all backend states', () => {
+    const stepLabels = () =>
+      Array.from(document.getElementById('readinessStepper').children)
+        .filter(el => el.tagName === 'DIV' && el.querySelector('div'))
+        .map(el => ({
+          label: el.querySelector('div:last-child').textContent,
+          status: el.querySelector('div:first-child').classList.contains('border-accent-500')
+            ? 'active'
+            : el.querySelector('div:first-child').classList.contains('bg-emerald-500')
+            ? 'completed'
+            : el.querySelector('div:first-child').classList.contains('border-rose-500')
+            ? 'error'
+            : 'pending',
+        }));
+
+    it('highlights LIVE step when backend emits STREAMING', () => {
+      buildHealthDom();
+      new StreamHealthPanel(socket);
+      socket.trigger('health_update', {
+        readiness_state: 'STREAMING',
+        readiness_reason: 'Live data flowing',
+        readiness_percent: 100,
+        platform_connected: true,
+      });
+
+      const steps = stepLabels();
+      expect(steps[6].label).toBe('Live');
+      expect(steps[6].status).toBe('active');
+      expect(steps.slice(0, 6).every(s => s.status === 'completed')).toBe(true);
+    });
+
+    it('highlights LIVE step as error when backend emits DEGRADED', () => {
+      buildHealthDom();
+      new StreamHealthPanel(socket);
+      socket.trigger('health_update', {
+        readiness_state: 'DEGRADED',
+        readiness_reason: 'Data quality issue',
+        readiness_percent: 80,
+        platform_connected: true,
+      });
+
+      const steps = stepLabels();
+      expect(steps[6].label).toBe('Live');
+      expect(steps[6].status).toBe('error');
+    });
+
+    it('never leaves every step pending for any visible canonical backend state', () => {
+      const visibleStates = [
+        'CONNECTED',
+        'WAITING_FOR_HISTORY',
+        'REFRESHING',
+        'WARMING_UP',
+        'READY',
+        'LIVE',
+        'STREAMING',
+        'DEGRADED',
+      ];
+
+      visibleStates.forEach((state) => {
+        buildHealthDom();
+        const panel = new StreamHealthPanel(socket);
+        panel.setActive(true);
+        socket.trigger('health_update', {
+          readiness_state: state,
+          readiness_reason: 'test',
+          platform_connected: true,
+        });
+
+        const steps = stepLabels();
+        expect(steps.some(s => s.status !== 'pending')).toBe(true);
+      });
+    });
+
+    it('hides the panel entirely for DISCONNECTED state', () => {
+      buildHealthDom();
+      const panel = new StreamHealthPanel(socket);
+      panel.setActive(true);
+      socket.trigger('health_update', {
+        readiness_state: 'DISCONNECTED',
+        readiness_reason: 'Platform disconnected',
+        platform_connected: false,
+      });
+
+      expect(document.getElementById('streamHealthWrapper').classList.contains('hidden')).toBe(true);
+    });
+  });
+
+  describe('per-instrument filtering', () => {
+    it('ignores readiness_changed events for a different instrument', () => {
+      buildHealthDom();
+      const panel = new StreamHealthPanel(socket, 'MNQ');
+      panel.setActive(true);
+
+      socket.trigger('readiness_changed', {
+        previous_state: 'CONNECTED',
+        state: 'WARMING_UP',
+        reason: 'History loaded',
+        pair: 'MES',
+      });
+
+      expect(panel.model.currentState).toBe('DISCONNECTED');
+      expect(document.getElementById('readinessStepper').textContent).not.toContain('WARMING_UP');
+    });
+
+    it('applies readiness_changed events for its own instrument', () => {
+      buildHealthDom();
+      const panel = new StreamHealthPanel(socket, 'MNQ');
+      panel.setActive(true);
+
+      socket.trigger('readiness_changed', {
+        previous_state: 'CONNECTED',
+        state: 'WARMING_UP',
+        reason: 'History loaded',
+        pair: 'MNQ',
+      });
+
+      expect(panel.model.currentState).toBe('WARMING_UP');
+      expect(document.getElementById('healthState').textContent).toBe('WARMING_UP');
+    });
+
+    it('ignores health_update events for a different instrument', () => {
+      buildHealthDom();
+      const panel = new StreamHealthPanel(socket, 'MNQ');
+      panel.setActive(true);
+
+      socket.trigger('health_update', {
+        readiness_state: 'READY',
+        readiness_reason: 'Ready',
+        pair: 'MES',
+      });
+
+      expect(panel.model.currentState).toBe('DISCONNECTED');
+    });
+
+    it('applies health_update events for its own instrument', () => {
+      buildHealthDom();
+      const panel = new StreamHealthPanel(socket, 'MNQ');
+      panel.setActive(true);
+
+      socket.trigger('health_update', {
+        readiness_state: 'READY',
+        readiness_reason: 'Ready',
+        pair: 'MNQ',
+      });
+
+      expect(panel.model.currentState).toBe('READY');
+    });
+
+    it('ignores warmup_progress events for a different instrument', () => {
+      buildHealthDom();
+      const panel = new StreamHealthPanel(socket, 'MNQ');
+      panel.setActive(true);
+      socket.trigger('health_update', { readiness_state: 'WARMING_UP', pair: 'MNQ' });
+
+      socket.trigger('warmup_progress', { phase: 'warmup', current: 50, total: 100, percent: 50, pair: 'MES' });
+
+      expect(panel.model.phaseProgress).toBeNull();
+    });
+
+    it('ignores phase_started events for a different instrument', () => {
+      buildHealthDom();
+      const panel = new StreamHealthPanel(socket, 'MNQ');
+      panel.setActive(true);
+
+      socket.trigger('phase_started', { phase: 'refreshing', reason: 'Refreshing', pair: 'MES' });
+
+      expect(panel.model.phase).toBeNull();
+    });
+
+    it('two panels sharing a socket only update their own instrument', () => {
+      buildHealthDom();
+      const mnqPanel = new StreamHealthPanel(socket, 'MNQ');
+      const mesPanel = new StreamHealthPanel(socket, 'MES');
+      mnqPanel.setActive(true);
+      mesPanel.setActive(true);
+
+      socket.trigger('readiness_changed', {
+        previous_state: 'CONNECTED',
+        state: 'WARMING_UP',
+        reason: 'History loaded',
+        pair: 'MNQ',
+      });
+
+      expect(mnqPanel.model.currentState).toBe('WARMING_UP');
+      expect(mesPanel.model.currentState).toBe('DISCONNECTED');
+
+      socket.trigger('health_update', {
+        readiness_state: 'READY',
+        readiness_reason: 'Ready',
+        pair: 'MES',
+      });
+
+      expect(mnqPanel.model.currentState).toBe('WARMING_UP');
+      expect(mesPanel.model.currentState).toBe('READY');
+    });
+
+    it('two panels do not share readiness transition history', () => {
+      buildHealthDom();
+      const mnqPanel = new StreamHealthPanel(socket, 'MNQ');
+      const mesPanel = new StreamHealthPanel(socket, 'MES');
+      mnqPanel.setActive(true);
+      mesPanel.setActive(true);
+
+      socket.trigger('readiness_changed', {
+        previous_state: 'CONNECTED',
+        state: 'WARMING_UP',
+        reason: 'History loaded',
+        pair: 'MNQ',
+      });
+
+      expect(mnqPanel.model.transitionHistory).toHaveLength(1);
+      expect(mesPanel.model.transitionHistory).toHaveLength(0);
+    });
   });
 
   describe('lifecycle visibility gate', () => {

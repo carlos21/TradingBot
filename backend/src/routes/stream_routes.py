@@ -113,6 +113,8 @@ def register_stream_routes(
         try:
             logger.info("[Stream] Stopping ZeroMQ gateway...")
             data_source.stop()
+            if coordinator is not None:
+                coordinator.stop_all()
             socketio.emit("gateway_stopped")
             logger.info("[Stream] ZeroMQ gateway stopped")
         except Exception as e:

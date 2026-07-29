@@ -20,10 +20,11 @@ class FakeDataSource:
 
 
 class FakeSettingsService:
-    def __init__(self, accounts=None, credentials=None, instrument="MNQ 09-26"):
+    def __init__(self, accounts=None, credentials=None, instrument="MNQ 09-26", pair="MNQ"):
         self._accounts = accounts or []
         self._credentials = credentials or {}
         self._instrument = instrument
+        self._pair = pair
 
     def list_accounts(self):
         return self._accounts
@@ -31,7 +32,7 @@ class FakeSettingsService:
     def get_full_settings(self):
         return {
             "credentials": self._credentials,
-            "trading": {"instrument": self._instrument},
+            "trading": {"instrument": self._instrument, "pair": self._pair},
         }
 
 
@@ -39,7 +40,9 @@ class TestNinjaTraderLifecycleService:
 
     def test_validate_before_start_with_accounts(self):
         nt_svc = MagicMock(spec=NtManagerService)
-        settings = FakeSettingsService(accounts=[{"name": "Sim101"}])
+        settings = FakeSettingsService(
+            accounts=[{"name": "Sim101", "live_enabled": True, "instrument_symbols": ["MNQ"]}]
+        )
         lifecycle = NinjaTraderLifecycleService(nt_svc, settings, FakeLogger())
         ok, err = lifecycle.validate_before_start(FakeDataSource())
         assert ok is True
@@ -65,6 +68,7 @@ class TestNinjaTraderLifecycleService:
         nt_svc = MagicMock(spec=NtManagerService)
         settings = MagicMock()
         del settings._accounts
+        settings.get_full_settings.side_effect = RuntimeError("no repo")
         lifecycle = NinjaTraderLifecycleService(nt_svc, settings, FakeLogger())
         ok, err = lifecycle.validate_before_start(FakeDataSource())
         assert ok is True

@@ -281,7 +281,6 @@ class SettingsService:
         if instruments:
             first = instruments[0]
             overrides["pair"] = first.symbol
-            overrides["instrument"] = first.full_name
             overrides["point_value"] = str(first.point_value)
 
         if accounts:

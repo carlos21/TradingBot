@@ -33,7 +33,7 @@ class ReadinessStateMachine:
         self._lock = threading.RLock()
         self._event_publisher = event_publisher
         self._logger = logger
-        self._observers: list[Any] = []
+        self._pair: str = ""
         self._retry_count = 0
 
     @property
@@ -55,15 +55,10 @@ class ReadinessStateMachine:
         with self._lock:
             return self._state in (ReadinessState.READY, ReadinessState.LIVE)
 
-    def add_observer(self, observer: Any) -> None:
+    def set_pair(self, pair: str) -> None:
+        """Set the instrument symbol carried on readiness events."""
         with self._lock:
-            if observer not in self._observers:
-                self._observers.append(observer)
-
-    def remove_observer(self, observer: Any) -> None:
-        with self._lock:
-            if observer in self._observers:
-                self._observers.remove(observer)
+            self._pair = pair
 
     # ------------------------------------------------------------------
     # Explicit transitions
@@ -212,23 +207,13 @@ class ReadinessStateMachine:
             print(f"{log_timestamp()} {message}", flush=True)
 
     def _notify(self, previous_state: ReadinessState, reason: str) -> None:
+        if self._event_publisher is None:
+            return
         payload = {
             "previous_state": previous_state.name,
             "state": self._state.name,
             "reason": reason,
+            "pair": self._pair,
         }
-        if self._event_publisher is not None:
-            with contextlib.suppress(Exception):
-                self._event_publisher.emit(
-                    "readiness_changed",
-                    payload,
-                )
-
-        # Observer list may be mutated during iteration; snapshot it.
-        for observer in list(self._observers):
-            with contextlib.suppress(Exception):
-                observer.on_readiness_changed(
-                    self._state,
-                    previous_state,
-                    reason,
-                )
+        with contextlib.suppress(Exception):
+            self._event_publisher.emit("readiness_changed", payload)

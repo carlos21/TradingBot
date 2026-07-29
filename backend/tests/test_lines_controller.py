@@ -25,6 +25,7 @@ class FakeStrategy:
 
 class FakeBarsLoader:
     def __init__(self, pair="MNQ"):
+        self.pair = pair
         self.data_source = FakeDataSource(pair=pair)
         self._last_played_ts = 0
         self.socketio = None

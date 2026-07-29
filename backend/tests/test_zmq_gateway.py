@@ -122,15 +122,14 @@ class TestGateway:
             command_pull="tcp://127.0.0.1:5556",
         )
         logger = ConsoleLogger()
-        gateway = TradingGateway(logger, config=config, pair="MNQ")
+        gateway = TradingGateway(logger, config=config)
 
-        assert gateway.pair == "MNQ"
         assert gateway.config == config
         assert not gateway.is_connected
 
     def test_callback_registration(self):
         logger = ConsoleLogger()
-        gateway = TradingGateway(logger, pair="MNQ")
+        gateway = TradingGateway(logger)
 
         received = []
         def callback(payload):
@@ -153,7 +152,7 @@ class TestGateway:
 
     def test_sequence_number_increment(self):
         logger = ConsoleLogger()
-        gateway = TradingGateway(logger, pair="MNQ")
+        gateway = TradingGateway(logger)
 
         seq1 = gateway._next_seq()
         seq2 = gateway._next_seq()
@@ -179,7 +178,7 @@ class TestIntegration:
             heartbeat_pub=f"tcp://127.0.0.1:{ports[3]}",
         )
         logger = ConsoleLogger()
-        gateway = TradingGateway(logger, config=config, pair="TEST", instrument="MNQ 09-26")
+        gateway = TradingGateway(logger, config=config)
         yield gateway
         gateway.stop()
 
@@ -209,6 +208,8 @@ class TestIntegration:
             take_profit=110.0,
             risk_points=10.0,
             rr_ratio=1.0,
+            pair="TEST",
+            instrument="MNQ 09-26",
         )
 
         # Check it was queued (check pending_commands since sender thread may pop queue)
@@ -225,28 +226,27 @@ class TestDataSource:
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
         logger = ConsoleLogger()
-        ds = ZMQDataSource(logger, pair="MNQ")
+        ds = ZMQDataSource(logger)
 
-        assert ds.pair == "MNQ"
         assert not ds.is_streaming
-        assert ds._historical_bars == []
+        assert ds._bars_by_pair == {}
 
     def test_bar_aggregation(self):
         from src.infrastructure.gateway.datasource import ZMQDataSource
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
         logger = ConsoleLogger()
-        ds = ZMQDataSource(logger, pair="MNQ")
+        ds = ZMQDataSource(logger)
 
         # Add some bars
         bars = [
             {"time": 1000, "open": 100, "high": 110, "low": 90, "close": 105, "volume": 100, "pair": "MNQ"},
             {"time": 1060, "open": 105, "high": 115, "low": 100, "close": 110, "volume": 200, "pair": "MNQ"},
         ]
-        ds._historical_bars = bars
+        ds._bars_by_pair["MNQ"] = bars
 
         # Test 1m aggregation (returns copy)
-        result = ds.load_historical_bars("1m")
+        result = ds.load_historical_bars("1m", pair="MNQ")
         assert len(result) == 2
 
         # Test 5m aggregation
@@ -306,13 +306,21 @@ class TestExecutor:
         mock_gateway = MagicMock()
         logger = ConsoleLogger()
         executor = ZMQTradeExecutor(mock_gateway, logger)
+        # Instrument and account are resolved from the trade itself, never
+        # from a gateway-level default.
+        executor.trade_resolver = lambda trade_id: {
+            "trade_id": trade_id,
+            "instrument": "MNQ 09-26",
+            "account": "Sim101",
+        }
 
         executor.on_trade_close("test_123", 21050)
 
         mock_gateway.send_close_order.assert_called_once_with(
             trade_id="test_123",
             reason="strategy",
-            account=None,
+            account="Sim101",
+            instrument="MNQ 09-26",
         )
 
     def test_on_sl_update(self):
@@ -322,13 +330,19 @@ class TestExecutor:
         mock_gateway = MagicMock()
         logger = ConsoleLogger()
         executor = ZMQTradeExecutor(mock_gateway, logger)
+        executor.trade_resolver = lambda trade_id: {
+            "trade_id": trade_id,
+            "instrument": "MNQ 09-26",
+            "account": "Sim101",
+        }
 
         executor.on_sl_update("test_123", 21000)
 
         mock_gateway.send_modify_order.assert_called_once_with(
             trade_id="test_123",
             stop_loss=21000,
-            account=None,
+            account="Sim101",
+            instrument="MNQ 09-26",
         )
 
 
@@ -339,7 +353,7 @@ class TestMultiAccountE2E:
         from src.infrastructure.gateway.gateway import TradingGateway
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
-        gw = TradingGateway(logger=ConsoleLogger(), instrument="MNQ 09-26")
+        gw = TradingGateway(logger=ConsoleLogger())
         gw._running = True  # pretend started
 
         gw._handle_test_start({
@@ -348,6 +362,8 @@ class TestMultiAccountE2E:
             'risk_points': 10.0,
             'rr_ratio': 2.0,
             'accounts': ['A1', 'A2', 'A3'],
+            'pair': 'MNQ',
+            'instrument': 'MNQ 09-26',
         })
 
         group = gw._test_sequences.get('__multi_account_group__')
@@ -359,7 +375,7 @@ class TestMultiAccountE2E:
         from src.infrastructure.gateway.gateway import TradingGateway
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
-        gw = TradingGateway(logger=ConsoleLogger(), instrument="MNQ 09-26")
+        gw = TradingGateway(logger=ConsoleLogger())
         gw._running = True
 
         gw._handle_test_start({
@@ -368,6 +384,8 @@ class TestMultiAccountE2E:
             'risk_points': 10.0,
             'rr_ratio': 2.0,
             'accounts': ['A1', 'A2'],
+            'pair': 'MNQ',
+            'instrument': 'MNQ 09-26',
         })
 
         group = gw._test_sequences['__multi_account_group__']
@@ -385,7 +403,7 @@ class TestMultiAccountE2E:
         from src.infrastructure.gateway.gateway import TradingGateway
         from src.utils.app_logger import ConsoleLogger  # noqa: E402
 
-        gw = TradingGateway(logger=ConsoleLogger(), instrument="MNQ 09-26")
+        gw = TradingGateway(logger=ConsoleLogger())
         gw._running = True
 
         gw._handle_test_start({
@@ -394,6 +412,8 @@ class TestMultiAccountE2E:
             'risk_points': 10.0,
             'rr_ratio': 2.0,
             'accounts': ['A1'],
+            'pair': 'MNQ',
+            'instrument': 'MNQ 09-26',
         })
 
         group = gw._test_sequences['__multi_account_group__']

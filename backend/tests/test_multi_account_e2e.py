@@ -105,6 +105,9 @@ class FakeZMQExecutor(ZMQTradeExecutor):
         self.logger = logger
         self._risk_usd = None
         self._risk_pct = None
+        self.trade_resolver = None
+        self.trade_canceler = None
+        self.trade_manager = None
 
 
 def _make_strategy(
@@ -410,6 +413,7 @@ class TestMultiAccountExecutor:
             "trade_id": "T1",
             "stop_loss": 95.0,
             "account": "A1",
+            "instrument": None,
         }
 
 
@@ -622,7 +626,7 @@ class TestZMQTradeExecutorAccountRouting:
 
         executor.on_trade_close("T1", 110.0, account="Sim101")
         gateway.send_close_order.assert_called_once_with(
-            trade_id="T1", reason="strategy", account="Sim101"
+            trade_id="T1", reason="strategy", account="Sim101", instrument=None
         )
 
     def test_modify_order_passes_account(self):
@@ -631,7 +635,7 @@ class TestZMQTradeExecutorAccountRouting:
 
         executor.on_sl_update("T1", 95.0, account="Sim101")
         gateway.send_modify_order.assert_called_once_with(
-            trade_id="T1", stop_loss=95.0, account="Sim101"
+            trade_id="T1", stop_loss=95.0, account="Sim101", instrument=None
         )
 
 

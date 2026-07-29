@@ -1,7 +1,7 @@
 """Unit tests for ReadinessStateMachine.
 
 These tests exercise every explicit transition, no-op guards, retry counting,
-observer notification, and event-publisher emission in isolation.
+and event-publisher emission in isolation.
 """
 
 from __future__ import annotations
@@ -10,19 +10,6 @@ import pytest
 
 from src.domain.readiness import ReadinessState, ReadinessStateMachine
 from tests.fakes import DummySocketIO, FakeLogger
-
-
-class _FakeObserver:
-    def __init__(self):
-        self.notifications: list[tuple[ReadinessState, ReadinessState, str]] = []
-
-    def on_readiness_changed(self, new_state, previous_state, reason):
-        self.notifications.append((new_state, previous_state, reason))
-
-
-class _RaisingObserver:
-    def on_readiness_changed(self, _new_state, _previous_state, _reason):
-        raise RuntimeError("observer boom")
 
 
 @pytest.fixture
@@ -189,41 +176,11 @@ class TestRetryCount:
         assert sm.retry_count == 0
 
 
-class TestObserverNotification:
-    def test_observer_receives_notifications(self, sm: ReadinessStateMachine) -> None:
-        observer = _FakeObserver()
-        sm.add_observer(observer)
-        sm.connect()
-        sm.history_loaded()
-        sm.warmup_complete()
-
-        assert len(observer.notifications) == 3
-        new, prev, reason = observer.notifications[0]
-        assert new == ReadinessState.CONNECTED
-        assert prev == ReadinessState.DISCONNECTED
-        assert reason == "Platform connected"
-
-    def test_removed_observer_does_not_receive_notifications(self, sm: ReadinessStateMachine) -> None:
-        observer = _FakeObserver()
-        sm.add_observer(observer)
-        sm.remove_observer(observer)
-        sm.connect()
-        assert len(observer.notifications) == 0
-
-    def test_observer_exception_does_not_break_machine(self, sm: ReadinessStateMachine) -> None:
-        bad = _RaisingObserver()
-        good = _FakeObserver()
-        sm.add_observer(bad)
-        sm.add_observer(good)
-        sm.connect()
-        assert sm.state == ReadinessState.CONNECTED
-        assert len(good.notifications) == 1
-
-
 class TestEventPublisher:
     def test_readiness_changed_event_emitted(self) -> None:
         publisher = DummySocketIO()
         sm = ReadinessStateMachine(event_publisher=publisher)
+        sm.set_pair("MNQ")
         sm.connect()
 
         events = [e for e, _ in publisher.events]
@@ -232,6 +189,15 @@ class TestEventPublisher:
         assert payload["previous_state"] == "DISCONNECTED"
         assert payload["state"] == "CONNECTED"
         assert payload["reason"] == "Platform connected"
+        assert payload["pair"] == "MNQ"
+
+    def test_readiness_changed_event_without_pair(self) -> None:
+        publisher = DummySocketIO()
+        sm = ReadinessStateMachine(event_publisher=publisher)
+        sm.connect()
+
+        payload = next(p for e, p in publisher.events if e == "readiness_changed")
+        assert payload["pair"] == ""
 
     def test_publisher_exception_does_not_break_machine(self) -> None:
         class _BadPublisher:

@@ -76,7 +76,7 @@ def logger():
 
 @pytest.fixture
 def gateway(logger):
-    return TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ", instrument="MNQ 09-26")
+    return TradingGateway(logger=logger, config=GatewayConfig())
 
 
 # ---------------------------------------------------------------------------
@@ -153,17 +153,15 @@ class TestGatewayConfig:
 
 
 class TestGatewayInitialization:
-    def test_default_config_and_pair(self, logger):
+    def test_default_config(self, logger):
         gw = TradingGateway(logger=logger)
-        assert gw.pair == "MNQ"
         assert isinstance(gw.config, GatewayConfig)
         assert gw.config.market_data_pub == "tcp://127.0.0.1:5555"
 
-    def test_custom_config_and_pair(self, logger):
+    def test_custom_config(self, logger):
         config = GatewayConfig()
         config.market_data_pub = "tcp://0.0.0.0:9000"
-        gw = TradingGateway(logger=logger, config=config, pair="ES")
-        assert gw.pair == "ES"
+        gw = TradingGateway(logger=logger, config=config)
         assert gw.config.market_data_pub == "tcp://0.0.0.0:9000"
 
     def test_initial_state(self, gateway):
@@ -879,6 +877,8 @@ class TestTestSequences:
             "entry_price": 100.0,
             "risk_points": 10.0,
             "rr_ratio": 2.0,
+            "pair": "MNQ",
+            "instrument": "MNQ 09-26",
         })
         seq_keys = [k for k in gateway._test_sequences if not k.startswith("__")]
         assert len(seq_keys) == 1
@@ -898,6 +898,8 @@ class TestTestSequences:
             "risk_points": 10.0,
             "rr_ratio": 2.0,
             "accounts": ["A1", "A2"],
+            "pair": "MNQ",
+            "instrument": "MNQ 09-26",
         })
         group = gateway._test_sequences.get("__multi_account_group__")
         assert group is not None
@@ -919,6 +921,8 @@ class TestTestSequences:
             "risk_points": 10.0,
             "rr_ratio": 2.0,
             "accounts": ["A1", "A2"],
+            "pair": "MNQ",
+            "instrument": "MNQ 09-26",
         })
         group = gateway._test_sequences["__multi_account_group__"]
         tid1, tid2 = group["trade_ids"]
@@ -936,6 +940,8 @@ class TestTestSequences:
             "risk_points": 10.0,
             "rr_ratio": 2.0,
             "accounts": ["A1"],
+            "pair": "MNQ",
+            "instrument": "MNQ 09-26",
         })
         group = gateway._test_sequences["__multi_account_group__"]
         tid1 = group["trade_ids"][0]
@@ -954,6 +960,8 @@ class TestTestSequences:
             "risk_points": 10.0,
             "rr_ratio": 2.0,
             "accounts": ["A1"],
+            "pair": "MNQ",
+            "instrument": "MNQ 09-26",
         })
         tid1 = gateway._test_sequences["__multi_account_group__"]["trade_ids"][0]
         gateway._handle_entry_fill({"trade_id": tid1, "entry_price": 100.0})
@@ -972,6 +980,8 @@ class TestTestSequences:
             "entry_price": 100.0,
             "risk_points": 10.0,
             "rr_ratio": 1.0,
+            "pair": "MNQ",
+            "instrument": "MNQ 09-26",
         })
         tid = [k for k in gateway._test_sequences if not k.startswith("__")][0]
         gateway._handle_entry_fill({"trade_id": tid, "entry_price": 100.0})
@@ -987,6 +997,8 @@ class TestTestSequences:
             "entry_price": 100.0,
             "risk_points": 10.0,
             "rr_ratio": 1.0,
+            "pair": "MNQ",
+            "instrument": "MNQ 09-26",
         })
         tid = [k for k in gateway._test_sequences if not k.startswith("__")][0]
         gateway._handle_entry_fill({"trade_id": tid, "entry_price": 100.0})
@@ -1101,6 +1113,8 @@ class TestCommandSending:
             take_profit=110.0,
             risk_points=10.0,
             rr_ratio=1.0,
+            pair="MNQ",
+            instrument="MNQ 09-26",
         )
         assert len(gateway._pending_commands) == 1
         assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
@@ -1126,7 +1140,7 @@ class TestCommandSending:
         assert gateway._pending_commands[1]["payload"]["instrument"] == "ES 09-26"
 
     def test_send_open_order_without_instrument_raises(self, logger):
-        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw = TradingGateway(logger=logger, config=GatewayConfig())
         gw._running = True
         with pytest.raises(ValueError, match="instrument is required"):
             gw.send_open_order(
@@ -1137,10 +1151,25 @@ class TestCommandSending:
                 take_profit=110.0,
                 risk_points=10.0,
                 rr_ratio=1.0,
+                pair="MNQ",
+            )
+
+    def test_send_open_order_without_pair_raises(self, gateway):
+        gateway._running = True
+        with pytest.raises(ValueError, match="pair is required"):
+            gateway.send_open_order(
+                trade_id="T1",
+                direction="long",
+                entry_price=100.0,
+                stop_loss=90.0,
+                take_profit=110.0,
+                risk_points=10.0,
+                rr_ratio=1.0,
+                instrument="MNQ 09-26",
             )
 
     def test_send_open_order_invalid_direction_raises(self, logger):
-        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ", instrument="MNQ 09-26")
+        gw = TradingGateway(logger=logger, config=GatewayConfig())
         gw._running = True
         with pytest.raises(ValueError, match="Invalid order direction"):
             gw.send_open_order(
@@ -1155,39 +1184,39 @@ class TestCommandSending:
 
     def test_send_close_order(self, gateway, logger):
         gateway._running = True
-        gateway.send_close_order("T1", reason="manual", account="Sim101")
+        gateway.send_close_order("T1", reason="manual", account="Sim101", instrument="MNQ 09-26")
         assert len(gateway._pending_commands) == 1
         assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("CLOSE order" in m for m in logger.messages)
 
     def test_send_close_order_without_instrument_raises(self, logger):
-        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw = TradingGateway(logger=logger, config=GatewayConfig())
         gw._running = True
         with pytest.raises(ValueError, match="instrument is required"):
             gw.send_close_order("T1", reason="manual", account="Sim101")
 
     def test_send_modify_order(self, gateway, logger):
         gateway._running = True
-        gateway.send_modify_order("T1", stop_loss=95.0, take_profit=115.0, account="Sim101")
+        gateway.send_modify_order("T1", stop_loss=95.0, take_profit=115.0, account="Sim101", instrument="MNQ 09-26")
         assert len(gateway._pending_commands) == 1
         assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("MODIFY order" in m for m in logger.messages)
 
     def test_send_modify_order_without_instrument_raises(self, logger):
-        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw = TradingGateway(logger=logger, config=GatewayConfig())
         gw._running = True
         with pytest.raises(ValueError, match="instrument is required"):
             gw.send_modify_order("T1", stop_loss=95.0, account="Sim101")
 
     def test_send_refresh_request(self, gateway, logger):
         gateway._running = True
-        gateway.send_refresh_request(days=5)
+        gateway.send_refresh_request(days=5, instrument="MNQ 09-26")
         assert len(gateway._pending_commands) == 1
         assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert any("REFRESH" in m for m in logger.messages)
 
     def test_send_refresh_request_without_instrument_raises(self, logger):
-        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw = TradingGateway(logger=logger, config=GatewayConfig())
         gw._running = True
         with pytest.raises(ValueError, match="instrument is required"):
             gw.send_refresh_request(days=5)
@@ -1200,7 +1229,7 @@ class TestCommandSending:
         assert any("SUBSCRIBE" in m for m in logger.messages)
 
     def test_send_subscribe_empty_instrument_raises(self, logger):
-        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw = TradingGateway(logger=logger, config=GatewayConfig())
         gw._running = True
         with pytest.raises(ValueError, match="instrument is required"):
             gw.send_subscribe("")
@@ -1221,14 +1250,14 @@ class TestCommandSending:
 
     def test_send_audit_request(self, gateway, logger):
         gateway._running = True
-        gateway.send_audit_request(bars_back=30)
+        gateway.send_audit_request(bars_back=30, instrument="MNQ 09-26")
         assert len(gateway._pending_commands) == 1
         assert gateway._pending_commands[1]["payload"]["instrument"] == "MNQ 09-26"
         assert gateway._pending_commands[1]["payload"]["bars_back"] == 30
         assert any("AUDIT" in m for m in logger.messages)
 
     def test_send_audit_request_without_instrument_raises(self, logger):
-        gw = TradingGateway(logger=logger, config=GatewayConfig(), pair="MNQ")
+        gw = TradingGateway(logger=logger, config=GatewayConfig())
         gw._running = True
         with pytest.raises(ValueError, match="instrument is required"):
             gw.send_audit_request(bars_back=30)
@@ -1263,10 +1292,10 @@ class TestCommandSending:
 
     def test_command_methods_noop_when_not_running(self, gateway, logger):
         gateway._running = False
-        gateway.send_open_order("T1", "long", 100, 90, 110, 10, 1.0)
-        gateway.send_close_order("T1")
-        gateway.send_modify_order("T1")
-        gateway.send_refresh_request()
+        gateway.send_open_order("T1", "long", 100, 90, 110, 10, 1.0, pair="MNQ", instrument="MNQ 09-26")
+        gateway.send_close_order("T1", instrument="MNQ 09-26")
+        gateway.send_modify_order("T1", instrument="MNQ 09-26")
+        gateway.send_refresh_request(instrument="MNQ 09-26")
         gateway.send_error("s", "t", "m")
         gateway.send_test_pong(0.0)
         gateway.send_test_result("s", True)

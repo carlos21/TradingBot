@@ -17,7 +17,8 @@ from tests.fakes import (
 class FakeBarsLoader:
     """Minimal fake for controller tests."""
 
-    def __init__(self, close_price=100.0):
+    def __init__(self, close_price=100.0, pair="MNQ"):
+        self.pair = pair
         if close_price is None:
             self._1m_buffer = []
             self._last_bar_close = 0
@@ -29,7 +30,7 @@ class FakeBarsLoader:
         self._last_played_ts = 0
         self.current_1m_index = {"MNQ": 0}
 
-    def load_historical_bars(self, _tf):
+    def load_historical_bars(self, _tf, pair=None):
         if not self._1m_buffer:
             return []
         return [{"close": self._last_bar_close, "time": 1000}]

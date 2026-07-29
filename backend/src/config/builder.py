@@ -237,7 +237,6 @@ class AppBuilder:
         if cfg.nt_accounts:
             live_account_configs = [a for a in cfg.nt_accounts if a.live_enabled]
             ds, executor = create_multi_account_live_components(
-                cfg.pair,
                 logger,
                 account_configs=live_account_configs,
                 risk_usd=cfg.risk_per_trade,
@@ -250,11 +249,9 @@ class AppBuilder:
                 accounts_repo=accounts_repo,
                 history_hours=cfg.history_hours,
                 notifier=notifier,
-                instrument=cfg.instrument,
             )
         else:
             ds, executor = create_live_components(
-                cfg.pair,
                 logger,
                 risk_usd=cfg.risk_per_trade,
                 risk_pct=cfg.risk_pct_per_trade,
@@ -266,7 +263,6 @@ class AppBuilder:
                 heartbeat_port=cfg.zmq_heartbeat_port,
                 history_hours=cfg.history_hours,
                 notifier=notifier,
-                instrument=cfg.instrument,
             )
 
         numbers, options = session_params(cfg.pair)

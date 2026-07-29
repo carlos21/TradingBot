@@ -8,6 +8,7 @@ ZeroMQ gateway to send trade commands to the platform.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from src.services.trade_executor import TradeExecutor
@@ -26,6 +27,12 @@ class ZMQTradeExecutor(TradeExecutor):
     This integrates with the existing TradeManager and sends
     trade commands to NinjaTrader, MetaTrader, or other platforms
     through the ZeroMQ gateway.
+
+    One executor is shared by all instrument sessions, so it holds no
+    per-session TradeManager reference.  Instead a ``trade_resolver``
+    (wired by app_factory) looks a trade up across every active session's
+    trade repository so close/modify commands carry the trade's own
+    instrument (and account) — there is no gateway-level default.
 
     Usage:
         gateway = TradingGateway()
@@ -56,7 +63,23 @@ class ZMQTradeExecutor(TradeExecutor):
         self.logger = logger
         self._risk_usd = risk_usd
         self._risk_pct = risk_pct
+        # Looks up a trade dict (with at least ``instrument`` / ``account``
+        # keys) by trade_id across all active sessions.  Wired by app_factory.
+        self.trade_resolver: Callable[[str], dict | None] | None = None
+        # Cancels a trade on the session that owns it (wired by app_factory).
+        self.trade_canceler: Callable[[str, str], None] | None = None
+        # Legacy single-session fallback (set directly in tests).
         self.trade_manager: TradeManager | None = None
+
+    def _resolve_trade(self, trade_id: str) -> dict | None:
+        """Find the trade dict for ``trade_id`` across all sessions."""
+        if self.trade_resolver is not None:
+            return self.trade_resolver(trade_id)
+        if self.trade_manager is not None:
+            for trade in self.trade_manager.open_trades:
+                if trade.get("trade_id") == trade_id:
+                    return trade
+        return None
 
     def on_command_failed(self, command_type: str, trade_id: str, seq_num: int, reason: str) -> None:
         """Called by the gateway when a command is NACK'd or times out.
@@ -65,12 +88,14 @@ class ZMQTradeExecutor(TradeExecutor):
         on close or modify failures.
         """
         if command_type == "order_open":
-            if self.trade_manager is not None:
+            if self.trade_canceler is not None:
+                self.trade_canceler(trade_id, f"ORDER_OPEN_FAILED:{reason}")
+            elif self.trade_manager is not None:
                 self.trade_manager.cancel_trade(trade_id, reason=f"ORDER_OPEN_FAILED:{reason}")
             else:
                 self.logger.error(
                     f"order_open failed for {trade_id} (seq={seq_num}, reason={reason}) "
-                    "but no trade_manager is set; cannot roll back"
+                    "but no trade_canceler is set; cannot roll back"
                 )
         elif command_type == "order_close":
             self.logger.error(
@@ -185,13 +210,22 @@ class ZMQTradeExecutor(TradeExecutor):
         Called when a trade should be closed.
         Sends close order command to the platform.
 
+        The instrument (and, unless given, the account) are resolved from the
+        trade itself via ``trade_resolver`` — never from a gateway default.
+
         Args:
             trade_id: The trade ID to close
             exit_price: The exit price (for logging, platform determines actual fill)
             account: Optional target account name for multi-account routing.
         """
         try:
-            self._gateway.send_close_order(trade_id=trade_id, reason="strategy", account=account)
+            trade = self._resolve_trade(trade_id)
+            instrument = trade.get("instrument") if trade else None
+            if account is None and trade:
+                account = trade.get("account")
+            self._gateway.send_close_order(
+                trade_id=trade_id, reason="strategy", account=account, instrument=instrument,
+            )
             self.logger.info(f"Sent close order for trade {trade_id}")
 
         except Exception as e:
@@ -203,13 +237,22 @@ class ZMQTradeExecutor(TradeExecutor):
         Called when stop loss should be updated.
         Sends modify order command to the platform.
 
+        The instrument (and, unless given, the account) are resolved from the
+        trade itself via ``trade_resolver`` — never from a gateway default.
+
         Args:
             trade_id: The trade ID to modify
             new_sl: The new stop loss price
             account: Optional target account name for multi-account routing.
         """
         try:
-            self._gateway.send_modify_order(trade_id=trade_id, stop_loss=new_sl, account=account)
+            trade = self._resolve_trade(trade_id)
+            instrument = trade.get("instrument") if trade else None
+            if account is None and trade:
+                account = trade.get("account")
+            self._gateway.send_modify_order(
+                trade_id=trade_id, stop_loss=new_sl, account=account, instrument=instrument,
+            )
             self.logger.info(f"Sent SL update for trade {trade_id}: new_sl={new_sl}")
 
         except Exception as e:
@@ -244,7 +287,18 @@ class MultiAccountExecutor(TradeExecutor):
         self._close_dedup_seconds = 5.0
 
     def _account_for_trade(self, trade_id: str) -> str | None:
-        """Look up the account name for a trade by checking DB."""
+        """Look up the account name for a trade.
+
+        The shared gateway executor resolves the trade across all active
+        sessions (``trade_resolver``); the legacy per-executor trade_manager
+        is only a fallback for tests that wire it directly.
+        """
+        try:
+            trade = self.gateway_executor._resolve_trade(trade_id)
+            if trade and trade.get("account"):
+                return trade["account"]
+        except Exception as e:
+            self.logger.warning(f"MultiAccount: failed to resolve account for {trade_id}: {e}")
         if self.trade_manager is None:
             return None
         try:

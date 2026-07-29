@@ -9,13 +9,10 @@ instrument's ``full_name`` (which changes at every contract rollover).
 """
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass, field
 
 from src.domain.models import Instrument
 from src.strategies.entry_context import TradingWindow
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -113,23 +110,23 @@ INSTRUMENT_PARAMS: dict[str, InstrumentParams] = {
     ),
 }
 
-DEFAULT_SYMBOL = "MNQ"
-
-
 def supported_symbols() -> list[str]:
     """Symbols of all supported (hardcoded) instruments, in catalog order."""
     return list(INSTRUMENT_PARAMS)
 
 
 def get_instrument_params(symbol: str | None) -> InstrumentParams:
-    """Return the parameters for ``symbol``; unknown symbols get the default instrument."""
+    """Return the parameters for ``symbol``.
+
+    Raises ``ValueError`` for unknown or missing symbols — there is no
+    default instrument, so callers must pass an explicit registered symbol.
+    """
     params = INSTRUMENT_PARAMS.get(symbol or "")
     if params is None:
-        logger.warning(
-            "Unknown instrument symbol %r; falling back to %s parameters",
-            symbol, DEFAULT_SYMBOL,
+        raise ValueError(
+            f"Unknown instrument symbol: {symbol!r} "
+            f"(supported: {', '.join(INSTRUMENT_PARAMS)})"
         )
-        params = INSTRUMENT_PARAMS[DEFAULT_SYMBOL]
     return params
 
 
@@ -145,6 +142,3 @@ class HardcodedInstrumentCatalog:
             )
             for params in INSTRUMENT_PARAMS.values()
         ]
-
-    def default_symbol(self) -> str:
-        return DEFAULT_SYMBOL

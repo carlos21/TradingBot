@@ -166,12 +166,12 @@ class TestAppBuilderBacktest:
         assert options.reentry_breakeven is None
 
     def test_csv_source_args(self, base_patches):
-        cfg = AppConfig(mode="backtest", pair="ES", csv_file="csvs/ES.csv")
+        cfg = AppConfig(mode="backtest", pair="MES", csv_file="csvs/MES.csv")
         AppBuilder(cfg).build()
         mock_csv = __import__("src.config.builder", fromlist=["CSVDataSource"]).CSVDataSource
         kwargs = mock_csv.call_args.kwargs
-        assert kwargs["pair"] == "ES"
-        assert kwargs["filename"] == "csvs/ES.csv"
+        assert kwargs["pair"] == "MES"
+        assert kwargs["filename"] == "csvs/MES.csv"
         assert kwargs["bars_per_second"] == cfg.bars_per_second
 
     def test_strategy_numbers_and_options_passed(self, base_patches):

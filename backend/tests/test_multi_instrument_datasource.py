@@ -1,12 +1,9 @@
 """Tests for multi-instrument routing in ``ZMQDataSource``."""
 
-import threading
-from collections import defaultdict
 from unittest.mock import MagicMock
 
 import pytest
 
-from src.config.models import DEFAULT_HISTORY_HOURS
 from src.infrastructure.gateway.datasource import DataSourceState, ZMQDataSource
 from tests.fakes import FakeLogger
 
@@ -29,8 +26,8 @@ class FakeCoordinator:
     def route_partial_bar(self, partial: dict) -> None:
         self.partials.append(partial)
 
-    def route_history_loaded(self, bars: list[dict]) -> None:
-        self.history_loaded.append(bars)
+    def route_history_loaded(self, bars: list[dict], pair: str | None = None) -> None:
+        self.history_loaded.append((bars, pair))
 
     def route_late_history_batch(self, bar_count: int, pair: str | None = None) -> None:
         self.late_history_batches.append((bar_count, pair))
@@ -52,7 +49,6 @@ class FakeGateway:
     def __init__(self):
         self.is_running = False
         self.is_connected = False
-        self.instrument = "MNQ 09-26"
         self._callbacks = {}
         self._conn_listeners = []
 
@@ -71,67 +67,6 @@ class FakeGateway:
             cb(payload)
 
 
-class FakeZMQDataSource(ZMQDataSource):
-    """Lightweight ZMQDataSource that skips the heavy __init__."""
-
-    def __init__(self, pair: str = "MNQ", gateway=None):
-        self.logger = FakeLogger()
-        self.pair = pair
-        self.history_hours = DEFAULT_HISTORY_HOURS
-        self._gateway = gateway
-        self._gateway_config = MagicMock()
-        self._owns_gateway = False
-        self._market_filter = None
-        self._coordinator = None
-
-        self._first_platform_connect = True
-        self._historical_bars: list[dict] = []
-        self._per_pair_bars: dict[str, list[dict]] = {}
-        self._per_pair_locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
-        self._bars_lock = MagicMock()
-        self._state = DataSourceState.STREAMING
-        self._last_history_time: int = 0
-        self._refresh_buffer: list[dict] = []
-
-        self.on_history_complete = None
-        self.on_live_bar = None
-        self.on_before_refresh = None
-        self.on_refresh_start = None
-        self.on_gap_detected = None
-        self.on_heartbeat_stale = None
-        self.on_late_history_batch = None
-
-        self._stop_event = MagicMock()
-        self._callback = None
-        self._from_time = 0
-        self._cb_lock = MagicMock()
-
-        self._current_bars = {}
-        self._extra_instruments = {}
-        self._extra_instruments_lock = threading.Lock()
-        self._last_emit_time = 0.0
-        self._last_native_partial_time = 0.0
-
-        self._stats = {
-            "ticks_received": 0,
-            "bars_received": 0,
-            "history_batches": 0,
-        }
-        self._duplicate_count = 0
-        self._gap_count = 0
-        self._gap_threshold = 60
-        self._history_request_delay_sec = 1.0
-        self._pending_refresh_timer = None
-        self._notifier = MagicMock()
-        self._market_is_open = True
-        self._last_completed_bar_time = 0.0
-        self._heartbeat_thread = None
-        self._heartbeat_stop_event = MagicMock()
-        self._heartbeat_alert_sent = False
-        self._heartbeat_check_interval_sec = 30.0
-        self._heartbeat_alert_threshold_sec = 90.0
-
-
 @pytest.fixture
 def gateway():
     return FakeGateway()
@@ -139,7 +74,8 @@ def gateway():
 
 @pytest.fixture
 def data_source(gateway):
-    ds = FakeZMQDataSource(pair="MNQ", gateway=gateway)
+    ds = ZMQDataSource(FakeLogger(), gateway=gateway)
+    ds._state = DataSourceState.STREAMING
     return ds
 
 
@@ -162,13 +98,13 @@ class TestMultiInstrumentRouting:
         assert len(coordinator.bars) == 1
         assert coordinator.bars[0]["pair"] == "ES"
 
-    def test_on_bar_default_pair_uses_legacy_cache(self, data_source, coordinator):
+    def test_on_bar_stores_in_per_pair_cache(self, data_source, coordinator):
         data_source.set_coordinator(coordinator)
         data_source._on_bar({
             "time": 100, "open": 10, "high": 11, "low": 9, "close": 10,
             "volume": 1, "pair": "MNQ",
         })
-        assert len(data_source._historical_bars) == 1
+        assert len(data_source._bars_by_pair["MNQ"]) == 1
         assert len(coordinator.bars) == 1
 
     def test_on_bar_other_pair_uses_per_pair_cache(self, data_source, coordinator):
@@ -177,18 +113,27 @@ class TestMultiInstrumentRouting:
             "time": 100, "open": 10, "high": 11, "low": 9, "close": 10,
             "volume": 1, "pair": "ES",
         })
-        assert "ES" in data_source._per_pair_bars
-        assert len(data_source._per_pair_bars["ES"]) == 1
+        assert "ES" in data_source._bars_by_pair
+        assert len(data_source._bars_by_pair["ES"]) == 1
 
-    def test_on_bar_buffers_default_pair_in_connected_state(self, data_source, coordinator):
+    def test_on_bar_without_pair_is_dropped(self, data_source, coordinator):
+        data_source.set_coordinator(coordinator)
+        data_source._on_bar({
+            "time": 100, "open": 10, "high": 11, "low": 9, "close": 10,
+            "volume": 1,
+        })
+        assert data_source._bars_by_pair == {}
+        assert len(coordinator.bars) == 0
+
+    def test_on_bar_buffers_in_connected_state(self, data_source, coordinator):
         data_source._state = DataSourceState.CONNECTED
         data_source.set_coordinator(coordinator)
         data_source._on_bar({
             "time": 100, "open": 10, "high": 11, "low": 9, "close": 10,
             "volume": 1, "pair": "MNQ",
         })
-        assert len(data_source._historical_bars) == 0
-        assert len(data_source._refresh_buffer) == 1
+        assert "MNQ" not in data_source._bars_by_pair
+        assert len(data_source._refresh_buffer["MNQ"]) == 1
         # The bar is still routed to the coordinator even while buffering.
         assert len(coordinator.bars) == 1
 
@@ -200,8 +145,17 @@ class TestMultiInstrumentRouting:
                 {"time": 100, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1},
             ],
         })
-        assert "ES" in data_source._per_pair_bars
-        assert len(data_source._per_pair_bars["ES"]) == 1
+        assert "ES" in data_source._bars_by_pair
+        assert len(data_source._bars_by_pair["ES"]) == 1
+
+    def test_on_history_batch_without_pair_is_dropped(self, data_source, coordinator):
+        data_source.set_coordinator(coordinator)
+        data_source._on_history_batch({
+            "bars": [
+                {"time": 100, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1},
+            ],
+        })
+        assert data_source._bars_by_pair == {}
 
     def test_on_history_end_routes_by_pair(self, data_source, coordinator):
         data_source.set_coordinator(coordinator)
@@ -213,7 +167,9 @@ class TestMultiInstrumentRouting:
         })
         data_source._on_history_end({"pair": "ES"})
         assert len(coordinator.history_loaded) == 1
-        assert coordinator.history_loaded[0][0]["pair"] == "ES"
+        bars, pair = coordinator.history_loaded[0]
+        assert pair == "ES"
+        assert bars[0]["pair"] == "ES"
 
     def test_load_historical_bars_with_pair_param(self, data_source, coordinator):
         data_source.set_coordinator(coordinator)
@@ -228,11 +184,15 @@ class TestMultiInstrumentRouting:
         assert len(bars) == 2
         assert bars[0]["pair"] == "ES"
 
-    def test_load_historical_bars_default_pair(self, data_source):
-        data_source._historical_bars = [
+    def test_load_historical_bars_requires_pair(self, data_source):
+        data_source._bars_by_pair["MNQ"] = [
             {"time": 100, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1, "pair": "MNQ"},
         ]
-        bars = data_source.load_historical_bars("1m")
+        with pytest.raises(TypeError):
+            data_source.load_historical_bars("1m")
+        with pytest.raises(ValueError):
+            data_source.load_historical_bars("1m", pair="")
+        bars = data_source.load_historical_bars("1m", pair="MNQ")
         assert len(bars) == 1
         assert bars[0]["pair"] == "MNQ"
 
@@ -278,11 +238,12 @@ class TestMultiInstrumentRouting:
         assert data_source._state == DataSourceState.STREAMING
 
 
-class TestSecondaryPairStateHygiene:
-    """A secondary instrument's refresh/history lifecycle must not mutate the
-    default pair's data-source state."""
+class TestPerPairRefreshState:
+    """Refresh/history lifecycle is tracked per pair via ``_refreshing_pairs``:
+    the connection is REFRESHING while any pair's history is in flight and
+    returns to STREAMING only when every pair has completed."""
 
-    def test_secondary_history_end_does_not_touch_state(self, data_source, coordinator):
+    def test_history_end_completes_pair_refresh(self, data_source, coordinator):
         data_source.set_coordinator(coordinator)
         data_source._state = DataSourceState.STREAMING
         data_source._on_history_batch({
@@ -292,19 +253,23 @@ class TestSecondaryPairStateHygiene:
             ],
         })
         data_source._on_history_end({"pair": "ES"})
+        # No refresh was in flight, so the state stays STREAMING.
         assert data_source._state == DataSourceState.STREAMING
         # Stream liveness stamp is still updated.
         assert data_source._last_completed_bar_time > 0
         assert len(coordinator.history_loaded) == 1
 
-    def test_secondary_refresh_start_does_not_touch_state(self, data_source, coordinator):
+    def test_refresh_start_enters_refreshing_until_history_end(self, data_source, coordinator):
         data_source.set_coordinator(coordinator)
         data_source._state = DataSourceState.STREAMING
-        data_source._per_pair_bars["ES"] = [
+        data_source._bars_by_pair["ES"] = [
             {"time": 100, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1, "pair": "ES"},
         ]
         data_source._on_refresh_start({"pair": "ES"})
-        # Was REFRESHING before the fix; the default pair's lifecycle is unaffected.
+        assert "ES" in data_source._refreshing_pairs
+        assert data_source._state == DataSourceState.REFRESHING
+        data_source._on_history_end({"pair": "ES"})
+        assert data_source._refreshing_pairs == set()
         assert data_source._state == DataSourceState.STREAMING
 
     def test_on_tick_keeps_separate_forming_bars_per_pair(self, data_source, coordinator):

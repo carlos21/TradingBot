@@ -123,6 +123,19 @@ describe('ChartController', () => {
       expect(chartApi.calls.some(c => c.method === 'fitContent')).toBe(true);
     });
 
+    it('does not fetch bars when no pair is pinned', async () => {
+      const { doc, win } = setupDocument();
+      const { controller, http } = buildController(doc, win, { activePair: null });
+      await flushPromises();
+
+      expect(controller.pair).toBeNull();
+      expect(http.requests.some(r => r.url.startsWith('/api/bars'))).toBe(false);
+
+      http.requests.length = 0;
+      await controller.initBars();
+      expect(http.requests.some(r => r.url.startsWith('/api/bars'))).toBe(false);
+    });
+
     it('skips when series is busy', async () => {
       const { doc, win } = setupDocument();
       const { controller } = buildController(doc, win);

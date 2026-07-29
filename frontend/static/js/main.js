@@ -4,6 +4,7 @@ import { StreamHealthPanel } from './StreamHealthPanel.js';
 import { StreamingEventType, StreamingState } from './domain/streamingLifecycle.js';
 import { resolvePinnedPair, findInstrument } from './domain/instruments.js';
 import { InstrumentsMenuController } from './application/InstrumentsMenuController.js';
+import { OverlayInstrumentController } from './application/OverlayInstrumentController.js';
 import { BrowserDomService } from './adapters/browser/BrowserDomService.js';
 
 function setConnectionStatus(text) {
@@ -30,9 +31,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   try {
     config = await loadConfig();
     const instruments = Array.isArray(config.instruments) ? config.instruments : [];
-    // This tab is pinned to one instrument: ?pair= wins when it names a
-    // known instrument, otherwise the instance default pair is used.
-    activePair = resolvePinnedPair(getUrlPair(), instruments, config.pair);
+    // This tab is pinned to one instrument only via a valid ?pair= param.
+    // Without one nothing is pinned: no room is joined, no bars load, and
+    // the overlay selector demands an explicit choice.
+    activePair = resolvePinnedPair(getUrlPair(), instruments);
     activeInstrument = findInstrument(instruments, activePair);
   } catch (err) {
     console.error('[main] Failed to load config:', err);
@@ -78,6 +80,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   instrumentsMenu.init();
   instrumentsMenu.setInstruments(config?.instruments || [], activePair);
 
+  // "Ready to Trade" overlay instrument picker: shown whenever the tab is
+  // unpinned (no valid ?pair=) or several instruments exist; choosing one
+  // reloads this tab pinned to the choice.
+  const overlaySelector = new OverlayInstrumentController(new BrowserDomService());
+  overlaySelector.init();
+  overlaySelector.setInstruments(config?.instruments || [], activePair);
+
+  // Without a pinned instrument there is nothing to stream yet: keep Start
+  // disabled until the user picks an instrument (which reloads the tab pinned).
+  if (!activePair) {
+    const startBtn = document.getElementById('startStreamingBtn');
+    if (startBtn) startBtn.disabled = true;
+    setConnectionStatus('Select an instrument to stream');
+  }
+
   function joinActiveInstrument() {
     if (activePair) socket.emit('join_instrument', { pair: activePair });
   }
@@ -88,10 +105,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (activePair) socket.emit('leave_instrument', { pair: activePair });
   });
 
-  const accountsDisplay = new NtAccountsDisplay(socket);
+  const accountsDisplay = new NtAccountsDisplay(socket, activePair);
   accountsDisplay.init();
 
-  const healthPanel = new StreamHealthPanel(socket);
+  const healthPanel = new StreamHealthPanel(socket, activePair);
   window.healthPanel = healthPanel;
 
   // The stream health panel only makes sense while the platform is actually
@@ -99,6 +116,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   healthPanel.setActive(streamingLifecycle.getState() === StreamingState.STREAMING);
   streamingLifecycle.onStateChange = (state) => {
     healthPanel.setActive(state === StreamingState.STREAMING);
+    // Don't allow changing the instrument only while a start is in flight;
+    // IDLE/GATEWAY_UP/DISCONNECTED all still let the user pick and reload.
+    overlaySelector.setEnabled(state !== StreamingState.STARTING);
   };
 
   // On page load, sync the streaming lifecycle machine with the backend so
@@ -107,6 +127,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     .then(r => r.json())
     .then(data => {
       streamingLifecycle.dispatch({ type: StreamingEventType.STATUS_SYNC, ...data });
+      // The dispatch re-renders the start button; re-apply the unpinned gate.
+      if (!activePair) {
+        const startBtn = document.getElementById('startStreamingBtn');
+        if (startBtn) startBtn.disabled = true;
+        setConnectionStatus('Select an instrument to stream');
+        return;
+      }
       if (data.platform_connected) {
         setConnectionStatus('Connected');
         return;

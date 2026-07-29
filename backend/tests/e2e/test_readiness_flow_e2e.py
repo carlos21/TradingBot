@@ -64,7 +64,7 @@ class _ReadinessHarness:
 
 def _wait_for_state(app, target_name: str, timeout: float = 5.0) -> None:
     deadline = time.time() + timeout
-    monitor = app.data_source._readiness_monitor
+    monitor = app.readiness_monitor
     while time.time() < deadline:
         if monitor is not None and monitor._state_machine.state.name == target_name:
             return
@@ -97,7 +97,7 @@ def readiness_harness(fake_nt, live_app):
     if isinstance(app.data_source, ZMQDataSource):
         app.data_source.check_history_completeness = lambda bars=None: (True, "test")
 
-    monitor = app.data_source._readiness_monitor
+    monitor = app.readiness_monitor
     if monitor is not None:
         class _AlwaysWarm:
             def is_warm(self, _strategy):
@@ -120,7 +120,7 @@ class TestReadinessFlowE2E:
     def test_history_then_live_bar_flow(self, readiness_harness: _ReadinessHarness) -> None:
         nt = readiness_harness.nt
         app = readiness_harness.app
-        monitor = app.data_source._readiness_monitor
+        monitor = app.readiness_monitor
         catcher = readiness_harness.catcher
 
         # 1) Platform connects and schedules refresh automatically.
@@ -129,7 +129,7 @@ class TestReadinessFlowE2E:
         # 2) NinjaTrader sends history.
         bars = _make_history_bars(100)  # enough bars for 1m warmup/indicators
         nt.send_history_batch(bars)
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
 
         # 3) Wait for READY.
         _wait_for_state(app, "READY")
@@ -164,7 +164,7 @@ class TestReadinessFlowE2E:
     def test_live_bar_dropped_before_ready(self, readiness_harness: _ReadinessHarness) -> None:
         nt = readiness_harness.nt
         app = readiness_harness.app
-        monitor = app.data_source._readiness_monitor
+        monitor = app.readiness_monitor
 
         # Send a live bar before any history has arrived.
         early_bar = {
@@ -181,7 +181,7 @@ class TestReadinessFlowE2E:
 
         # Strategy should not have processed the bar while CONNECTED.
         assert monitor._state_machine.state == ReadinessState.CONNECTED
-        historical = [b for b in app.data_source._historical_bars if b["time"] == early_bar["time"]]
+        historical = [b for b in app.data_source._bars_by_pair.get("MNQ", []) if b["time"] == early_bar["time"]]
         assert historical == []
 
 
@@ -204,7 +204,7 @@ def gap_fill_harness(fake_nt, live_app):
     app.strategy.timeframes = ["1m"]
 
     # Bypass only the indicator-warmup gate; keep the real completeness check.
-    monitor = app.data_source._readiness_monitor
+    monitor = app.readiness_monitor
     if monitor is not None:
         class _AlwaysWarm:
             def is_warm(self, _strategy):
@@ -249,7 +249,7 @@ class TestGapFillE2E:
         assert segment_b[-1]["time"] > t0 - 60  # last bar fresh enough
 
         nt.send_history_batch(segment_a + segment_b)
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         # Baseline before the monitor processes the history: the gap-fill
         # cannot have fired yet, and the connect-triggered delayed refresh
         # (1s arm) aborts once history lands, so it cannot pollute the count.
@@ -259,7 +259,7 @@ class TestGapFillE2E:
         # blocks the completeness check.
         _wait_for_state(app, "WARMING_UP")
         time.sleep(0.5)
-        monitor = app.data_source._readiness_monitor
+        monitor = app.readiness_monitor
         assert monitor._state_machine.state.name == "WARMING_UP"
 
         # Without any manual action, the monitor requests a refresh to fill
@@ -278,15 +278,20 @@ class TestGapFillE2E:
         # Segment A ends at t0-2700 and B starts at t0-210, so the fill must
         # cover t0-2640 through t0-240 (41 bars) to leave no >60s hole.
         hole_bars = [_bar(t0 - 2640 + i * 60, i + 200) for i in range(41)]
-        nt.send_refresh_start()
+        nt.send_refresh_start(pair="MNQ")
         nt.send_history_batch(segment_a + hole_bars + segment_b)
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
 
-        # A fresh live bar, contiguous with the last cached bar.
-        nt.send_bar(_bar(segment_b[-1]["time"] + 60, 999))
-
-        # With the hole filled, readiness completes.
+        # With the hole filled, readiness completes. Wait for READY *before*
+        # sending the live bar: once a live bar is queued, READY is transient
+        # (the bar immediately promotes it to LIVE), so polling for READY
+        # after the send races the warmup thread.
         _wait_for_state(app, "READY")
+
+        # A fresh live bar, contiguous with the last cached bar, promotes
+        # READY -> LIVE.
+        nt.send_bar(_bar(segment_b[-1]["time"] + 60, 999))
+        _wait_for_state(app, "LIVE")
 
         # No further auto refresh requests once READY.
         time.sleep(0.5)
@@ -300,7 +305,7 @@ class TestGapFillE2E:
         # Contiguous history (no hole) but the newest bar is ~100m old.
         stale_bars = [_bar(t0 - 6000 - (60 - i) * 60, i) for i in range(60)]
         nt.send_history_batch(stale_bars)
-        nt.send_history_end()
+        nt.send_history_end(pair="MNQ")
         # Baseline before the monitor processes the history (same race-safety
         # reasoning as the gap scenario).
         baseline = _refresh_request_count(nt)
@@ -310,5 +315,5 @@ class TestGapFillE2E:
         # Staleness is not fillable — no auto refresh may be requested.
         time.sleep(1.5)
         assert _refresh_request_count(nt) == baseline
-        monitor = app.data_source._readiness_monitor
+        monitor = app.readiness_monitor
         assert monitor._state_machine.state.name == "WARMING_UP"

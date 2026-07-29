@@ -52,7 +52,6 @@ def register_core_routes(
                 logger.error(f"[API /config] failed to load instruments: {exc}")
         return jsonify({
             'instruments': instruments,
-            'pair': pair,
             'platform_type': platform_type,
             'platform_label': platform_label,
             'is_ninjatrader': platform_type == 'ninjatrader',
@@ -69,6 +68,9 @@ def register_core_routes(
         tf       = request.args.get('tf', '5m')
         start_ts = request.args.get('start_time', type=int)
         pair_arg = request.args.get('pair')
+
+        if not pair_arg:
+            return jsonify({"error": "Query param 'pair' is required, e.g. /api/bars?pair=MNQ"}), 400
 
         try:
             bars = data_source.load_historical_bars(tf, start_ts, pair=pair_arg)

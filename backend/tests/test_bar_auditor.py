@@ -145,6 +145,8 @@ class TestNinjaTraderBarAuditorLifecycle:
             logger=logger,
             interval_minutes=0,  # will fire immediately
             bars_back=10,
+            pair="MNQ",
+            instrument="MNQ",
         )
         auditor.start()
         # give the timer a moment to fire
@@ -178,9 +180,11 @@ class TestNinjaTraderBarAuditorLifecycle:
             logger=logger,
             interval_minutes=5,
             bars_back=10,
+            pair="MNQ",
+            instrument="MNQ",
         )
 
-        def mock_send_audit_request(bars_back):
+        def mock_send_audit_request(bars_back, instrument=None):
             auditor._on_audit_response({
                 "bars": [bar_100, bar_160, bar_220],
             })
@@ -223,9 +227,11 @@ class TestNinjaTraderBarAuditorLifecycle:
             logger=logger,
             interval_minutes=5,
             bars_back=10,
+            pair="MNQ",
+            instrument="MNQ",
         )
 
-        def mock_send_audit_request(bars_back):
+        def mock_send_audit_request(bars_back, instrument=None):
             auditor._on_audit_response({
                 "bars": [bar_100, bar_160, bar_220],
             })
@@ -270,9 +276,11 @@ class TestNinjaTraderBarAuditorLifecycle:
             interval_minutes=5,
             bars_back=2,
             on_drift=on_drift,
+            pair="MNQ",
+            instrument="MNQ",
         )
 
-        def mock_send_audit_request(bars_back):
+        def mock_send_audit_request(bars_back, instrument=None):
             auditor._on_audit_response({
                 "bars": [bar_160, bar_220],
             })
@@ -319,9 +327,11 @@ class TestNinjaTraderBarAuditorLifecycle:
             interval_minutes=5,
             bars_back=3,
             on_drift=on_drift,
+            pair="MNQ",
+            instrument="MNQ",
         )
 
-        def mock_send_audit_request(bars_back):
+        def mock_send_audit_request(bars_back, instrument=None):
             auditor._on_audit_response({
                 "bars": [bar_100, bar_160, bar_220],
             })
@@ -358,9 +368,11 @@ class TestNinjaTraderBarAuditorLifecycle:
             interval_minutes=5,
             bars_back=1,
             on_drift=on_drift,
+            pair="MNQ",
+            instrument="MNQ",
         )
 
-        def mock_send_audit_request(bars_back):
+        def mock_send_audit_request(bars_back, instrument=None):
             auditor._on_audit_response({
                 "bars": [bar_100_remote],
             })
@@ -405,9 +417,11 @@ class TestNinjaTraderBarAuditorLifecycle:
             interval_minutes=5,
             bars_back=2,
             on_drift=on_drift,
+            pair="MNQ",
+            instrument="MNQ",
         )
 
-        def mock_send_audit_request(bars_back):
+        def mock_send_audit_request(bars_back, instrument=None):
             auditor._on_audit_response({
                 "bars": [bar_100_remote, bar_220_remote],
             })
@@ -449,9 +463,11 @@ class TestNinjaTraderBarAuditorLifecycle:
             interval_minutes=5,
             bars_back=2,
             on_drift=on_drift,
+            pair="MNQ",
+            instrument="MNQ",
         )
 
-        def mock_send_audit_request(bars_back):
+        def mock_send_audit_request(bars_back, instrument=None):
             auditor._on_audit_response({
                 "bars": [bar_40, bar_100_remote],
             })
@@ -493,6 +509,8 @@ class TestNinjaTraderBarAuditorStreamingGuard:
             logger=logger,
             interval_minutes=5,
             bars_back=10,
+            pair="MNQ",
+            instrument="MNQ",
         )
         auditor.start()
         auditor._run_audit()
@@ -525,6 +543,8 @@ class TestNinjaTraderBarAuditorStreamingGuard:
             logger=logger,
             interval_minutes=5,
             bars_back=10,
+            pair="MNQ",
+            instrument="MNQ",
         )
         auditor.start()
         auditor._run_audit()
@@ -560,9 +580,11 @@ class TestNinjaTraderBarAuditorStreamingGuard:
             logger=logger,
             interval_minutes=5,
             bars_back=10,
+            pair="MNQ",
+            instrument="MNQ",
         )
 
-        def mock_send_audit_request(bars_back):
+        def mock_send_audit_request(bars_back, instrument=None):
             auditor._on_audit_response({
                 "bars": [bar_100],
             })
@@ -575,6 +597,7 @@ class TestNinjaTraderBarAuditorStreamingGuard:
         auditor._run_audit()
 
         # Audit ran: request sent and bars compared successfully
-        gateway.send_audit_request.assert_called_once()
+        gateway.send_audit_request.assert_called_once_with(10, instrument="MNQ")
+        data_source.load_historical_bars.assert_called_once_with("1m", pair="MNQ")
         ok_calls = [call for call in logger.info.call_args_list if "[BarAuditor] OK" in str(call)]
         assert len(ok_calls) == 1, f"Expected one OK log, got: {ok_calls}"

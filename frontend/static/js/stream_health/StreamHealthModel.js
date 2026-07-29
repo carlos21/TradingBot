@@ -48,12 +48,25 @@ export class StreamHealthModel {
   updateFromTransition(data) {
     const prev = data.previous_state || this.currentState;
     const next = data.state || this.currentState;
-    if (prev !== next || data.reason !== this.reason) {
+    const reason = data.reason || '';
+    const now = Date.now();
+
+    // Defensive deduplication: ignore an event that is identical to the most
+    // recent history entry within a short window. This protects against
+    // accidental double emits without hiding genuine repeated transitions.
+    const last = this.transitionHistory[0];
+    const isDuplicate = last
+      && last.previousState === prev
+      && last.state === next
+      && last.reason === reason
+      && (now - last.timestamp) < 1000;
+
+    if (!isDuplicate && (prev !== next || reason !== this.reason)) {
       this.transitionHistory.unshift({
-        timestamp: Date.now(),
+        timestamp: now,
         previousState: prev,
         state: next,
-        reason: data.reason || '',
+        reason: reason,
       });
       // Keep a reasonable cap to avoid unbounded growth.
       if (this.transitionHistory.length > 50) {
@@ -62,7 +75,7 @@ export class StreamHealthModel {
     }
     this.previousState = prev;
     this.currentState = next;
-    this.reason = data.reason || this.reason;
+    this.reason = reason || this.reason;
     this.alertLevel = this._computeAlertLevel();
   }
 
@@ -101,6 +114,7 @@ export class StreamHealthModel {
   _computeAlertLevel() {
     if (
       this.currentState === 'DISCONNECTED' ||
+      this.currentState === 'DEGRADED' ||
       !this.platformConnected ||
       (this.heartbeatAgeSec !== null && this.heartbeatAgeSec > 90)
     ) {

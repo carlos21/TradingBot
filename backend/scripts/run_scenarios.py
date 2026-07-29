@@ -159,7 +159,7 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
         bars_per_second=bars_per_second,
     )
 
-    numbers = get_prod_strategy_numbers(rr_ratio=rr_ratio, risk_per_trade=risk_per_trade, risk_pct_per_trade=risk_pct_per_trade)
+    numbers = get_prod_strategy_numbers(rr_ratio=rr_ratio, risk_per_trade=risk_per_trade, risk_pct_per_trade=risk_pct_per_trade, symbol="MNQ")
     # Override account_balance with the value from command line
     from dataclasses import replace
     numbers = replace(numbers, account_balance=account_balance)
@@ -171,6 +171,7 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
         reentry_only=False,
         line_removal_mode=LineRemovalMode.ON_EVALUATE,
         max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
+        symbol="MNQ",
     )
 
     if no_breakeven:

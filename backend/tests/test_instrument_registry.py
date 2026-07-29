@@ -91,7 +91,7 @@ class TestInstrumentRegistry:
         assert instruments[0].symbol == "MNQ"
         assert instruments[0].full_name == "MNQ 06-26"
 
-    def test_legacy_instrument_for_unknown_pair_lands_on_default(self, tmp_path):
+    def test_legacy_instrument_for_unknown_pair_is_dropped(self, tmp_path, caplog):
         db_path = f"sqlite:///{tmp_path / 'legacy_unknown.db'}"
         setup_database(db_url=db_path)
         from src.infrastructure.database.database import get_db_session
@@ -99,11 +99,16 @@ class TestInstrumentRegistry:
         settings_repo = SettingsRepository()
         settings_repo.set("pair", "ES")
         settings_repo.set("instrument", "ES 06-26")
-        registry = InstrumentRegistry(settings_repo, HardcodedInstrumentCatalog())
+        with caplog.at_level("WARNING", logger="src.services.instrument_registry"):
+            registry = InstrumentRegistry(settings_repo, HardcodedInstrumentCatalog())
 
+        # The override is dropped (no default-symbol substitution): the
+        # registry falls back to the catalog defaults.
         instruments = registry.get_all()
-        assert instruments[0].symbol == "MNQ"
-        assert instruments[0].full_name == "ES 06-26"
+        assert [i.symbol for i in instruments] == ["MNQ", "MES"]
+        assert all(i.full_name != "ES 06-26" for i in instruments)
+        assert any("ES" in r.message and "Dropping legacy" in r.message
+                   for r in caplog.records)
 
     def test_malformed_json_falls_back_to_catalog(self, registry):
         registry._settings.set("instruments", "not-json")

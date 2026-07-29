@@ -284,8 +284,10 @@ class SocketIOBridge:
         self.socketio.emit('indicator_update', event.payload, **kwargs)
 
     def _on_readiness_changed(self, event: DomainEvent) -> None:
-        """Forward readiness changed event."""
-        self.socketio.emit('readiness_changed', event.payload)
+        """Forward readiness changed event to the instrument room."""
+        room = event.payload.get("pair")
+        kwargs = {"room": room} if room else {}
+        self.socketio.emit('readiness_changed', event.payload, **kwargs)
 
 
 # Global event bus singleton for convenience

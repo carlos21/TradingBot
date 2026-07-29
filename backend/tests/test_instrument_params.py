@@ -2,7 +2,6 @@
 import pytest
 
 from src.strategies.liquidity_v2.instrument_params import (
-    DEFAULT_SYMBOL,
     INSTRUMENT_PARAMS,
     HardcodedInstrumentCatalog,
     get_instrument_params,
@@ -45,9 +44,11 @@ class TestCatalog:
                 assert w.max_open_trades == 1
                 assert w.max_trades == 1
 
-    def test_unknown_symbol_falls_back_to_default(self):
-        assert get_instrument_params("ZZZ") is INSTRUMENT_PARAMS[DEFAULT_SYMBOL]
-        assert get_instrument_params(None) is INSTRUMENT_PARAMS[DEFAULT_SYMBOL]
+    def test_unknown_symbol_raises(self):
+        with pytest.raises(ValueError, match="Unknown instrument symbol"):
+            get_instrument_params("ZZZ")
+        with pytest.raises(ValueError, match="Unknown instrument symbol"):
+            get_instrument_params(None)
 
     def test_hardcoded_catalog_protocol(self):
         catalog = HardcodedInstrumentCatalog()
@@ -55,12 +56,11 @@ class TestCatalog:
         assert [i.symbol for i in defaults] == ["MNQ", "MES"]
         assert defaults[0].full_name == "MNQ 09-26"
         assert defaults[1].point_value == 5.0
-        assert catalog.default_symbol() == "MNQ"
 
 
 class TestPerSymbolProdConfig:
-    def test_numbers_default_symbol_is_mnq(self):
-        numbers = get_prod_strategy_numbers(rr_ratio=5.0)
+    def test_numbers_mnq_uses_mnq_values(self):
+        numbers = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
         assert numbers.point_value == 2.0
         assert numbers.sl_levels == [15.0, 20.0, 30.0, 40.0]
         assert numbers.be_threshold_points == 2.0
@@ -90,7 +90,7 @@ class TestPerSymbolProdConfig:
         assert mes_options.reentry_threshold == 30.0
 
     def test_options_default_windows_come_from_catalog(self):
-        numbers = get_prod_strategy_numbers(rr_ratio=5.0)
+        numbers = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
         options = get_prod_strategy_options(
             numbers.max_bounce,
             numbers.min_cross_depth,
@@ -98,13 +98,14 @@ class TestPerSymbolProdConfig:
             reentry_only=False,
             line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
             max_reentry_attempts=1,
+            symbol="MNQ",
         )
         # The trading_windows filter is installed by default (catalog windows).
         filter_names = [f.__name__ for f in options.entry_filters]
         assert "trading_windows" in filter_names
 
     def test_open_trades_limit_precedes_trading_windows(self):
-        numbers = get_prod_strategy_numbers(rr_ratio=5.0)
+        numbers = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
         options = get_prod_strategy_options(
             numbers.max_bounce,
             numbers.min_cross_depth,
@@ -112,6 +113,7 @@ class TestPerSymbolProdConfig:
             reentry_only=False,
             line_removal_mode=DEFAULT_STRATEGY_OPTIONS.line_removal_mode,
             max_reentry_attempts=1,
+            symbol="MNQ",
         )
         filter_names = [f.__name__ for f in options.entry_filters]
         assert "open_trades_limit" in filter_names

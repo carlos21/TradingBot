@@ -46,7 +46,7 @@ def main():
     instance = config.instance_name
     app_logger = wiring.logger
     app_logger.info(
-        f"[{instance}] Starting Liquid instance — pair={config.pair} mode={config.mode}"
+        f"[{instance}] Starting Liquid instance — mode={config.mode}"
     )
 
     # Register signal handlers for graceful shutdown
@@ -76,9 +76,9 @@ def main():
                 f"[{instance}] No NT accounts configured. Live streaming will be unavailable until accounts are added."
             )
         else:
-            app_logger.info(f"[{instance}] Starting ZeroMQ gateway...")
-            ds.start()
-            app_logger.info(f"[{instance}] ZeroMQ gateway started")
+            app_logger.info(
+                f"[{instance}] ZeroMQ gateway ready. Start streaming from the UI to connect {platform_label}."
+            )
 
         app_logger.info(
             f"[{instance}] Starting LIVE mode server on port {config.flask_port} (threaded, debug=False)"

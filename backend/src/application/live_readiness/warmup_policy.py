@@ -27,10 +27,13 @@ class MinimumBarsWarmupPolicy(IWarmupPolicy):
     def __init__(self, min_bars: int = 30, min_bars_floor: int = 20) -> None:
         if min_bars <= 0:
             raise ValueError("min_bars must be positive")
-        if min_bars_floor <= 0 or min_bars_floor > min_bars:
-            raise ValueError("min_bars_floor must be between 1 and min_bars")
+        if min_bars_floor <= 0:
+            raise ValueError("min_bars_floor must be positive")
+        # The floor cannot exceed the required minimum; otherwise a low-min_bars
+        # configuration (e.g. tests or small timeframes) would be impossible to
+        # satisfy.
         self._min_bars = min_bars
-        self._min_bars_floor = min_bars_floor
+        self._min_bars_floor = min(min_bars_floor, min_bars)
 
     def is_warm(self, strategy: LiquidityStrategyV2) -> bool:
         for tf in strategy.internal_timeframes:

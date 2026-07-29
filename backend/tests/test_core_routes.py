@@ -75,7 +75,7 @@ class TestCoreRoutes:
             resp = client.get("/api/config")
             assert resp.status_code == 200
             data = resp.get_json()
-            assert data["pair"] == "MNQ"
+            assert "pair" not in data  # no default instrument anymore
             assert data["instruments"] == [
                 {"symbol": "MNQ", "full_name": "MNQ 09-26", "point_value": 2.0, "session_start": "08:00", "session_end": "16:58", "daily_trades_limit": 1}
             ]
@@ -93,8 +93,8 @@ class TestCoreRoutes:
 
     def test_get_config_falls_back_when_settings_unavailable(self):
         # The in-memory scenario server runs without a DB; /api/config must
-        # still respond so the frontend can resolve its pair and join the
-        # instrument room (otherwise stream_end never arrives).
+        # still respond so the frontend can load (otherwise stream_end never
+        # arrives).
         app = Flask(__name__, static_folder=None)
         app.config["TESTING"] = True
         register_core_routes(
@@ -112,19 +112,25 @@ class TestCoreRoutes:
             assert resp.status_code == 200
             data = resp.get_json()
             assert data["instruments"] == []
-            assert data["pair"] == "MNQ"
+            assert "pair" not in data
 
     def test_get_bars(self, app):
         with app.test_client() as client:
-            resp = client.get("/api/bars?tf=1m")
+            resp = client.get("/api/bars?tf=1m&pair=MNQ")
             assert resp.status_code == 200
             data = resp.get_json()
             assert len(data) == 1
             assert data[0]["open"] == 100.0
 
+    def test_get_bars_requires_pair(self, app):
+        # There is no default instrument: /api/bars without a pair is a 400.
+        with app.test_client() as client:
+            resp = client.get("/api/bars?tf=1m")
+            assert resp.status_code == 400
+
     def test_get_bars_with_start_time(self, app):
         with app.test_client() as client:
-            resp = client.get("/api/bars?tf=1m&start_time=500")
+            resp = client.get("/api/bars?tf=1m&pair=MNQ&start_time=500")
             assert resp.status_code == 200
             data = resp.get_json()
             assert len(data) == 1

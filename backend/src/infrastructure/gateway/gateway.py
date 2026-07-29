@@ -116,13 +116,9 @@ to be:
         self,
         logger: ILogger,
         config: GatewayConfig | None = None,
-        pair: str = "MNQ",
-        instrument: str | None = None,
     ):
         self.logger = logger
         self.config = config or GatewayConfig()
-        self.pair = pair
-        self.instrument = instrument
 
         # ZMQ context and sockets
         self._context: zmq.Context | None = None
@@ -891,7 +887,8 @@ to be:
             take_profit=tp,
             risk_points=risk_points,
             rr_ratio=rr_ratio,
-            instrument=self.instrument,
+            pair=payload.get('pair'),
+            instrument=payload.get('instrument'),
         )
         self.logger.info(f"✅ TEST: Queued open order command for {trade_id}")
 
@@ -915,6 +912,7 @@ to be:
                 'sl': sl,
                 'tp': tp,
                 'account': account,
+                'instrument': payload.get('instrument'),
                 'start_time': time.time(),
             }
             self.send_open_order(
@@ -926,7 +924,8 @@ to be:
                 risk_points=risk_points,
                 rr_ratio=rr_ratio,
                 account=account,
-                instrument=self.instrument,
+                pair=payload.get('pair'),
+                instrument=payload.get('instrument'),
             )
             self.logger.info(f"✅ TEST: Queued open order for {trade_id} account={account}")
 
@@ -966,7 +965,8 @@ to be:
                 # All entries filled — send close orders for all
                 for tid in trade_ids:
                     account = self._test_sequences[tid].get('account')
-                    self.send_close_order(trade_id=tid, reason="test", account=account, instrument=self.instrument)
+                    instrument = self._test_sequences[tid].get('instrument')
+                    self.send_close_order(trade_id=tid, reason="test", account=account, instrument=instrument)
                     self.logger.info(f"✅ TEST: Queued close order for {tid} account={account}")
 
         elif stage == 'exit_fill':
@@ -1225,11 +1225,14 @@ to be:
             )
 
     def _resolve_instrument(self, instrument: str | None) -> str:
-        """Return the effective instrument for an order command."""
-        resolved = instrument if instrument is not None else self.instrument
-        if not resolved:
-            raise ValueError("instrument is required for order commands (configure it in Admin → Settings)")
-        return resolved
+        """Return the instrument for a command, or raise when absent.
+
+        There is no gateway-level default instrument: every command must
+        carry its instrument explicitly.
+        """
+        if not instrument:
+            raise ValueError("instrument is required — commands must carry it explicitly")
+        return instrument
 
     def send_open_order(
         self,
@@ -1249,10 +1252,12 @@ to be:
         """Send open order command to platform."""
         if direction not in ("long", "short"):
             raise ValueError(f"Invalid order direction: {direction!r}. Expected 'long' or 'short'.")
+        if not pair:
+            raise ValueError("pair is required for open order commands")
         resolved_instrument = self._resolve_instrument(instrument)
         cmd = OpenOrderCommand(
             trade_id=trade_id,
-            pair=pair or self.pair,
+            pair=pair,
             direction=direction,
             entry_price=entry_price,
             stop_loss=stop_loss,
@@ -1333,9 +1338,7 @@ to be:
 
     def send_refresh_request(self, days: int = 1, instrument: str | None = None) -> None:
         """Request historical data refresh."""
-        resolved = instrument if instrument is not None else self.instrument
-        if not resolved:
-            raise ValueError("instrument is required for refresh requests (configure it in Admin → Settings)")
+        resolved = self._resolve_instrument(instrument)
         cmd = RefreshRequestMessage(days=days, instrument=resolved)
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
@@ -1343,9 +1346,7 @@ to be:
 
     def send_audit_request(self, bars_back: int = 60, instrument: str | None = None) -> None:
         """Request recent bars for verification (read-only audit)."""
-        resolved = instrument if instrument is not None else self.instrument
-        if not resolved:
-            raise ValueError("instrument is required for audit requests (configure it in Admin → Settings)")
+        resolved = self._resolve_instrument(instrument)
         cmd = AuditRequestMessage(bars_back=bars_back, instrument=resolved)
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)

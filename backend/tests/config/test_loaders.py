@@ -70,7 +70,7 @@ class TestEnvConfigLoader:
     def test_load_overrides_from_env(self):
         env = {
             "MODE": "live",
-            "PAIR": "ES",
+            "CSV_FILE": "csvs/ES_live.csv",
             "ACCOUNT_BALANCE": "50000",
             "DAILY_TRADES_LIMIT": "5",
             "TIMEFRAMES": "5m,15m",
@@ -81,7 +81,7 @@ class TestEnvConfigLoader:
         with patch.dict(os.environ, env, clear=True):
             cfg = EnvConfigLoader().load()
         assert cfg.mode == "live"
-        assert cfg.pair == "ES"
+        assert cfg.csv_file == "csvs/ES_live.csv"
         assert cfg.account_balance == 50000.0
         assert cfg.daily_trades_limit == 5
         assert cfg.timeframes == ["5m", "15m"]
@@ -90,9 +90,9 @@ class TestEnvConfigLoader:
         assert cfg.sentry_dsn == "https://sentry.io"
 
     def test_empty_string_env_is_ignored(self):
-        with patch.dict(os.environ, {"PAIR": ""}, clear=True):
+        with patch.dict(os.environ, {"CSV_FILE": ""}, clear=True):
             cfg = EnvConfigLoader().load()
-        assert cfg.pair == "MNQ"
+        assert cfg.csv_file == AppConfig().csv_file
 
     def test_telegram_env_vars(self):
         env = {"TELEGRAM_BOT_TOKEN": "tok", "TELEGRAM_CHAT_ID": "chat"}
@@ -121,7 +121,7 @@ class TestCliConfigLoader:
     def test_load_overrides_from_args(self):
         args = [
             "--mode", "live",
-            "--pair", "ES",
+            "--csv-file", "csvs/ES_live.csv",
             "--rr", "4.0",
             "--daily-trades-limit", "3",
             "--timeframes", "5m,15m",
@@ -130,7 +130,7 @@ class TestCliConfigLoader:
         ]
         cfg = CliConfigLoader(args=args).load()
         assert cfg.mode == "live"
-        assert cfg.pair == "ES"
+        assert cfg.csv_file == "csvs/ES_live.csv"
         assert cfg.rr_ratio == 4.0
         assert cfg.daily_trades_limit == 3
         assert cfg.timeframes == ["5m", "15m"]

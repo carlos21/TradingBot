@@ -8,8 +8,10 @@ import traceback
 from typing import TYPE_CHECKING, Any, Callable
 
 from src.application.ports import EventPublisher, IReadinessProgressEmitter
+from src.domain.events import DomainEvent, EventType
 from src.domain.readiness import ReadinessState, ReadinessStateMachine
 from src.domain.readiness.protocols import IWarmupPolicy
+from src.events.event_bus import EventBus
 from src.utils.app_logger import ILogger
 
 from .live_bar_buffer import LiveBarBuffer
@@ -53,6 +55,8 @@ class ReadinessMonitor:
         logger: ILogger | None = None,
         retry_base_delay_sec: float = 2.0,
         retry_max_delay_sec: float = 60.0,
+        history_bars_provider: Callable[[], list[dict[str, Any]]] | None = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._state_machine = state_machine
         self._warmup_orchestrator = warmup_orchestrator
@@ -71,10 +75,15 @@ class ReadinessMonitor:
             )
             self._warmup_orchestrator.set_progress_listener(multicaster)
         self._logger = logger
+        # Returns the cached bars of this monitor's own instrument; used for
+        # the history-completeness check so no default cache is consulted.
+        self._history_bars_provider = history_bars_provider
 
-        # Observe the state machine so progress tracking stays in sync with
-        # every transition, including those driven by other components.
-        self._state_machine.add_observer(self)
+        # Keep progress tracking in sync by consuming the same domain event
+        # that the SocketIOBridge uses to notify browsers.
+        self._event_bus = event_bus
+        if self._event_bus is not None:
+            self._event_bus.subscribe(EventType.READINESS_CHANGED, self._on_readiness_event)
         self._pair: str = ""
         self._retry_base_delay_sec = retry_base_delay_sec
         self._retry_max_delay_sec = retry_max_delay_sec
@@ -93,6 +102,7 @@ class ReadinessMonitor:
 
     def set_pair(self, pair: str) -> None:
         self._pair = pair
+        self._state_machine.set_pair(pair)
 
     def on_connection_change(self, connected: bool) -> None:
         """Called when the gateway connection state changes."""
@@ -104,13 +114,19 @@ class ReadinessMonitor:
         else:
             self._state_machine.disconnect()
 
-    def on_readiness_changed(
-        self,
-        state: ReadinessState,
-        previous_state: ReadinessState,
-        reason: str,
-    ) -> None:
-        """Observer callback: keep progress tracker aligned with state machine."""
+    def _on_readiness_event(self, event: DomainEvent) -> None:
+        """Event-bus handler: keep progress tracker aligned with state machine."""
+        payload = event.payload
+        state_name = payload.get("state")
+        reason = payload.get("reason", "")
+        if state_name is None:
+            return
+        try:
+            state = ReadinessState[state_name]
+        except KeyError:
+            if self._logger is not None:
+                self._logger.warning(f"[ReadinessMonitor] unknown state {state_name}")
+            return
         self._progress_tracker.update_state(state, reason)
 
     def on_refresh_start(self) -> None:
@@ -155,6 +171,7 @@ class ReadinessMonitor:
                 "readiness_reason": self._state_machine.reason,
                 "bar_count": len(bars),
                 "last_bar_time": bars[-1].get("time") if bars else None,
+                "pair": self._pair,
             }
             with contextlib.suppress(Exception):
                 if self._history_loaded_emitter is not None:
@@ -357,7 +374,12 @@ class ReadinessMonitor:
                 self._bar_buffer.flush()
 
             if self._data_source is not None:
-                complete, reason = self._data_source.check_history_completeness()
+                if self._history_bars_provider is not None:
+                    complete, reason = self._data_source.check_history_completeness(
+                        bars=self._history_bars_provider()
+                    )
+                else:
+                    complete, reason = self._data_source.check_history_completeness()
                 if not complete:
                     if self._logger:
                         self._logger.info(f"[Readiness] History not ready: {reason}")
