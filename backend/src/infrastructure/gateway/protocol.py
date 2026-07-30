@@ -48,6 +48,7 @@ class MessageType(str, Enum):
     REFRESH_REQUEST = "refresh_request"
     REFRESH_START = "refresh_start"
     SUBSCRIBE = "subscribe"  # Python → Platform: instrument to use for live/historical data
+    UNSUBSCRIBE = "unsubscribe"  # Python → Platform: stop streaming one instrument
 
     # Queries (Bidirectional)
     POSITION_QUERY = "position_query"
@@ -481,6 +482,19 @@ class SubscribeMessage:
     def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
         return MessageEnvelope.create(
             msg_type=MessageType.SUBSCRIBE,
+            payload={"instrument": self.instrument},
+            seq_num=seq_num,
+        )
+
+
+@dataclass
+class UnsubscribeMessage:
+    """Tell the platform to stop streaming one instrument."""
+    instrument: str
+
+    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
+        return MessageEnvelope.create(
+            msg_type=MessageType.UNSUBSCRIBE,
             payload={"instrument": self.instrument},
             seq_num=seq_num,
         )

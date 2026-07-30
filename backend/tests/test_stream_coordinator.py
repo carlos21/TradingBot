@@ -121,6 +121,28 @@ class TestSessionLifecycle:
         assert coordinator.list_active_symbols() == []
         assert coordinator.get_session("MNQ") is None
 
+    def test_stop_session_stops_and_removes_only_that_session(self, coordinator):
+        coordinator.join_instrument("MNQ", "sid-1")
+        coordinator.join_instrument("ES", "sid-2")
+
+        stopped = coordinator.stop_session("ES")
+
+        assert stopped is True
+        assert coordinator.get_session("ES") is None
+        assert coordinator.list_active_symbols() == ["MNQ"]
+        # The other session is untouched and still streaming.
+        mnq = coordinator.get_session("MNQ")
+        assert mnq is not None
+        assert mnq._started is True
+
+    def test_stop_session_unknown_symbol_returns_false(self, coordinator):
+        coordinator.join_instrument("MNQ", "sid-1")
+
+        stopped = coordinator.stop_session("ES")
+
+        assert stopped is False
+        assert coordinator.list_active_symbols() == ["MNQ"]
+
     def test_leave_does_not_stop_with_remaining_clients(self, coordinator):
         coordinator.join_instrument("MNQ", "sid-1")
         coordinator.join_instrument("MNQ", "sid-2")

@@ -15,12 +15,12 @@ function setupDocument() {
   `;
 }
 
-function buildControls() {
+function buildControls(pair) {
   const dom = new FakeDomService(document, window);
   const notification = new FakeNotification();
   const lifecycle = new StreamingLifecycleController(dom);
   lifecycle.init();
-  const controls = new StreamingControlsController(dom, notification, lifecycle);
+  const controls = new StreamingControlsController(dom, notification, lifecycle, pair);
   return { dom, notification, lifecycle, controls };
 }
 
@@ -240,6 +240,44 @@ describe('StreamingControlsController', () => {
 
       expect(notification.alerts[0]).toBe('Failed to stop streaming: Network down');
       expect(stopBtn.disabled).toBe(false);
+    });
+
+    it('posts JSON {pair} with Content-Type header when a pair is configured', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ message: 'Stopped' }),
+      });
+
+      const { controls, notification, lifecycle } = buildControls('MES');
+      controls.init();
+      driveToStreaming(lifecycle);
+
+      document.getElementById('stopStreamingBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/stream/stop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pair: 'MES' }),
+      });
+      expect(notification.alerts).toHaveLength(0);
+      expect(lifecycle.getState()).toBe('stopping');
+    });
+
+    it('posts without a body when no pair is configured (legacy global stop)', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ message: 'Stopped' }),
+      });
+
+      const { controls, lifecycle } = buildControls();
+      controls.init();
+      driveToStreaming(lifecycle);
+
+      document.getElementById('stopStreamingBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/stream/stop', { method: 'POST' });
     });
   });
 

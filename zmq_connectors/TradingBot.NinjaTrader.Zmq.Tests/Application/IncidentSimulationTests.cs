@@ -138,8 +138,13 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             service.SafetyGuardEnabled = true;
             service.SafetyCheckIntervalMs = 50;
 
+            // Wait on SubmitOrder — the LAST effect of the guard chain (SendError →
+            // CreateMarketCloseOrder → SubmitOrder). Waiting on CreateMarketCloseOrder
+            // would let the assertion thread wake before SubmitOrder ran. A second
+            // flatten cannot happen: FlattenPosition tracks the close order and
+            // removes the tracker entry, so the next cycle skips this trade.
             var flattened = new ManualResetEventSlim(false);
-            orderExecutionService.When(x => x.CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), "guard"))
+            orderExecutionService.When(x => x.SubmitOrder(closeOrder))
                 .Do(x => flattened.Set());
 
             tradeIdExtractor.ExtractTradeId("Entry_guard").Returns("guard");
@@ -162,7 +167,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             service.Connect();
             try
             {
-                flattened.Wait(TimeSpan.FromMilliseconds(500)).Should().BeTrue("safety guard should flatten after stop disappears");
+                flattened.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue("safety guard should flatten after stop disappears");
                 orderExecutionService.Received(1).SubmitOrder(closeOrder);
                 network.Received(1).SendError("ninjatrader", "missing_stop_loss_guard", Arg.Is<string>(s => s.Contains("guard")));
             }

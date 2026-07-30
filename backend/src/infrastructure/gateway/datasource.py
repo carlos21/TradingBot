@@ -28,6 +28,7 @@ from src.utils.app_logger import ILogger
 
 from .gateway import GatewayConfig, TradingGateway
 from .protocol import MessageType
+from .subscription_supervisor import SubscriptionSupervisor
 
 if TYPE_CHECKING:
     from src.application.live_readiness.readiness_monitor import ReadinessMonitor
@@ -41,6 +42,19 @@ class DataSourceState(Enum):
     CONNECTED = auto()
     REFRESHING = auto()
     STREAMING = auto()
+
+
+class _GatewaySubscriptionTransport:
+    """``ISubscriptionTransport`` adapter that sends via the data source's gateway."""
+
+    def __init__(self, data_source: ZMQDataSource) -> None:
+        self._data_source = data_source
+
+    def subscribe(self, instrument: str) -> None:
+        self._data_source._ensure_gateway().send_subscribe(instrument)
+
+    def refresh(self, days: int, instrument: str) -> None:
+        self._data_source._ensure_gateway().send_refresh_request(days=days, instrument=instrument)
 
 
 class ZMQDataSource(CombinedDataSource):
@@ -177,21 +191,24 @@ class ZMQDataSource(CombinedDataSource):
         self._history_request_delay_sec: float = 1.0
         self._pending_refresh_timer: threading.Timer | None = None
 
-        # Retry while CONNECTED: the platform can miss the first refresh request
-        # (e.g. its command socket has not re-established after a rebind), and
-        # CONNECTED otherwise has no way to recover — the readiness retry loop
-        # only arms once a history_end arrives.
-        self._history_retry_base_delay_sec: float = 5.0
-        self._history_retry_max_delay_sec: float = 30.0
-        self._history_retry_timer: threading.Timer | None = None
-        self._history_retry_attempt: int = 0
-
         # Grace period for the disconnect notification to flush before the
         # gateway sockets close on stop().
         self._disconnect_flush_sec: float = 0.25
 
         # Notifier for alerts when bar stream dies
         self._notifier = notifier or NoOpNotifier()
+
+        # Retries subscribe+refresh until the platform answers (covers both
+        # the post-connect flow and instruments joining while another is
+        # already STREAMING — the platform can silently miss commands when
+        # its command channel wedges while heartbeats keep flowing).
+        self._subscription_supervisor = SubscriptionSupervisor(
+            transport=_GatewaySubscriptionTransport(self),
+            notifier=self._notifier,
+            on_retry=self._on_subscription_retry,
+            logger=self.logger,
+            days=max(1, math.ceil(self.history_hours / 24)),
+        )
 
         # Market status: suppress duplicate warnings when market is closed
         self._market_is_open: bool = True
@@ -344,6 +361,10 @@ class ZMQDataSource(CombinedDataSource):
         # Register connection-state callback so ZMQDataSource manages its own lifecycle
         gateway.on_connection_change(self._on_gateway_connection_change)
 
+        # ACK timeouts for subscribe/refresh poke the subscription supervisor
+        # into an immediate retry instead of waiting for its backoff timer.
+        gateway.on_command_timeout(self._on_command_timeout)
+
         # Start the gateway
         gateway.start()
 
@@ -365,7 +386,7 @@ class ZMQDataSource(CombinedDataSource):
         intentional stop from a dead channel and stand down quietly.
         """
         self._cancel_pending_refresh_timer()
-        self._cancel_history_retry_timer()
+        self._subscription_supervisor.stop()
         monitor = self._readiness_monitor
         if monitor is not None:
             with contextlib.suppress(Exception):
@@ -672,6 +693,9 @@ class ZMQDataSource(CombinedDataSource):
         if pair is None:
             return
 
+        # The platform answered this pair's refresh — stop retrying it.
+        self._mark_supervisor_responded(pair)
+
         bars = payload.get("bars", [])
         payload.get("days", 1)
 
@@ -834,9 +858,9 @@ class ZMQDataSource(CombinedDataSource):
             self.logger.info(f"Refresh start for {pair} ignored: already refreshing")
             return
 
-        # The platform actually started a refresh — the CONNECTED history
-        # retry has done its job.
-        self._cancel_history_retry_timer()
+        # The platform actually started a refresh — the subscription
+        # supervisor has done its job for this pair.
+        self._mark_supervisor_responded(pair)
 
         self.logger.info(f"Refresh start for {pair} - clearing recent data")
 
@@ -926,6 +950,66 @@ class ZMQDataSource(CombinedDataSource):
             )
             return
         self._subscribe_and_refresh(instrument)
+        # Watch for the platform's first response; the supervisor retries
+        # subscribe+refresh if none arrives (covers joins while another
+        # instrument is already STREAMING).
+        self._subscription_supervisor.track(instrument)
+
+    def _on_subscription_retry(self, instrument: Instrument, attempt: int) -> None:
+        """Supervisor callback: surface the retry to the session's readiness."""
+        if self._coordinator is not None:
+            try:
+                self._coordinator.route_history_retry(pair=instrument.symbol, attempt=attempt)
+            except Exception as e:
+                self.logger.error(f"route_history_retry failed for {instrument.symbol}: {e}")
+
+    def _on_command_timeout(self, command_type: str, payload: dict, seq_num: int) -> None:
+        """Gateway ACK timeout: poke the supervisor for subscribe/refresh commands."""
+        if command_type not in ("subscribe", "refresh_request"):
+            return
+        full_name = payload.get("instrument") if payload else None
+        if not full_name:
+            return
+        self._subscription_supervisor.fail_fast(full_name)
+
+    def _full_name_for_pair(self, pair: str) -> str | None:
+        """Resolve a message ``pair`` (symbol or full name) to a full name."""
+        with self._requested_instruments_lock:
+            requested = self._requested_instruments
+            if pair in requested:
+                return pair
+            for full_name, instrument in requested.items():
+                if instrument.symbol == pair:
+                    return full_name
+        return None
+
+    def stop_instrument_streaming(self, pair: str) -> None:
+        """Stop streaming one instrument without tearing down the gateway.
+
+        Removes the instrument from the requested set, disarms the
+        subscription supervisor for it, and — when the platform is connected —
+        tells the connector to unsubscribe it.  Other instruments keep
+        streaming; the gateway itself stays up.
+        """
+        full_name = self._full_name_for_pair(pair)
+        if full_name is None:
+            self.logger.warning(
+                f"stop_instrument_streaming: {pair} is not a requested instrument"
+            )
+            return
+        self._subscription_supervisor.untrack(full_name)
+        with self._requested_instruments_lock:
+            self._requested_instruments.pop(full_name, None)
+        gateway = self._gateway
+        if gateway is not None and gateway.is_connected:
+            gateway.send_unsubscribe(full_name)
+            self.logger.info(f"Unsubscribed from instrument {full_name} ({pair})")
+
+    def _mark_supervisor_responded(self, pair: str) -> None:
+        """Tell the subscription supervisor the platform answered for ``pair``."""
+        full_name = self._full_name_for_pair(pair)
+        if full_name is not None:
+            self._subscription_supervisor.mark_responded(full_name)
 
     def _subscribe_and_refresh(self, instrument: Instrument) -> None:
         """Send subscribe + history refresh for an instrument to the platform."""
@@ -1000,59 +1084,6 @@ class ZMQDataSource(CombinedDataSource):
             self._pending_refresh_timer.cancel()
             self._pending_refresh_timer = None
 
-    def _arm_history_retry(self) -> None:
-        """Schedule a subscribe+refresh retry while stuck in CONNECTED."""
-        self._cancel_history_retry_timer()
-        delay = min(
-            self._history_retry_base_delay_sec * (2 ** self._history_retry_attempt),
-            self._history_retry_max_delay_sec,
-        )
-        self._history_retry_timer = threading.Timer(delay, self._on_history_retry)
-        self._history_retry_timer.daemon = True
-        self._history_retry_timer.start()
-
-    def _cancel_history_retry_timer(self) -> None:
-        """Cancel any pending history retry."""
-        if self._history_retry_timer is not None:
-            self._history_retry_timer.cancel()
-            self._history_retry_timer = None
-
-    def _on_history_retry(self) -> None:
-        """Re-send subscribe+refresh when the platform never answered."""
-        self._history_retry_timer = None
-        if self._state != DataSourceState.CONNECTED:
-            return
-        with self._requested_instruments_lock:
-            instruments = list(self._requested_instruments.values())
-        if not instruments:
-            # Nothing requested — nothing to retry.
-            return
-        self._history_retry_attempt += 1
-        attempt = self._history_retry_attempt
-        self.logger.warning(
-            f"No history received after connect — retrying subscribe+refresh "
-            f"(attempt {attempt})"
-        )
-        if attempt >= 3 and attempt % 6 == 3:
-            # The platform is connected (heartbeats flow) but never answers
-            # commands — its command channel is most likely wedged. Retries
-            # may still heal it; make sure the user knows where to look.
-            try:
-                self._notifier.send(
-                    f"⚠️ NinjaTrader connector is not responding to commands "
-                    f"(attempt {attempt}). Check NinjaTrader / restart the connector."
-                )
-            except Exception as e:
-                self.logger.error(f"Failed to send notifier alert: {e}")
-        gateway = self._ensure_gateway()
-        for instrument in instruments:
-            try:
-                gateway.send_subscribe(instrument.full_name)
-            except Exception as e:
-                self.logger.error(f"Failed to re-subscribe to {instrument.full_name}: {e}")
-        self.request_refresh()
-        self._arm_history_retry()
-
     def _do_delayed_refresh(self) -> None:
         """Execute the delayed refresh request."""
         self._pending_refresh_timer = None
@@ -1067,9 +1098,7 @@ class ZMQDataSource(CombinedDataSource):
             )
             return
         self.logger.info("Requesting historical data refresh after delay")
-        self._history_retry_attempt = 0
         self.request_refresh()
-        self._arm_history_retry()
 
     def _cached_bars_for(self, instrument: Instrument) -> list[dict]:
         """Snapshot of the cached bars for an instrument (by symbol)."""
@@ -1147,6 +1176,9 @@ class ZMQDataSource(CombinedDataSource):
                 gateway.send_subscribe(instrument.full_name)
             except Exception as e:
                 self.logger.error(f"Failed to subscribe to {instrument.full_name}: {e}")
+            # Watch for the platform's response; the subscription supervisor
+            # retries subscribe+refresh if none arrives.
+            self._subscription_supervisor.track(instrument)
 
         delay = self._history_request_delay_sec
         names = ", ".join(i.full_name for i in requested)
@@ -1161,7 +1193,7 @@ class ZMQDataSource(CombinedDataSource):
             self._state = DataSourceState.DISCONNECTED
             self._refreshing_pairs.clear()
             self._cancel_pending_refresh_timer()
-            self._cancel_history_retry_timer()
+            self._subscription_supervisor.stop()
             self.logger.info("Platform disconnected")
 
     def _on_gateway_connection_change(self, connected: bool) -> None:

@@ -32,7 +32,9 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                     autoConnectOnStartup: obj["autoConnectOnStartup"]?.Value<bool>() ?? false,
                     autoShowWindow: obj["autoShowWindow"]?.Value<bool>() ?? true,
                     logDirectory: obj["logDirectory"]?.Value<string>(),
-                    enableFileLogging: obj["enableFileLogging"]?.Value<bool>() ?? true
+                    enableFileLogging: obj["enableFileLogging"]?.Value<bool>() ?? true,
+                    commandTimeoutSeconds: obj["commandTimeoutSeconds"]?.Value<int>() ?? 15,
+                    dataFlowSilenceThresholdSeconds: obj["dataFlowSilenceThresholdSeconds"]?.Value<int>() ?? 90
                 );
             }
             catch (Exception)

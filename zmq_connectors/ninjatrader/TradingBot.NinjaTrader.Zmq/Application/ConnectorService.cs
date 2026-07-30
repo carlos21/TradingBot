@@ -33,6 +33,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         private Thread _heartbeatThread;
         private Thread _safetyThread;
         private Thread _connectionWatchdogThread;
+        private Thread _healthMonitorThread;
         private CancellationTokenSource _cts;
 
         private readonly int _watchdogIntervalMs;
@@ -54,9 +55,40 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         /// </summary>
         public int SafetyCheckIntervalMs { get; set; } = 3000;
 
+        /// <summary>
+        /// Delay before the single retry of a failed connection recovery.
+        /// Can be shortened in tests.
+        /// </summary>
+        public int RecoveryRetryDelayMs { get; set; } = 5000;
+
         private volatile bool _connected;
         private readonly object _connectLock = new object();
         private readonly object _seqNumLock = new object();
+
+        // Command watchdog: the in-flight command is tracked here so a hung
+        // Dispatch (e.g. a NinjaTrader API call that never returns) is detected
+        // by the health monitor thread and escalated to connection recovery.
+        private sealed class CommandInFlight
+        {
+            public readonly MessageEnvelope Envelope;
+            public readonly string TradeId;
+            public readonly DateTime StartedUtc;
+
+            public CommandInFlight(MessageEnvelope envelope, string tradeId, DateTime startedUtc)
+            {
+                Envelope = envelope;
+                TradeId = tradeId;
+                StartedUtc = startedUtc;
+            }
+        }
+
+        private CommandInFlight _commandInFlight;
+        private int _commandTimeoutNotified; // Interlocked guard: one recovery per stuck episode
+
+        // Connection recovery runs on a dedicated one-shot thread, never inline on
+        // a watchdog/monitor thread (those may be blocked on locks recovery needs).
+        private int _recoveryInProgress; // Interlocked guard: recovery is idempotent
+        private const int HealthMonitorPollMs = 1000;
 
         private long _commandsReceived = 0;
 
@@ -160,6 +192,10 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                     _connectionWatchdogThread = new Thread(ConnectionWatchdogLoop) { IsBackground = true, Name = "ZMQ-ConnWatchdog" };
                     _connectionWatchdogThread.Start();
                     _logger.Info($"Connection watchdog started (interval={_watchdogIntervalMs}ms, threshold={_watchdogFailureThreshold})");
+
+                    _healthMonitorThread = new Thread(HealthMonitorLoop) { IsBackground = true, Name = "ZMQ-HealthMonitor" };
+                    _healthMonitorThread.Start();
+                    _logger.Info($"Health monitor started (commandTimeout={_config.CommandTimeoutSeconds}s, dataSilence={_config.DataFlowSilenceThresholdSeconds}s)");
                 }
                 catch (Exception ex)
                 {
@@ -202,6 +238,11 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 {
                     _connectionWatchdogThread.Join(600);
                     _connectionWatchdogThread = null;
+                }
+                if (_healthMonitorThread != null && _healthMonitorThread.IsAlive)
+                {
+                    _healthMonitorThread.Join(600);
+                    _healthMonitorThread = null;
                 }
 
                 _network?.Stop();
@@ -358,7 +399,20 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                         continue;
                     }
 
-                    bool dispatchSuccess = _dispatcher.Dispatch(envelope);
+                    // Track the in-flight command so the health monitor can detect a
+                    // hung Dispatch; if the handler never returns, the finally below
+                    // never runs and the watchdog escalates after CommandTimeoutSeconds.
+                    Volatile.Write(ref _commandInFlight, new CommandInFlight(envelope, tradeId, DateTime.UtcNow));
+                    bool dispatchSuccess;
+                    try
+                    {
+                        dispatchSuccess = _dispatcher.Dispatch(envelope);
+                    }
+                    finally
+                    {
+                        Volatile.Write(ref _commandInFlight, null);
+                    }
+
                     if (dispatchSuccess)
                         _network?.SendCommandAck(envelope.MsgType, envelope.SeqNum, true, tradeId);
                     else
@@ -557,6 +611,197 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 Thread.Sleep(slice);
                 slept += slice;
             }
+        }
+
+        /// <summary>
+        /// Health monitor: detects a hung command dispatch and a silent data flow,
+        /// then escalates to connection recovery. Runs on its own thread because the
+        /// checks must keep working when any other thread (command, connection
+        /// watchdog) is wedged. The command check uses only volatile reads and can
+        /// never block; the data-flow check briefly takes the coordinator's stats
+        /// lock, which is never held across NinjaTrader API calls.
+        /// </summary>
+        private void HealthMonitorLoop()
+        {
+            long lastDataTotal = -1;
+            DateTime lastDataChangeUtc = DateTime.UtcNow;
+            bool silenceWarned = false;
+
+            SleepWatchdog(HealthMonitorPollMs);
+
+            while (_connected && !_cts.Token.IsCancellationRequested)
+            {
+                try
+                {
+                    CheckCommandWatchdog();
+                    CheckDataFlowWatchdog(ref lastDataTotal, ref lastDataChangeUtc, ref silenceWarned);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("Health monitor error", ex);
+                }
+
+                SleepWatchdog(HealthMonitorPollMs);
+            }
+        }
+
+        /// <summary>
+        /// If a command has been stuck in Dispatch longer than CommandTimeoutSeconds,
+        /// ACK it as failed (best effort — the network may be the thing that is
+        /// broken) and trigger recovery once per stuck episode. The command thread
+        /// is considered lost afterwards; recovery replaces the connection state.
+        /// </summary>
+        private void CheckCommandWatchdog()
+        {
+            var inFlight = Volatile.Read(ref _commandInFlight);
+            if (inFlight == null)
+            {
+                // No command in flight: re-arm the guard for the next episode.
+                Volatile.Write(ref _commandTimeoutNotified, 0);
+                return;
+            }
+
+            double stuckSeconds = (DateTime.UtcNow - inFlight.StartedUtc).TotalSeconds;
+            if (stuckSeconds <= _config.CommandTimeoutSeconds)
+                return;
+
+            if (Interlocked.CompareExchange(ref _commandTimeoutNotified, 1, 0) != 0)
+                return; // already escalated for this episode
+
+            _logger.Error($"COMMAND WATCHDOG: '{inFlight.Envelope.MsgType}' seq={inFlight.Envelope.SeqNum} stuck in dispatch for {stuckSeconds:F0}s (timeout {_config.CommandTimeoutSeconds}s) — command thread is hung");
+            try
+            {
+                _network?.SendCommandAck(inFlight.Envelope.MsgType, inFlight.Envelope.SeqNum, false, inFlight.TradeId, "command timeout");
+            }
+            catch (Exception ackEx)
+            {
+                _logger.Error("Failed to send command-timeout ack", ackEx);
+            }
+            TriggerRecovery($"command '{inFlight.Envelope.MsgType}' seq={inFlight.Envelope.SeqNum} stuck for {stuckSeconds:F0}s");
+        }
+
+        /// <summary>
+        /// Detects "subscribed but silent": IsStreaming is true but the cumulative
+        /// send counters do not move. The coordinator's own BarsRequestWatchdog
+        /// recreates per-instrument requests (~75s); this is the escalate-further
+        /// level — warn after one threshold interval of silence, trigger recovery
+        /// only after a second interval of continued silence.
+        /// </summary>
+        private void CheckDataFlowWatchdog(ref long lastDataTotal, ref DateTime lastDataChangeUtc, ref bool silenceWarned)
+        {
+            bool streaming = _streamingCoordinator != null && _streamingCoordinator.IsStreaming;
+            if (!streaming)
+            {
+                lastDataTotal = -1;
+                silenceWarned = false;
+                return;
+            }
+
+            var (ticks, bars, partials) = _streamingCoordinator.GetStats();
+            long total = ticks + bars + partials;
+            if (total != lastDataTotal)
+            {
+                lastDataTotal = total;
+                lastDataChangeUtc = DateTime.UtcNow;
+                silenceWarned = false;
+                return;
+            }
+
+            double thresholdSeconds = _config.DataFlowSilenceThresholdSeconds;
+            double silentSeconds = (DateTime.UtcNow - lastDataChangeUtc).TotalSeconds;
+            if (silentSeconds <= thresholdSeconds)
+                return;
+
+            if (!silenceWarned)
+            {
+                silenceWarned = true;
+                _logger.Warning($"DATA WATCHDOG: subscribed but no ticks/bars sent for {silentSeconds:F0}s (threshold {thresholdSeconds:F0}s) — giving the BarsRequest watchdog one more interval to restore flow");
+                return;
+            }
+
+            if (silentSeconds > thresholdSeconds * 2)
+            {
+                TriggerRecovery($"no market data sent for {silentSeconds:F0}s while subscribed (threshold {thresholdSeconds:F0}s)");
+                lastDataChangeUtc = DateTime.UtcNow; // do not re-trigger immediately
+                silenceWarned = false;
+            }
+        }
+
+        /// <summary>
+        /// Starts connection recovery on a dedicated one-shot background thread.
+        /// Idempotent: concurrent triggers collapse into a single recovery.
+        /// Never call inline from a watchdog/monitor thread.
+        /// </summary>
+        private void TriggerRecovery(string reason)
+        {
+            if (Interlocked.CompareExchange(ref _recoveryInProgress, 1, 0) != 0)
+                return; // recovery already running
+
+            var thread = new Thread(() => RecoverConnection(reason)) { IsBackground = true, Name = "ZMQ-Recovery" };
+            thread.Start();
+        }
+
+        /// <summary>
+        /// The automated equivalent of the manual "click Connect": restart the
+        /// streaming subscriptions and the ZMQ sockets, resubscribe every
+        /// previously subscribed instrument, and re-send connect so Python
+        /// re-drives its subscribe+refresh flow (the documented reconnect
+        /// contract — see ConnectionWatchdogLoop). Any failure is logged and the
+        /// whole recovery is retried once after a short delay.
+        /// </summary>
+        private void RecoverConnection(string reason)
+        {
+            try
+            {
+                try
+                {
+                    RecoverConnectionCore(reason);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error($"Connection recovery failed ({reason}) — retrying once in {RecoveryRetryDelayMs / 1000}s", ex);
+                    Thread.Sleep(RecoveryRetryDelayMs);
+                    try
+                    {
+                        RecoverConnectionCore(reason + " (retry)");
+                    }
+                    catch (Exception retryEx)
+                    {
+                        _logger.Error($"Connection recovery retry failed ({reason})", retryEx);
+                    }
+                }
+            }
+            finally
+            {
+                Volatile.Write(ref _recoveryInProgress, 0);
+            }
+        }
+
+        private void RecoverConnectionCore(string reason)
+        {
+            if (!_connected)
+                return;
+
+            _logger.Warning($"!!! CONNECTION RECOVERY ({reason}) — restarting network and subscriptions");
+
+            // Snapshot BEFORE Stop() clears the coordinator's subscription list.
+            var instruments = _streamingCoordinator.SubscribedInstruments?.ToArray() ?? new string[0];
+
+            _streamingCoordinator.Stop();
+            _network.Stop();
+            _network.Start();
+
+            foreach (var instrument in instruments)
+            {
+                if (_streamingCoordinator.Start(instrument))
+                    _logger.Info($"[Recovery] Resubscribed to {instrument}");
+                else
+                    _logger.Warning($"[Recovery] Failed to resubscribe to {instrument}");
+            }
+
+            _clock.Sleep(300); // same settle delay as Connect() before announcing
+            _network.SendConnect("ninjatrader", _config.PlatformVersion, pair: Pair);
+            _logger.Success($"Connection recovery complete ({reason})");
         }
 
         /// <summary>

@@ -91,8 +91,12 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         [Fact]
         public void Watchdog_RestartsSockets_AfterThresholdConsecutiveFailures()
         {
-            _network.SendTestPingWithResponse(Arg.Any<double>()).Returns(false);
+            // Pings fail until the sockets are recreated, then succeed — mirroring
+            // reality, where recreation repairs the half-open channel. Failing
+            // forever would let the watchdog restart repeatedly while the assertion
+            // thread is still waking up, racing the exact Received(1) checks below.
             var stopped = new ManualResetEventSlim(false);
+            _network.SendTestPingWithResponse(Arg.Any<double>()).Returns(_ => stopped.IsSet);
             _network.When(x => x.Stop()).Do(_ => stopped.Set());
             var service = CreateService();
 

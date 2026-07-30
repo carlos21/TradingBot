@@ -73,6 +73,24 @@ class NtManagerService:
             return {"found": True, "path": str(exe_path), "install_dir": install_dir}
         return {"found": False, "path": None, "message": "NinjaTrader not found in registry"}
 
+    def is_nt_running(self) -> bool:
+        """Return True when any NinjaTrader process is running on Windows.
+
+        Any failure (no WSL interop, PowerShell error, timeout) degrades to
+        False, i.e. the caller falls back to the current launch path.
+        """
+        try:
+            if not self._can_run_windows_exe():
+                return False
+            result = self._run_ps(
+                'Get-Process | Where-Object { $_.ProcessName -like "*NinjaTrader*" }'
+            )
+            return result.returncode == 0 and bool(result.stdout.strip())
+        except Exception as e:
+            if self._logger:
+                self._logger.warning(f"[NT Launch] Failed to check running processes: {e}")
+            return False
+
     def install_netmq(self) -> dict:
         """Placeholder for NetMQ DLL installation."""
         # In practice the DLLs are either already present or copied with the AddOns.

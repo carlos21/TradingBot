@@ -23,6 +23,18 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
         public string LogDirectory { get; }
         public bool EnableFileLogging { get; }
 
+        /// <summary>
+        /// Seconds a command may stay in dispatch before the command watchdog
+        /// declares the command thread hung and triggers connection recovery.
+        /// </summary>
+        public int CommandTimeoutSeconds { get; }
+
+        /// <summary>
+        /// Seconds without any tick/bar sent while subscribed before the data-flow
+        /// watchdog warns; recovery triggers after a second interval of silence.
+        /// </summary>
+        public int DataFlowSilenceThresholdSeconds { get; }
+
         public string MarketDataAddress => $"tcp://{Host}:{MarketPort}";
         public string CommandAddress => $"tcp://{Host}:{CommandPort}";
         public string QueryAddress => $"tcp://{Host}:{QueryPort}";
@@ -42,7 +54,9 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
             bool autoConnectOnStartup = false,
             bool autoShowWindow = true,
             string logDirectory = null,
-            bool enableFileLogging = true)
+            bool enableFileLogging = true,
+            int commandTimeoutSeconds = 15,
+            int dataFlowSilenceThresholdSeconds = 90)
         {
             Host = host ?? throw new ArgumentNullException(nameof(host));
             MarketPort = marketPort;
@@ -58,12 +72,15 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
             AutoShowWindow = autoShowWindow;
             LogDirectory = logDirectory ?? GetDefaultLogDirectory();
             EnableFileLogging = enableFileLogging;
+            CommandTimeoutSeconds = commandTimeoutSeconds;
+            DataFlowSilenceThresholdSeconds = dataFlowSilenceThresholdSeconds;
         }
 
         public ZmqConfiguration WithInstrument(string instrument) =>
             new ZmqConfiguration(Host, MarketPort, CommandPort, QueryPort, HeartbeatPort,
                 instrument, HistoryDays, BatchSize, MaxTicksPerSecond, PlatformVersion,
-                AutoConnectOnStartup, AutoShowWindow, LogDirectory, EnableFileLogging);
+                AutoConnectOnStartup, AutoShowWindow, LogDirectory, EnableFileLogging,
+                CommandTimeoutSeconds, DataFlowSilenceThresholdSeconds);
 
         private static string GetDefaultLogDirectory()
         {

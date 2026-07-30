@@ -49,7 +49,7 @@ export function createChartApp(opts = {}) {
   const controls = new ReplayControlsController(controller, socket, dom, notification, tradeService);
   controls.init();
 
-  const streamingControls = new StreamingControlsController(dom, notification, streamingLifecycle);
+  const streamingControls = new StreamingControlsController(dom, notification, streamingLifecycle, controller.pair);
   streamingControls.init();
 
   return { controller, socketController, controls, streamingControls, streamingLifecycle, socket };

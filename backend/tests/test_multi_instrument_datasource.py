@@ -16,6 +16,7 @@ class FakeCoordinator:
         self.history_loaded = []
         self.late_history_batches = []
         self.gaps = []
+        self.history_retries = []
 
     def route_bar(self, bar: dict) -> None:
         self.bars.append(bar)
@@ -35,6 +36,9 @@ class FakeCoordinator:
     def route_gap_detected(self, gap_seconds: int, context: str, pair: str | None = None) -> None:
         self.gaps.append((gap_seconds, context, pair))
 
+    def route_history_retry(self, pair: str, attempt: int) -> None:
+        self.history_retries.append((pair, attempt))
+
     def route_heartbeat_stale(self, age_seconds: float, pair: str | None = None) -> None:
         pass
 
@@ -51,6 +55,9 @@ class FakeGateway:
         self.is_connected = False
         self._callbacks = {}
         self._conn_listeners = []
+        self.subscribed = []
+        self.unsubscribed = []
+        self.refreshed = []
 
     def on(self, msg_type, callback):
         self._callbacks[msg_type] = callback
@@ -60,6 +67,13 @@ class FakeGateway:
 
     def send_subscribe(self, instrument):
         self._subscribed = instrument
+        self.subscribed.append(instrument)
+
+    def send_unsubscribe(self, instrument):
+        self.unsubscribed.append(instrument)
+
+    def send_refresh_request(self, days=1, instrument=None):
+        self.refreshed.append((days, instrument))
 
     def trigger(self, msg_type, payload):
         cb = self._callbacks.get(msg_type)
@@ -282,3 +296,158 @@ class TestPerPairRefreshState:
         assert data_source._current_bars["ES"]["high"] == 12
         assert data_source._current_bars["MNQ"]["close"] == 200
         assert data_source._current_bars["MNQ"]["high"] == 200
+
+
+class TestSubscriptionSupervisorWiring:
+    """Joining an instrument arms the subscription supervisor; platform
+    responses, disconnects, and stops disarm it."""
+
+    def _join_mes(self, data_source):
+        from src.domain.models import Instrument
+
+        data_source.ensure_instrument_streaming(Instrument(symbol="MES", full_name="MES 09-26"))
+
+    def test_join_while_streaming_arms_retry(self, data_source, gateway):
+        self._join_mes(data_source)
+        supervisor = data_source._subscription_supervisor
+        try:
+            assert "MES 09-26" in supervisor._awaiting
+            assert supervisor._timer is not None
+        finally:
+            supervisor.stop()
+
+    def test_refresh_start_cancels_retry(self, data_source, gateway):
+        self._join_mes(data_source)
+        data_source._on_refresh_start({"pair": "MES"})
+        supervisor = data_source._subscription_supervisor
+        assert supervisor._awaiting == {}
+        assert supervisor._timer is None
+
+    def test_history_batch_cancels_retry(self, data_source, gateway):
+        self._join_mes(data_source)
+        data_source._on_history_batch({
+            "pair": "MES",
+            "bars": [
+                {"time": 100, "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1, "pair": "MES"},
+            ],
+        })
+        supervisor = data_source._subscription_supervisor
+        assert supervisor._awaiting == {}
+        assert supervisor._timer is None
+
+    def test_disconnect_cancels_retry(self, data_source, gateway):
+        self._join_mes(data_source)
+        data_source.on_platform_disconnected()
+        supervisor = data_source._subscription_supervisor
+        assert supervisor._awaiting == {}
+        assert supervisor._timer is None
+
+    def test_retry_resends_via_gateway_and_routes_to_coordinator(self, data_source, gateway, coordinator):
+        data_source.set_coordinator(coordinator)
+        self._join_mes(data_source)
+        supervisor = data_source._subscription_supervisor
+        try:
+            gateway.subscribed.clear()
+            gateway.refreshed.clear()
+            supervisor.fail_fast("MES 09-26")
+            assert gateway.subscribed == ["MES 09-26"]
+            assert gateway.refreshed[-1][1] == "MES 09-26"
+            assert coordinator.history_retries == [("MES", 1)]
+        finally:
+            supervisor.stop()
+
+    def test_subscribe_ack_timeout_triggers_fail_fast(self, data_source, gateway):
+        self._join_mes(data_source)
+        supervisor = data_source._subscription_supervisor
+        try:
+            gateway.subscribed.clear()
+            data_source._on_command_timeout(
+                "subscribe", {"instrument": "MES 09-26"}, seq_num=42
+            )
+            assert gateway.subscribed == ["MES 09-26"]
+        finally:
+            supervisor.stop()
+
+    def test_unrelated_command_timeout_is_ignored(self, data_source, gateway):
+        self._join_mes(data_source)
+        supervisor = data_source._subscription_supervisor
+        try:
+            gateway.subscribed.clear()
+            data_source._on_command_timeout(
+                "order_open", {"trade_id": "T1", "instrument": "MES 09-26"}, seq_num=43
+            )
+            assert gateway.subscribed == []
+        finally:
+            supervisor.stop()
+
+
+class TestStopInstrumentStreaming:
+    """``stop_instrument_streaming`` removes one instrument without tearing
+    down the gateway or disturbing the other instruments."""
+
+    def _join(self, data_source, symbol: str, full_name: str):
+        from src.domain.models import Instrument
+
+        data_source.ensure_instrument_streaming(Instrument(symbol=symbol, full_name=full_name))
+
+    def test_untracks_supervisor_and_removes_requested(self, data_source, gateway):
+        self._join(data_source, "MES", "MES 09-26")
+        self._join(data_source, "MNQ", "MNQ 09-26")
+        supervisor = data_source._subscription_supervisor
+        try:
+            assert "MES 09-26" in supervisor._awaiting
+            data_source.stop_instrument_streaming("MES")
+            assert "MES 09-26" not in supervisor._awaiting
+            assert "MES 09-26" not in data_source._requested_instruments
+            # The other instrument stays requested and tracked.
+            assert "MNQ 09-26" in data_source._requested_instruments
+            assert "MNQ 09-26" in supervisor._awaiting
+        finally:
+            supervisor.stop()
+
+    def test_sends_unsubscribe_when_gateway_connected(self, data_source, gateway):
+        gateway.is_connected = True
+        self._join(data_source, "MES", "MES 09-26")
+        try:
+            data_source.stop_instrument_streaming("MES")
+            assert gateway.unsubscribed == ["MES 09-26"]
+        finally:
+            data_source._subscription_supervisor.stop()
+
+    def test_accepts_full_name_as_pair(self, data_source, gateway):
+        gateway.is_connected = True
+        self._join(data_source, "MES", "MES 09-26")
+        try:
+            data_source.stop_instrument_streaming("MES 09-26")
+            assert gateway.unsubscribed == ["MES 09-26"]
+            assert "MES 09-26" not in data_source._requested_instruments
+        finally:
+            data_source._subscription_supervisor.stop()
+
+    def test_sends_nothing_when_gateway_disconnected(self, data_source, gateway):
+        gateway.is_connected = False
+        self._join(data_source, "MES", "MES 09-26")
+        try:
+            data_source.stop_instrument_streaming("MES")
+            assert gateway.unsubscribed == []
+            # The instrument is still removed locally.
+            assert "MES 09-26" not in data_source._requested_instruments
+        finally:
+            data_source._subscription_supervisor.stop()
+
+    def test_unknown_pair_warns_and_returns(self, gateway):
+        logger = MagicMock()
+        ds = ZMQDataSource(logger, gateway=gateway)
+        ds._state = DataSourceState.STREAMING
+        self._join(ds, "MNQ", "MNQ 09-26")
+        try:
+            ds.stop_instrument_streaming("MES")
+            assert any(
+                "not a requested instrument" in str(call)
+                for call in logger.warning.call_args_list
+            )
+            # Nothing was removed and nothing was sent.
+            assert "MNQ 09-26" in ds._requested_instruments
+            assert gateway.unsubscribed == []
+        finally:
+            ds._subscription_supervisor.stop()

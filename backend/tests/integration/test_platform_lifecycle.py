@@ -93,6 +93,7 @@ class TestNinjaTraderLifecycleService:
 
     def test_maybe_launch_after_delay_auto_login(self, monkeypatch):
         nt_service = MagicMock()
+        nt_service.is_nt_running.return_value = False
         nt_service.open_nt_and_login.return_value = {"success": True}
         svc = self._service(
             nt_service=nt_service,
@@ -106,6 +107,7 @@ class TestNinjaTraderLifecycleService:
 
     def test_maybe_launch_after_delay_no_credentials(self, monkeypatch):
         nt_service = MagicMock()
+        nt_service.is_nt_running.return_value = False
         svc = self._service(nt_service=nt_service)
         monkeypatch.setattr("time.sleep", lambda _s: None)
         data_source = MagicMock()

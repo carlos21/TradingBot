@@ -36,6 +36,7 @@ from .protocol import (
     TestStartMessage,
     TradeCommand,
 )
+from .subscription_supervisor import SubscriptionSupervisor
 
 __all__ = [
     # Protocol types
@@ -57,6 +58,8 @@ __all__ = [
     "create_zmq_executor",
     # DataSource
     "ZMQDataSource",
+    # Subscription supervision
+    "SubscriptionSupervisor",
     # Integration helpers
     "create_live_components",
     "create_multi_account_live_components",

@@ -36,6 +36,7 @@ from .protocol import (
     OpenOrderCommand,
     RefreshRequestMessage,
     SubscribeMessage,
+    UnsubscribeMessage,
 )
 
 
@@ -190,6 +191,10 @@ to be:
 
         # Callbacks notified when a command is NACK'd or times out waiting for an ACK
         self._command_failure_listeners: list[Callable[[str, str, int, str], None]] = []
+
+        # Callbacks notified for EVERY ACK timeout — including trade_id-less
+        # infra commands (subscribe/refresh_request) that on_command_failed drops
+        self._command_timeout_listeners: list[Callable[[str, dict[str, Any], int], None]] = []
 
         # Account names reported in config queries (refreshed from DB on demand)
         self._account_names: list[str] = []
@@ -579,6 +584,15 @@ to be:
                     if not self._running:
                         break
                     time.sleep(0.1)
+                    # Reap ACK-timed-out commands promptly (~every 2s) even
+                    # when no new command is sent — the lazy cleanup in
+                    # _send_command can otherwise leave timeouts undetected
+                    # for minutes.
+                    now = time.time()
+                    if now - self._last_cleanup_time >= 2.0:
+                        with self._lock:
+                            self._last_cleanup_time = now
+                            self._cleanup_pending_commands()
 
             except Exception as e:
                 self.logger.error(f"Error in heartbeat loop: {e}")
@@ -1124,6 +1138,19 @@ to be:
         """
         self._command_failure_listeners.append(callback)
 
+    def on_command_timeout(self, callback: Callable[[str, dict[str, Any], int], None]) -> None:
+        """Register callback for commands whose ACK never arrived in time.
+
+        Called with (command_type, payload, seq_num) for EVERY timed-out
+        command — including trade_id-less infra commands (subscribe,
+        refresh_request, audit) that ``on_command_failed`` deliberately drops.
+
+        Idempotent: registering the same callback twice is a no-op, so a
+        gateway stop/start cycle never notifies listeners more than once.
+        """
+        if callback not in self._command_timeout_listeners:
+            self._command_timeout_listeners.append(callback)
+
     def on_connection_change(self, callback: Callable[[bool], None]) -> None:
         """Register callback for platform connection state changes.
 
@@ -1214,8 +1241,10 @@ to be:
             seq for seq, info in self._pending_commands.items()
             if now - info.get('sent_time', 0) > timeout
         ]
+        seen_timeout_keys: set[tuple[str, str | None]] = set()
         for seq in to_remove:
             cmd_info = self._pending_commands.pop(seq)
+            self._command_retries.pop(seq, None)
             self.logger.warning(f"Command timed out waiting for ack: {cmd_info['type']} seq={seq}")
             self._notify_command_failed(
                 cmd_info['type'],
@@ -1223,6 +1252,26 @@ to be:
                 seq,
                 "timeout",
             )
+            payload = cmd_info.get('payload', {})
+            key = self._timeout_key(cmd_info['type'], payload)
+            if key in seen_timeout_keys:
+                continue
+            seen_timeout_keys.add(key)
+            for cb in list(self._command_timeout_listeners):
+                with contextlib.suppress(Exception):
+                    cb(cmd_info['type'], payload, seq)
+
+    def _timeout_key(self, command_type: str, payload: Any) -> tuple[str, str | None]:
+        """Dedupe command-timeout notifications within one cleanup sweep.
+
+        For infra commands (subscribe, refresh) the instrument is used; for
+        order commands the trade_id is used. This prevents a backlog of
+        timed-out commands for the same instrument from machine-gunning the
+        subscription supervisor.
+        """
+        if isinstance(payload, dict):
+            return (command_type, payload.get('instrument') or payload.get('trade_id'))
+        return (command_type, None)
 
     def _resolve_instrument(self, instrument: str | None) -> str:
         """Return the instrument for a command, or raise when absent.
@@ -1321,6 +1370,15 @@ to be:
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
         self.logger.info(f"Queued SUBSCRIBE command: {instrument}")
+
+    def send_unsubscribe(self, instrument: str) -> None:
+        """Tell the platform to stop streaming one instrument."""
+        if not instrument:
+            raise ValueError("instrument is required for unsubscribe commands")
+        cmd = UnsubscribeMessage(instrument=instrument)
+        envelope = cmd.to_envelope(seq_num=self._next_seq())
+        self._send_command(envelope)
+        self.logger.info(f"Queued UNSUBSCRIBE command: {instrument}")
 
     def send_disconnect(self, reason: str = "stream stopped") -> None:
         """Tell the platform we are deliberately shutting the stream down.

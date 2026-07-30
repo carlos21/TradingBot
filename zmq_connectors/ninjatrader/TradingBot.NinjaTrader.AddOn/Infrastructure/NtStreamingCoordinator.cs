@@ -74,6 +74,15 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             }
         }
 
+        public IReadOnlyList<string> SubscribedInstruments
+        {
+            get
+            {
+                lock (_streamsLock)
+                    return _subscriptionOrder.ToArray();
+            }
+        }
+
         public (long ticks, long bars, long partials) GetStats() =>
             (_ticksSent, _barsSent, _partialBarsSent);
 
@@ -99,6 +108,7 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 return false;
             }
 
+            InstrumentStream ctx;
             lock (_streamsLock)
             {
                 if (_streams.ContainsKey(instrument))
@@ -107,7 +117,7 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                     return true;
                 }
 
-                var ctx = new InstrumentStream
+                ctx = new InstrumentStream
                 {
                     FullName = instrument,
                     Pair = instrument.Split(' ')[0],
@@ -115,14 +125,82 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 };
                 _streams[instrument] = ctx;
                 _subscriptionOrder.Add(instrument);
-
-                ctx.Instrument.MarketData.Update += OnMarketDataUpdate;
-                _logger.Info($"Subscribed to market data for {instrument}");
-                StartLiveBarsDelayTimer(ctx);
-
-                _logger.Success($"Subscribed to instrument {instrument}");
-                return true;
             }
+
+            // NinjaTrader API calls must run OUTSIDE _streamsLock (same pattern as
+            // StopCore): an NT call can block (provider handshake, data-thread sync),
+            // and holding the lock here would wedge every bar path, watchdog, and
+            // command that needs FindContext/_streamsLock.
+            ctx.Instrument.MarketData.Update += OnMarketDataUpdate;
+            _logger.Info($"Subscribed to market data for {instrument}");
+            StartLiveBarsDelayTimer(ctx);
+
+            // Race: a concurrent Stop()/StopCore() may have removed this context
+            // while the NT calls above were running. Undo the NT subscription if so.
+            bool stillRegistered;
+            lock (_streamsLock)
+            {
+                stillRegistered = _streams.TryGetValue(instrument, out var current) &&
+                                  ReferenceEquals(current, ctx);
+            }
+            if (!stillRegistered)
+            {
+                _logger.Warning($"Subscription for {instrument} was stopped during subscribe, rolling back NT subscription");
+                ctx.Instrument.MarketData.Update -= OnMarketDataUpdate;
+                StopLiveBarsDelayTimer(ctx);
+                return false;
+            }
+
+            _logger.Success($"Subscribed to instrument {instrument}");
+            return true;
+        }
+
+        public bool Stop(string instrument)
+        {
+            if (Dispatcher.CurrentDispatcher.CheckAccess())
+                return StopCore(instrument);
+            return (bool)Dispatcher.CurrentDispatcher.Invoke(new Func<bool>(() => StopCore(instrument)));
+        }
+
+        private bool StopCore(string instrument)
+        {
+            if (string.IsNullOrWhiteSpace(instrument))
+            {
+                _logger.Error("Unsubscribe command received with empty instrument");
+                return false;
+            }
+
+            InstrumentStream ctx;
+            lock (_streamsLock)
+            {
+                if (!_streams.TryGetValue(instrument, out ctx))
+                {
+                    _logger.Info($"Not subscribed to instrument {instrument}");
+                    return false;
+                }
+                _streams.Remove(instrument);
+                _subscriptionOrder.Remove(instrument);
+            }
+
+            // NinjaTrader API calls must run OUTSIDE _streamsLock (same pattern as
+            // StartCore/StopCore()): an NT call can block, and holding the lock
+            // would wedge every bar path, watchdog, and command that needs
+            // FindContext/_streamsLock. Other instruments are untouched.
+            UnsubscribeFromLiveBars(ctx);
+            if (ctx.Instrument != null)
+            {
+                ctx.Instrument.MarketData.Update -= OnMarketDataUpdate;
+                _logger.Info($"Unsubscribed from market data for {ctx.FullName ?? "<none>"}");
+            }
+
+            bool anyLeft;
+            lock (_streamsLock)
+                anyLeft = _streams.Count > 0;
+            if (!anyLeft)
+                StopBarsRequestWatchdog();
+
+            _logger.Success($"Unsubscribed from instrument {instrument}");
+            return true;
         }
 
         public void Stop()

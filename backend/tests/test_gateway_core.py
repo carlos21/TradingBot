@@ -773,6 +773,121 @@ class TestCommandAckHandling:
 
 
 # ---------------------------------------------------------------------------
+# Command timeout listeners (infra commands without trade_id)
+# ---------------------------------------------------------------------------
+
+
+class TestCommandTimeoutListeners:
+    def test_timeout_fires_for_trade_id_less_command(self, gateway):
+        timeouts = []
+        gateway.on_command_timeout(lambda *args: timeouts.append(args))
+        gateway._pending_commands[8] = {
+            "type": "subscribe",
+            "sent_time": time.time() - 120,
+            "payload": {"instrument": "MES 09-26"},
+        }
+        gateway._cleanup_pending_commands()
+        assert timeouts == [("subscribe", {"instrument": "MES 09-26"}, 8)]
+
+    def test_on_command_failed_still_drops_trade_id_less_failures(self, gateway):
+        failures = []
+        gateway.on_command_failed(lambda *args: failures.append(args))
+        gateway._pending_commands[8] = {
+            "type": "subscribe",
+            "sent_time": time.time() - 120,
+            "payload": {"instrument": "MES 09-26"},
+        }
+        gateway._cleanup_pending_commands()
+        assert failures == []
+
+    def test_registration_is_idempotent(self, gateway):
+        timeouts = []
+
+        def cb(*args):
+            timeouts.append(args)
+
+        gateway.on_command_timeout(cb)
+        gateway.on_command_timeout(cb)
+        gateway._pending_commands[8] = {
+            "type": "refresh_request",
+            "sent_time": time.time() - 120,
+            "payload": {"days": 30, "instrument": "MES 09-26"},
+        }
+        gateway._cleanup_pending_commands()
+        assert len(timeouts) == 1
+
+    def test_timeout_listener_deduped_for_same_instrument(self, gateway):
+        timeouts = []
+        gateway.on_command_timeout(lambda *args: timeouts.append(args))
+        for seq in range(10, 20):
+            gateway._pending_commands[seq] = {
+                "type": "subscribe",
+                "sent_time": time.time() - 120,
+                "payload": {"instrument": "MES 09-26"},
+            }
+        gateway._cleanup_pending_commands()
+        assert len(timeouts) == 1
+        assert timeouts[0][0] == "subscribe"
+        assert timeouts[0][1]["instrument"] == "MES 09-26"
+        assert all(seq not in gateway._pending_commands for seq in range(10, 20))
+
+    def test_timeout_listener_keeps_distinct_instruments(self, gateway):
+        timeouts = []
+        gateway.on_command_timeout(lambda *args: timeouts.append(args))
+        gateway._pending_commands[10] = {
+            "type": "subscribe",
+            "sent_time": time.time() - 120,
+            "payload": {"instrument": "MES 09-26"},
+        }
+        gateway._pending_commands[11] = {
+            "type": "subscribe",
+            "sent_time": time.time() - 120,
+            "payload": {"instrument": "MNQ 09-26"},
+        }
+        gateway._cleanup_pending_commands()
+        assert len(timeouts) == 2
+        assert {t[1]["instrument"] for t in timeouts} == {"MES 09-26", "MNQ 09-26"}
+
+    def test_timeout_listener_deduped_by_trade_id_for_orders(self, gateway):
+        timeouts = []
+        gateway.on_command_timeout(lambda *args: timeouts.append(args))
+        for seq in range(3):
+            gateway._pending_commands[seq] = {
+                "type": "order_open",
+                "sent_time": time.time() - 120,
+                "payload": {"trade_id": "T1"},
+            }
+        gateway._cleanup_pending_commands()
+        assert len(timeouts) == 1
+        assert timeouts[0][0] == "order_open"
+
+    def test_heartbeat_loop_reaps_timeout_without_new_command(self, gateway):
+        """The periodic reaper detects an ACK timeout even when no further
+        command is ever sent."""
+        timeouts = []
+        gateway.on_command_timeout(lambda *args: timeouts.append(args))
+        gateway._command_ack_timeout_sec = 0.05
+        gateway._running = True
+        gateway._last_cleanup_time = 0.0
+        gateway._pending_commands[8] = {
+            "type": "subscribe",
+            "sent_time": time.time() - 1.0,
+            "payload": {"instrument": "MES 09-26"},
+        }
+        thread = threading.Thread(target=gateway._heartbeat_loop, daemon=True)
+        thread.start()
+        try:
+            deadline = time.time() + 2.0
+            while time.time() < deadline and not timeouts:
+                time.sleep(0.02)
+            assert timeouts == [("subscribe", {"instrument": "MES 09-26"}, 8)]
+            assert 8 not in gateway._pending_commands
+        finally:
+            gateway._running = False
+            thread.join(timeout=2.0)
+
+
+# ---------------------------------------------------------------------------
 # Position sync handling
 # ---------------------------------------------------------------------------
 

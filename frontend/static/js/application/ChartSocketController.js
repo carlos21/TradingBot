@@ -5,7 +5,8 @@ import { StreamingEventType } from '../domain/streamingLifecycle.js';
  * Depends only on the controller's public API and socket ports.
  *
  * Streaming-lifecycle socket events (gateway_started / platform_connected /
- * platform_disconnected / gateway_stopped / stream_status) are dispatched
+ * platform_disconnected / gateway_stopped / stream_stopped / stream_status)
+ * are dispatched
  * into the shared StreamingLifecycleController state machine, which owns the
  * Start/Reconnect/Stop buttons and the connection overlay.
  */
@@ -102,6 +103,17 @@ export class ChartSocketController {
     });
 
     this.socket.on('gateway_stopped', () => {
+      this.controller.setHistoryReady(false);
+      this.controller.clearPendingBars();
+      this._setConnectionStatus('Streaming stopped');
+      this.lifecycle.dispatch({ type: StreamingEventType.GATEWAY_STOPPED });
+    });
+
+    // Pair-scoped stop: only this instrument's session ended. Same UI reset
+    // as gateway_stopped, but ignored when the event is for another pair
+    // (another tab may still be streaming it).
+    this.socket.on('stream_stopped', data => {
+      if (!this._matchesCurrentPair(data)) return;
       this.controller.setHistoryReady(false);
       this.controller.clearPendingBars();
       this._setConnectionStatus('Streaming stopped');

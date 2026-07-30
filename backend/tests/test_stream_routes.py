@@ -25,6 +25,7 @@ class FakeZMQDataSource(ZMQDataSource):
         self.stop_calls = 0
         self._state = DataSourceState.DISCONNECTED
         self.refresh_calls = 0
+        self.stopped_instruments = []
 
     def start(self):
         self._started = True
@@ -39,6 +40,32 @@ class FakeZMQDataSource(ZMQDataSource):
 
     def request_refresh(self, days=None):
         self.refresh_calls += 1
+
+    def stop_instrument_streaming(self, pair):
+        self.stopped_instruments.append(pair)
+
+
+class FakeCoordinator:
+    """Minimal coordinator fake tracking sessions by symbol."""
+
+    def __init__(self, symbols=None):
+        self._symbols = list(symbols or [])
+        self.stopped_sessions = []
+        self.stop_all_calls = 0
+
+    def stop_session(self, symbol):
+        if symbol not in self._symbols:
+            return False
+        self._symbols.remove(symbol)
+        self.stopped_sessions.append(symbol)
+        return True
+
+    def stop_all(self):
+        self.stop_all_calls += 1
+        self._symbols.clear()
+
+    def list_active_symbols(self):
+        return list(self._symbols)
 
 
 class FakeNonZMQDataSource:
@@ -84,6 +111,7 @@ def make_registered_app(
     platform_lifecycle=None,
     socketio=None,
     logger=None,
+    coordinator=None,
 ):
     register_stream_routes(
         app=app,
@@ -91,6 +119,7 @@ def make_registered_app(
         platform_lifecycle=platform_lifecycle or FakePlatformLifecycleService(),
         socketio=socketio or FakeSocketIO(),
         logger=logger or FakeLogger(),
+        coordinator=coordinator,
     )
     return app
 
@@ -297,3 +326,87 @@ class TestStreamStop:
             data = resp.get_json()
             assert data["status"] == "error"
             assert "stop failed" in data["message"]
+
+
+class TestStreamStopSingleInstrument:
+    """Per-instrument stop: POST /api/stream/stop with a JSON {"pair": ...}."""
+
+    def test_stop_with_pair_keeps_gateway_alive_while_others_stream(self, app):
+        ds = FakeZMQDataSource(running=True, connected=True)
+        socketio = FakeSocketIO()
+        coordinator = FakeCoordinator(symbols=["MNQ", "MES"])
+        make_registered_app(app, data_source=ds, socketio=socketio, coordinator=coordinator)
+        with app.test_client() as client:
+            resp = client.post("/api/stream/stop", json={"pair": "MES"})
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data["status"] == "stopped"
+            # Only the MES session was stopped; MNQ keeps streaming and the
+            # gateway stays up.
+            assert coordinator.stopped_sessions == ["MES"]
+            assert coordinator.list_active_symbols() == ["MNQ"]
+            assert ds.stopped_instruments == ["MES"]
+            assert ds.stop_calls == 0
+            assert ds._gateway.is_running is True
+            # A pair-scoped event went out; no global gateway_stopped.
+            assert ("stream_stopped", ({"pair": "MES"},), {}) in socketio.emitted
+            assert not any(e[0] == "gateway_stopped" for e in socketio.emitted)
+
+    def test_stop_with_last_pair_triggers_full_gateway_stop(self, app):
+        ds = FakeZMQDataSource(running=True, connected=True)
+        socketio = FakeSocketIO()
+        coordinator = FakeCoordinator(symbols=["MES"])
+        make_registered_app(app, data_source=ds, socketio=socketio, coordinator=coordinator)
+        with app.test_client() as client:
+            resp = client.post("/api/stream/stop", json={"pair": "MES"})
+            assert resp.status_code == 200
+            assert resp.get_json()["status"] == "stopped"
+            # Last instrument stopped: the whole gateway goes down too.
+            assert ds.stopped_instruments == ["MES"]
+            assert ds.stop_calls == 1
+            assert ("stream_stopped", ({"pair": "MES"},), {}) in socketio.emitted
+            assert ("gateway_stopped", (), {}) in socketio.emitted
+
+    def test_stop_with_pair_and_no_coordinator_falls_back_to_full_stop(self, app):
+        ds = FakeZMQDataSource(running=True, connected=True)
+        socketio = FakeSocketIO()
+        make_registered_app(app, data_source=ds, socketio=socketio, coordinator=None)
+        with app.test_client() as client:
+            resp = client.post("/api/stream/stop", json={"pair": "MES"})
+            assert resp.status_code == 200
+            # With no coordinator nothing can be active afterwards, so the
+            # gateway is stopped like a single-instrument stop.
+            assert ds.stopped_instruments == ["MES"]
+            assert ds.stop_calls == 1
+            assert ("stream_stopped", ({"pair": "MES"},), {}) in socketio.emitted
+            assert ("gateway_stopped", (), {}) in socketio.emitted
+
+    def test_stop_without_pair_is_legacy_global_stop(self, app):
+        ds = FakeZMQDataSource(running=True, connected=True)
+        socketio = FakeSocketIO()
+        coordinator = FakeCoordinator(symbols=["MNQ", "MES"])
+        make_registered_app(app, data_source=ds, socketio=socketio, coordinator=coordinator)
+        with app.test_client() as client:
+            resp = client.post("/api/stream/stop")
+            assert resp.status_code == 200
+            assert resp.get_json()["status"] == "stopped"
+            assert ds.stop_calls == 1
+            assert coordinator.stop_all_calls == 1
+            assert coordinator.stopped_sessions == []
+            assert ds.stopped_instruments == []
+            assert ("gateway_stopped", (), {}) in socketio.emitted
+
+    def test_stop_with_pair_failure_returns_500(self, app):
+        class BrokenZMQDataSource(FakeZMQDataSource):
+            def stop_instrument_streaming(self, pair):
+                raise RuntimeError("unsubscribe failed")
+
+        ds = BrokenZMQDataSource(running=True, connected=True)
+        coordinator = FakeCoordinator(symbols=["MNQ", "MES"])
+        make_registered_app(app, data_source=ds, coordinator=coordinator)
+        with app.test_client() as client:
+            resp = client.post("/api/stream/stop", json={"pair": "MES"})
+            assert resp.status_code == 500
+            data = resp.get_json()
+            assert data["status"] == "error"
+            assert "unsubscribe failed" in data["message"]

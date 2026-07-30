@@ -267,6 +267,39 @@ describe('ChartSocketController', () => {
     expect(doc.getElementById('reconnectBtn').classList.contains('hidden')).toBe(true);
   });
 
+  describe('stream_stopped (pair-scoped stop)', () => {
+    it('resets the UI like gateway_stopped when the event is for the current pair', () => {
+      const { doc } = setupDocument();
+      const { socket, controller, lifecycle } = buildController(doc, window);
+
+      socket.trigger('platform_connected');
+      expect(lifecycle.getState()).toBe('streaming');
+
+      socket.trigger('stream_stopped', { pair: 'MNQ' });
+
+      expect(controller.setHistoryReady).toHaveBeenCalledWith(false);
+      expect(controller.clearPendingBars).toHaveBeenCalled();
+      expect(doc.getElementById('connectionStatus').textContent).toBe('Streaming stopped');
+      expect(lifecycle.getState()).toBe('idle');
+      expect(doc.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(true);
+    });
+
+    it('ignores the event when it is for a different pair', () => {
+      const { doc } = setupDocument();
+      const { socket, controller, lifecycle } = buildController(doc, window);
+
+      socket.trigger('platform_connected');
+      expect(lifecycle.getState()).toBe('streaming');
+
+      socket.trigger('stream_stopped', { pair: 'MES' });
+
+      expect(controller.setHistoryReady).not.toHaveBeenCalled();
+      expect(controller.clearPendingBars).not.toHaveBeenCalled();
+      expect(lifecycle.getState()).toBe('streaming');
+      expect(doc.getElementById('stopStreamingBtn').classList.contains('hidden')).toBe(false);
+    });
+  });
+
   describe('stop streaming button visibility', () => {
     it('shows stop button on stream_status when live and gateway running', () => {
       const { doc } = setupDocument();

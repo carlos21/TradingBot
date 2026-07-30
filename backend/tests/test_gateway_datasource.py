@@ -215,7 +215,7 @@ class TestPlatformConnection:
         # Wait for the timer to fire
         data_source._pending_refresh_timer.join()
         mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MNQ 06-26")
-        data_source._cancel_history_retry_timer()
+        data_source._subscription_supervisor.stop()
 
     def test_on_platform_connected_ignored_if_not_disconnected(self, data_source, mock_gateway):
         data_source._state = DataSourceState.CONNECTED
@@ -253,7 +253,7 @@ class TestPlatformConnection:
         assert data_source._pending_refresh_timer is not None
         data_source._pending_refresh_timer.join()
         mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MNQ 06-26")
-        data_source._cancel_history_retry_timer()
+        data_source._subscription_supervisor.stop()
 
     def test_on_platform_disconnected_cancels_pending_timer(self, data_source):
         from src.domain.models import Instrument
@@ -304,18 +304,21 @@ class TestPlatformConnection:
 
 
 # ---------------------------------------------------------------------------
-# History retry while CONNECTED
+# Subscription retry when the platform never answers
 # ---------------------------------------------------------------------------
 
 
-class TestHistoryRetry:
+class TestSubscriptionRetry:
+    """The subscription supervisor retries subscribe+refresh when the
+    platform never answers after connect."""
 
     def _connect_and_send_first_refresh(self, data_source):
         from src.domain.models import Instrument
 
         data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
         data_source._history_request_delay_sec = 0.02
-        data_source._history_retry_base_delay_sec = 0.02
+        data_source._subscription_supervisor._base_delay_sec = 0.05
+        data_source._subscription_supervisor._max_delay_sec = 0.05
         data_source.on_platform_connected()
         data_source._pending_refresh_timer.join()
 
@@ -324,49 +327,54 @@ class TestHistoryRetry:
         assert data_source.state == DataSourceState.CONNECTED
         assert mock_gateway.send_refresh_request.call_count == 1
 
-        retry_timer = data_source._history_retry_timer
+        supervisor = data_source._subscription_supervisor
+        retry_timer = supervisor._timer
         assert retry_timer is not None
         retry_timer.join()
 
         assert mock_gateway.send_subscribe.call_count == 2
         assert mock_gateway.send_refresh_request.call_count == 2
-        # The retry re-arms itself while still CONNECTED.
-        assert data_source._history_retry_timer is not None
-        data_source._cancel_history_retry_timer()
+        # The retry re-arms itself while the instrument is still unanswered.
+        assert supervisor._timer is not None
+        supervisor.stop()
 
     def test_refresh_start_disarms_retry(self, data_source, mock_gateway):
         self._connect_and_send_first_refresh(data_source)
         data_source._on_refresh_start({"pair": "MNQ"})
-        assert data_source._history_retry_timer is None
+        assert data_source._subscription_supervisor._timer is None
+        assert data_source._subscription_supervisor._awaiting == {}
 
     def test_disconnect_disarms_retry(self, data_source, mock_gateway):
         self._connect_and_send_first_refresh(data_source)
         data_source.on_platform_disconnected()
-        assert data_source._history_retry_timer is None
+        assert data_source._subscription_supervisor._timer is None
 
     def test_stop_disarms_retry(self, data_source, mock_gateway):
         self._connect_and_send_first_refresh(data_source)
         data_source.stop()
-        assert data_source._history_retry_timer is None
+        assert data_source._subscription_supervisor._timer is None
 
     def test_notifier_alert_after_repeated_retry_failures(self, data_source, mock_gateway):
         from src.domain.models import Instrument
 
-        data_source.ensure_instrument_streaming(Instrument(symbol="MNQ", full_name="MNQ 06-26"))
-        data_source._state = DataSourceState.CONNECTED
-        data_source._notifier = MagicMock()
+        notifier = MagicMock()
+        instrument = Instrument(symbol="MNQ", full_name="MNQ 06-26")
+        data_source._requested_instruments[instrument.full_name] = instrument
+        supervisor = data_source._subscription_supervisor
+        supervisor._notifier = notifier
+        supervisor.track(instrument)
 
-        data_source._on_history_retry()  # attempt 1 — no alert
-        data_source._on_history_retry()  # attempt 2 — no alert
-        assert data_source._notifier.send.call_count == 0
+        supervisor._run_retry_cycle([instrument], 1)  # attempt 1 — no alert
+        supervisor._run_retry_cycle([instrument], 2)  # attempt 2 — no alert
+        assert notifier.send.call_count == 0
 
-        data_source._on_history_retry()  # attempt 3 — alert
-        assert data_source._notifier.send.call_count == 1
+        supervisor._run_retry_cycle([instrument], 3)  # attempt 3 — alert
+        assert notifier.send.call_count == 1
 
-        data_source._on_history_retry()  # attempt 4 — throttled
-        data_source._on_history_retry()  # attempt 5 — throttled
-        assert data_source._notifier.send.call_count == 1
-        data_source._cancel_history_retry_timer()
+        supervisor._run_retry_cycle([instrument], 4)  # throttled
+        supervisor._run_retry_cycle([instrument], 5)  # throttled
+        assert notifier.send.call_count == 1
+        supervisor.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -1702,7 +1710,7 @@ class TestEnsureInstrumentStreaming:
         mock_gateway.send_subscribe.assert_called_once_with("MES 09-26")
         data_source._pending_refresh_timer.join()
         mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MES 09-26")
-        data_source._cancel_history_retry_timer()
+        data_source._subscription_supervisor.stop()
 
     def test_connect_subscribes_only_requested_instrument_no_default(self, data_source, mock_gateway):
         """With only MES requested, connect subscribes only MES — no MNQ/default."""
@@ -1743,4 +1751,4 @@ class TestEnsureInstrumentStreaming:
         mock_gateway.send_subscribe.assert_called_once_with("MES 09-26")
         data_source._pending_refresh_timer.join()
         mock_gateway.send_refresh_request.assert_called_once_with(days=30, instrument="MES 09-26")
-        data_source._cancel_history_retry_timer()
+        data_source._subscription_supervisor.stop()

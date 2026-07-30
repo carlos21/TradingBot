@@ -77,6 +77,38 @@ class TestNtManagerServiceFindNtExe:
                 assert "not found in registry" in result["message"]
 
 
+class TestNtManagerServiceIsNtRunning:
+
+    def test_cannot_run_windows_exe_returns_false(self):
+        svc = NtManagerService()
+        with patch.object(svc, "_can_run_windows_exe", return_value=False):
+            assert svc.is_nt_running() is False
+
+    def test_process_found_returns_true(self):
+        svc = NtManagerService()
+        with patch.object(svc, "_can_run_windows_exe", return_value=True):
+            with patch.object(svc, "_run_ps", return_value=MagicMock(returncode=0, stdout="NinjaTrader\n")):
+                assert svc.is_nt_running() is True
+
+    def test_no_process_returns_false(self):
+        svc = NtManagerService()
+        with patch.object(svc, "_can_run_windows_exe", return_value=True):
+            with patch.object(svc, "_run_ps", return_value=MagicMock(returncode=0, stdout="")):
+                assert svc.is_nt_running() is False
+
+    def test_powershell_failure_returns_false(self):
+        svc = NtManagerService()
+        with patch.object(svc, "_can_run_windows_exe", return_value=True):
+            with patch.object(svc, "_run_ps", return_value=MagicMock(returncode=1, stdout="NinjaTrader\n")):
+                assert svc.is_nt_running() is False
+
+    def test_exception_returns_false(self):
+        svc = NtManagerService()
+        with patch.object(svc, "_can_run_windows_exe", return_value=True):
+            with patch.object(svc, "_run_ps", side_effect=OSError("boom")):
+                assert svc.is_nt_running() is False
+
+
 class TestNtManagerServiceInstallNetmq:
 
     def test_always_success(self):

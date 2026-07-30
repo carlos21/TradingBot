@@ -282,6 +282,24 @@ class ReadinessMonitor:
             f"Live bar stream stale: {age_seconds:.0f}s since last bar"
         )
 
+    def on_platform_unresponsive(self, attempt: int) -> None:
+        """Called when the platform has not answered subscribe/refresh retries.
+
+        The data source's subscription supervisor is the retry driver; this
+        only mirrors the situation in the readiness state machine so the
+        Stream Health panel shows the retry instead of a stuck CONNECTED.
+        Unlike the empty-history path, no retry timer is armed here.
+        """
+        state = self._state_machine.state
+        if state == ReadinessState.CONNECTED:
+            self._state_machine.history_empty()
+        elif state == ReadinessState.WAITING_FOR_HISTORY:
+            # Bump the retry counter so the "attempt N" reason advances
+            # (history_retry_scheduled alone would repeat the same reason
+            # and be swallowed as a no-op transition).
+            self._state_machine.history_empty()
+            self._state_machine.history_retry_scheduled()
+
     def stop(self) -> None:
         """Cancel any pending retry timer and in-progress warmup."""
         self._cancel_retry_timer()

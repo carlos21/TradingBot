@@ -737,3 +737,86 @@ class TestGapFill:
 
         assert monitor._gap_fill_attempts == 0
         assert monitor._gap_fill_in_flight is False
+
+
+class TestPlatformUnresponsive:
+    """The subscription supervisor's retries surface in the readiness state
+    machine via ``on_platform_unresponsive`` — the Stream Health panel must
+    show WAITING_FOR_HISTORY instead of a stuck CONNECTED."""
+
+    def test_connected_moves_to_waiting_for_history(self) -> None:
+        socketio = DummySocketIO()
+        monitor, _strategy, _event_bus = _make_monitor(
+            socketio, _FreshDataSource(), _FakeWarmupPolicy(warm=True)
+        )
+        monitor._state_machine.connect()
+
+        monitor.on_platform_unresponsive(1)
+
+        assert monitor._state_machine.state.name == "WAITING_FOR_HISTORY"
+        assert monitor._state_machine.reason == "No historical data received"
+
+    def test_subsequent_calls_produce_attempt_reasons(self) -> None:
+        monitor, _strategy, _event_bus = _make_monitor(
+            DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
+        )
+        monitor._state_machine.connect()
+
+        monitor.on_platform_unresponsive(1)
+        monitor.on_platform_unresponsive(2)
+        assert monitor._state_machine.reason == "History refresh requested (attempt 2)"
+        monitor.on_platform_unresponsive(3)
+        assert monitor._state_machine.reason == "History refresh requested (attempt 3)"
+
+    def test_no_retry_timer_armed(self) -> None:
+        """The supervisor is the retry driver — this path must not schedule
+        the monitor's own empty-history retry."""
+        ds = _RecordingDataSource()
+        monitor, _strategy, _event_bus = _make_monitor(
+            DummySocketIO(), ds, _FakeWarmupPolicy(warm=True)
+        )
+        monitor._state_machine.connect()
+
+        monitor.on_platform_unresponsive(1)
+
+        assert monitor._retry_timer is None
+        import time
+        time.sleep(0.05)
+        assert ds.requests == []
+
+    def test_noop_in_other_states(self) -> None:
+        monitor, _strategy, _event_bus = _make_monitor(
+            DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
+        )
+        assert monitor._state_machine.state.name == "DISCONNECTED"
+
+        monitor.on_platform_unresponsive(1)
+
+        assert monitor._state_machine.state.name == "DISCONNECTED"
+
+    def test_recovers_on_history_complete(self) -> None:
+        monitor, _strategy, _event_bus = _make_monitor(
+            DummySocketIO(), _FreshDataSource(), _FakeWarmupPolicy(warm=True)
+        )
+        monitor._state_machine.connect()
+        monitor.on_platform_unresponsive(1)
+        assert monitor._state_machine.state.name == "WAITING_FOR_HISTORY"
+
+        monitor.on_history_complete(_make_bars())
+        _join_warmup(monitor)
+
+        assert monitor._state_machine.state.name == "READY"
+
+    def test_does_not_emit_readiness_changed_directly(self) -> None:
+        """readiness_changed only travels via the EventBus, never SocketIO."""
+        socketio = DummySocketIO()
+        monitor, _strategy, _event_bus = _make_monitor(
+            socketio, _FreshDataSource(), _FakeWarmupPolicy(warm=True)
+        )
+        monitor._state_machine.connect()
+
+        monitor.on_platform_unresponsive(1)
+        monitor.on_platform_unresponsive(2)
+
+        events = [event for event, _payload in socketio.events]
+        assert "readiness_changed" not in events

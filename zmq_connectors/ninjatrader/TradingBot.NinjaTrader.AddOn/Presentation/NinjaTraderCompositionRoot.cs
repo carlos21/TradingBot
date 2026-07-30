@@ -30,6 +30,7 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
 
             var dispatcher = new CommandDispatcher(logger);
             dispatcher.Register(new SubscribeHandler(network, logger, streamingCoordinator));
+            dispatcher.Register(new UnsubscribeHandler(network, logger, streamingCoordinator));
             dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
             dispatcher.Register(new OrderCloseHandler(network, logger, orderTracker, tradeIdExtractor, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
             dispatcher.Register(new OrderModifyHandler(network, logger, orderTracker, tradeIdExtractor, tradingMode, accountProvider, instrumentProvider, orderExecutionService));

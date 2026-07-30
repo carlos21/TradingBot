@@ -27,6 +27,7 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
         public const string RefreshRequest = "refresh_request";
         public const string RefreshStart = "refresh_start";
         public const string Subscribe = "subscribe";
+        public const string Unsubscribe = "unsubscribe";
         public const string PositionQuery = "position_query";
         public const string PositionResponse = "position_response";
         public const string PositionSync = "position_sync";

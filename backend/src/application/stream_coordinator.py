@@ -114,6 +114,19 @@ class StreamCoordinator:
                 session.stop()
             self._sessions.clear()
 
+    def stop_session(self, symbol: str) -> bool:
+        """Stop and remove the session for *symbol* only.
+
+        Other instruments keep streaming.  Returns True when a session was
+        stopped, False when no session exists for *symbol*.
+        """
+        with self._session_lock:
+            session = self._sessions.pop(symbol, None)
+            if session is None:
+                return False
+            session.stop()
+            return True
+
     def list_active_symbols(self) -> list[str]:
         """Return symbols of currently active sessions."""
         with self._session_lock:
@@ -214,6 +227,19 @@ class StreamCoordinator:
         """Degrade every session: a stalled bar stream is connection-level."""
         for session in self.get_active_sessions():
             session.on_heartbeat_stale(age_seconds)
+
+    def route_history_retry(self, pair: str, attempt: int) -> None:
+        """Forward a subscription retry to the matching session's readiness monitor.
+
+        Sent by the data source's subscription supervisor when the platform
+        has not answered subscribe+refresh for ``pair``.
+        """
+        if not pair:
+            logger.warning("history_retry without pair — dropped")
+            return
+        session = self.get_session(pair)
+        if session is not None and session.readiness_monitor is not None:
+            session.readiness_monitor.on_platform_unresponsive(attempt)
 
     def route_late_history_batch(self, bar_count: int, pair: str | None = None) -> None:
         if not pair:

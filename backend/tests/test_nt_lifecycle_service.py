@@ -96,8 +96,29 @@ class TestNinjaTraderLifecycleService:
 
         nt_svc.open_nt_and_login.assert_not_called()
 
+    def test_maybe_launch_skips_if_connects_during_phase1_poll(self):
+        """A slow-but-healthy NT connecting within the 8s poll is not launched over."""
+        nt_svc = MagicMock(spec=NtManagerService)
+        settings = FakeSettingsService(credentials={"username": "user", "password": "pass"})
+        lifecycle = NinjaTraderLifecycleService(nt_svc, settings, FakeLogger())
+
+        data_source = FakeDataSource(connected=False)
+
+        sleep_calls = {"n": 0}
+
+        def _fake_sleep(_seconds):
+            sleep_calls["n"] += 1
+            if sleep_calls["n"] >= 3:
+                data_source.gateway.is_connected = True
+
+        with patch("time.sleep", side_effect=_fake_sleep):
+            lifecycle.maybe_launch_after_delay(data_source)
+
+        nt_svc.open_nt_and_login.assert_not_called()
+
     def test_maybe_launch_with_credentials(self):
         nt_svc = MagicMock(spec=NtManagerService)
+        nt_svc.is_nt_running.return_value = False
         nt_svc.open_nt_and_login.return_value = {"success": True, "message": "ok"}
         settings = FakeSettingsService(credentials={"username": "user", "password": "pass"})
         lifecycle = NinjaTraderLifecycleService(nt_svc, settings, FakeLogger())
@@ -109,6 +130,7 @@ class TestNinjaTraderLifecycleService:
 
     def test_maybe_launch_without_credentials(self):
         nt_svc = MagicMock(spec=NtManagerService)
+        nt_svc.is_nt_running.return_value = False
         settings = FakeSettingsService(credentials={})
         lifecycle = NinjaTraderLifecycleService(nt_svc, settings, FakeLogger())
 
@@ -119,6 +141,7 @@ class TestNinjaTraderLifecycleService:
 
     def test_maybe_launch_logs_warning_on_failure(self):
         nt_svc = MagicMock(spec=NtManagerService)
+        nt_svc.is_nt_running.return_value = False
         nt_svc.open_nt_and_login.return_value = {"success": False, "message": "failed"}
         settings = FakeSettingsService(credentials={"username": "user", "password": "pass"})
         lifecycle = NinjaTraderLifecycleService(nt_svc, settings, FakeLogger())
@@ -127,3 +150,42 @@ class TestNinjaTraderLifecycleService:
             lifecycle.maybe_launch_after_delay(FakeDataSource(connected=False))
 
         nt_svc.open_nt_and_login.assert_called_once()
+
+    def test_maybe_launch_never_launches_over_running_nt(self):
+        """NT already running but not connected: warn, do NOT auto-launch."""
+        nt_svc = MagicMock(spec=NtManagerService)
+        nt_svc.is_nt_running.return_value = True
+        settings = FakeSettingsService(credentials={"username": "user", "password": "pass"})
+        logger = MagicMock()
+        lifecycle = NinjaTraderLifecycleService(nt_svc, settings, logger)
+
+        with patch("time.sleep"):
+            lifecycle.maybe_launch_after_delay(FakeDataSource(connected=False))
+
+        nt_svc.open_nt_and_login.assert_not_called()
+        assert any(
+            "already running but the connector has not connected" in str(call)
+            for call in logger.warning.call_args_list
+        )
+
+    def test_maybe_launch_running_nt_connects_during_phase2_poll(self):
+        """NT running: keep polling; if it connects, return without launching."""
+        nt_svc = MagicMock(spec=NtManagerService)
+        nt_svc.is_nt_running.return_value = True
+        settings = FakeSettingsService(credentials={"username": "user", "password": "pass"})
+        lifecycle = NinjaTraderLifecycleService(nt_svc, settings, FakeLogger())
+
+        data_source = FakeDataSource(connected=False)
+
+        sleep_calls = {"n": 0}
+
+        def _fake_sleep(_seconds):
+            sleep_calls["n"] += 1
+            # Phase 1 takes 8 polls; connect shortly into phase 2.
+            if sleep_calls["n"] >= 12:
+                data_source.gateway.is_connected = True
+
+        with patch("time.sleep", side_effect=_fake_sleep):
+            lifecycle.maybe_launch_after_delay(data_source)
+
+        nt_svc.open_nt_and_login.assert_not_called()

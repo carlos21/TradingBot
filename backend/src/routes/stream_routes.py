@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import threading
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 
 from src.application.ports import PlatformLifecycleService
 from src.infrastructure.gateway.datasource import DataSourceState, ZMQDataSource
@@ -110,6 +110,12 @@ def register_stream_routes(
                 "message": "Streaming is only available in live mode",
             }), 400
 
+        body = request.get_json(silent=True) or {}
+        pair = body.get("pair")
+
+        if pair:
+            return _stop_single_instrument(pair)
+
         try:
             logger.info("[Stream] Stopping ZeroMQ gateway...")
             data_source.stop()
@@ -127,4 +133,33 @@ def register_stream_routes(
         return jsonify({
             "status": "stopped",
             "message": "ZeroMQ gateway stopped",
+        }), 200
+
+    def _stop_single_instrument(pair: str):
+        """Stop one instrument's stream; full gateway stop when it was the last."""
+        try:
+            if coordinator is not None:
+                coordinator.stop_session(pair)
+            data_source.stop_instrument_streaming(pair)
+            socketio.emit("stream_stopped", {"pair": pair})
+            logger.info(f"[Stream] Stopped streaming {pair}")
+
+            remaining = coordinator.list_active_symbols() if coordinator is not None else []
+            if not remaining:
+                # Last instrument stopped: tear the gateway down so the
+                # single-instrument UX behaves exactly like a global stop.
+                logger.info("[Stream] No active instruments left — stopping ZeroMQ gateway...")
+                data_source.stop()
+                socketio.emit("gateway_stopped")
+                logger.info("[Stream] ZeroMQ gateway stopped")
+        except Exception as e:
+            logger.error(f"[Stream] Failed to stop streaming {pair}: {e}")
+            return jsonify({
+                "status": "error",
+                "message": f"Failed to stop streaming {pair}: {e}",
+            }), 500
+
+        return jsonify({
+            "status": "stopped",
+            "message": f"Stopped streaming {pair}",
         }), 200

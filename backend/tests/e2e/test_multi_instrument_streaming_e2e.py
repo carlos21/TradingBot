@@ -553,3 +553,165 @@ def test_second_instrument_reaches_ready_and_live(
         assert all(p.get("pair") != "MES" for p in mnq_readiness)
     finally:
         app.socketio.emit = orig_emit
+
+
+def _mes_subscribe_count(nt: FakeNinjaTrader) -> int:
+    return sum(
+        1
+        for c in nt.commands_received
+        if c["msg_type"] == "subscribe" and c["payload"].get("instrument") == "MES 09-26"
+    )
+
+
+def test_unresponsive_platform_retries_and_recovers(
+    fake_nt: FakeNinjaTrader,
+    live_app_two_instruments: AppWiring,
+) -> None:
+    """Regression: the platform never answers a second instrument's subscribe.
+
+    MNQ streams; a client joins MES but the (wedged) connector never sends
+    REFRESH_START/HISTORY for it.  The subscription supervisor must retry
+    subscribe+refresh, the MES session readiness must leave CONNECTED for
+    WAITING_FOR_HISTORY (with attempt reasons), MNQ must keep streaming, and
+    once MES history finally arrives the retries must stop and the session
+    must advance past CONNECTED.
+    """
+    app = live_app_two_instruments
+    data_source = app.data_source
+    coordinator = app.coordinator
+
+    supervisor = data_source._subscription_supervisor
+    supervisor._base_delay_sec = 0.05
+    supervisor._max_delay_sec = 0.1
+
+    # (a) MNQ streams first.
+    coordinator.join_instrument("MNQ", "fake-sid-1")
+    time.sleep(0.3)  # slow-joiner protection
+    fake_nt.send_connect(pair="MNQ")
+    _wait_until(
+        lambda: _command_seen(fake_nt, "subscribe", "MNQ 09-26"),
+        description="MNQ subscribe command",
+    )
+    fake_nt.send_history_batch(_build_history(60, "MNQ"), pair="MNQ")
+    fake_nt.send_history_end(pair="MNQ")
+    _wait_until(lambda: data_source.is_streaming, description="MNQ STREAMING")
+
+    # (b) A client joins MES; the fake stays silent for MES (wedged connector).
+    coordinator.join_instrument("MES", "fake-sid-2")
+    mes_session = coordinator.get_session("MES")
+    assert mes_session is not None
+    _wait_until(
+        lambda: _command_seen(fake_nt, "subscribe", "MES 09-26"),
+        description="MES subscribe command",
+    )
+
+    # (c) The supervisor retries: repeated MES subscribe commands appear.
+    _wait_until(
+        lambda: _mes_subscribe_count(fake_nt) >= 3,
+        timeout=5.0,
+        description="MES subscribe retries",
+    )
+
+    # (d) The MES session readiness leaves CONNECTED for WAITING_FOR_HISTORY
+    # and reports retry attempts instead of sitting stuck.
+    _wait_until(
+        lambda: mes_session.readiness_monitor._state_machine.state.name == "WAITING_FOR_HISTORY",
+        timeout=5.0,
+        description="MES readiness WAITING_FOR_HISTORY",
+    )
+    _wait_until(
+        lambda: "attempt" in mes_session.readiness_monitor._state_machine.reason,
+        timeout=5.0,
+        description="MES readiness attempt reason",
+    )
+
+    # (e) MNQ streaming is unaffected.
+    assert data_source.is_streaming
+
+    # (f) Recovery: MES history finally arrives — retries stop and the
+    # session advances past WAITING_FOR_HISTORY.
+    fake_nt.clear_commands()
+    fake_nt.send_history_batch(_build_history(60, "MES"), pair="MES")
+    fake_nt.send_history_end(pair="MES")
+    _wait_until(
+        lambda: mes_session.readiness_monitor._state_machine.state.name
+        in ("WARMING_UP", "READY", "LIVE"),
+        timeout=10.0,
+        description="MES readiness to advance past WAITING_FOR_HISTORY",
+    )
+    time.sleep(0.3)  # several capped retry delays
+    assert _mes_subscribe_count(fake_nt) == 0
+
+
+def test_stop_single_instrument_keeps_other_streaming(
+    fake_nt: FakeNinjaTrader,
+    live_app_two_instruments: AppWiring,
+) -> None:
+    """Per-instrument stop: stopping MES must not disturb the MNQ stream.
+
+    MNQ + MES stream together; ``POST /api/stream/stop`` with
+    ``{"pair": "MES"}`` must send an ``unsubscribe`` command for MES's full
+    name, remove the MES session, keep the gateway running, and let MNQ bars
+    keep flowing.
+    """
+    app = live_app_two_instruments
+    data_source = app.data_source
+    coordinator = app.coordinator
+    client = app.app.test_client()
+
+    # (a) MNQ streams first.
+    coordinator.join_instrument("MNQ", "fake-sid-1")
+    time.sleep(0.3)  # slow-joiner protection
+    fake_nt.send_connect(pair="MNQ")
+    _wait_until(
+        lambda: _command_seen(fake_nt, "subscribe", "MNQ 09-26"),
+        description="MNQ subscribe command",
+    )
+    mnq_history = _build_history(60, "MNQ")
+    fake_nt.send_history_batch(mnq_history, pair="MNQ")
+    fake_nt.send_history_end(pair="MNQ")
+    _wait_until(lambda: data_source.is_streaming, description="MNQ STREAMING")
+
+    # (b) MES joins and streams alongside.
+    coordinator.join_instrument("MES", "fake-sid-2")
+    _wait_until(
+        lambda: _command_seen(fake_nt, "subscribe", "MES 09-26"),
+        description="MES subscribe command",
+    )
+    mes_history = _build_history(30, "MES")
+    fake_nt.send_history_batch(mes_history, pair="MES")
+    fake_nt.send_history_end(pair="MES")
+    _wait_until(
+        lambda: len(data_source.load_historical_bars("1m", pair="MES")) == 30,
+        description="MES history in per-pair cache",
+    )
+
+    # (c) Stop only MES through the HTTP route.
+    resp = client.post("/api/stream/stop", json={"pair": "MES"})
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json()["status"] == "stopped"
+
+    # The platform receives an unsubscribe for MES's full name...
+    _wait_until(
+        lambda: _command_seen(fake_nt, "unsubscribe", "MES 09-26"),
+        description="MES unsubscribe command",
+    )
+    # ...the MES session is gone, MNQ's is untouched...
+    assert coordinator.get_session("MES") is None
+    assert coordinator.get_session("MNQ") is not None
+    assert "MES 09-26" not in data_source._requested_instruments
+    assert "MNQ 09-26" in data_source._requested_instruments
+    # ...and the gateway stays up because MNQ is still streaming.
+    assert data_source.gateway.is_running
+    assert data_source.is_streaming
+
+    # (d) MNQ bars keep flowing after MES was stopped.
+    mnq_live = _make_bar(
+        mnq_history[-1]["time"] + 60,
+        22000.0, 22010.0, 21990.0, 22005.0, 400, pair="MNQ",
+    )
+    fake_nt.send_bar(mnq_live)
+    _wait_until(
+        lambda: any(b["time"] == mnq_live["time"] for b in data_source._bars_by_pair["MNQ"]),
+        description="live MNQ bar in MNQ cache after MES stop",
+    )

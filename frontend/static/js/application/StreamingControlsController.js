@@ -12,10 +12,14 @@ import { StreamingEventType } from '../domain/streamingLifecycle.js';
  * get stuck in an inconsistent state.
  */
 export class StreamingControlsController {
-  constructor(dom, notification, lifecycle) {
+  constructor(dom, notification, lifecycle, pair) {
     this.dom = dom;
     this.notification = notification;
     this.lifecycle = lifecycle;
+    // When known, Stop Streaming is scoped to this instrument so other tabs
+    // streaming other pairs keep running. When undefined, Stop keeps the
+    // legacy global-stop behavior (bare POST, no body).
+    this.pair = pair || null;
 
     this.startStreamingBtn = null;
     this.reconnectBtn = null;
@@ -100,7 +104,12 @@ export class StreamingControlsController {
     this.dom.addEventListener(this.stopStreamingBtn, 'click', async () => {
       this.lifecycle.dispatch({ type: StreamingEventType.STOP_CLICKED });
       try {
-        const resp = await fetch('/api/stream/stop', { method: 'POST' });
+        const options = { method: 'POST' };
+        if (this.pair) {
+          options.headers = { 'Content-Type': 'application/json' };
+          options.body = JSON.stringify({ pair: this.pair });
+        }
+        const resp = await fetch('/api/stream/stop', options);
         const data = await resp.json();
         if (!resp.ok) {
           // The overlay (and its connectionStatus element) is hidden while
@@ -108,8 +117,9 @@ export class StreamingControlsController {
           this.notification.alert('Failed to stop streaming: ' + (data.message || resp.status));
           this.lifecycle.dispatch({ type: StreamingEventType.STOP_FAILED });
         }
-        // Success path: the 'gateway_stopped' socket event drives the UI
-        // back to IDLE via ChartSocketController.
+        // Success path: the pair-scoped 'stream_stopped' socket event (or
+        // the global 'gateway_stopped' when the last session stopped) drives
+        // the UI back to IDLE via ChartSocketController.
       } catch (err) {
         this.notification.alert('Failed to stop streaming: ' + err.message);
         this.lifecycle.dispatch({ type: StreamingEventType.STOP_FAILED });
