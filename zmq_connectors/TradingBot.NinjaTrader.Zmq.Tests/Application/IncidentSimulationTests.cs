@@ -278,8 +278,12 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         [Fact]
         public void FullFill_WhenBracketModifyFails_FallsBackToRecreate()
         {
-            // If the broker rejects the in-place amend, the connector must fall back to
-            // the old cancel+recreate path — and must NOT flatten when recreate succeeds.
+            // If the broker rejects the in-place amend AND the tracked bracket legs are
+            // already terminal (a genuinely dead bracket), the connector must recreate
+            // immediately — and must NOT flatten when recreate succeeds.
+            // (Since the 2026-07-30 deferred-amendment fix, a modify failure against a
+            // LIVE bracket defers instead of recreating; this test keeps covering the
+            // terminal-leg recreate path.)
 
             var network = Substitute.For<IZmqNetwork>();
             var logger = new TestLogger();
@@ -330,11 +334,16 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             dispatcher.Dispatch(MessageEnvelope.Create(MessageType.OrderOpen,
                 TestDataFactory.OrderOpenPayload(tradeId: "replay", riskPct: 2, riskPoints: 30, account: "Sim101")));
             service.OnExecutionUpdate(entryPartial, 21000, 1);
+
+            // Put the tracked bracket legs in a terminal state: a dead bracket is
+            // recreated immediately (a live one now defers the amendment instead).
+            orderTracker.TrackStopLoss("replay", stopOrder.WithState(OrderState.Cancelled));
+            orderTracker.TrackTakeProfit("replay", targetOrder.WithState(OrderState.Cancelled));
+
             service.OnExecutionUpdate(entryFull, 21002, 2);
 
-            // Fallback: the working bracket legs were cancelled and a fresh bracket submitted.
-            orderExecutionService.Received(1).CancelOrder(Arg.Is<BrokerOrder>(o => o.Name == "Stop_replay"));
-            orderExecutionService.Received(1).CancelOrder(Arg.Is<BrokerOrder>(o => o.Name == "Target_replay"));
+            // The dead legs are not cancelled (already terminal); a fresh bracket is created+submitted.
+            orderExecutionService.DidNotReceiveWithAnyArgs().CancelOrder(Arg.Any<BrokerOrder>());
             orderExecutionService.Received(2).CreateStopLossOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "replay");
             orderExecutionService.Received(2).CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "replay");
             orderExecutionService.Received(2).SubmitOrders(Arg.Any<IReadOnlyList<BrokerOrder>>());
@@ -469,6 +478,345 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             orderExecutionService.Received(1).CreateMarketCloseOrder(instrument, account, OrderSide.Sell, 3, Arg.Any<string>());
             orderExecutionService.Received(1).SubmitOrder(closeOrder);
             network.Received(1).SendError("ninjatrader", "missing_stop_loss_guard", Arg.Any<string>());
+        }
+
+        [Fact]
+        public void PartialFill_ThenFullFill_WhenBracketNotYetModifiable_DefersAmendment_NoDuplicateBracket()
+        {
+            // Replay of the 2026-07-30 incident (trade 1f0fdffc): x6 short, partial fill
+            // of 4, bracket #1 created but still Initialized when the remaining 2 fill
+            // ~220ms later. The amend must be DEFERRED — never cancel+recreate against
+            // live orders — and applied once the legs reach a modifiable state.
+
+            var h = new ConnectorHarness();
+            h.MockTradeIdNames("incident");
+
+            var entryOrder = TestDataFactory.Order(name: "Entry_incident", side: OrderSide.SellShort, state: OrderState.Submitted, quantity: 6, instrument: h.Instrument);
+            var entryPartial = TestDataFactory.Order(name: "Entry_incident", side: OrderSide.SellShort, state: OrderState.PartFilled, filled: 4, quantity: 6, instrument: h.Instrument, avgFill: 25000);
+            var entryFull = TestDataFactory.Order(name: "Entry_incident", side: OrderSide.SellShort, state: OrderState.Filled, filled: 6, quantity: 6, instrument: h.Instrument, avgFill: 25002);
+            var stopInit = TestDataFactory.Order(name: "Stop_incident", side: OrderSide.BuyToCover, state: OrderState.Initialized, quantity: 4, instrument: h.Instrument, stopPrice: 25020, orderType: OrderType.StopMarket);
+            var targetInit = TestDataFactory.Order(name: "Target_incident", side: OrderSide.BuyToCover, state: OrderState.Initialized, quantity: 4, instrument: h.Instrument, limitPrice: 24960, orderType: OrderType.Limit);
+
+            h.Execution.CreateEntryOrder(h.Instrument, h.Account, OrderSide.SellShort, 6, "incident").Returns(entryOrder);
+            h.Execution.CreateStopLossOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "incident").Returns(stopInit);
+            h.Execution.CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "incident").Returns(targetInit);
+
+            // NT rejects the amend while the bracket submit is still in flight.
+            bool modifiable = false;
+            h.Execution.When(x => x.ModifyOrder(Arg.Any<BrokerOrder>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<int?>()))
+                .Do(_ => { if (!modifiable) throw new InvalidOperationException("not found or not in a modifiable state"); });
+
+            h.Open("incident", "short", 6).Should().BeTrue();
+            h.Execution.Received(1).CreateEntryOrder(h.Instrument, h.Account, OrderSide.SellShort, 6, "incident");
+
+            // First chunk: 4 of 6 short — bracket #1 is created for the filled qty.
+            // SL = 25000 + 20 = 25020, TP = 25000 - 40 = 24960.
+            h.Service.OnExecutionUpdate(entryPartial, 25000, 4);
+            h.Execution.Received(1).CreateStopLossOrder(h.Instrument, h.Account, OrderSide.BuyToCover, 4, 25020, "incident");
+            h.Execution.Received(1).CreateTakeProfitOrder(h.Instrument, h.Account, OrderSide.BuyToCover, 4, 24960, "incident");
+            h.Execution.Received(1).SubmitOrders(Arg.Is<IReadOnlyList<BrokerOrder>>(l => l.Count == 2));
+
+            // The remaining 2 fill; bracket #1 is still Initialized, so NT rejects the
+            // amend. Desired: SL = 25002 + 20 = 25022, TP = 25002 - 40 = 24962, qty = 6.
+            h.Service.OnExecutionUpdate(entryFull, 25002, 2);
+
+            // NO second bracket generation, NO cancel, NO flatten — amendment deferred.
+            h.Execution.Received(1).CreateStopLossOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "incident");
+            h.Execution.Received(1).CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "incident");
+            h.Execution.Received(1).SubmitOrders(Arg.Any<IReadOnlyList<BrokerOrder>>());
+            h.Execution.DidNotReceiveWithAnyArgs().CancelOrder(Arg.Any<BrokerOrder>());
+            h.Execution.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), Arg.Any<BrokerAccount>(), Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<string>());
+            h.Logger.Warnings.Should().Contain(m => m.Contains("BRACKET AMENDMENT PENDING") && m.Contains("incident") && m.Contains("qty=6"));
+            h.Network.Received(1).SendTradeLog("incident", "NT:WARNING", Arg.Is<string>(s => s.Contains("Bracket amendment pending")));
+
+            // NT then reports the legs Working — the deferred amendment applies.
+            modifiable = true;
+            h.Service.OnOrderUpdate(stopInit.WithState(OrderState.Working));
+            h.Service.OnOrderUpdate(targetInit.WithState(OrderState.Working));
+
+            h.Execution.Received(1).ModifyOrder(
+                Arg.Is<BrokerOrder>(o => o.Name == "Stop_incident" && o.OrderState == OrderState.Working),
+                Arg.Is<double?>(s => s.HasValue && Math.Abs(s.Value - 25022) < 0.01),
+                Arg.Is<double?>(l => !l.HasValue),
+                Arg.Is<int?>(q => q.HasValue && q.Value == 6));
+            h.Execution.Received(1).ModifyOrder(
+                Arg.Is<BrokerOrder>(o => o.Name == "Target_incident" && o.OrderState == OrderState.Working),
+                Arg.Is<double?>(s => !s.HasValue),
+                Arg.Is<double?>(l => l.HasValue && Math.Abs(l.Value - 24962) < 0.01),
+                Arg.Is<int?>(q => q.HasValue && q.Value == 6));
+            h.Logger.Successes.Should().Contain(m => m.Contains("BRACKET UPDATED") && m.Contains("incident") && m.Contains("qty=6"));
+            h.Network.Received(1).SendTradeLog("incident", "NT:ORDER", Arg.Is<string>(s => s.Contains("Bracket updated") && s.Contains("qty=6")));
+
+            h.Tracker.TryGetStopLoss("incident", out var trackedStop).Should().BeTrue();
+            trackedStop.Quantity.Should().Be(6);
+            trackedStop.StopPrice.Should().BeApproximately(25022, 0.01);
+            h.Tracker.TryGetTakeProfit("incident", out var trackedTarget).Should().BeTrue();
+            trackedTarget.Quantity.Should().Be(6);
+            trackedTarget.LimitPrice.Should().BeApproximately(24962, 0.01);
+
+            // Both entry fills were still reported to Python.
+            h.Network.Received(2).SendEntryFill("incident", Arg.Any<double>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<string>(), Arg.Any<double?>(), Arg.Any<double?>());
+        }
+
+        [Fact]
+        public void FullFill_WhenBracketLegsTerminal_RecreatesBracketImmediately()
+        {
+            // Modify fails AND both tracked legs are already terminal (a genuinely dead
+            // bracket): recreating cannot produce live duplicates, so a fresh bracket is
+            // created immediately — no deferral, no flatten.
+
+            var h = new ConnectorHarness(cashValue: 9000);
+            h.TradeIdExtractor.ExtractTradeId("Entry_dead").Returns("dead");
+            h.TradeIdExtractor.IsEntryOrder("Entry_dead").Returns(true);
+
+            var entryPartial = TestDataFactory.Order(name: "Entry_dead", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 1, quantity: 3, instrument: h.Instrument, avgFill: 21000);
+            var entryFull = TestDataFactory.Order(name: "Entry_dead", side: OrderSide.Buy, state: OrderState.Filled, filled: 3, quantity: 3, instrument: h.Instrument, avgFill: 21002);
+            var stop1 = TestDataFactory.Order(name: "Stop_dead", side: OrderSide.Sell, state: OrderState.Working, quantity: 1, instrument: h.Instrument, stopPrice: 20970, orderType: OrderType.StopMarket);
+            var target1 = TestDataFactory.Order(name: "Target_dead", side: OrderSide.Sell, state: OrderState.Working, quantity: 1, instrument: h.Instrument, limitPrice: 21060, orderType: OrderType.Limit);
+            var stop2 = TestDataFactory.Order(name: "Stop_dead", side: OrderSide.Sell, state: OrderState.Initialized, quantity: 3, instrument: h.Instrument, stopPrice: 20972, orderType: OrderType.StopMarket);
+            var target2 = TestDataFactory.Order(name: "Target_dead", side: OrderSide.Sell, state: OrderState.Initialized, quantity: 3, instrument: h.Instrument, limitPrice: 21062, orderType: OrderType.Limit);
+
+            h.Execution.CreateEntryOrder(h.Instrument, h.Account, OrderSide.Buy, 3, "dead").Returns(entryPartial);
+            h.Execution.CreateStopLossOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "dead").Returns(stop1, stop2);
+            h.Execution.CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "dead").Returns(target1, target2);
+            h.Execution.When(x => x.ModifyOrder(Arg.Any<BrokerOrder>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<int?>()))
+                .Do(_ => throw new InvalidOperationException("NT rejected amend"));
+
+            h.Open("dead", "long", 3, riskPoints: 30).Should().BeTrue();
+            h.Service.OnExecutionUpdate(entryPartial, 21000, 1);
+            h.Execution.Received(1).CreateStopLossOrder(h.Instrument, h.Account, OrderSide.Sell, 1, 20970, "dead");
+
+            // Both legs die (e.g. rejected by the broker) before the full fill arrives.
+            h.Tracker.TrackStopLoss("dead", stop1.WithState(OrderState.Cancelled));
+            h.Tracker.TrackTakeProfit("dead", target1.WithState(OrderState.Cancelled));
+
+            h.Service.OnExecutionUpdate(entryFull, 21002, 2);
+
+            // Exactly one fresh bracket created+submitted; the dead legs are not cancelled.
+            h.Execution.Received(2).CreateStopLossOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "dead");
+            h.Execution.Received(2).CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "dead");
+            h.Execution.Received(2).SubmitOrders(Arg.Any<IReadOnlyList<BrokerOrder>>());
+            h.Execution.DidNotReceiveWithAnyArgs().CancelOrder(Arg.Any<BrokerOrder>());
+            h.Execution.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), Arg.Any<BrokerAccount>(), Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<string>());
+            h.Network.DidNotReceive().SendError("ninjatrader", "bracket_creation_failed", Arg.Any<string>());
+            h.Logger.Warnings.Should().Contain(m => m.Contains("is dead") && m.Contains("dead") && m.Contains("recreating"));
+            h.Network.Received(2).SendEntryFill("dead", Arg.Any<double>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<string>(), Arg.Any<double?>(), Arg.Any<double?>());
+        }
+
+        [Fact]
+        public void MultiplePartialFills_LastAmendmentWins()
+        {
+            // Three fill chunks with the amend rejected each time: the pending amendment
+            // is overwritten on every fill; when the legs reach Working a single amend
+            // pair applies with the FINAL cumulative qty/prices.
+
+            var h = new ConnectorHarness();
+            h.MockTradeIdNames("multi");
+
+            var entryOrder = TestDataFactory.Order(name: "Entry_multi", side: OrderSide.SellShort, state: OrderState.Submitted, quantity: 6, instrument: h.Instrument);
+            var entryP1 = TestDataFactory.Order(name: "Entry_multi", side: OrderSide.SellShort, state: OrderState.PartFilled, filled: 2, quantity: 6, instrument: h.Instrument, avgFill: 25000);
+            var entryP2 = TestDataFactory.Order(name: "Entry_multi", side: OrderSide.SellShort, state: OrderState.PartFilled, filled: 4, quantity: 6, instrument: h.Instrument, avgFill: 25001);
+            var entryFull = TestDataFactory.Order(name: "Entry_multi", side: OrderSide.SellShort, state: OrderState.Filled, filled: 6, quantity: 6, instrument: h.Instrument, avgFill: 25002);
+            var stopInit = TestDataFactory.Order(name: "Stop_multi", side: OrderSide.BuyToCover, state: OrderState.Initialized, quantity: 2, instrument: h.Instrument, stopPrice: 25020, orderType: OrderType.StopMarket);
+            var targetInit = TestDataFactory.Order(name: "Target_multi", side: OrderSide.BuyToCover, state: OrderState.Initialized, quantity: 2, instrument: h.Instrument, limitPrice: 24960, orderType: OrderType.Limit);
+
+            h.Execution.CreateEntryOrder(h.Instrument, h.Account, OrderSide.SellShort, 6, "multi").Returns(entryOrder);
+            h.Execution.CreateStopLossOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "multi").Returns(stopInit);
+            h.Execution.CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "multi").Returns(targetInit);
+
+            bool modifiable = false;
+            h.Execution.When(x => x.ModifyOrder(Arg.Any<BrokerOrder>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<int?>()))
+                .Do(_ => { if (!modifiable) throw new InvalidOperationException("not modifiable"); });
+
+            h.Open("multi", "short", 6).Should().BeTrue();
+            h.Service.OnExecutionUpdate(entryP1, 25000, 2);
+            h.Service.OnExecutionUpdate(entryP2, 25001, 2);
+            h.Service.OnExecutionUpdate(entryFull, 25002, 2);
+
+            // Exactly one bracket generation; the amendment was deferred on each later fill.
+            h.Execution.Received(1).CreateStopLossOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "multi");
+            h.Execution.Received(1).CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "multi");
+            h.Execution.Received(1).SubmitOrders(Arg.Any<IReadOnlyList<BrokerOrder>>());
+            h.Execution.DidNotReceiveWithAnyArgs().CancelOrder(Arg.Any<BrokerOrder>());
+            h.Logger.Warnings.FindAll(m => m.Contains("BRACKET AMENDMENT PENDING")).Count.Should().Be(2);
+
+            modifiable = true;
+            h.Service.OnOrderUpdate(stopInit.WithState(OrderState.Working));
+            h.Service.OnOrderUpdate(targetInit.WithState(OrderState.Working));
+
+            // A single amend pair, carrying the LAST amendment (avg 25002 → SL 25022 / TP 24962, qty 6).
+            h.Execution.Received(1).ModifyOrder(
+                Arg.Is<BrokerOrder>(o => o.Name == "Stop_multi" && o.OrderState == OrderState.Working),
+                Arg.Is<double?>(s => s.HasValue && Math.Abs(s.Value - 25022) < 0.01),
+                Arg.Is<double?>(l => !l.HasValue),
+                Arg.Is<int?>(q => q.HasValue && q.Value == 6));
+            h.Execution.Received(1).ModifyOrder(
+                Arg.Is<BrokerOrder>(o => o.Name == "Target_multi" && o.OrderState == OrderState.Working),
+                Arg.Is<double?>(s => !s.HasValue),
+                Arg.Is<double?>(l => l.HasValue && Math.Abs(l.Value - 24962) < 0.01),
+                Arg.Is<int?>(q => q.HasValue && q.Value == 6));
+
+            h.Tracker.TryGetStopLoss("multi", out var trackedStop).Should().BeTrue();
+            trackedStop.Quantity.Should().Be(6);
+            h.Network.Received(3).SendEntryFill("multi", Arg.Any<double>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<string>(), Arg.Any<double?>(), Arg.Any<double?>());
+        }
+
+        [Fact]
+        public void DeferredAmendment_RetriesOnNextUpdate_WhenApplyFails()
+        {
+            // The first apply attempt (on Submitted) fails again — the amendment stays
+            // pending and a later Working update applies it; exactly one successful
+            // amend pair overall.
+
+            var h = new ConnectorHarness();
+            h.MockTradeIdNames("retry");
+
+            var entryOrder = TestDataFactory.Order(name: "Entry_retry", side: OrderSide.SellShort, state: OrderState.Submitted, quantity: 6, instrument: h.Instrument);
+            var entryPartial = TestDataFactory.Order(name: "Entry_retry", side: OrderSide.SellShort, state: OrderState.PartFilled, filled: 4, quantity: 6, instrument: h.Instrument, avgFill: 25000);
+            var entryFull = TestDataFactory.Order(name: "Entry_retry", side: OrderSide.SellShort, state: OrderState.Filled, filled: 6, quantity: 6, instrument: h.Instrument, avgFill: 25002);
+            var stopInit = TestDataFactory.Order(name: "Stop_retry", side: OrderSide.BuyToCover, state: OrderState.Initialized, quantity: 4, instrument: h.Instrument, stopPrice: 25020, orderType: OrderType.StopMarket);
+            var targetInit = TestDataFactory.Order(name: "Target_retry", side: OrderSide.BuyToCover, state: OrderState.Initialized, quantity: 4, instrument: h.Instrument, limitPrice: 24960, orderType: OrderType.Limit);
+
+            h.Execution.CreateEntryOrder(h.Instrument, h.Account, OrderSide.SellShort, 6, "retry").Returns(entryOrder);
+            h.Execution.CreateStopLossOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "retry").Returns(stopInit);
+            h.Execution.CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "retry").Returns(targetInit);
+
+            bool failModify = true;
+            h.Execution.When(x => x.ModifyOrder(Arg.Any<BrokerOrder>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<int?>()))
+                .Do(_ => { if (failModify) throw new InvalidOperationException("rejected"); });
+
+            h.Open("retry", "short", 6).Should().BeTrue();
+            h.Service.OnExecutionUpdate(entryPartial, 25000, 4);
+            h.Service.OnExecutionUpdate(entryFull, 25002, 2);
+            h.Logger.Warnings.Should().Contain(m => m.Contains("BRACKET AMENDMENT PENDING"));
+
+            // First apply attempt (legs Submitted) fails again — amendment stays pending.
+            h.Service.OnOrderUpdate(stopInit.WithState(OrderState.Submitted));
+            h.Service.OnOrderUpdate(targetInit.WithState(OrderState.Submitted));
+
+            h.Logger.Warnings.Should().Contain(m => m.Contains("Failed to apply pending bracket amendment") && m.Contains("retry"));
+            h.Tracker.TryGetStopLoss("retry", out var stopAfterFail).Should().BeTrue();
+            stopAfterFail.Quantity.Should().Be(4);
+
+            // A later Working update applies it.
+            failModify = false;
+            h.Service.OnOrderUpdate(stopInit.WithState(OrderState.Working));
+            h.Service.OnOrderUpdate(targetInit.WithState(OrderState.Working));
+
+            // Exactly one successful amend pair overall (qty 6 at the amended prices).
+            // The apply fires on the stop's Working update — at that point the tracked
+            // target is still Submitted, which is already a modifiable state.
+            h.Execution.Received(1).ModifyOrder(
+                Arg.Is<BrokerOrder>(o => o.Name == "Stop_retry" && o.OrderState == OrderState.Working),
+                Arg.Is<double?>(s => s.HasValue && Math.Abs(s.Value - 25022) < 0.01),
+                Arg.Is<double?>(l => !l.HasValue),
+                Arg.Is<int?>(q => q.HasValue && q.Value == 6));
+            h.Execution.Received(1).ModifyOrder(
+                Arg.Is<BrokerOrder>(o => o.Name == "Target_retry"),
+                Arg.Is<double?>(s => !s.HasValue),
+                Arg.Is<double?>(l => l.HasValue && Math.Abs(l.Value - 24962) < 0.01),
+                Arg.Is<int?>(q => q.HasValue && q.Value == 6));
+            h.Tracker.TryGetStopLoss("retry", out var trackedStop).Should().BeTrue();
+            trackedStop.Quantity.Should().Be(6);
+            h.Logger.Successes.Should().Contain(m => m.Contains("BRACKET UPDATED") && m.Contains("retry"));
+        }
+
+        [Fact]
+        public void PendingAmendment_Discarded_WhenTradeClosesBeforeApply()
+        {
+            // Amendment pending; the stop fills fully before the legs become modifiable.
+            // The trade is removed and the amendment discarded — subsequent order updates
+            // must trigger no ModifyOrder, no recreate, no guard action.
+
+            var h = new ConnectorHarness();
+            h.MockTradeIdNames("gone");
+
+            var entryOrder = TestDataFactory.Order(name: "Entry_gone", side: OrderSide.SellShort, state: OrderState.Submitted, quantity: 6, instrument: h.Instrument);
+            var entryPartial = TestDataFactory.Order(name: "Entry_gone", side: OrderSide.SellShort, state: OrderState.PartFilled, filled: 4, quantity: 6, instrument: h.Instrument, avgFill: 25000);
+            var entryFull = TestDataFactory.Order(name: "Entry_gone", side: OrderSide.SellShort, state: OrderState.Filled, filled: 6, quantity: 6, instrument: h.Instrument, avgFill: 25002);
+            var stopInit = TestDataFactory.Order(name: "Stop_gone", side: OrderSide.BuyToCover, state: OrderState.Initialized, quantity: 4, instrument: h.Instrument, stopPrice: 25020, orderType: OrderType.StopMarket);
+            var targetInit = TestDataFactory.Order(name: "Target_gone", side: OrderSide.BuyToCover, state: OrderState.Initialized, quantity: 4, instrument: h.Instrument, limitPrice: 24960, orderType: OrderType.Limit);
+
+            h.Execution.CreateEntryOrder(h.Instrument, h.Account, OrderSide.SellShort, 6, "gone").Returns(entryOrder);
+            h.Execution.CreateStopLossOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "gone").Returns(stopInit);
+            h.Execution.CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "gone").Returns(targetInit);
+            h.Execution.When(x => x.ModifyOrder(Arg.Any<BrokerOrder>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<int?>()))
+                .Do(_ => throw new InvalidOperationException("not modifiable"));
+
+            h.Open("gone", "short", 6).Should().BeTrue();
+            h.Service.OnExecutionUpdate(entryPartial, 25000, 4);
+            h.Service.OnExecutionUpdate(entryFull, 25002, 2);
+            h.Logger.Warnings.Should().Contain(m => m.Contains("BRACKET AMENDMENT PENDING"));
+
+            // The qty=4 stop sweeps and fills completely before NT makes the legs modifiable.
+            var stopFill = TestDataFactory.Order(name: "Stop_gone", side: OrderSide.BuyToCover, state: OrderState.Filled, filled: 4, quantity: 4, instrument: h.Instrument, avgFill: 25020, stopPrice: 25020, orderType: OrderType.StopMarket);
+            h.Service.OnExecutionUpdate(stopFill, 25020, 4);
+
+            h.Logger.Infos.Should().Contain(m => m.Contains("Discarding pending bracket amendment") && m.Contains("gone"));
+            h.Tracker.TryGetEntry("gone", out _).Should().BeFalse();
+            h.Tracker.TryGetStopLoss("gone", out _).Should().BeFalse();
+            h.Tracker.TryGetTakeProfit("gone", out _).Should().BeFalse();
+            h.Network.Received(1).SendExitFill("gone", 25020, "SL", Arg.Any<string>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<double?>());
+
+            // Late order updates must not resurrect the amendment.
+            h.Service.OnOrderUpdate(targetInit.WithState(OrderState.Working));
+            h.Service.OnOrderUpdate(stopInit.WithState(OrderState.Working));
+
+            // The only amend attempt ever was the failed in-place one at the second fill.
+            h.Execution.Received(1).ModifyOrder(Arg.Any<BrokerOrder>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<int?>());
+            h.Execution.Received(1).CreateStopLossOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "gone");
+            h.Execution.DidNotReceiveWithAnyArgs().CreateMarketCloseOrder(Arg.Any<BrokerInstrument>(), Arg.Any<BrokerAccount>(), Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<string>());
+        }
+
+        [Fact]
+        public void DeferredAmendment_ShortSide_UsesBuyToCover()
+        {
+            // Mirrors the incident direction (short entry): the created bracket legs and
+            // the legs the deferred amendment applies to are all BuyToCover.
+
+            var h = new ConnectorHarness();
+            h.MockTradeIdNames("side");
+
+            var entryOrder = TestDataFactory.Order(name: "Entry_side", side: OrderSide.SellShort, state: OrderState.Submitted, quantity: 6, instrument: h.Instrument);
+            var entryPartial = TestDataFactory.Order(name: "Entry_side", side: OrderSide.SellShort, state: OrderState.PartFilled, filled: 4, quantity: 6, instrument: h.Instrument, avgFill: 25000);
+            var entryFull = TestDataFactory.Order(name: "Entry_side", side: OrderSide.SellShort, state: OrderState.Filled, filled: 6, quantity: 6, instrument: h.Instrument, avgFill: 25002);
+            var stopInit = TestDataFactory.Order(name: "Stop_side", side: OrderSide.BuyToCover, state: OrderState.Initialized, quantity: 4, instrument: h.Instrument, stopPrice: 25020, orderType: OrderType.StopMarket);
+            var targetInit = TestDataFactory.Order(name: "Target_side", side: OrderSide.BuyToCover, state: OrderState.Initialized, quantity: 4, instrument: h.Instrument, limitPrice: 24960, orderType: OrderType.Limit);
+
+            h.Execution.CreateEntryOrder(h.Instrument, h.Account, OrderSide.SellShort, 6, "side").Returns(entryOrder);
+            h.Execution.CreateStopLossOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "side").Returns(stopInit);
+            h.Execution.CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "side").Returns(targetInit);
+
+            bool modifiable = false;
+            h.Execution.When(x => x.ModifyOrder(Arg.Any<BrokerOrder>(), Arg.Any<double?>(), Arg.Any<double?>(), Arg.Any<int?>()))
+                .Do(_ => { if (!modifiable) throw new InvalidOperationException("not modifiable"); });
+
+            h.Open("side", "short", 6).Should().BeTrue();
+            h.Service.OnExecutionUpdate(entryPartial, 25000, 4);
+
+            // Bracket legs are BuyToCover for the short position.
+            h.Execution.Received(1).CreateStopLossOrder(h.Instrument, h.Account, OrderSide.BuyToCover, 4, 25020, "side");
+            h.Execution.Received(1).CreateTakeProfitOrder(h.Instrument, h.Account, OrderSide.BuyToCover, 4, 24960, "side");
+
+            h.Service.OnExecutionUpdate(entryFull, 25002, 2);
+            modifiable = true;
+            h.Service.OnOrderUpdate(stopInit.WithState(OrderState.Working));
+            h.Service.OnOrderUpdate(targetInit.WithState(OrderState.Working));
+
+            // The deferred amendment applies to the BuyToCover legs; no second bracket.
+            h.Execution.Received(1).ModifyOrder(
+                Arg.Is<BrokerOrder>(o => o.Name == "Stop_side" && o.OrderSide == OrderSide.BuyToCover && o.OrderState == OrderState.Working),
+                Arg.Any<double?>(), Arg.Any<double?>(), Arg.Is<int?>(q => q.HasValue && q.Value == 6));
+            h.Execution.Received(1).ModifyOrder(
+                Arg.Is<BrokerOrder>(o => o.Name == "Target_side" && o.OrderSide == OrderSide.BuyToCover && o.OrderState == OrderState.Working),
+                Arg.Any<double?>(), Arg.Any<double?>(), Arg.Is<int?>(q => q.HasValue && q.Value == 6));
+            h.Execution.Received(1).CreateStopLossOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "side");
+            h.Execution.Received(1).CreateTakeProfitOrder(Arg.Any<BrokerInstrument>(), h.Account, Arg.Any<OrderSide>(), Arg.Any<int>(), Arg.Any<double>(), "side");
+
+            h.Tracker.TryGetStopLoss("side", out var trackedStop).Should().BeTrue();
+            trackedStop.OrderSide.Should().Be(OrderSide.BuyToCover);
+            h.Tracker.TryGetTakeProfit("side", out var trackedTarget).Should().BeTrue();
+            trackedTarget.OrderSide.Should().Be(OrderSide.BuyToCover);
         }
     }
 }
