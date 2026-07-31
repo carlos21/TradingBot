@@ -58,6 +58,9 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
             result_type=t.result_type,
             fees=t.fees,
             pnl_usd=t.pnl_usd,
+            original_entry_price=t.original_entry_price,
+            gross_pnl=t.gross_pnl,
+            realized_pnl=t.realized_pnl,
             params=t.params,
             logs=t.logs or [],
             source=t.source,
@@ -100,6 +103,7 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
                 account_balance=account_balance,
                 contracts=contracts,
                 entry_time=entry_time,
+                original_entry_price=entry_price,
                 params=params or {},
                 source=source,
                 account=account,
@@ -252,6 +256,8 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
         result_type: str | None = None,
         fees: float | None = None,
         pnl_usd: float | None = None,
+        gross_pnl: float | None = None,
+        realized_pnl: float | None = None,
     ) -> TradeData:
         with self._session() as db:
             t = db.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
@@ -264,6 +270,8 @@ class SQLTradeRepository(SQLRepositoryBase, ITradeRepository):
             t.result_type = result_type
             t.fees = fees
             t.pnl_usd = pnl_usd
+            t.gross_pnl = gross_pnl
+            t.realized_pnl = realized_pnl
             try:
                 db.commit()
                 db.refresh(t)

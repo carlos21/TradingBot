@@ -126,6 +126,9 @@ class UnitOfWorkTradeRepository(ITradeRepository):
             result_type=t.result_type,
             fees=t.fees,
             pnl_usd=t.pnl_usd,
+            original_entry_price=t.original_entry_price,
+            gross_pnl=t.gross_pnl,
+            realized_pnl=t.realized_pnl,
             params=t.params,
             logs=t.logs or [],
             source=t.source,
@@ -141,12 +144,16 @@ class UnitOfWorkTradeRepository(ITradeRepository):
                      risk_pct: float | None = None,
                      account_balance: float | None = None,
                      contracts: float | None = None,
+                     source: str | None = None,
+                     account: str | None = None,
+                     signal_id: str | None = None,
                      trade_id: str | None = None) -> TradeData:
         t = Trade(
             trade_id=trade_id if trade_id else str(uuid.uuid4()),
             pair=pair,
             trade_type=trade_type,
             entry_price=entry_price,
+            original_entry_price=entry_price,
             stop_loss=stop_loss,
             take_profit=take_profit,
             risk=risk,
@@ -155,7 +162,10 @@ class UnitOfWorkTradeRepository(ITradeRepository):
             account_balance=account_balance,
             contracts=contracts,
             entry_time=entry_time,
-            params=params or {}
+            params=params or {},
+            source=source,
+            account=account,
+            signal_id=signal_id,
         )
         self._session.add(t)
         self._session.flush()
@@ -218,7 +228,9 @@ class UnitOfWorkTradeRepository(ITradeRepository):
 
     def close_trade(self, trade_id: str, exit_price: float, exit_time: datetime,
                    result: float, result_type: str | None = None,
-                   fees: float | None = None, pnl_usd: float | None = None) -> TradeData:
+                   fees: float | None = None, pnl_usd: float | None = None,
+                   gross_pnl: float | None = None,
+                   realized_pnl: float | None = None) -> TradeData:
         t = self._session.query(Trade).filter(Trade.trade_id == trade_id).one_or_none()
         if not t:
             raise DBNotFoundException(f"Trade {trade_id} not found")
@@ -228,6 +240,8 @@ class UnitOfWorkTradeRepository(ITradeRepository):
         t.result_type = result_type
         t.fees = fees
         t.pnl_usd = pnl_usd
+        t.gross_pnl = gross_pnl
+        t.realized_pnl = realized_pnl
         self._session.flush()
         return self._make_trade_data(t)
 

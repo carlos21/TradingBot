@@ -88,6 +88,9 @@ class TradeDetail:
     pnl_usd: float | None
     status: str
     logs: list[dict[str, str]]
+    original_entry_price: float | None = None
+    gross_pnl: float | None = None
+    realized_pnl: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -111,4 +114,7 @@ class TradeDetail:
             "pnl_usd": self.pnl_usd,
             "status": self.status,
             "logs": self.logs,
+            "original_entry_price": self.original_entry_price,
+            "gross_pnl": self.gross_pnl,
+            "realized_pnl": self.realized_pnl,
         }

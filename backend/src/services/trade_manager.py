@@ -815,6 +815,8 @@ class TradeManager:
             return
 
         # Persist the strategy-reported close to the DB so the row is not left open.
+        # Strategy-reported pnl_usd is net; derive gross for reporting consistency.
+        gross_pnl = pnl_usd + fees if pnl_usd is not None and fees is not None else None
         try:
             self.trade_repository.close_trade(
                 trade_id=trade_id,
@@ -824,6 +826,8 @@ class TradeManager:
                 result_type=result_type,
                 fees=fees,
                 pnl_usd=pnl_usd,
+                gross_pnl=gross_pnl,
+                realized_pnl=pnl_usd,
             )
         except Exception as e:
             self.logger.error(f"[TradeManager] DB error persisting strategy close for {trade_id}: {e}")

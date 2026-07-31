@@ -184,8 +184,8 @@ class TestTradeManagerBalanceSync:
             account_balance=75000.0,
         )
 
-        # Exit fill sets balance to broker-reported value, then adds PnL.
-        assert tm.account_balance == 75000.0 + 200.0
+        # Exit fill sets balance to broker-reported value, then adds net PnL.
+        assert tm.account_balance == 75000.0 + 195.0
         # The broker-reported exit balance is persisted on the trade record.
         stored = next(t for t in tm.trade_repository.inserted if t["trade_id"] == "T1")
         assert stored["account_balance"] == 75000.0

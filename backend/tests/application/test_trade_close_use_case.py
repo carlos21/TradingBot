@@ -110,9 +110,12 @@ class TestTradeCloseUseCaseExecute:
 
         result = uc.execute(trade, 110.0, 2000.0, broker_pnl_usd=123.45, broker_fees=2.5)
 
-        assert result.pnl_usd == 123.45
+        # broker_pnl_usd is treated as gross realized PnL; pnl_usd is net after fees.
+        assert result.gross_pnl == 123.45
         assert result.fees == 2.5
-        assert result.result == pytest.approx((123.45 + 2.5) / (5.0 * 10.0 * 2.0))
+        assert result.pnl_usd == 120.95
+        assert result.realized_pnl == 120.95
+        assert result.result == pytest.approx(123.45 / (5.0 * 10.0 * 2.0))
 
     def test_execute_result_type_override(self, use_case):
         uc, repo, _, _, _, _ = use_case

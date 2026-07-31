@@ -17,7 +17,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Protocol
 
-from src.domain.models import Instrument, LineData, TradeData
+from src.domain.models import Instrument, LineData, PnLResult, TradeData
 
 # =============================================================================
 # Line Repository Interfaces
@@ -87,13 +87,18 @@ class TradeWriter(ABC):
                      risk_pct: float | None = None,
                      account_balance: float | None = None,
                      contracts: float | None = None,
+                     source: str | None = None,
+                     account: str | None = None,
+                     signal_id: str | None = None,
                      trade_id: str | None = None) -> TradeData:
         """Insert a new trade. If trade_id is provided, use it instead of generating a UUID."""
 
     @abstractmethod
     def close_trade(self, trade_id: str, exit_price: float, exit_time: datetime,
                    result: float, result_type: str | None = None,
-                   fees: float | None = None, pnl_usd: float | None = None) -> TradeData:
+                   fees: float | None = None, pnl_usd: float | None = None,
+                   gross_pnl: float | None = None,
+                   realized_pnl: float | None = None) -> TradeData:
         """Close a trade."""
 
     @abstractmethod

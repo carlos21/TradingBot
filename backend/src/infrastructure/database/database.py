@@ -32,8 +32,11 @@ class Trade(Base):
     exit_time    = Column(DateTime(timezone=True), nullable=True)
     result       = Column(Float,   nullable=True)       # e.g. PnL or +1/–1 flag
     result_type  = Column(String(10), nullable=True)    # "TP", "SL", "BE", "SP", or "CLOSE" (null while open)
-    fees         = Column(Float,   nullable=True)
-    pnl_usd      = Column(Float,   nullable=True)
+    fees         = Column(Float,   nullable=True)       # commission/fees deducted from the trade
+    pnl_usd      = Column(Float,   nullable=True)       # net realized PnL after fees
+    original_entry_price = Column(Float, nullable=True) # strategy-calculated entry before slippage
+    gross_pnl    = Column(Float,   nullable=True)       # realized PnL before fees
+    realized_pnl = Column(Float,   nullable=True)       # net realized PnL after fees (mirror of pnl_usd)
     params       = Column(JSON,    nullable=True)       # any extra metadata (e.g. {"rr": "1:4"})
     logs         = Column(JSON,    nullable=True)       # per-trade lifecycle log entries
     source       = Column(String(20), nullable=True)    # strategy, manual, test
@@ -181,6 +184,9 @@ def _migrate_schema(engine):
         _add_column_if_missing(engine, 'trades', Trade.__table__.c.source)
         _add_column_if_missing(engine, 'trades', Trade.__table__.c.account)
         _add_column_if_missing(engine, 'trades', Trade.__table__.c.signal_id)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.original_entry_price)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.gross_pnl)
+        _add_column_if_missing(engine, 'trades', Trade.__table__.c.realized_pnl)
 
     # NT accounts migrations
     if 'nt_accounts' in tables:

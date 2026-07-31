@@ -29,6 +29,7 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 order.AverageFillPrice,
                 order.StopPrice,
                 order.LimitPrice,
+                order.Commission,
                 null,
                 order.Time);
         }

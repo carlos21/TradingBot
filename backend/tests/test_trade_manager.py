@@ -405,9 +405,11 @@ class TestBrokerFill:
             broker_fees=2.5,
         )
         closed = tm.trade_repository.closed[0]
-        assert closed["pnl_usd"] == 25.0
+        assert closed["gross_pnl"] == 25.0
         assert closed["fees"] == 2.5
-        assert tm.account_balance == 100025.0
+        assert closed["pnl_usd"] == 22.5
+        assert closed["realized_pnl"] == 22.5
+        assert tm.account_balance == 100022.5
 
     def test_duplicate_broker_fill_ignored(self):
         """A second broker fill for the same trade must not double-count PnL."""
@@ -416,7 +418,7 @@ class TestBrokerFill:
         tm.handle_broker_fill("T1", 110.0, "TP", broker_pnl_usd=25.0, broker_fees=2.5)
         tm.handle_broker_fill("T1", 110.0, "TP", broker_pnl_usd=25.0, broker_fees=2.5)
         assert len(tm.trade_repository.closed) == 1
-        assert tm.account_balance == 100025.0
+        assert tm.account_balance == 100022.5
 
 
 class TestNotifyStrategyClose:

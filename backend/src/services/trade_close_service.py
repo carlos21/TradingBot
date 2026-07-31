@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal, Protocol
 
+from src.domain.models import PnLResult
 from src.domain.repositories import TradeRepository
 from src.domain.result_type_classifier import (
     ClassificationContext,
@@ -32,6 +33,8 @@ class TradeCloseResult:
     fees: float
     pnl_usd: float
     close_reason: CloseReason
+    gross_pnl: float | None = None
+    realized_pnl: float | None = None
 
 
 class TradeEventPublisher(Protocol):
@@ -96,6 +99,8 @@ class TradeCloseService:
         exit_time: datetime,
         close_reason: CloseReason,
         broker_result_type: str | None = None,
+        broker_pnl_usd: float | None = None,
+        broker_fees: float | None = None,
     ) -> TradeCloseResult:
         """Close a trade with centralized logic.
 
@@ -104,6 +109,8 @@ class TradeCloseService:
             exit_price: Price at which trade is closing
             exit_time: Timestamp of close
             close_reason: Why the trade is closing
+            broker_pnl_usd: Optional broker-reported gross realized PnL
+            broker_fees: Optional broker-reported exact commission
 
         Returns:
             TradeCloseResult with all calculated fields
@@ -117,19 +124,39 @@ class TradeCloseService:
         risk_points = trade.get('risk', 0) or 1.0
         contracts = trade.get('contracts', 1) or 1
 
-        # Use FinancialCalc for PnL / R metrics; classifier for result type.
-        result_r, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
-            direction=Direction.from_string(trade_type),
-            entry_price=entry_price,
-            exit_price=exit_price,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
+        if broker_pnl_usd is not None:
+            gross_pnl = broker_pnl_usd
+            fees = broker_fees if broker_fees is not None else 0.0
+            pnl_usd = gross_pnl - fees
+        else:
+            _, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
+                direction=Direction.from_string(trade_type),
+                entry_price=entry_price,
+                exit_price=exit_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                risk_points=risk_points,
+                contracts=contracts,
+                point_value=self.point_value,
+                fee_per_rt=self.fee_per_rt,
+                be_threshold_points=self.be_threshold_points,
+                sl_tp_tolerance=self.sl_tp_tolerance,
+            )
+            gross_pnl = pnl_usd + fees
+
+        pnl_result = PnLResult(
+            gross_pnl=gross_pnl,
+            commission=fees,
+            realized_pnl=pnl_usd,
+        )
+
+        # Recompute R-multiple from net realized PnL for consistency.
+        result_r = FinancialCalc.r_multiple_from_pnl(
+            pnl_usd=pnl_usd,
+            fees=fees,
             risk_points=risk_points,
             contracts=contracts,
             point_value=self.point_value,
-            fee_per_rt=self.fee_per_rt,
-            be_threshold_points=self.be_threshold_points,
-            sl_tp_tolerance=self.sl_tp_tolerance,
         )
 
         result_type = self._classifier.classify(
@@ -154,6 +181,8 @@ class TradeCloseService:
             result_type=result_type_str,
             fees=fees,
             pnl_usd=pnl_usd,
+            gross_pnl=pnl_result.gross_pnl,
+            realized_pnl=pnl_result.realized_pnl,
         )
 
         # Build result
@@ -166,6 +195,8 @@ class TradeCloseService:
             fees=fees,
             pnl_usd=pnl_usd,
             close_reason=close_reason,
+            gross_pnl=pnl_result.gross_pnl,
+            realized_pnl=pnl_result.realized_pnl,
         )
 
         # Emit event
@@ -179,6 +210,8 @@ class TradeCloseService:
             'result_type': result_type_str,
             'fees': fees,
             'pnl_usd': pnl_usd,
+            'gross_pnl': pnl_result.gross_pnl,
+            'realized_pnl': pnl_result.realized_pnl,
             'close_reason': close_reason.name,
         })
 
@@ -246,6 +279,8 @@ class TradeCloseService:
         exit_price: float,
         exit_time: datetime,
         result_type: str | None = None,
+        broker_pnl_usd: float | None = None,
+        broker_fees: float | None = None,
     ) -> TradeCloseResult:
         """Close trade on broker fill (live mode).
 
@@ -254,6 +289,8 @@ class TradeCloseService:
             exit_price: Fill price from broker
             exit_time: Fill timestamp
             result_type: Optional broker-provided result type (e.g. 'SL', 'TP', 'CLOSE')
+            broker_pnl_usd: Optional broker-reported gross realized PnL
+            broker_fees: Optional broker-reported exact commission
         """
         return self.close_trade(
             trade=trade,
@@ -261,4 +298,6 @@ class TradeCloseService:
             exit_time=exit_time,
             close_reason=CloseReason.BROKER_FILL,
             broker_result_type=result_type,
+            broker_pnl_usd=broker_pnl_usd,
+            broker_fees=broker_fees,
         )

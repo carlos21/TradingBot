@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Literal
 
 from src.application.ports import EventPublisher
+from src.domain.models import PnLResult
 from src.domain.repositories import TradeRepository
 from src.domain.result_type_classifier import (
     ClassificationContext,
@@ -40,6 +41,8 @@ class CloseResult:
     result_type: Literal["BE", "SL", "TP", "SP", "CLOSE"]
     fees: float
     pnl_usd: float
+    gross_pnl: float | None = None
+    realized_pnl: float | None = None
 
 
 class TradeCloseUseCase:
@@ -88,6 +91,55 @@ class TradeCloseUseCase:
             sl_tp_tolerance=sl_tp_tolerance,
         )
 
+    def _resolve_pnl_result(
+        self,
+        trade_type: str,
+        entry: float,
+        exit_price: float,
+        stop_loss: float,
+        take_profit: float,
+        risk: float,
+        contracts: float,
+        broker_pnl_usd: float | None,
+        broker_fees: float | None,
+    ) -> PnLResult:
+        """Resolve gross/commission/net PnL from broker or Python calculation.
+
+        When the broker reports values, ``broker_pnl_usd`` is treated as the
+        gross realized PnL before commissions, and ``broker_fees`` is the exact
+        commission. Otherwise the values are computed from prices.
+        """
+        if broker_pnl_usd is not None:
+            gross_pnl = broker_pnl_usd
+            commission = broker_fees if broker_fees is not None else 0.0
+            realized_pnl = gross_pnl - commission
+        else:
+            _, commission, realized_pnl, _ = FinancialCalc.calculate_close_metrics(
+                direction=Direction.from_string(trade_type),
+                entry_price=entry,
+                exit_price=exit_price,
+                stop_loss=stop_loss,
+                take_profit=take_profit,
+                risk_points=risk,
+                contracts=contracts,
+                point_value=self._point_value,
+                fee_per_rt=self._fee_per_rt,
+                be_threshold_points=self._be_threshold_points,
+                sl_tp_tolerance=self._sl_tp_tolerance,
+            )
+            # Spread adjustment (only when Python is calculating; broker value already includes it)
+            if self._broker_spread > 0:
+                spread_cost = contracts * self._broker_spread * self._point_value
+                realized_pnl -= spread_cost
+                commission += spread_cost
+            gross_pnl = realized_pnl + commission
+
+        return PnLResult(
+            gross_pnl=gross_pnl,
+            commission=commission,
+            realized_pnl=realized_pnl,
+        )
+
     def execute(
         self,
         trade: dict,
@@ -121,38 +173,27 @@ class TradeCloseUseCase:
         entry = trade.get('entry', trade.get('entry_price'))
         contracts = trade.get('contracts') or 1
 
-        # Use broker-reported PnL/fees when available (source of truth from fills).
-        if broker_pnl_usd is not None:
-            pnl_usd = broker_pnl_usd
-            fees = broker_fees if broker_fees is not None else 0.0
-            # Recompute R-multiple from the broker PnL so analytics stay consistent.
-            result = FinancialCalc.r_multiple_from_pnl(
-                pnl_usd=pnl_usd,
-                fees=fees,
-                risk_points=risk,
-                contracts=contracts,
-                point_value=self._point_value,
-            )
-        else:
-            result, fees, pnl_usd, _ = FinancialCalc.calculate_close_metrics(
-                direction=Direction.from_string(trade['type']),
-                entry_price=entry,
-                exit_price=exit_price,
-                stop_loss=sl,
-                take_profit=tp,
-                risk_points=risk,
-                contracts=contracts,
-                point_value=self._point_value,
-                fee_per_rt=self._fee_per_rt,
-                be_threshold_points=self._be_threshold_points,
-                sl_tp_tolerance=self._sl_tp_tolerance,
-            )
-
-        # Spread adjustment (only when Python is calculating; broker value already includes it)
-        if self._broker_spread > 0 and broker_pnl_usd is None:
-            spread_cost = contracts * self._broker_spread * self._point_value
-            pnl_usd -= spread_cost
-            fees += spread_cost
+        pnl_result = self._resolve_pnl_result(
+            trade_type=trade['type'],
+            entry=entry,
+            exit_price=exit_price,
+            stop_loss=sl,
+            take_profit=tp,
+            risk=risk,
+            contracts=contracts,
+            broker_pnl_usd=broker_pnl_usd,
+            broker_fees=broker_fees,
+        )
+        fees = pnl_result.commission
+        pnl_usd = pnl_result.realized_pnl
+        # Recompute R-multiple from the net realized PnL so analytics stay consistent.
+        result = FinancialCalc.r_multiple_from_pnl(
+            pnl_usd=pnl_usd,
+            fees=fees,
+            risk_points=risk,
+            contracts=contracts,
+            point_value=self._point_value,
+        )
 
         result_type = self._classifier.classify(
             ClassificationContext(
@@ -193,6 +234,8 @@ class TradeCloseUseCase:
                 result_type=result_type,
                 fees=fees,
                 pnl_usd=pnl_usd,
+                gross_pnl=pnl_result.gross_pnl,
+                realized_pnl=pnl_result.realized_pnl,
             )
         except Exception as e:
             if self._logger:
@@ -226,6 +269,8 @@ class TradeCloseUseCase:
             'result_type': result_type,
             'fees': fees,
             'pnl_usd': pnl_usd,
+            'gross_pnl': pnl_result.gross_pnl,
+            'realized_pnl': pnl_result.realized_pnl,
             'line_level': trade.get('line_level'),
             'is_reentry': trade.get('is_reentry', False),
             'is_phantom': trade.get('is_phantom', False),
@@ -245,4 +290,6 @@ class TradeCloseUseCase:
             result_type=result_type,
             fees=fees,
             pnl_usd=pnl_usd,
+            gross_pnl=pnl_result.gross_pnl,
+            realized_pnl=pnl_result.realized_pnl,
         )

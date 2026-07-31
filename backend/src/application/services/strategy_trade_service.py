@@ -227,6 +227,8 @@ class StrategyTradeService:
             t_fees += spread_cost
         trade["fees"] = t_fees
         trade["pnl_usd"] = t_pnl_usd
+        trade["gross_pnl"] = t_pnl_usd + t_fees
+        trade["realized_pnl"] = t_pnl_usd
 
         result_type = trade.get("result_type")
         if not result_type:
@@ -252,6 +254,8 @@ class StrategyTradeService:
             result_type=result_type,
             fees=t_fees,
             pnl_usd=t_pnl_usd,
+            gross_pnl=trade["gross_pnl"],
+            realized_pnl=trade["realized_pnl"],
         )
 
     @staticmethod

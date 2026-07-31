@@ -216,7 +216,8 @@ class LiquidityDualM1Strategy:
                     point_value=self.point_value,
                     fee_per_rt=self.fee_per_rt,
                 )
-                t.update(status='closed', result=r_result, exit_time=bar['time'], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, result_type=result_type)
+                gross_pnl = t_pnl_usd + t_fees
+                t.update(status='closed', result=r_result, exit_time=bar['time'], exit_price=exit_price, fees=t_fees, pnl_usd=t_pnl_usd, gross_pnl=gross_pnl, realized_pnl=t_pnl_usd, result_type=result_type)
                 self.event_publisher.emit('trade_close', t)
                 try:
                     self.trade_repository.close_trade(
@@ -227,6 +228,8 @@ class LiquidityDualM1Strategy:
                         result_type=result_type,
                         fees=t_fees,
                         pnl_usd=t_pnl_usd,
+                        gross_pnl=gross_pnl,
+                        realized_pnl=t_pnl_usd,
                     )
                 except Exception as e:
                     self.logger.error(f"[DualM1] Failed to persist close for {t['trade_id']}: {e}")
@@ -287,11 +290,20 @@ class LiquidityDualM1Strategy:
             else:
                 result_type = "SP"
             trade['result_type'] = result_type
+        fees = trade.get('fees') or 0.0
+        pnl_usd = trade.get('pnl_usd') or 0.0
+        gross_pnl = pnl_usd + fees
+        trade['gross_pnl'] = gross_pnl
+        trade['realized_pnl'] = pnl_usd
         self.event_publisher.emit('trade_close', trade)
         self.trade_repository.close_trade(
             trade_id=trade['trade_id'],
             exit_price=trade['exit_price'],
             exit_time=datetime.fromtimestamp(trade['exit_time'], tz=timezone.utc),
             result=trade['result'],
-            result_type=result_type
+            result_type=result_type,
+            fees=fees,
+            pnl_usd=pnl_usd,
+            gross_pnl=gross_pnl,
+            realized_pnl=pnl_usd,
         )

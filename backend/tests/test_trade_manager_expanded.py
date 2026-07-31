@@ -62,10 +62,10 @@ class ExplodingTradeRepository(FakeTradeRepository):
         super().__init__()
         self.explode_on = explode_on or set()
 
-    def close_trade(self, trade_id, exit_price, exit_time, result, result_type=None, fees=None, pnl_usd=None):
+    def close_trade(self, trade_id, exit_price, exit_time, result, result_type=None, fees=None, pnl_usd=None, gross_pnl=None, realized_pnl=None):
         if "close_trade" in self.explode_on:
             raise RuntimeError("DB write failure")
-        return super().close_trade(trade_id, exit_price, exit_time, result, result_type, fees, pnl_usd)
+        return super().close_trade(trade_id, exit_price, exit_time, result, result_type, fees, pnl_usd, gross_pnl, realized_pnl)
 
     def list_trades(self, pair):
         if "list_trades" in self.explode_on:

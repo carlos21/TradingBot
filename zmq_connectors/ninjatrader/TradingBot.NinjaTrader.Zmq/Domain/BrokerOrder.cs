@@ -19,6 +19,7 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
         public double AverageFillPrice { get; }
         public double StopPrice { get; }
         public double LimitPrice { get; }
+        public double Commission { get; }
         public string OcoId { get; }
         public DateTime Time { get; }
 
@@ -34,6 +35,7 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
             double averageFillPrice = 0,
             double stopPrice = 0,
             double limitPrice = 0,
+            double commission = 0,
             string ocoId = null,
             DateTime? time = null)
         {
@@ -48,6 +50,7 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
             AverageFillPrice = averageFillPrice;
             StopPrice = stopPrice;
             LimitPrice = limitPrice;
+            Commission = commission;
             OcoId = ocoId;
             Time = time ?? DateTime.UtcNow;
         }
@@ -62,15 +65,19 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
 
         public BrokerOrder WithState(OrderState state) =>
             new BrokerOrder(Name, AccountName, Instrument, OrderType, OrderSide, state, Quantity, Filled,
-                AverageFillPrice, StopPrice, LimitPrice, OcoId, Time);
+                AverageFillPrice, StopPrice, LimitPrice, Commission, OcoId, Time);
 
         public BrokerOrder WithFill(double averageFillPrice, int filled) =>
             new BrokerOrder(Name, AccountName, Instrument, OrderType, OrderSide, OrderState, Quantity, filled,
-                averageFillPrice, StopPrice, LimitPrice, OcoId, Time);
+                averageFillPrice, StopPrice, LimitPrice, Commission, OcoId, Time);
+
+        public BrokerOrder WithFill(double averageFillPrice, int filled, double commission) =>
+            new BrokerOrder(Name, AccountName, Instrument, OrderType, OrderSide, OrderState, Quantity, filled,
+                averageFillPrice, StopPrice, LimitPrice, commission, OcoId, Time);
 
         public BrokerOrder WithBracket(double stopPrice, double limitPrice, int quantity) =>
             new BrokerOrder(Name, AccountName, Instrument, OrderType, OrderSide, OrderState, quantity, Filled,
-                AverageFillPrice, stopPrice, limitPrice, OcoId, Time);
+                AverageFillPrice, stopPrice, limitPrice, Commission, OcoId, Time);
     }
 
     public enum OrderType

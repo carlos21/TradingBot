@@ -932,9 +932,11 @@ class TestFillAccuracy:
         )
         closed = _wait_for_trade_closed_in_repo(app.trade_manager.trade_repository, trade_id)
         assert closed.result_type == "TP"
-        assert closed.pnl_usd == pytest.approx(387.25)
+        assert closed.gross_pnl == pytest.approx(387.25)
         assert closed.fees == pytest.approx(2.75)
-        assert app.trade_manager.account_balance == pytest.approx(100000.0 + 387.25)
+        assert closed.pnl_usd == pytest.approx(384.5)
+        assert closed.realized_pnl == pytest.approx(384.5)
+        assert app.trade_manager.account_balance == pytest.approx(100000.0 + 384.5)
 
 
 # ---------------------------------------------------------------------------

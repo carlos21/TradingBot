@@ -25,8 +25,9 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             bool isLong = entryOrder.OrderSide == OrderSide.Buy;
             double priceDiff = isLong ? (exitPrice - entryPrice) : (entryPrice - exitPrice);
             double grossPnl = priceDiff * quantity * pointValue;
+            double commission = entryOrder.Commission + exitOrder.Commission;
 
-            return new PnlResult(grossPnl, 0);
+            return new PnlResult(grossPnl, commission);
         }
     }
 }

@@ -171,6 +171,7 @@ class FakeTradeRepository:
             pair=pair,
             trade_type=trade_type,
             entry_price=entry_price,
+            original_entry_price=entry_price,
             stop_loss=stop_loss,
             take_profit=take_profit,
             risk=risk,
@@ -185,6 +186,8 @@ class FakeTradeRepository:
             result_type=None,
             fees=None,
             pnl_usd=None,
+            gross_pnl=None,
+            realized_pnl=None,
             params=params,
             source=source,
             account=account,
@@ -229,7 +232,7 @@ class FakeTradeRepository:
                 t['account_balance'] = account_balance
                 return
 
-    def close_trade(self, trade_id, exit_price, exit_time, result, result_type=None, fees=None, pnl_usd=None):
+    def close_trade(self, trade_id, exit_price, exit_time, result, result_type=None, fees=None, pnl_usd=None, gross_pnl=None, realized_pnl=None):
         self.closed.append({
             "trade_id": trade_id,
             "exit_price": exit_price,
@@ -238,6 +241,8 @@ class FakeTradeRepository:
             "result_type": result_type,
             "fees": fees,
             "pnl_usd": pnl_usd,
+            "gross_pnl": gross_pnl,
+            "realized_pnl": realized_pnl,
         })
 
     def append_trade_log(self, trade_id: str, event: str, message: str) -> None:
@@ -276,6 +281,8 @@ class FakeTradeRepository:
                     result_type=closed_info.get('result_type') if closed_info else None,
                     fees=closed_info.get('fees') if closed_info else None,
                     pnl_usd=closed_info.get('pnl_usd') if closed_info else None,
+                    gross_pnl=closed_info.get('gross_pnl') if closed_info else None,
+                    realized_pnl=closed_info.get('realized_pnl') if closed_info else None,
                     params=t.get('params'),
                     source=t.get('source'),
                     account=t.get('account'),
@@ -319,6 +326,8 @@ class FakeTradeRepository:
                 result_type=result_type,
                 fees=closed_info.get('fees') if closed_info else None,
                 pnl_usd=closed_info.get('pnl_usd') if closed_info else None,
+                gross_pnl=closed_info.get('gross_pnl') if closed_info else None,
+                realized_pnl=closed_info.get('realized_pnl') if closed_info else None,
                 params=t.get('params'),
                 source=t.get('source'),
                 account=t.get('account'),
