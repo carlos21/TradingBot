@@ -698,7 +698,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     continue
 
                 show_tsi = "true" if sc.get("show_tsi", False) else "false"
-                await page.goto(f"{base_url}/?start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}&show_tsi={show_tsi}", wait_until="domcontentloaded")
+                await page.goto(
+                    f"{base_url}/?pair={pair_name}&start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}&show_tsi={show_tsi}",
+                    wait_until="domcontentloaded",
+                )
 
                 try:
                     await page.wait_for_function("() => window.__chartReady === true", timeout=10000)
@@ -746,8 +749,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 stream_stop_at = max(end_ts, session_end_ts)
 
                 await page.evaluate(
-                    """(p) => window.chartViewer.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
-                    {"tf": tf, "start": start_ts, "end": stream_stop_at}
+                    """(p) => window.chartViewer.socket.emit('start_stream', { pair: p.pair, timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
+                    {"pair": pair_name, "tf": tf, "start": start_ts, "end": stream_stop_at}
                 )
 
                 try:

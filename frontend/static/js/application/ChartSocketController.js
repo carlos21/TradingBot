@@ -82,7 +82,11 @@ export class ChartSocketController {
           this._setConnectionStatus(`Waiting for ${this._getPlatformLabel()} connection...`);
         }
       }
-      this.lifecycle.dispatch({ type: StreamingEventType.STATUS_SYNC, ...data });
+      // Playback-only notifications (only `playing`) should not reset the
+      // streaming lifecycle UI. Only full status syncs carry `live_mode`.
+      if (data.live_mode !== undefined) {
+        this.lifecycle.dispatch({ type: StreamingEventType.STATUS_SYNC, ...data });
+      }
     });
 
     this.socket.on('gateway_started', () => {

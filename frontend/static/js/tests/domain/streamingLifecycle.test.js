@@ -97,6 +97,12 @@ describe('reduceStreamingState', () => {
     const notLive = { type: E.STATUS_SYNC, live_mode: false, gateway_running: false, platform_connected: false };
     expect(reduceStreamingState(S.STREAMING, notLive)).toBe(S.INACTIVE);
   });
+
+  it('ignores STATUS_SYNC payloads that only carry playing (no live_mode)', () => {
+    // Playback-only stream_status events must not reset the lifecycle state.
+    expect(reduceStreamingState(S.INACTIVE, { type: E.STATUS_SYNC, playing: true })).toBe(S.INACTIVE);
+    expect(reduceStreamingState(S.STREAMING, { type: E.STATUS_SYNC, playing: false })).toBe(S.STREAMING);
+  });
 });
 
 describe('stateFromStatus', () => {
