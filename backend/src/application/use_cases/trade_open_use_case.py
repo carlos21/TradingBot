@@ -67,14 +67,19 @@ class TradeOpenUseCase:
         self._instrument = instrument
         self._live_mode = live_mode
 
-    def _get_current_risk(self) -> tuple[float | None, float | None]:
-        """Return (risk_usd, risk_pct) from DB if available, else fallbacks."""
-        if self._accounts_repo is not None:
+    def _get_current_risk(self, account_name: str | None = None) -> tuple[float | None, float | None]:
+        """Return (risk_usd, risk_pct) for the named account, else constructor defaults.
+
+        When ``account_name`` is provided, look up that exact account's configured
+        risk. If the account is unknown or no name is given, fall back to the
+        constructor-level defaults only — never silently use another account's
+        risk setting.
+        """
+        if self._accounts_repo is not None and account_name is not None:
             try:
-                accounts = self._accounts_repo.list_accounts()
-                if accounts:
-                    first = accounts[0]
-                    return first.risk_usd, first.risk_pct
+                account = self._accounts_repo.get_account(account_name)
+                if account is not None:
+                    return account.risk_usd, account.risk_pct
             except Exception:
                 pass
         return self._risk_per_trade, self._risk_pct_per_trade
@@ -83,6 +88,7 @@ class TradeOpenUseCase:
         self,
         risk_per_trade_override: float | None = None,
         risk_pct_per_trade_override: float | None = None,
+        account_name: str | None = None,
     ) -> tuple[float | None, float | None]:
         """Return the configured risk inputs with override > account > default precedence.
 
@@ -91,15 +97,22 @@ class TradeOpenUseCase:
         """
         if risk_per_trade_override is not None or risk_pct_per_trade_override is not None:
             return risk_per_trade_override, risk_pct_per_trade_override
-        return self._get_current_risk()
+        return self._get_current_risk(account_name)
 
-    def _calc_contracts(self, risk_per_contract: float,
-                        risk_per_trade_override: float | None = None,
-                        risk_pct_per_trade_override: float | None = None) -> float:
+    def _calc_contracts(
+        self,
+        risk_per_contract: float,
+        risk_per_trade_override: float | None = None,
+        risk_pct_per_trade_override: float | None = None,
+        account_name: str | None = None,
+        risk_usd: float | None = None,
+        risk_pct: float | None = None,
+    ) -> float:
         """Calculate number of contracts/lots, matching NinjaTrader's logic."""
-        risk_usd, risk_pct = self._effective_risk_config(
-            risk_per_trade_override, risk_pct_per_trade_override
-        )
+        if risk_usd is None and risk_pct is None:
+            risk_usd, risk_pct = self._effective_risk_config(
+                risk_per_trade_override, risk_pct_per_trade_override, account_name
+            )
         risk_budget = FinancialCalc.risk_budget(
             self._account_balance,
             risk_usd,
@@ -129,37 +142,29 @@ class TradeOpenUseCase:
         params: dict | None = None,
     ) -> OpenResult:
         """Open a new trade with precomputed parameters."""
+        # Preserve the configured risk inputs so the executor can forward the
+        # same source of truth to the broker (e.g., NinjaTrader sizes from the
+        # configured risk_usd or risk_pct, not from Python's dollar estimate).
+        risk_usd, risk_pct = self._effective_risk_config(
+            risk_per_trade_override, risk_pct_per_trade_override, account_name=account
+        )
+
         # In backtest/simulation mode Python is the source of truth for sizing,
         # so an explicit account balance is required when using %-based risk.
-        if not self._live_mode:
-            using_risk_pct = (
-                risk_pct_per_trade_override is not None
-                or (self._accounts_repo is None and self._risk_pct_per_trade is not None)
-                or (self._accounts_repo is not None and any(
-                    a.risk_pct is not None for a in self._accounts_repo.list_accounts()
-                ))
+        if not self._live_mode and risk_pct is not None and self._account_balance <= 0:
+            raise ValueError(
+                "Backtest/simulation mode with risk_pct requires a positive account_balance. "
+                "Set it before opening trades."
             )
-            if using_risk_pct and self._account_balance <= 0:
-                raise ValueError(
-                    "Backtest/simulation mode with risk_pct requires a positive account_balance. "
-                    "Set it before opening trades."
-                )
 
         risk_per_contract = risk * self._point_value
         contracts = self._calc_contracts(
             risk_per_contract,
-            risk_per_trade_override,
-            risk_pct_per_trade_override,
+            risk_usd=risk_usd,
+            risk_pct=risk_pct,
         )
         risk_dollars, calculated_risk_pct = FinancialCalc.risk_fields(
             risk, contracts, self._point_value, self._account_balance
-        )
-
-        # Preserve the configured risk inputs so the executor can forward the
-        # same source of truth to the broker (e.g., NinjaTrader sizes from the
-        # configured risk_usd or risk_pct, not from Python's estimate).
-        risk_usd, risk_pct = self._effective_risk_config(
-            risk_per_trade_override, risk_pct_per_trade_override
         )
 
         # Persist open trade

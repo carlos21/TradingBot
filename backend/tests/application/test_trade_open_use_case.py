@@ -110,6 +110,7 @@ class TestTradeOpenUseCaseExecute:
         account.risk_usd = 250.0
         account.risk_pct = None
         accounts_repo = MagicMock()
+        accounts_repo.get_account.return_value = account
         accounts_repo.list_accounts.return_value = [account]
         repo = MagicMock()
         repo.insert_trade.return_value = MagicMock(
@@ -137,10 +138,94 @@ class TestTradeOpenUseCaseExecute:
             take_profit=130.0,
             risk=10.0,
             entry_time=1000.0,
+            account="Sim101",
         )
 
         forwarded = executor.on_trade_open.call_args[0][0]
         assert forwarded["risk_usd"] == 250.0
+        accounts_repo.get_account.assert_called_once_with("Sim101")
+
+    def test_execute_uses_target_account_risk_pct(self):
+        account_a = MagicMock()
+        account_a.risk_usd = None
+        account_a.risk_pct = 2.0
+        account_b = MagicMock()
+        account_b.risk_usd = None
+        account_b.risk_pct = 1.6
+        accounts_repo = MagicMock()
+        accounts_repo.get_account.side_effect = lambda name: {"Account-A": account_a, "Account-B": account_b}[name]
+        accounts_repo.list_accounts.return_value = [account_a, account_b]
+        repo = MagicMock()
+        repo.insert_trade.return_value = MagicMock(
+            trade_id="T1",
+            entry_time=datetime.fromtimestamp(1000.0, tz=timezone.utc),
+        )
+        executor = MagicMock()
+
+        uc = TradeOpenUseCase(
+            trade_repository=repo,
+            trade_executor=executor,
+            event_publisher=None,
+            logger=None,
+            point_value=2.0,
+            account_balance=100_000.0,
+            accounts_repo=accounts_repo,
+        )
+
+        uc.execute(
+            pair="MNQ",
+            trade_type="long",
+            entry_price=100.0,
+            stop_loss=90.0,
+            take_profit=130.0,
+            risk=10.0,
+            entry_time=1000.0,
+            account="Account-B",
+        )
+
+        forwarded = executor.on_trade_open.call_args[0][0]
+        # 1.6% of 100k = 1600 budget; risk_per_contract = 10*2 = 20; contracts = 80
+        assert forwarded["risk_pct"] == 1.6
+        assert forwarded["contracts"] == 80
+        assert forwarded["risk_usd"] is None
+
+    def test_execute_fallback_to_defaults_when_account_not_found(self):
+        accounts_repo = MagicMock()
+        accounts_repo.get_account.return_value = None
+        accounts_repo.list_accounts.return_value = []
+        repo = MagicMock()
+        repo.insert_trade.return_value = MagicMock(
+            trade_id="T1",
+            entry_time=datetime.fromtimestamp(1000.0, tz=timezone.utc),
+        )
+        executor = MagicMock()
+
+        uc = TradeOpenUseCase(
+            trade_repository=repo,
+            trade_executor=executor,
+            event_publisher=None,
+            logger=None,
+            point_value=2.0,
+            account_balance=100_000.0,
+            risk_per_trade=500.0,
+            accounts_repo=accounts_repo,
+        )
+
+        uc.execute(
+            pair="MNQ",
+            trade_type="long",
+            entry_price=100.0,
+            stop_loss=90.0,
+            take_profit=130.0,
+            risk=10.0,
+            entry_time=1000.0,
+            account="MissingAccount",
+        )
+
+        forwarded = executor.on_trade_open.call_args[0][0]
+        # Constructor default: $500 / $20 per contract = 25 contracts
+        assert forwarded["risk_usd"] == 500.0
+        assert forwarded["contracts"] == 25
 
     def test_execute_backtest_risk_pct_requires_positive_balance(self, use_case):
         uc, _, _, _, _, _ = use_case
@@ -297,6 +382,7 @@ class TestTradeOpenUseCaseHelpers:
         account.risk_usd = 300.0
         account.risk_pct = 1.5
         accounts_repo = MagicMock()
+        accounts_repo.get_account.return_value = account
         accounts_repo.list_accounts.return_value = [account]
         repo = MagicMock()
 
@@ -310,7 +396,58 @@ class TestTradeOpenUseCaseHelpers:
             accounts_repo=accounts_repo,
         )
 
-        assert uc._get_current_risk() == (300.0, 1.5)
+        assert uc._get_current_risk("Sim101") == (300.0, 1.5)
+        accounts_repo.get_account.assert_called_once_with("Sim101")
+
+    def test_get_current_risk_uses_requested_account(self):
+        account_a = MagicMock()
+        account_a.risk_usd = None
+        account_a.risk_pct = 2.0
+        account_b = MagicMock()
+        account_b.risk_usd = 750.0
+        account_b.risk_pct = 1.6
+        accounts_repo = MagicMock()
+        accounts_repo.get_account.side_effect = lambda name: {"Account-A": account_a, "Account-B": account_b}[name]
+        accounts_repo.list_accounts.return_value = [account_a, account_b]
+        repo = MagicMock()
+
+        uc = TradeOpenUseCase(
+            trade_repository=repo,
+            trade_executor=MagicMock(),
+            event_publisher=None,
+            logger=None,
+            risk_per_trade=500.0,
+            risk_pct_per_trade=1.0,
+            accounts_repo=accounts_repo,
+        )
+
+        assert uc._get_current_risk("Account-B") == (750.0, 1.6)
+        assert uc._get_current_risk("Account-A") == (None, 2.0)
+
+    def test_get_current_risk_no_account_name_uses_defaults(self):
+        account_a = MagicMock()
+        account_a.risk_usd = None
+        account_a.risk_pct = 2.0
+        account_b = MagicMock()
+        account_b.risk_usd = None
+        account_b.risk_pct = 1.6
+        accounts_repo = MagicMock()
+        accounts_repo.list_accounts.return_value = [account_a, account_b]
+        repo = MagicMock()
+
+        uc = TradeOpenUseCase(
+            trade_repository=repo,
+            trade_executor=MagicMock(),
+            event_publisher=None,
+            logger=None,
+            risk_per_trade=500.0,
+            risk_pct_per_trade=1.0,
+            accounts_repo=accounts_repo,
+        )
+
+        # No account specified -> constructor defaults, never another account
+        assert uc._get_current_risk() == (500.0, 1.0)
+        accounts_repo.get_account.assert_not_called()
 
     def test_get_current_risk_repo_exception_uses_defaults(self):
         accounts_repo = MagicMock()
