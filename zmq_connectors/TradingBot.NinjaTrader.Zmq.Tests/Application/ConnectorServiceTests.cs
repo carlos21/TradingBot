@@ -1898,8 +1898,8 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             _orderExecutionService.Received(1).CancelOrder(stopOrder);
             _orderExecutionService.Received(1).CancelOrder(targetOrder);
-            _logger.Infos.Should().Contain(i => i.Contains("Cancelled working stop order for t1"));
-            _logger.Infos.Should().Contain(i => i.Contains("Cancelled working target order for t1"));
+            _logger.Infos.Should().Contain(i => i.Contains("Cancelling stop for t1") && i.Contains("tracked=Working") && i.Contains("live=Working"));
+            _logger.Infos.Should().Contain(i => i.Contains("Cancelling target for t1") && i.Contains("tracked=Working") && i.Contains("live=Working"));
         }
 
         [Fact]

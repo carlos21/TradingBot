@@ -9,6 +9,7 @@ from tests.fakes import (
     DummySocketIO,
     FakeAnalyticsReporter,
     FakeLogger,
+    FakeNtAccountRepository,
     FakeNotifier,
     FakeTradeExecutor,
     FakeTradeRepository,
@@ -673,6 +674,26 @@ class TestOpenTradeMultiAccountAndOverrides:
         trade = tm.open_trade("MNQ", "long", 100, 90, 130, 10, 1000.0, account="Account-B")
         assert trade["account"] == "Account-B"
         assert tm.trade_repository.inserted[0]["account"] == "Account-B"
+
+    def test_open_trade_sizes_with_selected_live_account_risk(self):
+        accounts_repo = FakeNtAccountRepository()
+        accounts_repo.upsert("Account-A", risk_pct=2.0, live_enabled=False)
+        accounts_repo.upsert("Account-B", risk_pct=1.6, live_enabled=True)
+
+        tm = _make_manager(
+            account_balance=100_000.0,
+            accounts_repo=accounts_repo,
+            live_mode=True,
+        )
+
+        trade = tm.open_trade("MNQ", "long", 100, 90, 130, 10, 1000.0)
+
+        # Account-B is the only live-enabled account, so it should be selected
+        assert trade["account"] == "Account-B"
+        # 1.6% of 100k = 1600 budget; risk_per_contract = 10*2 = 20; contracts = 80
+        assert trade["contracts"] == 80
+        assert trade["risk_dollars"] == 1600.0
+        assert trade["risk_pct"] == 1.6
 
     def test_trailing_sl_update_reflected_in_memory(self):
         tm = _make_manager()

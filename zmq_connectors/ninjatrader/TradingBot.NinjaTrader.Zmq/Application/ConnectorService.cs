@@ -106,6 +106,27 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         private readonly Dictionary<string, DateTime> _recentEntryFills = new Dictionary<string, DateTime>();
         private static readonly TimeSpan EntryFillGracePeriod = TimeSpan.FromSeconds(2);
 
+        // Deferred bracket amendments: when a further entry fill arrives while the
+        // existing bracket is not yet modifiable (submit still in flight), the desired
+        // SL/TP/qty is recorded here and applied from OnOrderUpdate once the legs reach
+        // a modifiable state. Exactly one bracket generation per trade at all times.
+        private readonly Dictionary<string, PendingBracketAmend> _pendingBracketAmends = new Dictionary<string, PendingBracketAmend>();
+
+        private sealed class PendingBracketAmend
+        {
+            public double Sl { get; }
+            public double Tp { get; }
+            public int Qty { get; }
+            public int Attempts { get; set; }
+
+            public PendingBracketAmend(double sl, double tp, int qty)
+            {
+                Sl = sl;
+                Tp = tp;
+                Qty = qty;
+            }
+        }
+
         public bool IsConnected => _connected;
         public IZmqNetwork Network => _network;
         public string Pair => string.IsNullOrEmpty(_streamingCoordinator?.CurrentInstrument)
@@ -880,6 +901,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                     // the warning does not spam every safety-check cycle.
                     _logger.Debug($"SAFETY GUARD: Entry {tradeId} has no working stop-loss, but the account position is flat. Removing stale tracker entry.");
                     _orderTracker.RemoveTrade(tradeId);
+                    ClearPendingAmendment(tradeId);
                     continue;
                 }
 
@@ -1020,6 +1042,11 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                     }
                 }
 
+                // Apply any deferred bracket amendment now that the tracked state
+                // above reflects this update (see HandleEntryFill / 2026-07-30 incident).
+                if (!string.IsNullOrEmpty(tradeIdFromName))
+                    TryApplyPendingBracketAmendment(tradeIdFromName);
+
                 if (order.OrderState == OrderState.Cancelled &&
                     (_tradeIdExtractor.IsStopOrder(order.Name) || _tradeIdExtractor.IsTargetOrder(order.Name)))
                 {
@@ -1031,7 +1058,10 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                     string oid = _tradeIdExtractor.ExtractTradeId(order.Name);
 
                     if (order.OrderState == OrderState.Rejected && _tradeIdExtractor.IsEntryOrder(order.Name) && !string.IsNullOrEmpty(oid))
+                    {
                         _orderTracker.RemoveTrade(oid);
+                        ClearPendingAmendment(oid);
+                    }
 
                     if (order.OrderState == OrderState.Cancelled && _tradeIdExtractor.IsEntryOrder(order.Name) && !string.IsNullOrEmpty(oid))
                     {
@@ -1039,6 +1069,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                         {
                             _logger.Info($"[Close-Pending] Entry cancel confirmed for {oid} — cleaning up tracking");
                             _orderTracker.RemoveTrade(oid);
+                            ClearPendingAmendment(oid);
                         }
                         else if (order.Filled > 0 && _orderTracker.TryGetPendingEntry(oid, out var pendingEntry))
                         {
@@ -1072,6 +1103,80 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             catch (Exception ex)
             {
                 _logger.Error("Order update error", ex);
+            }
+        }
+
+        /// <summary>
+        /// Applies a deferred bracket amendment (recorded by HandleEntryFill when the
+        /// bracket was not yet modifiable) as soon as both legs reach a modifiable
+        /// state. On failure the amendment stays pending and the next order update
+        /// retries — the bracket stays live at its old quantity meanwhile, so the
+        /// position is never unprotected.
+        /// </summary>
+        private void TryApplyPendingBracketAmendment(string tradeId)
+        {
+            if (!_pendingBracketAmends.TryGetValue(tradeId, out var amend))
+                return;
+
+            if (!_orderTracker.TryGetStopLoss(tradeId, out var stop) ||
+                !_orderTracker.TryGetTakeProfit(tradeId, out var target))
+            {
+                ClearPendingAmendment(tradeId);
+                return;
+            }
+
+            if (!stop.IsWorking || !target.IsWorking)
+            {
+                _logger.Debug($"Bracket amendment for {tradeId} still pending — legs not modifiable yet (stop={stop.OrderState}, target={target.OrderState})");
+                return;
+            }
+
+            try
+            {
+                amend.Attempts++;
+                _orderExecutionService.ModifyOrder(stop, stopPrice: amend.Sl, limitPrice: null, quantity: amend.Qty);
+                _orderExecutionService.ModifyOrder(target, stopPrice: null, limitPrice: amend.Tp, quantity: amend.Qty);
+
+                _orderTracker.TrackStopLoss(tradeId, stop.WithBracket(amend.Sl, stop.LimitPrice, amend.Qty));
+                _orderTracker.TrackTakeProfit(tradeId, target.WithBracket(target.StopPrice, amend.Tp, amend.Qty));
+
+                _pendingBracketAmends.Remove(tradeId);
+                _logger.Success($"BRACKET UPDATED: {tradeId} SL={amend.Sl} TP={amend.Tp} qty={amend.Qty}");
+                _network.SendTradeLog(tradeId, "NT:ORDER", $"Bracket updated: SL={amend.Sl} TP={amend.Tp} qty={amend.Qty}");
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning(
+                    $"Failed to apply pending bracket amendment for {tradeId} (attempt {amend.Attempts}, " +
+                    $"stop={stop.OrderState}, target={target.OrderState}) — will retry on next order update: {ex.Message}\n{FormatExceptionDetails(ex)}");
+                _network.SendTradeLog(tradeId, "NT:WARNING", $"Bracket amendment apply failed (attempt {amend.Attempts}), retry pending: {ex.Message}");
+            }
+        }
+
+        private void ClearPendingAmendment(string tradeId)
+        {
+            if (string.IsNullOrEmpty(tradeId))
+                return;
+            if (_pendingBracketAmends.Remove(tradeId))
+                _logger.Info($"Discarding pending bracket amendment for {tradeId} — trade no longer active");
+        }
+
+        private static bool IsTerminalState(OrderState state) =>
+            state == OrderState.Filled || state == OrderState.Cancelled || state == OrderState.Rejected;
+
+        private static string DescribeOrderLeg(BrokerOrder order) =>
+            $"{order.Name} state={order.OrderState} qty={order.Quantity} filled={order.Filled} stop={order.StopPrice} limit={order.LimitPrice}";
+
+        private string DescribeLiveOrderState(BrokerAccount account, BrokerOrder trackedOrder)
+        {
+            try
+            {
+                var live = _orderExecutionService.FindOrderByName(account, trackedOrder.Name);
+                return live != null ? live.OrderState.ToString() : "not found";
+            }
+            catch (Exception ex)
+            {
+                return $"lookup failed ({ex.Message})";
             }
         }
 
@@ -1269,10 +1374,13 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 return;
             }
 
-            // Exactly ONE bracket per trade at all times. If a bracket already exists
-            // (e.g., attached by an earlier partial fill), modify it in place instead of
-            // cancel+recreate — the recreate path races with NT state updates and once
-            // left duplicate stops against the position (2026-07-29 incident).
+            // Exactly ONE bracket generation per trade at all times. If a bracket
+            // already exists (e.g., attached by an earlier partial fill), amend it in
+            // place. When the legs are not yet modifiable (submit still in flight —
+            // the 2026-07-30 incident), the amendment is deferred and applied from
+            // OnOrderUpdate once the orders reach a modifiable state; cancel+recreate
+            // is only used when the tracked legs are already terminal, so duplicate
+            // live brackets can never exist.
             bool bracketAttached = false;
             if (_orderTracker.TryGetStopLoss(tradeId, out var existingStop) &&
                 _orderTracker.TryGetTakeProfit(tradeId, out var existingTarget))
@@ -1292,15 +1400,40 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 }
                 catch (Exception modifyEx)
                 {
-                    _logger.Warning($"Failed to modify existing bracket for {tradeId} ({modifyEx.Message}) — falling back to cancel+recreate");
+                    string liveStop = DescribeLiveOrderState(account, existingStop);
+                    string liveTarget = DescribeLiveOrderState(account, existingTarget);
+                    _logger.Warning(
+                        $"Failed to modify existing bracket for {tradeId} (desired SL={sl} TP={tp} qty={modifyQty}; " +
+                        $"stop [{DescribeOrderLeg(existingStop)} live={liveStop}], " +
+                        $"target [{DescribeOrderLeg(existingTarget)} live={liveTarget}]): {modifyEx.Message}");
+
+                    if (!IsTerminalState(existingStop.OrderState) || !IsTerminalState(existingTarget.OrderState))
+                    {
+                        // The legs are still alive but not yet modifiable (e.g. Initialized
+                        // while the submit is in flight). Defer the amendment — never
+                        // cancel+recreate against live orders; that once left duplicate
+                        // stops against the position (2026-07-30 incident).
+                        _pendingBracketAmends[tradeId] = new PendingBracketAmend(sl, tp, modifyQty);
+                        _logger.Warning($"BRACKET AMENDMENT PENDING: {tradeId} SL={sl} TP={tp} qty={modifyQty} (stop state={existingStop.OrderState}, target state={existingTarget.OrderState}) — will apply when orders become modifiable");
+                        _network.SendTradeLog(tradeId, "NT:WARNING",
+                            $"Bracket amendment pending: SL={sl} TP={tp} qty={modifyQty} (stop={existingStop.OrderState}, target={existingTarget.OrderState})");
+                        bracketAttached = true;
+                    }
+                    else
+                    {
+                        // Both legs are already terminal — the bracket is genuinely dead,
+                        // so recreating it below cannot produce live duplicates.
+                        _logger.Warning($"Existing bracket for {tradeId} is dead (stop={existingStop.OrderState}, target={existingTarget.OrderState}) — recreating fresh bracket");
+                        _network.SendTradeLog(tradeId, "NT:WARNING",
+                            $"Existing bracket dead (stop={existingStop.OrderState}, target={existingTarget.OrderState}) — recreating fresh bracket");
+                    }
                 }
             }
 
             if (!bracketAttached)
             {
-                // If a bracket already exists in a broken state (or the in-place modify
-                // just failed), replace it so the quantity matches the final filled
-                // amount and prices match the actual fill.
+                // Only reached when no bracket exists yet, or when the tracked legs are
+                // already terminal (see above) — never to replace a live bracket.
                 CancelWorkingBracketOrders(tradeId, account.Name);
 
                 try
@@ -1412,6 +1545,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             _network.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
             CancelWorkingBracketOrders(tradeId, order.AccountName);
             _orderTracker.RemoveTrade(tradeId);
+            ClearPendingAmendment(tradeId);
         }
 
         private void HandleTakeProfitFill(BrokerOrder order, double fillPrice)
@@ -1443,6 +1577,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             _network.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
             CancelWorkingBracketOrders(tradeId, order.AccountName);
             _orderTracker.RemoveTrade(tradeId);
+            ClearPendingAmendment(tradeId);
         }
 
         private void HandleCloseFill(BrokerOrder order, double fillPrice)
@@ -1470,6 +1605,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             _network.SendTradeLog(tradeId, "NT:FILL", $"Position closed @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
             CancelWorkingBracketOrders(tradeId, order.AccountName);
             _orderTracker.RemoveTrade(tradeId);
+            ClearPendingAmendment(tradeId);
         }
 
         private void HandlePotentialManualClose(BrokerOrder closeOrder, double fillPrice)
@@ -1500,6 +1636,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                     _network.SendTradeLog(tradeId, "NT:FILL", $"Manual position closed @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
                     CancelWorkingBracketOrders(tradeId, closeOrder.AccountName);
                     _orderTracker.RemoveTrade(tradeId);
+                    ClearPendingAmendment(tradeId);
                     return;
                 }
             }
@@ -1555,6 +1692,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             finally
             {
                 _orderTracker.RemoveTrade(tradeId);
+                ClearPendingAmendment(tradeId);
             }
         }
 
@@ -1611,7 +1749,11 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                 .Select(kv => kv.Key)
                 .ToList();
             foreach (var k in expired)
+            {
                 _recentEntryFills.Remove(k);
+                if (_pendingBracketAmends.TryGetValue(k, out var pendingAmend))
+                    _logger.Warning($"Bracket amendment still pending for {k} after {EntryFillGracePeriod.TotalSeconds}s — bracket at reduced qty (desired SL={pendingAmend.Sl} TP={pendingAmend.Tp} qty={pendingAmend.Qty})");
+            }
         }
 
         private void FlattenAccountPosition(BrokerAccount account, BrokerPosition position, string reason)
@@ -1678,32 +1820,66 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             }
             if (account == null) return;
 
-            if (_orderTracker.TryGetStopLoss(tradeId, out var stopOrder) && stopOrder.IsWorking)
+            if (_orderTracker.TryGetStopLoss(tradeId, out var stopOrder))
+                CancelBracketLeg(tradeId, account, stopOrder, "stop");
+
+            if (_orderTracker.TryGetTakeProfit(tradeId, out var targetOrder))
+                CancelBracketLeg(tradeId, account, targetOrder, "target");
+        }
+
+        /// <summary>
+        /// Cancels one bracket leg. The tracked snapshot can lag NT's real state (e.g.
+        /// still Initialized while the live order is already Working — the 2026-07-30
+        /// incident), so the live order state is consulted first; the tracked snapshot
+        /// is only a fallback when the live lookup finds nothing.
+        /// </summary>
+        private void CancelBracketLeg(string tradeId, BrokerAccount account, BrokerOrder trackedOrder, string leg)
+        {
+            BrokerOrder liveOrder = null;
+            try
             {
-                try
+                liveOrder = _orderExecutionService.FindOrderByName(account, trackedOrder.Name);
+
+                // Duplicate-bracket tripwire: more than one non-terminal order with the
+                // same bracket name must be impossible — report it before it over-fills.
+                var allOrders = _orderExecutionService.GetAllOrders(account);
+                if (allOrders != null)
                 {
-                    _orderTracker.ExpectCancellation(stopOrder.Name);
-                    _orderExecutionService.CancelOrder(stopOrder);
-                    _logger.Info($"Cancelled working stop order for {tradeId}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning($"Failed to cancel stop order for {tradeId}: {ex.Message}");
+                    int liveCount = allOrders.Count(o => o.Name == trackedOrder.Name && !IsTerminalState(o.OrderState));
+                    if (liveCount > 1)
+                    {
+                        _logger.Error($"CRITICAL: duplicate live {leg} orders detected for {tradeId} ({trackedOrder.Name} x{liveCount}) — over-fill risk!");
+                        _network.SendError("ninjatrader", "duplicate_bracket_detected",
+                            $"Duplicate live {leg} orders for {tradeId}: {trackedOrder.Name} x{liveCount}");
+                    }
                 }
             }
-
-            if (_orderTracker.TryGetTakeProfit(tradeId, out var targetOrder) && targetOrder.IsWorking)
+            catch (Exception ex)
             {
-                try
-                {
-                    _orderTracker.ExpectCancellation(targetOrder.Name);
-                    _orderExecutionService.CancelOrder(targetOrder);
-                    _logger.Info($"Cancelled working target order for {tradeId}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.Warning($"Failed to cancel target order for {tradeId}: {ex.Message}");
-                }
+                _logger.Warning($"Live order lookup failed for {trackedOrder.Name} ({tradeId}): {ex.Message}");
+            }
+
+            var orderToCancel = liveOrder ?? (trackedOrder.IsWorking ? trackedOrder : null);
+            if (orderToCancel == null)
+            {
+                _logger.Debug($"Live {leg} order {trackedOrder.Name} for {tradeId} not found — already gone (tracked={trackedOrder.OrderState})");
+                return;
+            }
+            if (IsTerminalState(orderToCancel.OrderState))
+            {
+                _logger.Debug($"Live {leg} order {trackedOrder.Name} for {tradeId} already {orderToCancel.OrderState} — nothing to cancel");
+                return;
+            }
+
+            try
+            {
+                _orderTracker.ExpectCancellation(trackedOrder.Name);
+                _orderExecutionService.CancelOrder(orderToCancel);
+                _logger.Info($"Cancelling {leg} for {tradeId}: tracked={trackedOrder.OrderState} live={orderToCancel.OrderState}");
+            }
+            catch (Exception ex)
+            {
+                _logger.Warning($"Failed to cancel {leg} order for {tradeId}: {ex.Message}\n{FormatExceptionDetails(ex)}");
             }
         }
 
