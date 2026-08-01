@@ -28,5 +28,6 @@ poetry run python backend/scripts/run_scenarios.py \
 # Modes: --mode sim (fixed risk) | --mode real_futures (MNQ) | --mode real_cfd (CFD) | --mode both (all 3)
 # RR ratio: --rr 4.0 (default) | --rr 2.0 (conservative) | --rr 6.0 (aggressive)
 # CFD options: --cfd-spread 1.5 (default) --cfd-commission 5.0 (default)
+# Slippage simulation: --slippage 5 (points) shifts every entry based on the next bar color.
 # Example: ./bin/run_scenarios.sh --group london --mode real_cfd --rr 2.0 --cfd-spread 2.0
 # To generate an HTML report with monthly view, add: --html-report
