@@ -194,9 +194,6 @@ class TestGatewayInitialization:
             MessageType.CONNECT,
             MessageType.TEST_PING,
             MessageType.TEST_PONG,
-            MessageType.TEST_START,
-            MessageType.TEST_STATUS,
-            MessageType.TEST_RESULT,
             MessageType.POSITION_SYNC,
             MessageType.COMMAND_ACK,
             MessageType.MARKET_STATUS,
@@ -332,18 +329,6 @@ class TestCallbackRegistration:
             return None
         gateway.on_position_sync(cb)
         assert cb in gateway._callbacks[MessageType.POSITION_SYNC]
-
-    def test_on_test_start(self, gateway):
-        def cb(_):
-            return None
-        gateway.on_test_start(cb)
-        assert cb in gateway._callbacks[MessageType.TEST_START]
-
-    def test_on_test_result(self, gateway):
-        def cb(_):
-            return None
-        gateway.on_test_result(cb)
-        assert cb in gateway._callbacks[MessageType.TEST_RESULT]
 
     def test_on_market_status(self, gateway):
         def cb(_):
@@ -671,7 +656,7 @@ class TestMessageRouting:
         assert len(received) == 1
 
     def test_debug_logging_for_other_types(self, gateway, logger):
-        env = MessageEnvelope.create(msg_type=MessageType.TEST_START, payload={"scenario": "tp_hit"}, seq_num=1)
+        env = MessageEnvelope.create(msg_type=MessageType.TICK, payload={"pair": "MNQ", "price": 100.0}, seq_num=1)
         gateway._handle_message(env.to_json())
         # Should not raise; debug path exercised
 
@@ -977,151 +962,6 @@ class TestMarketStatusHandling:
 
 
 # ---------------------------------------------------------------------------
-# Test sequence handling
-# ---------------------------------------------------------------------------
-
-
-class TestTestSequences:
-    def test_handle_test_start_default(self, gateway, logger):
-        gateway._running = True
-        gateway._command_queue = MagicMock()
-        gateway._command_queue.maxlen = 10000
-        gateway._command_queue.__len__ = MagicMock(return_value=0)
-        gateway._handle_test_start({
-            "scenario": "tp_hit",
-            "entry_price": 100.0,
-            "risk_points": 10.0,
-            "rr_ratio": 2.0,
-            "pair": "MNQ",
-            "instrument": "MNQ 09-26",
-        })
-        seq_keys = [k for k in gateway._test_sequences if not k.startswith("__")]
-        assert len(seq_keys) == 1
-        seq = gateway._test_sequences[seq_keys[0]]
-        assert seq["scenario"] == "tp_hit"
-        assert seq["stage"] == "awaiting_entry_fill"
-        assert any("E2E TEST START" in m for m in logger.messages)
-
-    def test_handle_test_start_multi_account(self, gateway, logger):
-        gateway._running = True
-        gateway._command_queue = MagicMock()
-        gateway._command_queue.maxlen = 10000
-        gateway._command_queue.__len__ = MagicMock(return_value=0)
-        gateway._handle_test_start({
-            "scenario": "multi_account",
-            "entry_price": 100.0,
-            "risk_points": 10.0,
-            "rr_ratio": 2.0,
-            "accounts": ["A1", "A2"],
-            "pair": "MNQ",
-            "instrument": "MNQ 09-26",
-        })
-        group = gateway._test_sequences.get("__multi_account_group__")
-        assert group is not None
-        assert len(group["trade_ids"]) == 2
-        assert group["stage"] == "awaiting_entry_fills"
-
-    def test_maybe_advance_nonexistent_trade(self, gateway):
-        gateway._maybe_advance_test_sequence("missing", "entry_fill")
-        # Should not raise
-
-    def test_multi_account_group_entry_fill_partial(self, gateway):
-        gateway._running = True
-        gateway._command_queue = MagicMock()
-        gateway._command_queue.maxlen = 10000
-        gateway._command_queue.__len__ = MagicMock(return_value=0)
-        gateway._handle_test_start({
-            "scenario": "multi_account",
-            "entry_price": 100.0,
-            "risk_points": 10.0,
-            "rr_ratio": 2.0,
-            "accounts": ["A1", "A2"],
-            "pair": "MNQ",
-            "instrument": "MNQ 09-26",
-        })
-        group = gateway._test_sequences["__multi_account_group__"]
-        tid1, tid2 = group["trade_ids"]
-        gateway._handle_entry_fill({"trade_id": tid1, "entry_price": 100.0})
-        assert group["stage"] == "awaiting_entry_fills"
-
-    def test_multi_account_group_all_entry_fills(self, gateway, logger):
-        gateway._running = True
-        gateway._command_queue = MagicMock()
-        gateway._command_queue.maxlen = 10000
-        gateway._command_queue.__len__ = MagicMock(return_value=0)
-        gateway._handle_test_start({
-            "scenario": "multi_account",
-            "entry_price": 100.0,
-            "risk_points": 10.0,
-            "rr_ratio": 2.0,
-            "accounts": ["A1"],
-            "pair": "MNQ",
-            "instrument": "MNQ 09-26",
-        })
-        group = gateway._test_sequences["__multi_account_group__"]
-        tid1 = group["trade_ids"][0]
-        gateway._handle_entry_fill({"trade_id": tid1, "entry_price": 100.0})
-        assert group["stage"] == "awaiting_exit_fills"
-        assert any("close order" in m.lower() for m in logger.messages)
-
-    def test_multi_account_group_all_exit_fills_cleans_up(self, gateway, logger):
-        gateway._running = True
-        gateway._command_queue = MagicMock()
-        gateway._command_queue.maxlen = 10000
-        gateway._command_queue.__len__ = MagicMock(return_value=0)
-        gateway._handle_test_start({
-            "scenario": "multi_account",
-            "entry_price": 100.0,
-            "risk_points": 10.0,
-            "rr_ratio": 2.0,
-            "accounts": ["A1"],
-            "pair": "MNQ",
-            "instrument": "MNQ 09-26",
-        })
-        tid1 = gateway._test_sequences["__multi_account_group__"]["trade_ids"][0]
-        gateway._handle_entry_fill({"trade_id": tid1, "entry_price": 100.0})
-        gateway._handle_exit_fill({"trade_id": tid1, "exit_price": 120.0, "result_type": "TP"})
-        assert "__multi_account_group__" not in gateway._test_sequences
-        assert tid1 not in gateway._test_sequences
-        assert any("PASSED" in m for m in logger.messages)
-
-    def test_entry_fill_advances_single_sequence(self, gateway, logger):
-        gateway._running = True
-        gateway._command_queue = MagicMock()
-        gateway._command_queue.maxlen = 10000
-        gateway._command_queue.__len__ = MagicMock(return_value=0)
-        gateway._handle_test_start({
-            "scenario": "tp_hit",
-            "entry_price": 100.0,
-            "risk_points": 10.0,
-            "rr_ratio": 1.0,
-            "pair": "MNQ",
-            "instrument": "MNQ 09-26",
-        })
-        tid = [k for k in gateway._test_sequences if not k.startswith("__")][0]
-        gateway._handle_entry_fill({"trade_id": tid, "entry_price": 100.0})
-        assert gateway._test_sequences[tid]["stage"] == "entry_fill"
-
-    def test_exit_fill_advances_single_sequence(self, gateway, logger):
-        gateway._running = True
-        gateway._command_queue = MagicMock()
-        gateway._command_queue.maxlen = 10000
-        gateway._command_queue.__len__ = MagicMock(return_value=0)
-        gateway._handle_test_start({
-            "scenario": "tp_hit",
-            "entry_price": 100.0,
-            "risk_points": 10.0,
-            "rr_ratio": 1.0,
-            "pair": "MNQ",
-            "instrument": "MNQ 09-26",
-        })
-        tid = [k for k in gateway._test_sequences if not k.startswith("__")][0]
-        gateway._handle_entry_fill({"trade_id": tid, "entry_price": 100.0})
-        gateway._handle_exit_fill({"trade_id": tid, "exit_price": 120.0, "result_type": "TP"})
-        assert gateway._test_sequences[tid]["stage"] == "exit_fill"
-
-
-# ---------------------------------------------------------------------------
 # Payload preview formatting
 # ---------------------------------------------------------------------------
 
@@ -1393,18 +1233,6 @@ class TestCommandSending:
         gateway.send_test_pong(timestamp=12345.0)
         assert len(gateway._pending_commands) == 1
 
-    def test_send_test_result_passed(self, gateway, logger):
-        gateway._running = True
-        gateway.send_test_result("tp_hit", True, trade_id="T1", message="ok")
-        assert len(gateway._pending_commands) == 1
-        assert any("PASSED" in m for m in logger.messages)
-
-    def test_send_test_result_failed(self, gateway, logger):
-        gateway._running = True
-        gateway.send_test_result("sl_hit", False)
-        assert len(gateway._pending_commands) == 1
-        assert any("FAILED" in m for m in logger.messages)
-
     def test_command_methods_noop_when_not_running(self, gateway, logger):
         gateway._running = False
         gateway.send_open_order("T1", "long", 100, 90, 110, 10, 1.0, pair="MNQ", instrument="MNQ 09-26")
@@ -1413,9 +1241,8 @@ class TestCommandSending:
         gateway.send_refresh_request(instrument="MNQ 09-26")
         gateway.send_error("s", "t", "m")
         gateway.send_test_pong(0.0)
-        gateway.send_test_result("s", True)
         # All should warn about not running
-        assert sum("not running" in m.lower() for m in logger.messages) == 7
+        assert sum("not running" in m.lower() for m in logger.messages) == 6
 
 
 # ---------------------------------------------------------------------------

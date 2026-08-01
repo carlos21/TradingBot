@@ -25,8 +25,6 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
         void SendError(string source, string errorType, string message, string details = null);
         void SendHeartbeat(string source, string status);
         void SendConnect(string platform, string version, string account = null, string pair = null);
-        void SendTestStart(string scenario, double entryPrice = 21000.0, double riskPoints = 80.0, double rrRatio = 1.0, JArray accounts = null);
-        void SendTestResult(string scenario, bool passed, string tradeId = null, string message = "");
         void SendMarketStatus(bool marketOpen, DateTime nextOpen, string pair);
         void SendPositionSync(JArray positions, JArray untrackedOrders = null);
         void SendCommandAck(string commandType, int seqNum, bool success, string tradeId = null, string message = null);

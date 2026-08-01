@@ -14,15 +14,13 @@ zmq_connectors/ninjatrader/
 │   └── Application/                      # Business logic (no NinjaTrader deps)
 │       ├── ConnectorService.cs           # Headless orchestrator
 │       ├── CommandDispatcher.cs
-│       ├── ZmqE2ETestRunner.cs
 │       └── Handlers/                     # Command handlers
 │           ├── OrderOpenHandler.cs
 │           ├── OrderCloseHandler.cs
 │           ├── OrderModifyHandler.cs
 │           ├── SubscribeHandler.cs
 │           ├── RefreshRequestHandler.cs
-│           ├── AuditRequestHandler.cs
-│           └── TestStartHandler.cs
+│           └── AuditRequestHandler.cs
 ├── TradingBot.NinjaTrader.AddOn/         # NinjaTrader-specific AddOn (net48)
 │   ├── Infrastructure/                   # NT + NetMQ implementations
 │   │   ├── ZmqNetwork.cs

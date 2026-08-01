@@ -39,11 +39,8 @@ namespace TradingBot.NinjaTrader.Zmq.Domain
         public const string AuditRequest = "audit_request";
         public const string AuditResponse = "audit_response";
 
-        // Testing
+        // Connection watchdog keep-alive
         public const string TestPing = "test_ping";
         public const string TestPong = "test_pong";
-        public const string TestStart = "test_start";
-        public const string TestStatus = "test_status";
-        public const string TestResult = "test_result";
     }
 }

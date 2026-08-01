@@ -23,7 +23,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests
         public IOrderExecutionService Execution { get; } = Substitute.For<IOrderExecutionService>();
         public ITradeIdExtractor TradeIdExtractor { get; } = Substitute.For<ITradeIdExtractor>();
         public IConnectorClock Clock { get; } = Substitute.For<IConnectorClock>();
-        public ITradingMode TradingMode { get; } = Substitute.For<ITradingMode>();
         public ConnectorService Service { get; }
         public BrokerAccount Account { get; }
         public BrokerInstrument Instrument { get; }
@@ -37,9 +36,8 @@ namespace TradingBot.NinjaTrader.Zmq.Tests
             AccountProvider.GetAccount("Sim101").Returns(Account);
             InstrumentProvider.GetInstrument("MNQ 09-25").Returns(Instrument);
             Clock.UtcNow.Returns(DateTime.UtcNow);
-            TradingMode.IsSimulation.Returns(false);
 
-            Dispatcher.Register(new OrderOpenHandler(Network, Logger, Tracker, TradingMode, AccountProvider, InstrumentProvider, Execution));
+            Dispatcher.Register(new OrderOpenHandler(Network, Logger, Tracker, AccountProvider, InstrumentProvider, Execution));
 
             Service = new ConnectorService(
                 TestDataFactory.Config(), Network, Logger, Dispatcher, Tracker,
@@ -50,7 +48,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests
         /// <summary>Registers the close/modify handlers for dispatcher-driven close flows.</summary>
         public void RegisterCloseHandler()
         {
-            Dispatcher.Register(new OrderCloseHandler(Network, Logger, Tracker, TradeIdExtractor, TradingMode, AccountProvider, InstrumentProvider, Execution));
+            Dispatcher.Register(new OrderCloseHandler(Network, Logger, Tracker, TradeIdExtractor, AccountProvider, InstrumentProvider, Execution));
         }
 
         /// <summary>Opens a trade through the real ORDER_OPEN pipeline; qty comes from risk_usd = contracts × riskPoints × pointValue.</summary>

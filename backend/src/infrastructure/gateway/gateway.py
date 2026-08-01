@@ -161,9 +161,6 @@ to be:
             MessageType.CONNECT: [],
             MessageType.TEST_PING: [],
             MessageType.TEST_PONG: [],
-            MessageType.TEST_START: [],
-            MessageType.TEST_STATUS: [],
-            MessageType.TEST_RESULT: [],
             MessageType.POSITION_SYNC: [],
             MessageType.COMMAND_ACK: [],
             MessageType.MARKET_STATUS: [],
@@ -198,9 +195,6 @@ to be:
 
         # Account names reported in config queries (refreshed from DB on demand)
         self._account_names: list[str] = []
-
-        # E2E test state tracking
-        self._test_sequences: dict[str, dict[str, Any]] = {}
 
     def set_account_names(self, names: list[str]) -> None:
         """Set the account names used for config queries from the platform."""
@@ -658,8 +652,6 @@ to be:
                 self._handle_error(envelope.payload)
             elif msg_type == MessageType.TEST_PING:
                 self._handle_test_ping(envelope.payload)
-            elif msg_type == MessageType.TEST_START:
-                self._handle_test_start(envelope.payload)
             elif msg_type == MessageType.POSITION_SYNC:
                 self._handle_position_sync(envelope.payload)
             elif msg_type == MessageType.COMMAND_ACK:
@@ -740,7 +732,6 @@ to be:
             f"Entry fill: {trade_id} @ {entry_price} qty={quantity} account={account} "
             f"SL={stop_loss} TP={take_profit}"
         )
-        self._maybe_advance_test_sequence(trade_id, 'entry_fill', payload)
 
     def _handle_exit_fill(self, payload: dict[str, Any]) -> None:
         """Handle exit fill notification."""
@@ -754,7 +745,6 @@ to be:
             f"Exit fill: {trade_id} @ {exit_price} ({result_type}) "
             f"pnl={realized_pnl} commission={commission} account={account}"
         )
-        self._maybe_advance_test_sequence(trade_id, 'exit_fill', payload)
 
     def _handle_position_sync(self, payload: dict[str, Any]) -> None:
         """Handle position sync from broker (broker is source of truth).
@@ -855,148 +845,6 @@ to be:
         from .protocol import TestPongMessage
         pong = TestPongMessage(timestamp=time.time())
         self._send_command(pong.to_envelope(seq_num=self._next_seq()))
-
-    def _handle_test_start(self, payload: dict[str, Any]) -> None:
-        """Handle E2E test start - create test trade(s) and enqueue commands."""
-        scenario = payload.get('scenario', 'tp_hit')
-        entry_price = payload.get('entry_price', 21000.0)
-        risk_points = payload.get('risk_points', 80.0)
-        rr_ratio = payload.get('rr_ratio', 1.0)
-
-        self.logger.info("=" * 60)
-        self.logger.info(f"🧪 E2E TEST START RECEIVED: {scenario}")
-        self.logger.info(f"   Entry Price: {entry_price}")
-        self.logger.info(f"   Risk Points: {risk_points}")
-        self.logger.info(f"   R:R Ratio: {rr_ratio}")
-        self.logger.info("=" * 60)
-
-        if scenario == 'multi_account':
-            self._run_multi_account_test(payload, entry_price, risk_points, rr_ratio)
-            return
-
-        # Single-account test flow
-        import uuid
-        trade_id = f"test_{scenario}_{uuid.uuid4().hex[:8]}"
-        sl = entry_price - risk_points
-        tp = entry_price + (risk_points * rr_ratio)
-
-        self.logger.info(f"   Generated Trade ID: {trade_id}")
-        self.logger.info(f"   Stop Loss: {sl}")
-        self.logger.info(f"   Take Profit: {tp}")
-
-        self._test_sequences[trade_id] = {
-            'stage': 'awaiting_entry_fill',
-            'scenario': scenario,
-            'entry_price': entry_price,
-            'sl': sl,
-            'tp': tp,
-            'start_time': time.time(),
-        }
-
-        self.send_open_order(
-            trade_id=trade_id,
-            direction='long',
-            entry_price=entry_price,
-            stop_loss=sl,
-            take_profit=tp,
-            risk_points=risk_points,
-            rr_ratio=rr_ratio,
-            pair=payload.get('pair'),
-            instrument=payload.get('instrument'),
-        )
-        self.logger.info(f"✅ TEST: Queued open order command for {trade_id}")
-
-    def _run_multi_account_test(self, payload: dict, entry_price: float,
-                                 risk_points: float, rr_ratio: float) -> None:
-        """Multi-account E2E: send N ORDER_OPEN commands, track fills, then close."""
-        import uuid
-
-        accounts = payload.get('accounts', ['Sim101', 'Sim102'])
-        sl = entry_price - risk_points
-        tp = entry_price + (risk_points * rr_ratio)
-        trade_ids: list[str] = []
-
-        for account in accounts:
-            trade_id = f"test_ma_{uuid.uuid4().hex[:8]}"
-            trade_ids.append(trade_id)
-            self._test_sequences[trade_id] = {
-                'stage': 'awaiting_entry_fill',
-                'scenario': 'multi_account',
-                'entry_price': entry_price,
-                'sl': sl,
-                'tp': tp,
-                'account': account,
-                'instrument': payload.get('instrument'),
-                'start_time': time.time(),
-            }
-            self.send_open_order(
-                trade_id=trade_id,
-                direction='long',
-                entry_price=entry_price,
-                stop_loss=sl,
-                take_profit=tp,
-                risk_points=risk_points,
-                rr_ratio=rr_ratio,
-                account=account,
-                pair=payload.get('pair'),
-                instrument=payload.get('instrument'),
-            )
-            self.logger.info(f"✅ TEST: Queued open order for {trade_id} account={account}")
-
-        # Store the group for collective tracking
-        self._test_sequences['__multi_account_group__'] = {
-            'trade_ids': trade_ids,
-            'stage': 'awaiting_entry_fills',
-            'start_time': time.time(),
-        }
-        self.logger.info(f"🧪 MULTI-ACCOUNT TEST: {len(trade_ids)} trades queued ({', '.join(accounts)})")
-
-    def _maybe_advance_test_sequence(self, trade_id: str, stage: str,
-                                      payload: dict[str, Any] | None = None) -> None:
-        """Advance E2E test state machine for a given trade."""
-        seq = self._test_sequences.get(trade_id)
-        if not seq:
-            return
-
-        seq['stage'] = stage
-
-        # Multi-account group logic
-        group = self._test_sequences.get('__multi_account_group__')
-        if group and trade_id in group.get('trade_ids', []):
-            self._advance_multi_account_group(group, trade_id, stage, payload)
-
-    def _advance_multi_account_group(self, group: dict, trade_id: str,
-                                      stage: str, payload: dict | None) -> None:
-        """Check if all trades in multi-account group have reached a stage."""
-        trade_ids = group.get('trade_ids', [])
-
-        if stage == 'entry_fill':
-            filled = sum(1 for tid in trade_ids
-                         if self._test_sequences.get(tid, {}).get('stage') == 'entry_fill')
-            self.logger.info(f"🧪 MULTI-ACCOUNT: {filled}/{len(trade_ids)} entry fills received")
-            if filled >= len(trade_ids):
-                group['stage'] = 'awaiting_exit_fills'
-                # All entries filled — send close orders for all
-                for tid in trade_ids:
-                    account = self._test_sequences[tid].get('account')
-                    instrument = self._test_sequences[tid].get('instrument')
-                    self.send_close_order(trade_id=tid, reason="test", account=account, instrument=instrument)
-                    self.logger.info(f"✅ TEST: Queued close order for {tid} account={account}")
-
-        elif stage == 'exit_fill':
-            closed = sum(1 for tid in trade_ids
-                         if self._test_sequences.get(tid, {}).get('stage') == 'exit_fill')
-            self.logger.info(f"🧪 MULTI-ACCOUNT: {closed}/{len(trade_ids)} exit fills received")
-            if closed >= len(trade_ids):
-                elapsed = time.time() - group['start_time']
-                self.logger.info("=" * 60)
-                self.logger.info(f"🧪 MULTI-ACCOUNT E2E TEST PASSED: {len(trade_ids)} accounts")
-                self.logger.info(f"   Elapsed: {elapsed:.2f}s")
-                self.logger.info("=" * 60)
-                # Clean up
-                for tid in trade_ids:
-                    self._test_sequences.pop(tid, None)
-                self._test_sequences.pop('__multi_account_group__', None)
 
     def _format_payload_preview(self, payload: dict[str, Any]) -> str:
         """Format payload for logging (short preview)."""
@@ -1172,28 +1020,6 @@ to be:
             - pair: str (trading pair symbol)
         """
         self.on(MessageType.MARKET_STATUS, callback)
-
-    def on_test_start(self, callback: Callable[[dict[str, Any]], None]) -> None:
-        """Register test start callback.
-
-        Payload contains:
-            - scenario: Test scenario name ("tp_hit", "sl_hit", "session_end")
-            - entry_price: Test entry price
-            - risk_points: Risk in points
-            - rr_ratio: Risk/Reward ratio
-        """
-        self.on(MessageType.TEST_START, callback)
-
-    def on_test_result(self, callback: Callable[[dict[str, Any]], None]) -> None:
-        """Register test result callback.
-
-        Payload contains:
-            - scenario: Test scenario name
-            - passed: True/False
-            - trade_id: Test trade ID (if applicable)
-            - message: Result message
-        """
-        self.on(MessageType.TEST_RESULT, callback)
 
     # -------------------------------------------------------------------------
     # Public API - Command Sending
@@ -1456,26 +1282,6 @@ to be:
         envelope = pong.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
         self.logger.debug("Sent TEST_PONG")
-
-    def send_test_result(
-        self,
-        scenario: str,
-        passed: bool,
-        trade_id: str | None = None,
-        message: str = "",
-    ) -> None:
-        """Send E2E test result to platform."""
-        from .protocol import TestResultMessage
-        result = TestResultMessage(
-            scenario=scenario,
-            passed=passed,
-            trade_id=trade_id,
-            message=message,
-        )
-        envelope = result.to_envelope(seq_num=self._next_seq())
-        self._send_command(envelope)
-        status = "PASSED" if passed else "FAILED"
-        self.logger.info(f"Sent TEST_RESULT: {scenario} {status}")
 
     # -------------------------------------------------------------------------
     # Public API - Queries

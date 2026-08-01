@@ -12,7 +12,7 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
     /// </summary>
     public static class NinjaTraderCompositionRoot
     {
-        public static ConnectorService Build(ZmqConfiguration config, ILogger logger, bool simulateTrades)
+        public static ConnectorService Build(ZmqConfiguration config, ILogger logger)
         {
             var serializer = new JsonMessageSerializer(logger);
             var network = new ZmqNetwork(config, serializer, logger);
@@ -26,17 +26,15 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
             var pnlCalculator = new NtPnLCalculator();
             var clock = new NtConnectorClock();
             var tradeIdExtractor = new NtTradeIdExtractor();
-            var tradingMode = new SimulationTradingMode(simulateTrades);
 
             var dispatcher = new CommandDispatcher(logger);
             dispatcher.Register(new SubscribeHandler(network, logger, streamingCoordinator));
             dispatcher.Register(new UnsubscribeHandler(network, logger, streamingCoordinator));
-            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
-            dispatcher.Register(new OrderCloseHandler(network, logger, orderTracker, tradeIdExtractor, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
-            dispatcher.Register(new OrderModifyHandler(network, logger, orderTracker, tradeIdExtractor, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderCloseHandler(network, logger, orderTracker, tradeIdExtractor, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderModifyHandler(network, logger, orderTracker, tradeIdExtractor, accountProvider, instrumentProvider, orderExecutionService));
             dispatcher.Register(new RefreshRequestHandler(network, logger, instrumentProvider, barHistoryService, clock, config));
             dispatcher.Register(new AuditRequestHandler(network, logger, instrumentProvider, barHistoryService, streamingCoordinator, clock));
-            dispatcher.Register(new TestStartHandler(network, logger));
 
             var connectorService = new ConnectorService(
                 config,

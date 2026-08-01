@@ -1927,25 +1927,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             return $"Ticks: {ticks} | Bars: {bars} | Partial: {partials} | Cmds: {_commandsReceived}";
         }
 
-        public async Task<bool> TestConnectionAsync()
-        {
-            _logger.Info("=== TEST CONNECTION ===");
-            try
-            {
-                bool success = await Task.Run(() => _network?.SendTestPingWithResponse(2000) ?? false);
-                if (success)
-                    _logger.Success("TEST CONNECTION: PASSED - ZMQ REQ/REP working");
-                else
-                    _logger.Warning("TEST CONNECTION: FAILED - No response from Python");
-                return success;
-            }
-            catch (Exception ex)
-            {
-                _logger.Error("TEST CONNECTION: FAILED", ex);
-                return false;
-            }
-        }
-
         private static string FormatExceptionDetails(Exception ex)
         {
             var sb = new StringBuilder();

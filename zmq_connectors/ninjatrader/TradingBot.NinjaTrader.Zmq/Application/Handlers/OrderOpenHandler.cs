@@ -11,7 +11,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
         private readonly IZmqNetwork _network;
         private readonly ILogger _logger;
         private readonly IOrderTracker _orderTracker;
-        private readonly ITradingMode _tradingMode;
         private readonly IAccountProvider _accountProvider;
         private readonly IInstrumentProvider _instrumentProvider;
         private readonly IOrderExecutionService _orderExecutionService;
@@ -20,7 +19,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
             IZmqNetwork network,
             ILogger logger,
             IOrderTracker orderTracker,
-            ITradingMode tradingMode,
             IAccountProvider accountProvider,
             IInstrumentProvider instrumentProvider,
             IOrderExecutionService orderExecutionService)
@@ -28,7 +26,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
             _network = network ?? throw new ArgumentNullException(nameof(network));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _orderTracker = orderTracker ?? throw new ArgumentNullException(nameof(orderTracker));
-            _tradingMode = tradingMode ?? throw new ArgumentNullException(nameof(tradingMode));
             _accountProvider = accountProvider ?? throw new ArgumentNullException(nameof(accountProvider));
             _instrumentProvider = instrumentProvider ?? throw new ArgumentNullException(nameof(instrumentProvider));
             _orderExecutionService = orderExecutionService ?? throw new ArgumentNullException(nameof(orderExecutionService));
@@ -43,19 +40,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                 var instrumentName = payload?["instrument"]?.Value<string>();
                 if (string.IsNullOrEmpty(instrumentName))
                     throw new InvalidOperationException("instrument is required in ORDER_OPEN payload");
-
-                if (_tradingMode.IsSimulation)
-                {
-                    double entryPrice = payload?["entry_price"]?.Value<double>() ?? 0;
-                    double stopLoss = payload?["stop_loss"]?.Value<double>() ?? 0;
-                    double takeProfit = payload?["take_profit"]?.Value<double>() ?? 0;
-                    int simQty = payload?["contracts"]?.Value<int>() ?? 1;
-
-                    _logger.Info($"SIMULATE OPEN: {tradeId} {direction} {instrumentName} x{simQty} @ {entryPrice} SL={stopLoss} TP={takeProfit} account={accountName ?? "default"}");
-                    _network.SendEntryFill(tradeId, entryPrice, stopLoss, takeProfit, account: accountName, quantity: simQty);
-                    _network.SendTradeLog(tradeId, "NT:SIMULATE", $"Simulated entry fill {direction} x{simQty} @ {entryPrice}");
-                    return true;
-                }
 
                 var account = ResolveAccount(accountName);
                 if (account == null)

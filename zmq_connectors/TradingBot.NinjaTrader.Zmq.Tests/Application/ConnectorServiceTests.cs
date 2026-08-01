@@ -179,30 +179,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         }
 
         [Fact]
-        public async Task TestConnectionAsync_ReturnsTrue_WhenPingSucceeds()
-        {
-            _network.SendTestPingWithResponse(Arg.Any<double>()).Returns(true);
-            var service = CreateService();
-
-            var result = await service.TestConnectionAsync();
-
-            result.Should().BeTrue();
-            _logger.Successes.Should().Contain(s => s.Contains("PASSED"));
-        }
-
-        [Fact]
-        public async Task TestConnectionAsync_ReturnsFalse_WhenPingFails()
-        {
-            _network.SendTestPingWithResponse(Arg.Any<double>()).Returns(false);
-            var service = CreateService();
-
-            var result = await service.TestConnectionAsync();
-
-            result.Should().BeFalse();
-            _logger.Warnings.Should().Contain(w => w.Contains("FAILED"));
-        }
-
-        [Fact]
         public void RestoreOrderTracking_TracksEntryStopTargetAndCloseOrders()
         {
             var account = TestDataFactory.Account();
@@ -870,18 +846,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             service.IsConnected.Should().BeFalse();
             _network.Received(1).SendError("ninjatrader", "connection_failed", Arg.Any<string>(), Arg.Any<string>());
             _network.Received(1).Stop();
-        }
-
-        [Fact]
-        public async Task TestConnectionAsync_ReturnsFalse_WhenPingThrows()
-        {
-            _network.SendTestPingWithResponse(Arg.Any<double>()).Returns(x => throw new InvalidOperationException("ping failed"));
-            var service = CreateService();
-
-            var result = await service.TestConnectionAsync();
-
-            result.Should().BeFalse();
-            _logger.Errors.Should().Contain(e => e.Exception.Message == "ping failed");
         }
 
         [Fact]

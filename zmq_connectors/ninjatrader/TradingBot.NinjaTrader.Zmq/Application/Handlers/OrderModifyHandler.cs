@@ -12,7 +12,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
         private readonly ILogger _logger;
         private readonly IOrderTracker _orderTracker;
         private readonly ITradeIdExtractor _tradeIdExtractor;
-        private readonly ITradingMode _tradingMode;
         private readonly IAccountProvider _accountProvider;
         private readonly IInstrumentProvider _instrumentProvider;
         private readonly IOrderExecutionService _orderExecutionService;
@@ -22,7 +21,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
             ILogger logger,
             IOrderTracker orderTracker,
             ITradeIdExtractor tradeIdExtractor,
-            ITradingMode tradingMode,
             IAccountProvider accountProvider,
             IInstrumentProvider instrumentProvider,
             IOrderExecutionService orderExecutionService)
@@ -31,7 +29,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _orderTracker = orderTracker ?? throw new ArgumentNullException(nameof(orderTracker));
             _tradeIdExtractor = tradeIdExtractor ?? throw new ArgumentNullException(nameof(tradeIdExtractor));
-            _tradingMode = tradingMode ?? throw new ArgumentNullException(nameof(tradingMode));
             _accountProvider = accountProvider ?? throw new ArgumentNullException(nameof(accountProvider));
             _instrumentProvider = instrumentProvider ?? throw new ArgumentNullException(nameof(instrumentProvider));
             _orderExecutionService = orderExecutionService ?? throw new ArgumentNullException(nameof(orderExecutionService));
@@ -55,13 +52,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                     throw new ArgumentException("trade_id is required");
                 if (newSl <= 0 && newTp <= 0)
                     throw new ArgumentException("At least one of stop_loss or take_profit must be provided");
-
-                if (_tradingMode.IsSimulation)
-                {
-                    _logger.Info($"SIMULATE MODIFY: {tradeId} {instrumentName} new SL={newSl} new TP={newTp} account={accountName ?? "default"}");
-                    _network.SendTradeLog(tradeId, "NT:SIMULATE", $"Simulated modify SL={newSl} TP={newTp}");
-                    return true;
-                }
 
                 var account = ResolveAccount(accountName);
                 if (account == null)
