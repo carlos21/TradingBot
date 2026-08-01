@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ChartSocketController } from '../../application/ChartSocketController.js';
 import { StreamingLifecycleController } from '../../application/StreamingLifecycleController.js';
+import { StreamingState as S } from '../../domain/streamingLifecycle.js';
 import { FakeSocket } from '../fakes/FakeSocket.js';
 import { FakeDomService } from '../fakes/FakeDomService.js';
 
@@ -214,6 +215,20 @@ describe('ChartSocketController', () => {
     const { socket, controller } = buildController(...Object.values(setupDocument()));
     socket.trigger('stream_status', { playing: false, live_mode: false });
     expect(controller.setPlaying).toHaveBeenCalledWith(false);
+  });
+
+  it('does not show overlay for playback-only stream_status without live_mode', () => {
+    const { doc, win } = setupDocument();
+    const { socket, lifecycle } = buildController(doc, win);
+    // Simulate CSV replay page load: status sync hides the overlay.
+    socket.trigger('stream_status', { playing: false, live_mode: false });
+    expect(lifecycle.getState()).toBe(S.INACTIVE);
+
+    // Runner emits start_stream, which broadcasts { playing: true } only.
+    socket.trigger('stream_status', { playing: true });
+
+    expect(lifecycle.getState()).toBe(S.INACTIVE);
+    expect(doc.getElementById('connectionOverlay').classList.contains('hidden')).toBe(true);
   });
 
   it('shows gateway started status and hides reconnect', () => {

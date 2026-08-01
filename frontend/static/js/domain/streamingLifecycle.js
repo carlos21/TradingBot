@@ -117,7 +117,12 @@ export function stateFromStatus(payload = {}) {
  */
 export function reduceStreamingState(state, event) {
   if (!event || !event.type) return state;
-  if (event.type === E.STATUS_SYNC) return stateFromStatus(event);
+  if (event.type === E.STATUS_SYNC) {
+    // Ignore partial stream_status payloads that only carry `playing`.
+    // A full status sync must include an explicit `live_mode` flag.
+    if (event.live_mode === undefined) return state;
+    return stateFromStatus(event);
+  }
   const transitions = TRANSITIONS[state];
   if (!transitions) return state;
   return transitions[event.type] || state;

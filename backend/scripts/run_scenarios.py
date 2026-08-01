@@ -7,6 +7,7 @@ import re
 import json
 import argparse
 import asyncio
+import bisect
 import csv
 import logging
 import sys
@@ -36,6 +37,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from app_factory import create_app, Repositories
 from src.infrastructure.data_sources.csv_datasource import CSVDataSource
 from src.financial_calc import FinancialCalc
+from src.domain.types import Direction
 
 # Use unified BE threshold from FinancialCalc
 BE_THRESHOLD = FinancialCalc.DEFAULT_BE_THRESHOLD_R  # Threshold for considering a trade as breakeven (in R)
@@ -367,6 +369,56 @@ def compute_trade_pnl(trade):
     r_multiple = pnl_pts / risk_pts if risk_pts > 0 else 0.0
     return direction, pnl_pts, risk_pts, pnl_pct, r_multiple
 
+
+def _apply_entry_slippage(trade, close, bar_times, bars, slippage):
+    """Return a (trade, close) copy with entry price shifted by slippage.
+
+    The shift direction is derived from the next bar after the entry bar:
+      - red bar (close < open)  → entry - slippage
+      - green bar (close >= open) → entry + slippage
+
+    Only used for simulation; the original captured trade is left untouched.
+    """
+    if slippage <= 0 or trade is None:
+        return trade, close
+
+    orig_entry = trade.get("entry") or trade.get("entry_price")
+    entry_time = trade.get("entry_time")
+    if orig_entry is None or entry_time is None:
+        return trade, close
+
+    idx = bisect.bisect_right(bar_times, entry_time)
+    if idx >= len(bars):
+        return trade, close
+    next_bar = bars[idx]
+
+    delta = -slippage if next_bar["close"] < next_bar["open"] else slippage
+    adj_entry = orig_entry + delta
+
+    adj_trade = dict(trade)
+    adj_trade["entry"] = adj_entry
+    adj_trade["entry_price"] = adj_entry
+
+    # Actual risk distance is from the slipped entry to the original stop price.
+    orig_sl = trade.get("orig_sl") or trade.get("stop_loss")
+    if orig_sl is not None:
+        adj_trade["risk"] = abs(adj_entry - orig_sl)
+
+    if close is None:
+        return adj_trade, close
+
+    # Recompute the R-multiple from the slipped entry. Drop stored PnL/fees so
+    # downstream calculators (mode_pnl, html_report) recompute using the new entry.
+    adj_close = dict(close)
+    direction = Direction.LONG if trade.get("type") == "long" else Direction.SHORT
+    adj_close["result"] = FinancialCalc.calculate_r_multiple(
+        direction, adj_entry, close["exit_price"], adj_trade["risk"]
+    )
+    adj_close.pop("pnl_usd", None)
+    adj_close.pop("fees", None)
+    return adj_trade, adj_close
+
+
 # -------------------------------------------------------------------------
 # Log Printer
 # -------------------------------------------------------------------------
@@ -581,8 +633,9 @@ def _ensure_server_running(
     return _start_test_server(args, csv_path, port)
 
 
-async def run_suite(args, scenarios: List[Dict], csv_path: Path):
+async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float = 0.0, bars: List[Dict] = None):
     quiet = args.quiet
+    bar_times = [b["time"] for b in bars] if bars else []
     if not quiet:
         print(f"🚀 Launching In-Memory Test Server with {csv_path}...")
 
@@ -698,7 +751,10 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                     continue
 
                 show_tsi = "true" if sc.get("show_tsi", False) else "false"
-                await page.goto(f"{base_url}/?start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}&show_tsi={show_tsi}", wait_until="domcontentloaded")
+                await page.goto(
+                    f"{base_url}/?pair={pair_name}&start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf={tf}&show_tsi={show_tsi}",
+                    wait_until="domcontentloaded",
+                )
 
                 try:
                     await page.wait_for_function("() => window.__chartReady === true", timeout=10000)
@@ -746,8 +802,8 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 stream_stop_at = max(end_ts, session_end_ts)
 
                 await page.evaluate(
-                    """(p) => window.chartViewer.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
-                    {"tf": tf, "start": start_ts, "end": stream_stop_at}
+                    """(p) => window.chartViewer.socket.emit('start_stream', { pair: p.pair, timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
+                    {"pair": pair_name, "tf": tf, "start": start_ts, "end": stream_stop_at}
                 )
 
                 try:
@@ -779,6 +835,15 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path):
                 trade      = captured_trades[0] if captured_trades else None
                 close_data = trade_pairs[0][1]  if trade_pairs   else None
                 status, reason, values = check_expectations(sc.get("expect"), captured_trades)
+
+                # Apply slippage simulation only to the pairs used for PnL accounting.
+                # Expectation checks and snapshots keep the original captured trades.
+                if slippage > 0:
+                    trade_pairs = [
+                        _apply_entry_slippage(t, c, bar_times, bars, slippage)
+                        for t, c in trade_pairs
+                    ]
+
                 summary_results.append({
                     "name": name,
                     "status": status,
@@ -1477,6 +1542,10 @@ def main():
                     help="Session end time HH:MM for closing open trades (default: 16:58)")
     ap.add_argument("--session-tz", type=str, default="America/New_York",
                     help="Timezone for session end time (default: America/New_York)")
+    ap.add_argument("--slippage", type=float, default=0.0,
+                    help="Simulate entry slippage in points (default: 0). "
+                         "Red next bar = entry - slippage, green next bar = entry + slippage. "
+                         "Only affects simulation reporting, not live trading.")
     args = ap.parse_args()
 
     # Snapshots are grouped per session: explicit --group, or derived from the
@@ -1515,7 +1584,20 @@ def main():
 
     if not args.quiet:
         print(f"✅ Found {len(scenarios)} scenarios. Starting runner...")
-    asyncio.run(run_suite(args, scenarios, Path(args.source_csv)))
+
+    # Pre-load 1m bars only when slippage simulation is requested.
+    bars = None
+    if args.slippage > 0:
+        bar_source = CSVDataSource(
+            pair="MNQ",
+            filename=str(Path(args.source_csv).resolve()),
+            initial_start_time=0,
+            initial_end_time=9999999999,
+            bars_per_second=1.0,
+        )
+        bars = bar_source._bars
+
+    asyncio.run(run_suite(args, scenarios, Path(args.source_csv), slippage=args.slippage, bars=bars))
 
 if __name__ == "__main__":
     main()
