@@ -358,7 +358,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             service.OnExecutionUpdate(stop, 19990, 2);
 
-            _network.Received(1).SendExitFill("t1", 19990, "SL", account: "Sim101", realizedPnl: -20);
+            _network.Received(1).SendExitFill("t1", 19990, "SL", account: "Sim101", realizedPnl: -20, commission: 0);
             _orderTracker.TryGetStopLoss("t1", out _).Should().BeFalse();
         }
 
@@ -379,7 +379,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             service.OnExecutionUpdate(stop, 19990, 2);
 
-            _network.Received(1).SendExitFill("t1", 19990, "SL", account: "Sim101", realizedPnl: -20, accountBalance: 54321);
+            _network.Received(1).SendExitFill("t1", 19990, "SL", account: "Sim101", realizedPnl: -20, commission: 0, accountBalance: 54321);
             _orderTracker.TryGetStopLoss("t1", out _).Should().BeFalse();
         }
 
@@ -398,8 +398,43 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             service.OnExecutionUpdate(target, 20040, 2);
 
-            _network.Received(1).SendExitFill("t1", 20040, "TP", account: "Sim101", realizedPnl: 40);
+            _network.Received(1).SendExitFill("t1", 20040, "TP", account: "Sim101", realizedPnl: 40, commission: 0);
             _orderTracker.TryGetTakeProfit("t1", out _).Should().BeFalse();
+        }
+
+        [Fact]
+        public void OnExecutionUpdate_ExitFill_IncludesEntryAndExitCommission()
+        {
+            var service = CreateService();
+            var account = TestDataFactory.Account();
+            var instrument = TestDataFactory.Instrument();
+            // The tracked entry (from OnOrderUpdate) carries no commission — NinjaTrader
+            // reports commission per execution, so it arrives with the entry fill event.
+            var trackedEntry = TestDataFactory.Order(name: "Entry_t1", instrument: instrument, side: OrderSide.Buy, state: OrderState.Filled, filled: 2, avgFill: 20000);
+            var entryExec = TestDataFactory.Order(name: "Entry_t1", instrument: instrument, side: OrderSide.Buy, state: OrderState.Filled, filled: 2, avgFill: 20000, commission: 2.50);
+            var stop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19990);
+            var target = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, state: OrderState.Working, limitPrice: 20020);
+            var stopFilled = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Filled, filled: 2, avgFill: 19990, commission: 1.75);
+
+            _orderTracker.TrackEntry("t1", trackedEntry);
+            _orderTracker.TrackStopLoss("t1", stop);
+            _orderTracker.TrackPendingEntry("t1", new PendingEntryInfo("long", 10, 2));
+            _accountProvider.GetAccount("Sim101").Returns(account);
+            _tradeIdExtractor.ExtractTradeId("Entry_t1").Returns("t1");
+            _tradeIdExtractor.ExtractTradeId("Stop_t1").Returns("t1");
+            _tradeIdExtractor.IsEntryOrder("Entry_t1").Returns(true);
+            _tradeIdExtractor.IsStopOrder("Stop_t1").Returns(true);
+            _orderExecutionService.CreateStopLossOrder(instrument, account, OrderSide.Sell, 2, 19990, "t1").Returns(stop);
+            _orderExecutionService.CreateTakeProfitOrder(instrument, account, OrderSide.Sell, 2, 20020, "t1").Returns(target);
+            _pnlCalculator.Calculate(Arg.Any<BrokerOrder>(), Arg.Any<BrokerOrder>()).Returns(new PnlResult(-20, 4.25));
+
+            service.OnExecutionUpdate(entryExec, 20000, 2);
+            service.OnExecutionUpdate(stopFilled, 19990, 2);
+
+            _pnlCalculator.Received(1).Calculate(
+                Arg.Is<BrokerOrder>(o => o.Name == "Entry_t1" && o.Commission == 2.50),
+                Arg.Is<BrokerOrder>(o => o.Name == "Stop_t1" && o.Commission == 1.75));
+            _network.Received(1).SendExitFill("t1", 19990, "SL", account: "Sim101", realizedPnl: -20, commission: 4.25, accountBalance: account.CashValue);
         }
 
         [Fact]
@@ -476,7 +511,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             service.OnExecutionUpdate(close, 20005, 2);
 
-            _network.Received(1).SendExitFill("t1", 20005, "CLOSE", account: "Sim101", realizedPnl: 10);
+            _network.Received(1).SendExitFill("t1", 20005, "CLOSE", account: "Sim101", realizedPnl: 10, commission: 0);
             _orderTracker.TryGetEntry("t1", out _).Should().BeFalse();
         }
 
@@ -495,7 +530,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
 
             service.OnExecutionUpdate(manualClose, 20005, 2);
 
-            _network.Received(1).SendExitFill("t1", 20005, "CLOSE", account: "Sim101", realizedPnl: 5);
+            _network.Received(1).SendExitFill("t1", 20005, "CLOSE", account: "Sim101", realizedPnl: 5, commission: 0);
         }
 
         [Fact]

@@ -193,7 +193,7 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
         private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         {
             _service?.OnExecutionUpdate(
-                BrokerOrderMapper.ToBrokerOrder(e.Execution.Order),
+                BrokerOrderMapper.ToBrokerOrder(e.Execution.Order, e.Execution.Commission),
                 e.Execution.Price,
                 e.Execution.Quantity);
         }

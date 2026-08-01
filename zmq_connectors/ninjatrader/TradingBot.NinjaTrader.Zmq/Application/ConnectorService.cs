@@ -29,6 +29,13 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         private readonly IConnectorClock _clock;
         private readonly ITradeIdExtractor _tradeIdExtractor;
 
+        /// <summary>
+        /// Accumulated entry commissions per trade. NinjaTrader reports commission
+        /// per execution (not per order), so partial entry fills are summed here and
+        /// applied to the tracked entry order when computing exit PnL.
+        /// </summary>
+        private readonly Dictionary<string, double> _entryCommissions = new Dictionary<string, double>();
+
         private Thread _commandThread;
         private Thread _heartbeatThread;
         private Thread _safetyThread;
@@ -900,7 +907,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                     // Remove the stale tracker entry so the safety guard stops checking it and
                     // the warning does not spam every safety-check cycle.
                     _logger.Debug($"SAFETY GUARD: Entry {tradeId} has no working stop-loss, but the account position is flat. Removing stale tracker entry.");
-                    _orderTracker.RemoveTrade(tradeId);
+                    UntrackTrade(tradeId);
                     ClearPendingAmendment(tradeId);
                     continue;
                 }
@@ -1059,7 +1066,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
                     if (order.OrderState == OrderState.Rejected && _tradeIdExtractor.IsEntryOrder(order.Name) && !string.IsNullOrEmpty(oid))
                     {
-                        _orderTracker.RemoveTrade(oid);
+                        UntrackTrade(oid);
                         ClearPendingAmendment(oid);
                     }
 
@@ -1068,7 +1075,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
                         if (_orderTracker.IsClosePending(oid))
                         {
                             _logger.Info($"[Close-Pending] Entry cancel confirmed for {oid} — cleaning up tracking");
-                            _orderTracker.RemoveTrade(oid);
+                            UntrackTrade(oid);
                             ClearPendingAmendment(oid);
                         }
                         else if (order.Filled > 0 && _orderTracker.TryGetPendingEntry(oid, out var pendingEntry))
@@ -1320,6 +1327,14 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         {
             string tradeId = _tradeIdExtractor.ExtractTradeId(order.Name);
 
+            // Commission is reported per execution; accumulate it so partial entry
+            // fills sum to the full entry commission for the exit PnL calculation.
+            if (!string.IsNullOrEmpty(tradeId) && order.Commission > 0)
+            {
+                lock (_entryCommissions)
+                    _entryCommissions[tradeId] = (_entryCommissions.TryGetValue(tradeId, out var c) ? c : 0) + order.Commission;
+            }
+
             // Protect the position as soon as any contracts are filled. Large market
             // orders can be filled in multiple partial executions; waiting for the
             // order to reach the Filled state leaves the position exposed.
@@ -1544,7 +1559,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             _network.SendExitFill(tradeId, fillPrice, "SL", account: order.AccountName, realizedPnl: pnl?.RealizedPnl, commission: pnl?.Commission, accountBalance: account?.CashValue);
             _network.SendTradeLog(tradeId, "NT:FILL", $"SL filled @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"} commission={pnl?.Commission.ToString("F2") ?? "n/a"}{balanceInfo}");
             CancelWorkingBracketOrders(tradeId, order.AccountName);
-            _orderTracker.RemoveTrade(tradeId);
+            UntrackTrade(tradeId);
             ClearPendingAmendment(tradeId);
         }
 
@@ -1576,7 +1591,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             _network.SendExitFill(tradeId, fillPrice, "TP", account: order.AccountName, realizedPnl: pnl?.RealizedPnl, commission: pnl?.Commission, accountBalance: account?.CashValue);
             _network.SendTradeLog(tradeId, "NT:FILL", $"TP filled @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"} commission={pnl?.Commission.ToString("F2") ?? "n/a"}{balanceInfo}");
             CancelWorkingBracketOrders(tradeId, order.AccountName);
-            _orderTracker.RemoveTrade(tradeId);
+            UntrackTrade(tradeId);
             ClearPendingAmendment(tradeId);
         }
 
@@ -1604,7 +1619,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             _network.SendExitFill(tradeId, fillPrice, "CLOSE", account: order.AccountName, realizedPnl: pnl?.RealizedPnl, commission: pnl?.Commission, accountBalance: account?.CashValue);
             _network.SendTradeLog(tradeId, "NT:FILL", $"Position closed @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"} commission={pnl?.Commission.ToString("F2") ?? "n/a"}{balanceInfo}");
             CancelWorkingBracketOrders(tradeId, order.AccountName);
-            _orderTracker.RemoveTrade(tradeId);
+            UntrackTrade(tradeId);
             ClearPendingAmendment(tradeId);
         }
 
@@ -1628,14 +1643,14 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
                 if (isOpposing)
                 {
-                    var pnl = _pnlCalculator.Calculate(entryOrder, closeOrder);
+                    var pnl = _pnlCalculator.Calculate(GetEntryForExit(tradeId), closeOrder);
                     var account = ResolveAccountForOrder(closeOrder);
                     var balanceInfo = account != null ? $" balance={account.CashValue:C2}" : "";
                     _logger.Success($"MANUAL CLOSE DETECTED: {tradeId} @ {fillPrice} via {closeOrder.Name} account={closeOrder.AccountName} pnl={pnl?.RealizedPnl.ToString("F2") ?? "n/a"}{balanceInfo}");
                     _network.SendExitFill(tradeId, fillPrice, "CLOSE", account: closeOrder.AccountName, realizedPnl: pnl?.RealizedPnl, commission: pnl?.Commission, accountBalance: account?.CashValue);
                     _network.SendTradeLog(tradeId, "NT:FILL", $"Manual position closed @ {fillPrice} PnL={pnl?.RealizedPnl.ToString("F2") ?? "n/a"} commission={pnl?.Commission.ToString("F2") ?? "n/a"}{balanceInfo}");
                     CancelWorkingBracketOrders(tradeId, closeOrder.AccountName);
-                    _orderTracker.RemoveTrade(tradeId);
+                    UntrackTrade(tradeId);
                     ClearPendingAmendment(tradeId);
                     return;
                 }
@@ -1691,7 +1706,7 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             }
             finally
             {
-                _orderTracker.RemoveTrade(tradeId);
+                UntrackTrade(tradeId);
                 ClearPendingAmendment(tradeId);
             }
         }
@@ -1796,7 +1811,21 @@ namespace TradingBot.NinjaTrader.Zmq.Application
         private BrokerOrder GetEntryForExit(string tradeId)
         {
             _orderTracker.TryGetEntry(tradeId, out var entry);
+            if (entry != null)
+            {
+                lock (_entryCommissions)
+                {
+                    if (_entryCommissions.TryGetValue(tradeId, out var commission))
+                        entry = entry.WithFill(entry.AverageFillPrice, entry.Filled, commission);
+                }
+            }
             return entry;
+        }
+
+        private void UntrackTrade(string tradeId)
+        {
+            _orderTracker.RemoveTrade(tradeId);
+            lock (_entryCommissions) _entryCommissions.Remove(tradeId);
         }
 
         private (double sl, double tp) CalculateSlTp(double fillPrice, string direction, double slPoints, double rrRatio)
