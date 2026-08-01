@@ -33,8 +33,8 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
             _window = new Window
             {
                 Title = "Liquid ZMQ Connector",
-                Width = 550,
-                Height = 450,
+                Width = 800,
+                Height = 650,
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
                 Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
             };
