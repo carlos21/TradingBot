@@ -3,10 +3,16 @@
 //|  ZeroMQ connector for MetaTrader 5 → Python TradingBot           |
 //|  SOLID architecture, clean dependency injection, feature parity  |
 //|  with NinjaTrader connector.                                     |
+//|                                                                  |
+//|  v3.0: protocol alignment with the current Python↔platform ZMQ  |
+//|  protocol — subscribe/unsubscribe/disconnect commands, account   |
+//|  validation (terminal login), per-instrument order routing,     |
+//|  refresh_start + order_rejected messages, connection watchdog    |
+//|  with socket recovery, minimal connect handshake (no account).   |
 //+------------------------------------------------------------------+
 #property copyright "TradingBot"
 #property link      ""
-#property version   "2.10"
+#property version   "3.0"
 #property strict
 
 #include <Zmq/Zmq.mqh>
@@ -15,19 +21,28 @@
 #include "Domain/Contracts.mqh"
 #include "Domain/MessageTypes.mqh"
 #include "Domain/ValueObjects.mqh"
+#include "Domain/PlatformApi.mqh"
 #include "Domain/TickRateLimiter.mqh"
 #include "Infrastructure/ConfigLoader.mqh"
 #include "Infrastructure/Logger.mqh"
 #include "Infrastructure/Serializers.mqh"
 #include "Infrastructure/OrderTracking.mqh"
+#include "Infrastructure/MqlPlatformApi.mqh"
 #include "Application/ZmqNetwork.mqh"
 #include "Application/CommandDispatcher.mqh"
 #include "Application/E2ETestRunner.mqh"
 #include "Application/HistoryProvider.mqh"
+#include "Application/SubscriptionManager.mqh"
+#include "Application/BrokerSync.mqh"
+#include "Application/ConnectionWatchdog.mqh"
+#include "Application/MarketStreamer.mqh"
 #include "Commands/OrderOpenHandler.mqh"
 #include "Commands/OrderCloseHandler.mqh"
 #include "Commands/OrderModifyHandler.mqh"
 #include "Commands/RefreshRequestHandler.mqh"
+#include "Commands/SubscribeHandler.mqh"
+#include "Commands/UnsubscribeHandler.mqh"
+#include "Commands/DisconnectHandler.mqh"
 #include "Commands/TestStartHandler.mqh"
 #include "UI/ConnectorDialog.mqh"
 
@@ -49,15 +64,21 @@ IMessageSerializer *_serializer;
 IOrderTracker      *_orderTracker;
 IZmqNetwork        *_network;
 ICommandDispatcher *_dispatcher;
-IRateLimiter       *_tickRateLimiter;
-IRateLimiter       *_partialBarRateLimiter;
 IHistoryProvider   *_historyProvider;
+SubscriptionManager *_subscriptions;
+PlatformApis       *_apis;
+BrokerSync         *_brokerSync;
+ConnectionWatchdog *_watchdog;
+MarketStreamer     *_streamer;
 
 //--- Command handlers (tracked for cleanup)
 OrderOpenHandler     *_handlerOpen;
 OrderCloseHandler    *_handlerClose;
 OrderModifyHandler   *_handlerModify;
 RefreshRequestHandler *_handlerRefresh;
+SubscribeHandler     *_handlerSubscribe;
+UnsubscribeHandler   *_handlerUnsubscribe;
+DisconnectHandler    *_handlerDisconnect;
 TestStartHandler     *_handlerTest;
 
 //--- State
@@ -65,22 +86,17 @@ bool               _connected = false;
 bool               g_simulateTrades = false;   // Simulate mode: skip broker, send fake fills
 bool               g_e2eTestRunning = false;   // Forces simulate mode during E2E tests
 long               _seqNum = 0;
-datetime           _lastBarTime = 0;
 int                _heartbeatCounter = 0;
 
+//--- Deferred disconnect (Python 'disconnect' command)
+long               g_disconnectRequestTick = 0;
+
 //--- Stats
-long               _ticksSent = 0;
-long               _barsSent = 0;
-long               _partialBarsSent = 0;
 long               _commandsReceived = 0;
 
 //--- Duplicate detection
 long               _processedSeqNums[];
 const int          MAX_TRACKED_SEQ_NUMS = 1000;
-
-//--- Deal tracking (for OnTrade fill detection)
-ulong              _processedDeals[];
-const int          MAX_TRACKED_DEALS = 1000;
 
 //--- Pending refresh flag
 bool               _pendingHistoryRefresh = false;
@@ -130,10 +146,13 @@ int OnInit()
    // 2. Create logger
    _logger = new MetaTraderLogger("[ZMQ]");
 
-   // 3. Clean up any orphaned dialog from previous runs (Destroy can fail during OnDeinit)
+   // 3. Create platform API seams (real MQL implementations)
+   _apis = MqlPlatformApis::Create();
+
+   // 4. Clean up any orphaned dialog from previous runs (Destroy can fail during OnDeinit)
    ForceRemoveOrphanedDialog();
-   
-   // 4. Create and show dialog
+
+   // 5. Create and show dialog
    g_dialog = new CConnectorDialog();
    if(!g_dialog.Create(0, "TradingBotZmqDialog", 0, 100, 100, 660, 460))
    {
@@ -171,14 +190,14 @@ void OnTick()
 {
    if(!_connected) return;
 
-   // 1. Send tick (rate-limited)
-   SendTickIfAllowed();
+   // 1. Stream ticks/bars/partials for all subscribed symbols
+   _streamer.StreamAll();
 
-   // 2. Send bar on new minute + partial bar
-   SendBarIfNew();
-
-   // 3. Poll for commands (non-blocking)
+   // 2. Poll for commands (non-blocking)
    PollCommands();
+
+   // 3. Handle deferred disconnect (Python 'disconnect' command)
+   HandleDeferredDisconnect();
 
    // 4. Handle pending history refresh
    if(_pendingHistoryRefresh)
@@ -190,9 +209,9 @@ void OnTick()
 
    // 5. Update panel periodically
    static datetime lastPanelUpdate = 0;
-   if(TimeCurrent() - lastPanelUpdate >= 1)
+   if(_apis.time.Now() - lastPanelUpdate >= 1)
    {
-      lastPanelUpdate = TimeCurrent();
+      lastPanelUpdate = _apis.time.Now();
       UpdatePanel();
    }
 }
@@ -207,12 +226,20 @@ void OnTimer()
    // Poll for commands even when market is closed (OnTick not firing)
    PollCommands();
 
+   // Handle deferred disconnect (Python 'disconnect' command)
+   HandleDeferredDisconnect();
+
+   // Stream subscribed symbols (OnTick only fires for the chart symbol)
+   _streamer.StreamAll();
+
    _heartbeatCounter++;
    if(_heartbeatCounter >= _config.heartbeatSec)
    {
       _heartbeatCounter = 0;
       _network.SendHeartbeat("metatrader5", "ok");
    }
+
+   _watchdog.OnTimerTick();
 }
 
 //+------------------------------------------------------------------+
@@ -221,7 +248,7 @@ void OnTimer()
 void OnTrade()
 {
    if(!_connected) return;
-   ProcessNewDeals();
+   _brokerSync.ProcessNewDeals();
 }
 
 //+------------------------------------------------------------------+
@@ -245,9 +272,9 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
          return;
       }
    }
-   
+
    if(g_dialog == NULL) return;
-   
+
    // Forward all chart events to the dialog for processing
    g_dialog.ChartEvent(id, lparam, dparam, sparam);
 }
@@ -259,7 +286,7 @@ void OnChartEvent(const int id, const long &lparam, const double &dparam, const 
 void Connect()
 {
    if(_connected) return;
-   
+
    if(_logger != NULL)
       _logger.Info("Starting ZeroMQ connection...");
 
@@ -267,9 +294,12 @@ void Connect()
    _serializer = new JsonMessageSerializer(_logger);
    _orderTracker = new OrderStateManager();
    _network = new ZmqNetwork(_config, _serializer, _logger);
-   _tickRateLimiter = new TickRateLimiter(_config.maxTicksPerSecond);
-   _partialBarRateLimiter = new TickRateLimiter(1); // 1 partial bar/sec
-   _historyProvider = new HistoryProvider(_network, _logger, _config, _Symbol);
+   _historyProvider = new HistoryProvider(_network, _logger, _config, _config.pair, _apis.marketData, _apis.time);
+   _subscriptions = new SubscriptionManager(_logger, _config.maxTicksPerSecond, _apis.symbol, _apis.time);
+   _brokerSync = new BrokerSync(_apis.position, _apis.dealHistory, _apis.account, _apis.time,
+                                _orderTracker, _network, _logger, _config.magicNumber);
+   _streamer = new MarketStreamer(_subscriptions, _network, _apis.symbol, _apis.marketData);
+   _watchdog = new ConnectionWatchdog(_network, _brokerSync, _subscriptions, _logger, _config, _apis.symbol);
 
    // Connect ZMQ
    if(!_network.Start())
@@ -280,16 +310,23 @@ void Connect()
       return;
    }
 
-   // Send connect handshake (minimal — account name not critical, mirroring NinjaTrader)
-   _network.SendConnect("metatrader5", _config.platformVersion, IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)), _Symbol);
+   // Send connect handshake (minimal — no account field, mirroring NinjaTrader)
+   _network.SendConnect("metatrader5", _config.platformVersion, _config.pair);
    if(_logger != NULL)
       _logger.Success("Connected to Python TradingBot via ZeroMQ");
 
+   // Auto-subscribe the configured pair as a bootstrap so streaming starts
+   // immediately. The source of truth after connect is subscribe/unsubscribe
+   // commands — Python re-drives subscribe for its instrument anyway (the
+   // SubscriptionManager is idempotent).
+   if(StringLen(_config.pair) > 0)
+      _subscriptions.Add(_config.pair);
+
    // Restore order tracking from broker (crash recovery)
-   RestoreFromBroker();
+   _brokerSync.RestoreFromBroker();
 
    // Report positions to Python (source of truth sync)
-   ReportPositionsToPython();
+   _brokerSync.ReportPositionsToPython();
 
    // Setup command dispatcher
    // NOTE: Historical data is NOT sent automatically on connect.
@@ -304,16 +341,22 @@ void Connect()
       simulate = true;
    g_simulateTrades = simulate;
 
-   _handlerOpen = new OrderOpenHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol, simulate);
-   _handlerClose = new OrderCloseHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol, simulate);
-   _handlerModify = new OrderModifyHandler(_network, _logger, _orderTracker, _config.magicNumber, _Symbol, simulate);
-   _handlerRefresh = new RefreshRequestHandler(_network, _logger, _historyProvider);
+   _handlerOpen = new OrderOpenHandler(_network, _logger, _orderTracker, _config, _apis, simulate);
+   _handlerClose = new OrderCloseHandler(_network, _logger, _orderTracker, _config, _apis, simulate);
+   _handlerModify = new OrderModifyHandler(_network, _logger, _orderTracker, _config, _apis, simulate);
+   _handlerRefresh = new RefreshRequestHandler(_network, _logger, _historyProvider, _apis);
+   _handlerSubscribe = new SubscribeHandler(_network, _logger, _subscriptions);
+   _handlerUnsubscribe = new UnsubscribeHandler(_network, _logger, _subscriptions);
+   _handlerDisconnect = new DisconnectHandler(_network, _logger);
    _handlerTest = new TestStartHandler(_network, _logger);
 
    _dispatcher.Register(_handlerOpen);
    _dispatcher.Register(_handlerClose);
    _dispatcher.Register(_handlerModify);
    _dispatcher.Register(_handlerRefresh);
+   _dispatcher.Register(_handlerSubscribe);
+   _dispatcher.Register(_handlerUnsubscribe);
+   _dispatcher.Register(_handlerDisconnect);
    _dispatcher.Register(_handlerTest);
 
    // Start heartbeat timer (1-second granularity)
@@ -321,14 +364,14 @@ void Connect()
 
    _connected = true;
    if(_logger != NULL)
-      _logger.Info("Command dispatcher ready. Handlers: open, close, modify, refresh, test");
+      _logger.Info("Command dispatcher ready. Handlers: open, close, modify, refresh, subscribe, unsubscribe, disconnect, test");
    UpdatePanel();
 }
 
 void Disconnect()
 {
    if(!_connected && _network == NULL) return;
-   
+
    if(_logger != NULL)
       _logger.Info("Disconnecting...");
 
@@ -337,30 +380,31 @@ void Disconnect()
    Sleep(100); // Let in-flight sends drain
 
    // Handlers (must be deleted before dispatcher)
-   if(_handlerOpen != NULL)     { delete _handlerOpen; _handlerOpen = NULL; }
-   if(_handlerClose != NULL)    { delete _handlerClose; _handlerClose = NULL; }
-   if(_handlerModify != NULL)   { delete _handlerModify; _handlerModify = NULL; }
-   if(_handlerRefresh != NULL)  { delete _handlerRefresh; _handlerRefresh = NULL; }
-   if(_handlerTest != NULL)     { delete _handlerTest; _handlerTest = NULL; }
+   if(_handlerOpen != NULL)        { delete _handlerOpen; _handlerOpen = NULL; }
+   if(_handlerClose != NULL)       { delete _handlerClose; _handlerClose = NULL; }
+   if(_handlerModify != NULL)      { delete _handlerModify; _handlerModify = NULL; }
+   if(_handlerRefresh != NULL)     { delete _handlerRefresh; _handlerRefresh = NULL; }
+   if(_handlerSubscribe != NULL)   { delete _handlerSubscribe; _handlerSubscribe = NULL; }
+   if(_handlerUnsubscribe != NULL) { delete _handlerUnsubscribe; _handlerUnsubscribe = NULL; }
+   if(_handlerDisconnect != NULL)  { delete _handlerDisconnect; _handlerDisconnect = NULL; }
+   if(_handlerTest != NULL)        { delete _handlerTest; _handlerTest = NULL; }
 
    if(_dispatcher != NULL)      { delete _dispatcher; _dispatcher = NULL; }
+   if(_watchdog != NULL)        { delete _watchdog; _watchdog = NULL; }
+   if(_streamer != NULL)        { delete _streamer; _streamer = NULL; }
+   if(_brokerSync != NULL)      { delete _brokerSync; _brokerSync = NULL; }
+   if(_subscriptions != NULL)   { delete _subscriptions; _subscriptions = NULL; }
    if(_historyProvider != NULL) { delete _historyProvider; _historyProvider = NULL; }
    if(_network != NULL)         { _network.Dispose(); delete _network; _network = NULL; }
    if(_orderTracker != NULL)    { delete _orderTracker; _orderTracker = NULL; }
    if(_serializer != NULL)      { delete _serializer; _serializer = NULL; }
-   if(_tickRateLimiter != NULL) { delete _tickRateLimiter; _tickRateLimiter = NULL; }
-   if(_partialBarRateLimiter != NULL) { delete _partialBarRateLimiter; _partialBarRateLimiter = NULL; }
 
    // Reset stats
-   _ticksSent = 0;
-   _barsSent = 0;
-   _partialBarsSent = 0;
    _commandsReceived = 0;
    _heartbeatCounter = 0;
    _seqNum = 0;
-   _lastBarTime = 0;
+   g_disconnectRequestTick = 0;
    ArrayResize(_processedSeqNums, 0);
-   ArrayResize(_processedDeals, 0);
    _pendingHistoryRefresh = false;
 
    if(_logger != NULL)
@@ -382,10 +426,10 @@ void TestConnection()
          _logger.Warning("Not connected. Click Connect first.");
       return;
    }
-   
+
    if(_logger != NULL)
       _logger.Info("=== TEST CONNECTION ===");
-   
+
    bool success = _network.SendTestPingWithResponse(2000);
    if(success)
    {
@@ -407,74 +451,38 @@ void RunE2ETests()
          _logger.Warning("Not connected. Click Connect first.");
       return;
    }
-   
+
    if(g_dialog != NULL)
       g_dialog.SetButtonEnabled(2, false);
-   
+
    // Force simulate mode during E2E tests (safety)
    g_e2eTestRunning = true;
-   
-   E2ETestRunner runner(_network, _logger);
+
+   E2ETestRunner runner(_network, _logger, _apis.account);
    runner.RunAllScenarios();
-   
+
    // Reset test flag
    g_e2eTestRunning = false;
-   
+
    if(g_dialog != NULL)
       g_dialog.SetButtonEnabled(2, true);
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Market Data
+// Deferred Disconnect (Python 'disconnect' command)
 // ═══════════════════════════════════════════════════════════════════
 
-void SendTickIfAllowed()
+// Python's disconnect command is ACKed first; teardown happens here ~100ms
+// later so the ACK goes out and a deliberate stop never triggers recovery.
+void HandleDeferredDisconnect()
 {
-   if(_tickRateLimiter == NULL || !_tickRateLimiter.TryAllow())
-      return;
+   if(g_disconnectRequestTick == 0) return;
+   if(_apis.time.TickCount() - g_disconnectRequestTick < 100) return;
+   g_disconnectRequestTick = 0;
 
-   MqlTick tick;
-   if(!SymbolInfoTick(_Symbol, tick))
-      return;
-
-   double price = (tick.last > 0) ? tick.last : tick.bid;
-   _network.SendTick(_Symbol, price, tick.volume, tick.time);
-   _ticksSent++;
-}
-
-void SendBarIfNew()
-{
-   datetime currentBarTime = iTime(_Symbol, PERIOD_M1, 0);
-   if(currentBarTime == 0) return;
-
-   // New bar started — send the completed previous bar
-   if(currentBarTime > _lastBarTime && _lastBarTime != 0)
-   {
-      MqlRates rates[1];
-      if(CopyRates(_Symbol, PERIOD_M1, 1, 1, rates) == 1)
-      {
-         _network.SendBar(_Symbol, rates[0].time, rates[0].open, rates[0].high,
-                          rates[0].low, rates[0].close, rates[0].tick_volume, false);
-         _barsSent++;
-      }
-   }
-
-   // Send partial (forming) bar at 1/sec rate limit
-   if(_lastBarTime != 0 && currentBarTime == _lastBarTime)
-   {
-      if(_partialBarRateLimiter != NULL && _partialBarRateLimiter.TryAllow())
-      {
-         MqlRates rates[1];
-         if(CopyRates(_Symbol, PERIOD_M1, 0, 1, rates) == 1)
-         {
-            _network.SendBar(_Symbol, rates[0].time, rates[0].open, rates[0].high,
-                             rates[0].low, rates[0].close, rates[0].tick_volume, true);
-            _partialBarsSent++;
-         }
-      }
-   }
-
-   _lastBarTime = currentBarTime;
+   if(_logger != NULL)
+      _logger.Info("Python requested disconnect — tearing down quietly (no recovery)");
+   Disconnect();
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -555,200 +563,14 @@ bool IsDuplicateCommand(long seqNum)
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// Crash Recovery & Position Sync
-// ═══════════════════════════════════════════════════════════════════
-
-void RestoreFromBroker()
-{
-   int total = PositionsTotal();
-   int restored = 0;
-
-   for(int i = 0; i < total; i++)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket == 0) continue;
-      if(PositionGetInteger(POSITION_MAGIC) != (long)_config.magicNumber) continue;
-
-      string tradeId = PositionGetString(POSITION_COMMENT);
-      if(StringLen(tradeId) == 0) tradeId = "mt5_" + IntegerToString(ticket);
-
-      double slPoints = 0;
-      double rrRatio = 1.0;
-      _orderTracker.TrackEntry(tradeId, ticket, slPoints, rrRatio);
-      restored++;
-   }
-
-   if(restored > 0)
-      _logger.Info("[Sync] Restored " + IntegerToString(restored) + " position(s) from broker");
-}
-
-void ReportPositionsToPython()
-{
-   int total = PositionsTotal();
-   JSONValue *positions = new JSONValue(JSON_ARRAY);
-   JSONValue *untracked = new JSONValue(JSON_ARRAY);
-   int count = 0;
-   int untrackedCount = 0;
-
-   // Build set of tracked trade IDs for orphan detection
-   string trackedTradeIds[];
-   if(_orderTracker != NULL)
-      _orderTracker.GetActiveTradeIds(trackedTradeIds);
-
-   for(int i = 0; i < total; i++)
-   {
-      ulong ticket = PositionGetTicket(i);
-      if(ticket == 0) continue;
-      if(PositionGetInteger(POSITION_MAGIC) != (long)_config.magicNumber) continue;
-
-      string tradeId = PositionGetString(POSITION_COMMENT);
-      if(StringLen(tradeId) == 0) tradeId = "mt5_" + IntegerToString(ticket);
-
-      JSONValue *pos = new JSONValue(JSON_OBJECT);
-      pos["trade_id"]   = new JSONValue(tradeId);
-      pos["direction"]  = new JSONValue((PositionGetInteger(POSITION_TYPE) == POSITION_TYPE_BUY) ? "long" : "short");
-      pos["entry_price"]= new JSONValue(PositionGetDouble(POSITION_PRICE_OPEN));
-      pos["stop_loss"]  = new JSONValue(PositionGetDouble(POSITION_SL));
-      pos["take_profit"]= new JSONValue(PositionGetDouble(POSITION_TP));
-      pos["quantity"]   = new JSONValue(PositionGetDouble(POSITION_VOLUME));
-
-      // Check if this trade is tracked (orphan detection)
-      bool isTracked = false;
-      for(int j = 0; j < ArraySize(trackedTradeIds); j++)
-      {
-         if(trackedTradeIds[j] == tradeId)
-         {
-            isTracked = true;
-            break;
-         }
-      }
-
-      if(isTracked)
-      {
-         positions.Add(pos);
-         count++;
-      }
-      else
-      {
-         untracked.Add(pos);
-         untrackedCount++;
-      }
-      // NOTE: Add() takes ownership — do NOT delete pos
-   }
-
-   _network.SendPositionSync(positions, untracked);
-   // NOTE: SendPositionSync puts arrays into a payload tree which is then deleted.
-   // Do NOT delete positions or untracked here.
-
-   if(count > 0 || untrackedCount > 0)
-   {
-      if(_logger != NULL)
-         _logger.Info("[Sync] Reported " + IntegerToString(count) + " position(s) to Python (broker is source of truth)");
-      if(_logger != NULL && untrackedCount > 0)
-         _logger.Warning("[Sync] Found " + IntegerToString(untrackedCount) + " untracked position(s) on broker");
-   }
-}
-
-// ═══════════════════════════════════════════════════════════════════
-// Fill Detection (OnTrade)
-// ═══════════════════════════════════════════════════════════════════
-
-void ProcessNewDeals()
-{
-   if(_network == NULL || _logger == NULL) return;
-
-   // Load recent history (last hour)
-   datetime from = TimeCurrent() - 3600;
-   if(from < 0) from = 0;
-   HistorySelect(from, TimeCurrent());
-
-   int total = HistoryDealsTotal();
-   for(int i = total - 1; i >= 0; i--)
-   {
-      ulong ticket = HistoryDealGetTicket(i);
-      if(ticket == 0) continue;
-      if(IsDealProcessed(ticket)) continue;
-
-      // Check magic number
-      ulong magic = HistoryDealGetInteger(ticket, DEAL_MAGIC);
-      if(magic != _config.magicNumber) continue;
-
-      // Process this deal
-      ENUM_DEAL_ENTRY entry = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(ticket, DEAL_ENTRY);
-      ENUM_DEAL_REASON reason = (ENUM_DEAL_REASON)HistoryDealGetInteger(ticket, DEAL_REASON);
-      double price = HistoryDealGetDouble(ticket, DEAL_PRICE);
-      string comment = HistoryDealGetString(ticket, DEAL_COMMENT);
-      ulong orderTicket = HistoryDealGetInteger(ticket, DEAL_ORDER);
-
-      if(entry == DEAL_ENTRY_IN)
-      {
-         // Entry fill
-         double sl = 0, tp = 0;
-         // Try to get SL/TP from the associated order
-         if(HistoryOrderSelect(orderTicket))
-         {
-            sl = HistoryOrderGetDouble(orderTicket, ORDER_SL);
-            tp = HistoryOrderGetDouble(orderTicket, ORDER_TP);
-         }
-         _network.SendEntryFill(comment, price, sl, tp);
-         _network.SendTradeLog(comment, "MT5:FILL", "Entry filled @ " + DoubleToString(price, 5));
-         _logger.Success("ENTRY FILL: " + comment + " @ " + DoubleToString(price, 5));
-      }
-      else if(entry == DEAL_ENTRY_OUT || entry == DEAL_ENTRY_OUT_BY)
-      {
-         // Exit fill
-         string resultType = "CLOSE";
-         if(reason == DEAL_REASON_SL) resultType = "SL";
-         else if(reason == DEAL_REASON_TP) resultType = "TP";
-
-         _network.SendExitFill(comment, price, resultType);
-         _network.SendTradeLog(comment, "MT5:FILL", resultType + " filled @ " + DoubleToString(price, 5));
-         _logger.Info("EXIT FILL (" + resultType + "): " + comment + " @ " + DoubleToString(price, 5));
-
-         // Clean up tracking
-         if(_orderTracker != NULL)
-            _orderTracker.RemoveTrade(comment);
-      }
-
-      MarkDealProcessed(ticket);
-   }
-}
-
-bool IsDealProcessed(ulong ticket)
-{
-   int size = ArraySize(_processedDeals);
-   for(int i = 0; i < size; i++)
-      if(_processedDeals[i] == ticket)
-         return true;
-   return false;
-}
-
-void MarkDealProcessed(ulong ticket)
-{
-   int size = ArraySize(_processedDeals);
-   if(size >= MAX_TRACKED_DEALS)
-   {
-      // Shift array left (FIFO)
-      for(int i = 1; i < size; i++)
-         _processedDeals[i - 1] = _processedDeals[i];
-      _processedDeals[size - 1] = ticket;
-   }
-   else
-   {
-      ArrayResize(_processedDeals, size + 1);
-      _processedDeals[size] = ticket;
-   }
-}
-
-// ═══════════════════════════════════════════════════════════════════
 // UI / Status Panel
 // ═══════════════════════════════════════════════════════════════════
 
 void UpdatePanel()
 {
-   string stats = "Ticks: " + IntegerToString(_ticksSent) +
-                  " | Bars: " + IntegerToString(_barsSent) +
-                  " | Partial: " + IntegerToString(_partialBarsSent) + "\n" +
+   string stats = "Ticks: " + IntegerToString(_streamer != NULL ? _streamer.TicksSent() : 0) +
+                  " | Bars: " + IntegerToString(_streamer != NULL ? _streamer.BarsSent() : 0) +
+                  " | Partial: " + IntegerToString(_streamer != NULL ? _streamer.PartialBarsSent() : 0) + "\n" +
                   "Cmds: " + IntegerToString(_commandsReceived) +
                   " | Trades: " + IntegerToString(_orderTracker != NULL ? _orderTracker.GetActiveCount() : 0);
 
@@ -776,7 +598,7 @@ void ForceRemoveOrphanedDialog()
    long chartId = ChartID();
    // First try batch delete
    ObjectsDeleteAll(chartId, "TradingBotZmqDialog", -1, -1);
-   
+
    // Then individually hunt down any survivors
    for(int sub = 0; sub <= 1; sub++)
    {
@@ -814,5 +636,6 @@ void Cleanup(const int reason = 0)
    }
 
    if(_logger != NULL) { delete _logger; _logger = NULL; }
+   if(_apis != NULL)   { MqlPlatformApis::Destroy(_apis); _apis = NULL; }
    if(_config != NULL) { delete _config; _config = NULL; }
 }

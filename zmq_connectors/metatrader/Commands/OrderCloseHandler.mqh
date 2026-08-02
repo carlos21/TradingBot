@@ -1,12 +1,16 @@
 //+------------------------------------------------------------------+
 //|                                 Commands/OrderCloseHandler.mqh   |
 //|  Handles order_close command: close open position.               |
+//|  Validates the payload account (single-account terminal) and     |
+//|  resolves the broker symbol from the required 'instrument' field.|
 //+------------------------------------------------------------------+
 #property strict
 
 #include "../Domain/Contracts.mqh"
 #include "../Domain/MessageTypes.mqh"
 #include "../Domain/ValueObjects.mqh"
+#include "../Domain/PlatformApi.mqh"
+#include "../Domain/AccountValidator.mqh"
 
 //+------------------------------------------------------------------+
 //| OrderCloseHandler — closes position by trade_id                  |
@@ -14,21 +18,21 @@
 class OrderCloseHandler : public ICommandHandler
 {
 private:
-   IZmqNetwork   *m_network;
-   ILogger       *m_logger;
-   IOrderTracker *m_tracker;
-   ulong          m_magicNumber;
-   string         m_symbol;
-   bool           m_simulate;
+   IZmqNetwork      *m_network;
+   ILogger          *m_logger;
+   IOrderTracker    *m_tracker;
+   ZmqConfiguration *m_config;
+   PlatformApis     *m_apis;
+   bool              m_simulate;
 
 public:
-   OrderCloseHandler(IZmqNetwork *network, ILogger *logger, IOrderTracker *tracker, ulong magicNumber, string symbol, bool simulate = false)
+   OrderCloseHandler(IZmqNetwork *network, ILogger *logger, IOrderTracker *tracker, ZmqConfiguration *config, PlatformApis *apis, bool simulate = false)
    {
       m_network = network;
       m_logger = logger;
       m_tracker = tracker;
-      m_magicNumber = magicNumber;
-      m_symbol = symbol;
+      m_config = config;
+      m_apis = apis;
       m_simulate = simulate;
    }
 
@@ -49,11 +53,43 @@ public:
          return false;
       }
 
-      string tradeId = envelope.PayloadString("trade_id");
+      string tradeId    = envelope.PayloadString("trade_id");
+      string instrument = envelope.PayloadString("instrument");
+      string account    = envelope.PayloadString("account");
+
       if(StringLen(tradeId) == 0)
       {
          if(m_logger != NULL)
             m_logger.Error("OrderCloseHandler: missing trade_id");
+         return false;
+      }
+
+      // instrument is REQUIRED — it carries the MT5 broker symbol
+      if(StringLen(instrument) == 0)
+      {
+         if(m_logger != NULL)
+            m_logger.Error("OrderCloseHandler: instrument is required");
+         m_network.SendError("metatrader5", "order_close_failed", "instrument is required in order_close payload");
+         return false;
+      }
+
+      // Account validation (single-account terminal — never silently fall back)
+      string resolvedAccount;
+      if(!AccountValidator::Validate(m_apis.account, account, resolvedAccount))
+      {
+         string msg = "account '" + account + "' does not match terminal account '" + resolvedAccount + "'";
+         if(m_logger != NULL)
+            m_logger.Error("OrderCloseHandler: " + msg);
+         m_network.SendError("metatrader5", "account_mismatch", msg);
+         return false;
+      }
+
+      // Resolve the symbol at the broker — fail if it does not exist
+      if(!m_apis.symbol.Select(instrument))
+      {
+         if(m_logger != NULL)
+            m_logger.Error("OrderCloseHandler: unknown symbol '" + instrument + "'");
+         m_network.SendError("metatrader5", "order_close_failed", "unknown symbol: " + instrument);
          return false;
       }
 
@@ -62,7 +98,7 @@ public:
       {
          if(m_logger != NULL)
             m_logger.Info("🧪 SIMULATE CLOSE: " + tradeId);
-         m_network.SendExitFill(tradeId, SymbolInfoDouble(m_symbol, SYMBOL_BID), "CLOSE");
+         m_network.SendExitFill(tradeId, m_apis.symbol.Bid(instrument), "CLOSE", 0, resolvedAccount);
          m_network.SendTradeLog(tradeId, "MT5:SIMULATE", "Simulated exit fill (close)");
          return true;
       }
@@ -110,7 +146,7 @@ public:
          return true;
       }
 
-      if(!PositionSelectByTicket(ticket))
+      if(!m_apis.position.SelectByTicket(ticket))
       {
          if(m_logger != NULL)
             m_logger.Warning("OrderCloseHandler: PositionSelectByTicket failed for " + tradeId + " — may already be closed");
@@ -120,38 +156,40 @@ public:
       }
 
       // Build close request
-      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE);
+      ENUM_POSITION_TYPE posType = (ENUM_POSITION_TYPE)m_apis.position.Type();
       ENUM_ORDER_TYPE closeType = (posType == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
       double closePrice = (closeType == ORDER_TYPE_SELL)
-                           ? SymbolInfoDouble(m_symbol, SYMBOL_BID)
-                           : SymbolInfoDouble(m_symbol, SYMBOL_ASK);
-      double volume = PositionGetDouble(POSITION_VOLUME);
+                           ? m_apis.symbol.Bid(instrument)
+                           : m_apis.symbol.Ask(instrument);
+      double volume = m_apis.position.Volume();
 
       MqlTradeRequest request = {};
-      MqlTradeResult result = {};
+      TradeResult result;
       request.action   = TRADE_ACTION_DEAL;
       request.position = ticket;
-      request.symbol   = m_symbol;
+      request.symbol   = instrument;
       request.volume   = volume;
       request.type     = closeType;
       request.price    = closePrice;
       request.deviation = 10;
-      request.magic    = m_magicNumber;
+      request.magic    = m_config.magicNumber;
 
       if(m_logger != NULL)
-         m_logger.Info("Closing " + tradeId + " vol=" + DoubleToString(volume, 2) + " @ " + DoubleToString(closePrice, 5));
+         m_logger.Info("Closing " + tradeId + " " + instrument + " vol=" + DoubleToString(volume, 2) + " @ " + DoubleToString(closePrice, 5) + " account=" + resolvedAccount);
 
-      if(!OrderSend(request, result))
+      if(!m_apis.trade.Send(request, result))
       {
-         int err = GetLastError();
+         int err = result.error;
          if(m_logger != NULL)
             m_logger.Error("Close OrderSend failed for " + tradeId + " err=" + IntegerToString(err));
+         m_network.SendOrderRejected(tradeId, "Close OrderSend err=" + IntegerToString(err));
+         m_network.SendError("metatrader5", "order_close_failed", "OrderSend err=" + IntegerToString(err));
          return false;
       }
 
       if(result.retcode == TRADE_RETCODE_DONE)
       {
-         m_network.SendExitFill(tradeId, result.price, "CLOSE");
+         m_network.SendExitFill(tradeId, result.price, "CLOSE", 0, resolvedAccount, 0, 0, m_apis.account.Balance());
          m_network.SendTradeLog(tradeId, "MT5:CLOSE", "Position closed @ " + DoubleToString(result.price, 5));
 
          if(m_tracker != NULL)
@@ -165,6 +203,8 @@ public:
       {
          if(m_logger != NULL)
             m_logger.Error("Close failed for " + tradeId + " retcode=" + IntegerToString(result.retcode));
+         m_network.SendOrderRejected(tradeId, "Close retcode=" + IntegerToString(result.retcode));
+         m_network.SendError("metatrader5", "order_close_failed", "Retcode=" + IntegerToString(result.retcode));
          return false;
       }
    }
@@ -173,13 +213,13 @@ private:
    //--- Find position ticket by comment (trade_id)
    ulong FindTicketByComment(string tradeId)
    {
-      int total = PositionsTotal();
+      int total = m_apis.position.Total();
       for(int i = 0; i < total; i++)
       {
-         ulong ticket = PositionGetTicket(i);
+         ulong ticket = m_apis.position.TicketByIndex(i);
          if(ticket == 0) continue;
-         if(PositionGetInteger(POSITION_MAGIC) != (long)m_magicNumber) continue;
-         if(PositionGetString(POSITION_COMMENT) == tradeId)
+         if(m_apis.position.Magic() != (long)m_config.magicNumber) continue;
+         if(m_apis.position.Comment() == tradeId)
             return ticket;
       }
       return 0;

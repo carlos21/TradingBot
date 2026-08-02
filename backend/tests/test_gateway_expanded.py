@@ -382,8 +382,8 @@ class TestMessageHandling:
         logger = FakeLogger()
         gw = TradingGateway(logger)
         envelope = MessageEnvelope.create(
-            msg_type=MessageType.TEST_START,
-            payload={"scenario": "tp_hit"},
+            msg_type=MessageType.TICK,
+            payload={"pair": "MNQ", "price": 100.0},
             seq_num=1,
         )
         gw._handle_message(envelope.to_json())
@@ -601,20 +601,6 @@ class TestCallbackRegistration:
         gw.on_connection_change(cb)
         assert cb in gw._connection_listeners
 
-    def test_on_test_start(self):
-        gw = TradingGateway(FakeLogger())
-        def cb(x):
-            return None
-        gw.on_test_start(cb)
-        assert cb in gw._callbacks[MessageType.TEST_START]
-
-    def test_on_test_result(self):
-        gw = TradingGateway(FakeLogger())
-        def cb(x):
-            return None
-        gw.on_test_result(cb)
-        assert cb in gw._callbacks[MessageType.TEST_RESULT]
-
     def test_on_unknown_message_type(self):
         gw = TradingGateway(FakeLogger())
         def cb(x):
@@ -792,21 +778,6 @@ class TestCommandSending:
         gw.send_test_pong(timestamp=12345.0)
         assert len(gw._pending_commands) == 1
 
-    def test_send_test_result(self):
-        logger = FakeLogger()
-        gw = TradingGateway(logger)
-        gw._running = True
-        gw.send_test_result("tp_hit", True, trade_id="T1", message="all good")
-        assert len(gw._pending_commands) == 1
-        assert any("TEST_RESULT" in m for m in logger.messages)
-
-    def test_send_test_result_failed(self):
-        logger = FakeLogger()
-        gw = TradingGateway(logger)
-        gw._running = True
-        gw.send_test_result("sl_hit", False)
-        assert any("FAILED" in m for m in logger.messages)
-
 
 class TestQueryPositions:
     """Tests for query_positions."""
@@ -905,49 +876,6 @@ class TestRefreshAccountNames:
             MockRepo.side_effect = Exception("DB error")
             gw._refresh_account_names()
             assert any("Failed to refresh" in m for m in logger.messages)
-
-
-class TestHandleTestStartSingleAccount:
-    """Tests for single-account test start."""
-
-    def test_handle_test_start_default_scenario(self):
-        logger = FakeLogger()
-        gw = TradingGateway(logger)
-        gw._running = True
-        gw._command_queue = MagicMock()
-        gw._command_queue.maxlen = 10000
-        gw._command_queue.__len__ = MagicMock(return_value=0)
-        gw._handle_test_start({
-            "scenario": "tp_hit",
-            "entry_price": 100.0,
-            "risk_points": 10.0,
-            "rr_ratio": 2.0,
-            "pair": "MNQ",
-            "instrument": "MNQ 09-26",
-        })
-        assert len(gw._test_sequences) >= 1
-        assert any("E2E TEST START" in m for m in logger.messages)
-
-    def test_handle_test_start_non_multi_account(self):
-        logger = FakeLogger()
-        gw = TradingGateway(logger)
-        gw._running = True
-        gw._command_queue = MagicMock()
-        gw._command_queue.maxlen = 10000
-        gw._command_queue.__len__ = MagicMock(return_value=0)
-        gw._handle_test_start({
-            "scenario": "sl_hit",
-            "entry_price": 200.0,
-            "risk_points": 20.0,
-            "rr_ratio": 1.5,
-            "pair": "MNQ",
-            "instrument": "MNQ 09-26",
-        })
-        # Find the trade sequence (skip group key if present)
-        seq_keys = [k for k in gw._test_sequences if not k.startswith("__")]
-        assert len(seq_keys) == 1
-        seq = gw._test_sequences[seq_keys[0]]
-        assert seq["scenario"] == "sl_hit"
 
 
 class TestCommandSenderLoop:

@@ -12,5 +12,6 @@
   "batchSize": 500,
   "autoConnectOnStartup": true,
   "autoShowPanel": true,
-  "platformVersion": "2.0.0"
+  "simulateTrades": false,
+  "platformVersion": "3.0.0"
 }

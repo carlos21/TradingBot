@@ -65,7 +65,7 @@ The EA auto-connects on startup. Check the `Experts` tab for connection logs.
 
 ## Protocol
 
-All connectors use the same protocol defined in `src/gateway/protocol.py`.
+All connectors use the same protocol defined in `backend/src/infrastructure/gateway/protocol.py`.
 
 ### Default Ports
 
@@ -120,7 +120,8 @@ Infrastructure (ConfigLoader, Logger, Serializer, OrderTracking)
 - Tick rate limiting (configurable)
 - Partial bar streaming (1/sec rate limit)
 - Heartbeat timer loop
-- Config query (account name from Python)
+- Subscribe-driven per-instrument streaming (`subscribe`/`unsubscribe`)
+- Per-command account routing (validated against the platform account, no silent fallback)
 - Position sync on connect (crash recovery)
 - Dynamic lot sizing from `risk_usd` / `risk_points`
 - Trade log messages (`trade_log`)

@@ -15,7 +15,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         private readonly IZmqNetwork _network;
         private readonly IOrderTracker _orderTracker;
         private readonly ITradeIdExtractor _tradeIdExtractor;
-        private readonly ITradingMode _tradingMode;
         private readonly IAccountProvider _accountProvider;
         private readonly IInstrumentProvider _instrumentProvider;
         private readonly IOrderExecutionService _orderExecutionService;
@@ -27,11 +26,10 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
             _network = Substitute.For<IZmqNetwork>();
             _orderTracker = Substitute.For<IOrderTracker>();
             _tradeIdExtractor = Substitute.For<ITradeIdExtractor>();
-            _tradingMode = Substitute.For<ITradingMode>();
             _accountProvider = Substitute.For<IAccountProvider>();
             _instrumentProvider = Substitute.For<IInstrumentProvider>();
             _orderExecutionService = Substitute.For<IOrderExecutionService>();
-            _handler = new OrderModifyHandler(_network, _logger, _orderTracker, _tradeIdExtractor, _tradingMode, _accountProvider, _instrumentProvider, _orderExecutionService);
+            _handler = new OrderModifyHandler(_network, _logger, _orderTracker, _tradeIdExtractor, _accountProvider, _instrumentProvider, _orderExecutionService);
         }
 
         [Theory]
@@ -39,22 +37,20 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [InlineData(1, "logger")]
         [InlineData(2, "orderTracker")]
         [InlineData(3, "tradeIdExtractor")]
-        [InlineData(4, "tradingMode")]
-        [InlineData(5, "accountProvider")]
-        [InlineData(6, "instrumentProvider")]
-        [InlineData(7, "orderExecutionService")]
+        [InlineData(4, "accountProvider")]
+        [InlineData(5, "instrumentProvider")]
+        [InlineData(6, "orderExecutionService")]
         public void Constructor_Throws_WhenDependencyIsNull(int nullIndex, string paramName)
         {
             var network = nullIndex == 0 ? null : _network;
             var logger = nullIndex == 1 ? null : _logger;
             var orderTracker = nullIndex == 2 ? null : _orderTracker;
             var tradeIdExtractor = nullIndex == 3 ? null : _tradeIdExtractor;
-            var tradingMode = nullIndex == 4 ? null : _tradingMode;
-            var accountProvider = nullIndex == 5 ? null : _accountProvider;
-            var instrumentProvider = nullIndex == 6 ? null : _instrumentProvider;
-            var orderExecutionService = nullIndex == 7 ? null : _orderExecutionService;
+            var accountProvider = nullIndex == 4 ? null : _accountProvider;
+            var instrumentProvider = nullIndex == 5 ? null : _instrumentProvider;
+            var orderExecutionService = nullIndex == 6 ? null : _orderExecutionService;
 
-            Action act = () => new OrderModifyHandler(network, logger, orderTracker, tradeIdExtractor, tradingMode, accountProvider, instrumentProvider, orderExecutionService);
+            Action act = () => new OrderModifyHandler(network, logger, orderTracker, tradeIdExtractor, accountProvider, instrumentProvider, orderExecutionService);
             act.Should().Throw<ArgumentNullException>().Which.ParamName.Should().Be(paramName);
         }
 
@@ -65,21 +61,8 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         }
 
         [Fact]
-        public void Handle_SimulationMode_SendsTradeLog()
-        {
-            _tradingMode.IsSimulation.Returns(true);
-
-            var result = _handler.Handle(TestDataFactory.OrderModifyPayload(stopLoss: 19980, takeProfit: 20040));
-
-            result.Should().BeTrue();
-            _network.Received(1).SendTradeLog("test-1", "NT:SIMULATE", Arg.Any<string>());
-            _orderExecutionService.DidNotReceiveWithAnyArgs().FindOrderByName(null, null);
-        }
-
-        [Fact]
         public void Handle_LiveMode_ModifiesStopLoss()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working);
@@ -106,7 +89,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ModifiesTakeProfit()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var targetOrder = TestDataFactory.Order(name: "Target_test-1", side: OrderSide.Sell, state: OrderState.Working);
@@ -133,7 +115,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_RejectsDuplicatePendingModify()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
@@ -150,7 +131,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenStopOrderNotFound()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
@@ -168,7 +148,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenTargetOrderNotModifiable()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var targetOrder = TestDataFactory.Order(name: "Target_test-1", side: OrderSide.Sell, state: OrderState.Filled);
@@ -188,7 +167,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenOrderNotModifiable()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", state: OrderState.Filled);
@@ -207,7 +185,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenAccountNotFound()
         {
-            _tradingMode.IsSimulation.Returns(false);
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount>());
 
             var result = _handler.Handle(TestDataFactory.OrderModifyPayload(stopLoss: 19980));
@@ -219,7 +196,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenAccountHasNoConnection()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account(hasConnection: false);
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
 
@@ -232,7 +208,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenMultipleAccountsAndNoneSpecified()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account1 = TestDataFactory.Account(name: "Sim101");
             var account2 = TestDataFactory.Account(name: "Sim102");
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account1, account2 });
@@ -246,7 +221,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenAccountNameNotFound()
         {
-            _tradingMode.IsSimulation.Returns(false);
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { TestDataFactory.Account(name: "Sim101") });
 
             var result = _handler.Handle(TestDataFactory.OrderModifyPayload(stopLoss: 19980, account: "Sim999"));
@@ -258,7 +232,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenInstrumentMissing()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var payload = TestDataFactory.OrderModifyPayload(stopLoss: 19980);
             payload.Remove("instrument");
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { TestDataFactory.Account() });
@@ -272,7 +245,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenTradeIdMissing()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var payload = TestDataFactory.OrderModifyPayload(stopLoss: 19980);
             payload["trade_id"] = "";
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { TestDataFactory.Account() });
@@ -286,7 +258,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenPayloadInvalid()
         {
-            _tradingMode.IsSimulation.Returns(false);
 
             var result = _handler.Handle(new JObject { ["trade_id"] = "test-1", ["instrument"] = "MNQ 09-25" });
 
@@ -297,7 +268,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ModifiesStopLossAndTakeProfit()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working);
@@ -334,7 +304,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_PurgesStaleModifies_BeforeProcessing()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", state: OrderState.Working);
@@ -352,7 +321,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenInstrumentNotFound()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", state: OrderState.Working);
 
@@ -370,7 +338,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenTargetOrderNotFound()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
 
@@ -389,7 +356,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ReturnsFalse_WhenTakeProfitModifyAlreadyPending()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
 
@@ -407,7 +373,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ModifiesTrackedStopLoss()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working);
@@ -430,7 +395,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_ModifiesTrackedTakeProfit()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var targetOrder = TestDataFactory.Order(name: "Target_test-1", side: OrderSide.Sell, state: OrderState.Working);
@@ -453,7 +417,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_RemovesPendingModify_WhenStopModifyThrows()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working);
@@ -478,7 +441,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application.Handlers
         [Fact]
         public void Handle_LiveMode_RemovesPendingModify_WhenTargetModifyThrows()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var targetOrder = TestDataFactory.Order(name: "Target_test-1", side: OrderSide.Sell, state: OrderState.Working);

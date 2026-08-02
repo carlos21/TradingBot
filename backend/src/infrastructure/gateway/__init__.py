@@ -32,8 +32,6 @@ from .protocol import (
     MessageType,
     TestPingMessage,
     TestPongMessage,
-    TestResultMessage,
-    TestStartMessage,
     TradeCommand,
 )
 from .subscription_supervisor import SubscriptionSupervisor
@@ -47,8 +45,6 @@ __all__ = [
     "HeartbeatMessage",
     "TestPingMessage",
     "TestPongMessage",
-    "TestStartMessage",
-    "TestResultMessage",
     # Gateway
     "TradingGateway",
     "GatewayConfig",

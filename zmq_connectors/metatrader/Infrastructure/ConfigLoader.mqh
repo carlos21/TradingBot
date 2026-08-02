@@ -135,24 +135,32 @@ public:
          int handle = FileOpen(filename, FILE_READ|FILE_TXT|FILE_COMMON);
          if(handle == INVALID_HANDLE)
             handle = FileOpen(filename, FILE_READ|FILE_TXT);
-         
+
          if(handle == INVALID_HANDLE)
          {
             Print("[ConfigLoader] Config file not found: ", filename, ". Using defaults.");
             return cfg;
          }
-         
+
          while(!FileIsEnding(handle))
             json += FileReadString(handle);
          FileClose(handle);
       }
-      
+
       if(json == "")
       {
          Print("[ConfigLoader] Config file is empty. Using defaults.");
          return cfg;
       }
-      
+
+      return Parse(json, filename);
+   }
+
+   //--- Pure JSON/fallback extraction (testable without the Files sandbox)
+   static ZmqConfiguration Parse(string json, string sourceName = "")
+   {
+      ZmqConfiguration cfg;
+
       // Log first part of JSON for debugging (truncate to avoid huge logs)
       string preview = json;
       if(StringLen(preview) > 200)
@@ -164,7 +172,7 @@ public:
       {
          Print("[ConfigLoader] JSONParser::Parse failed. Attempting string fallback...");
          if(root != NULL) delete root;
-         
+
          //--- String fallback: extract critical fields manually
          string host = ExtractStringValue(json, "host");
          if(host != "")
@@ -174,7 +182,8 @@ public:
             cfg.commandPort    = ExtractIntValue(json, "commandPort", cfg.commandPort);
             cfg.queryPort      = ExtractIntValue(json, "queryPort", cfg.queryPort);
             cfg.heartbeatPort  = ExtractIntValue(json, "heartbeatPort", cfg.heartbeatPort);
-            cfg.pair           = ExtractStringValue(json, "pair");
+            string pair = ExtractStringValue(json, "pair");
+            if(pair != "") cfg.pair = pair;
             cfg.historyDays    = ExtractIntValue(json, "historyDays", cfg.historyDays);
             cfg.heartbeatSec   = ExtractIntValue(json, "heartbeatSec", cfg.heartbeatSec);
             cfg.magicNumber    = (ulong)ExtractIntValue(json, "magicNumber", (int)cfg.magicNumber);
@@ -183,12 +192,13 @@ public:
             cfg.autoConnectOnStartup = ExtractBoolValue(json, "autoConnectOnStartup", cfg.autoConnectOnStartup);
             cfg.autoShowPanel  = ExtractBoolValue(json, "autoShowPanel", cfg.autoShowPanel);
             cfg.simulateTrades = ExtractBoolValue(json, "simulateTrades", cfg.simulateTrades);
-            cfg.platformVersion = ExtractStringValue(json, "platformVersion");
-            
-            Print("[ConfigLoader] Config loaded via string fallback from ", filename);
+            string platformVersion = ExtractStringValue(json, "platformVersion");
+            if(platformVersion != "") cfg.platformVersion = platformVersion;
+
+            Print("[ConfigLoader] Config loaded via string fallback from ", sourceName);
             return cfg;
          }
-         
+
          Print("[ConfigLoader] Failed to parse config JSON and string fallback also failed. Using defaults.");
          return cfg;
       }
@@ -211,7 +221,7 @@ public:
       if(root.HasKey("platformVersion")) cfg.platformVersion = root["platformVersion"].ToString();
 
       delete root;
-      Print("[ConfigLoader] Config loaded from ", filename);
+      Print("[ConfigLoader] Config loaded from ", sourceName);
       return cfg;
    }
 };

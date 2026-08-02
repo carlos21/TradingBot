@@ -93,11 +93,7 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
                 _ui = new ZmqConnectorWindow(msg => Print("[ZMQ] " + msg));
                 var uiLogger = new NinjatraderLogger(msg => _ui.Log(msg));
                 _logger = CreateCompositeLogger(uiLogger);
-                _ui.SetButtonHandlers(
-                    onConnect: ToggleConnection,
-                    onTestConnection: () => _ = _service?.TestConnectionAsync(),
-                    onE2ETests: () => _ = RunE2ETestsAsync()
-                );
+                _ui.SetButtonHandlers(onConnect: ToggleConnection);
             }
             _ui.Show(_service?.IsConnected ?? false);
         }
@@ -137,8 +133,7 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
                 if (_logger == null)
                     InitializeLoggerOnly();
 
-                bool simulate = _ui?.IsSimulateTradesEnabled ?? false;
-                _service = NinjaTraderCompositionRoot.Build(_config, _logger, simulate);
+                _service = NinjaTraderCompositionRoot.Build(_config, _logger);
 
                 WireAccountEvents();
                 _service.Connect();
@@ -193,7 +188,7 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
         private void OnExecutionUpdate(object sender, ExecutionEventArgs e)
         {
             _service?.OnExecutionUpdate(
-                BrokerOrderMapper.ToBrokerOrder(e.Execution.Order),
+                BrokerOrderMapper.ToBrokerOrder(e.Execution.Order, e.Execution.Commission),
                 e.Execution.Price,
                 e.Execution.Quantity);
         }
@@ -215,25 +210,6 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
             {
                 _statsTimer.Stop();
                 _statsTimer = null;
-            }
-        }
-
-        private async System.Threading.Tasks.Task RunE2ETestsAsync()
-        {
-            if (_service == null) return;
-            _ui?.SetE2EButtonEnabled(false);
-            try
-            {
-                var runner = new ZmqE2ETestRunner(
-                    _service.Network,
-                    _logger,
-                    new NtAccountProvider(),
-                    new SimulationTradingMode(true));
-                await runner.RunAllScenariosAsync();
-            }
-            finally
-            {
-                _ui?.SetE2EButtonEnabled(true);
             }
         }
 

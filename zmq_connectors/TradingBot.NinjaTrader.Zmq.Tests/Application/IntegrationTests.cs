@@ -17,7 +17,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
     {
         private readonly TestLogger _logger;
         private readonly IZmqNetwork _network;
-        private readonly ITradingMode _tradingMode;
         private readonly IAccountProvider _accountProvider;
         private readonly IInstrumentProvider _instrumentProvider;
         private readonly IOrderExecutionService _orderExecutionService;
@@ -28,7 +27,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         {
             _logger = new TestLogger();
             _network = Substitute.For<IZmqNetwork>();
-            _tradingMode = Substitute.For<ITradingMode>();
             _accountProvider = Substitute.For<IAccountProvider>();
             _instrumentProvider = Substitute.For<IInstrumentProvider>();
             _orderExecutionService = Substitute.For<IOrderExecutionService>();
@@ -40,15 +38,14 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             _accountProvider.GetAccounts().Returns(new List<BrokerAccount> { account });
             _instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
 
-            _dispatcher.Register(new OrderOpenHandler(_network, _logger, _orderTracker, _tradingMode, _accountProvider, _instrumentProvider, _orderExecutionService));
-            _dispatcher.Register(new OrderCloseHandler(_network, _logger, _orderTracker, Substitute.For<ITradeIdExtractor>(), _tradingMode, _accountProvider, _instrumentProvider, _orderExecutionService));
-            _dispatcher.Register(new OrderModifyHandler(_network, _logger, _orderTracker, Substitute.For<ITradeIdExtractor>(), _tradingMode, _accountProvider, _instrumentProvider, _orderExecutionService));
+            _dispatcher.Register(new OrderOpenHandler(_network, _logger, _orderTracker, _accountProvider, _instrumentProvider, _orderExecutionService));
+            _dispatcher.Register(new OrderCloseHandler(_network, _logger, _orderTracker, Substitute.For<ITradeIdExtractor>(), _accountProvider, _instrumentProvider, _orderExecutionService));
+            _dispatcher.Register(new OrderModifyHandler(_network, _logger, _orderTracker, Substitute.For<ITradeIdExtractor>(), _accountProvider, _instrumentProvider, _orderExecutionService));
         }
 
         [Fact]
         public void OpenModifyCloseFlow_Live_CreatesSubmitsAndClosesOrder()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var entryOrder = TestDataFactory.Order(name: "Entry_test-1", state: OrderState.Filled, filled: 2);
@@ -80,28 +77,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
                 TestDataFactory.OrderClosePayload()));
             closeResult.Should().BeTrue();
             _orderExecutionService.Received(1).SubmitOrder(Arg.Is<BrokerOrder>(o => o.Name == "Close_test-1"));
-        }
-
-        [Fact]
-        public void OpenModifyCloseFlow_Simulation_SendsFillsWithoutBroker()
-        {
-            _tradingMode.IsSimulation.Returns(true);
-
-            var openResult = _dispatcher.Dispatch(MessageEnvelope.Create(MessageType.OrderOpen,
-                TestDataFactory.OrderOpenPayload(entryPrice: 20000, stopLoss: 19980, takeProfit: 20040, contracts: 2)));
-            openResult.Should().BeTrue();
-
-            var modifyResult = _dispatcher.Dispatch(MessageEnvelope.Create(MessageType.OrderModify,
-                TestDataFactory.OrderModifyPayload(stopLoss: 19990, takeProfit: 20030)));
-            modifyResult.Should().BeTrue();
-
-            var closeResult = _dispatcher.Dispatch(MessageEnvelope.Create(MessageType.OrderClose,
-                TestDataFactory.OrderClosePayload()));
-            closeResult.Should().BeTrue();
-
-            _orderExecutionService.DidNotReceiveWithAnyArgs().CreateEntryOrder(null, null, default, 0, null);
-            _network.Received(1).SendEntryFill("test-1", 20000, 19980, 20040, account: (string)null, quantity: 2);
-            _network.Received(1).SendExitFill("test-1", 0, "CLOSE", account: (string)null);
         }
 
         [Fact]
@@ -158,10 +133,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
             clock.UtcNow.Returns(DateTime.UtcNow);
 
-            var tradingMode = Substitute.For<ITradingMode>();
-            tradingMode.IsSimulation.Returns(false);
-
-            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, accountProvider, instrumentProvider, orderExecutionService));
 
             var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 2, instrument: instrument, avgFill: 20000);
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19990);
@@ -222,7 +194,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         [Fact]
         public void ModifyStopLoss_Live_CallsModifyOrder_NotCancel()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19980);
@@ -246,7 +217,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         [Fact]
         public void ModifyStopLossAndTakeProfit_Live_CallsModifyOrderForBoth()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19980);
@@ -275,7 +245,6 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
         [Fact]
         public void ModifyStopLoss_Live_ReturnsFalse_WhenOrderNotWorking()
         {
-            _tradingMode.IsSimulation.Returns(false);
             var account = TestDataFactory.Account();
             var instrument = TestDataFactory.Instrument();
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Filled, stopPrice: 19980);
@@ -315,11 +284,8 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
             clock.UtcNow.Returns(DateTime.UtcNow);
 
-            var tradingMode = Substitute.For<ITradingMode>();
-            tradingMode.IsSimulation.Returns(false);
-
-            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
-            dispatcher.Register(new OrderModifyHandler(network, logger, orderTracker, tradeIdExtractor, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderModifyHandler(network, logger, orderTracker, tradeIdExtractor, accountProvider, instrumentProvider, orderExecutionService));
 
             var entryOrder = TestDataFactory.Order(name: "Entry_test-1", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 2, instrument: instrument, avgFill: 20000);
             var stopOrder = TestDataFactory.Order(name: "Stop_test-1", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 19990);

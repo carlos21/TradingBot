@@ -2,12 +2,16 @@
 //|                                Commands/OrderModifyHandler.mqh   |
 //|  Handles order_modify command: move SL/TP via TRADE_ACTION_SLTP  |
 //|  Unlike NinjaTrader, MT5 supports atomic SL/TP modification.     |
+//|  Validates the payload account (single-account terminal) and     |
+//|  resolves the broker symbol from the required 'instrument' field.|
 //+------------------------------------------------------------------+
 #property strict
 
 #include "../Domain/Contracts.mqh"
 #include "../Domain/MessageTypes.mqh"
 #include "../Domain/ValueObjects.mqh"
+#include "../Domain/PlatformApi.mqh"
+#include "../Domain/AccountValidator.mqh"
 
 //+------------------------------------------------------------------+
 //| OrderModifyHandler — modifies SL/TP of an open position          |
@@ -15,21 +19,21 @@
 class OrderModifyHandler : public ICommandHandler
 {
 private:
-   IZmqNetwork   *m_network;
-   ILogger       *m_logger;
-   IOrderTracker *m_tracker;
-   ulong          m_magicNumber;
-   string         m_symbol;
-   bool           m_simulate;
+   IZmqNetwork      *m_network;
+   ILogger          *m_logger;
+   IOrderTracker    *m_tracker;
+   ZmqConfiguration *m_config;
+   PlatformApis     *m_apis;
+   bool              m_simulate;
 
 public:
-   OrderModifyHandler(IZmqNetwork *network, ILogger *logger, IOrderTracker *tracker, ulong magicNumber, string symbol, bool simulate = false)
+   OrderModifyHandler(IZmqNetwork *network, ILogger *logger, IOrderTracker *tracker, ZmqConfiguration *config, PlatformApis *apis, bool simulate = false)
    {
       m_network = network;
       m_logger = logger;
       m_tracker = tracker;
-      m_magicNumber = magicNumber;
-      m_symbol = symbol;
+      m_config = config;
+      m_apis = apis;
       m_simulate = simulate;
    }
 
@@ -50,11 +54,43 @@ public:
          return false;
       }
 
-      string tradeId = envelope.PayloadString("trade_id");
+      string tradeId    = envelope.PayloadString("trade_id");
+      string instrument = envelope.PayloadString("instrument");
+      string account    = envelope.PayloadString("account");
+
       if(StringLen(tradeId) == 0)
       {
          if(m_logger != NULL)
             m_logger.Error("OrderModifyHandler: missing trade_id");
+         return false;
+      }
+
+      // instrument is REQUIRED — it carries the MT5 broker symbol
+      if(StringLen(instrument) == 0)
+      {
+         if(m_logger != NULL)
+            m_logger.Error("OrderModifyHandler: instrument is required");
+         m_network.SendError("metatrader5", "order_modify_failed", "instrument is required in order_modify payload");
+         return false;
+      }
+
+      // Account validation (single-account terminal — never silently fall back)
+      string resolvedAccount;
+      if(!AccountValidator::Validate(m_apis.account, account, resolvedAccount))
+      {
+         string msg = "account '" + account + "' does not match terminal account '" + resolvedAccount + "'";
+         if(m_logger != NULL)
+            m_logger.Error("OrderModifyHandler: " + msg);
+         m_network.SendError("metatrader5", "account_mismatch", msg);
+         return false;
+      }
+
+      // Resolve the symbol at the broker — fail if it does not exist
+      if(!m_apis.symbol.Select(instrument))
+      {
+         if(m_logger != NULL)
+            m_logger.Error("OrderModifyHandler: unknown symbol '" + instrument + "'");
+         m_network.SendError("metatrader5", "order_modify_failed", "unknown symbol: " + instrument);
          return false;
       }
 
@@ -89,7 +125,7 @@ public:
          return false;
       }
 
-      if(!PositionSelectByTicket(ticket))
+      if(!m_apis.position.SelectByTicket(ticket))
       {
          if(m_logger != NULL)
             m_logger.Error("OrderModifyHandler: PositionSelectByTicket failed");
@@ -101,27 +137,28 @@ public:
       double newTp = envelope.PayloadDouble("take_profit");
 
       if(newSl == 0)
-         newSl = PositionGetDouble(POSITION_SL);
+         newSl = m_apis.position.StopLoss();
       if(newTp == 0)
-         newTp = PositionGetDouble(POSITION_TP);
+         newTp = m_apis.position.TakeProfit();
 
       // Build modify request
       MqlTradeRequest request = {};
-      MqlTradeResult result = {};
+      TradeResult result;
       request.action   = TRADE_ACTION_SLTP;
       request.position = ticket;
-      request.symbol   = m_symbol;
+      request.symbol   = instrument;
       request.sl       = newSl;
       request.tp       = newTp;
 
       if(m_logger != NULL)
-         m_logger.Info("Modifying " + tradeId + " SL=" + DoubleToString(newSl, 5) + " TP=" + DoubleToString(newTp, 5));
+         m_logger.Info("Modifying " + tradeId + " " + instrument + " SL=" + DoubleToString(newSl, 5) + " TP=" + DoubleToString(newTp, 5) + " account=" + resolvedAccount);
 
-      if(!OrderSend(request, result))
+      if(!m_apis.trade.Send(request, result))
       {
-         int err = GetLastError();
+         int err = result.error;
          if(m_logger != NULL)
             m_logger.Error("Modify OrderSend failed for " + tradeId + " err=" + IntegerToString(err));
+         m_network.SendError("metatrader5", "order_modify_failed", "OrderSend err=" + IntegerToString(err));
          return false;
       }
 
@@ -136,6 +173,7 @@ public:
       {
          if(m_logger != NULL)
             m_logger.Error("Modify failed for " + tradeId + " retcode=" + IntegerToString(result.retcode));
+         m_network.SendError("metatrader5", "order_modify_failed", "Retcode=" + IntegerToString(result.retcode));
          return false;
       }
    }
@@ -143,13 +181,13 @@ public:
 private:
    ulong FindTicketByComment(string tradeId)
    {
-      int total = PositionsTotal();
+      int total = m_apis.position.Total();
       for(int i = 0; i < total; i++)
       {
-         ulong ticket = PositionGetTicket(i);
+         ulong ticket = m_apis.position.TicketByIndex(i);
          if(ticket == 0) continue;
-         if(PositionGetInteger(POSITION_MAGIC) != (long)m_magicNumber) continue;
-         if(PositionGetString(POSITION_COMMENT) == tradeId)
+         if(m_apis.position.Magic() != (long)m_config.magicNumber) continue;
+         if(m_apis.position.Comment() == tradeId)
             return ticket;
       }
       return 0;

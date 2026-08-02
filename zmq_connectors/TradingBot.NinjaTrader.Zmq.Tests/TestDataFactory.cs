@@ -23,8 +23,9 @@ namespace TradingBot.NinjaTrader.Zmq.Tests
             int filled = 0,
             double avgFill = 0,
             double stopPrice = 0,
-            double limitPrice = 0)
-            => new BrokerOrder(name, accountName, instrument ?? Instrument(), orderType, side, state, quantity, filled, avgFill, stopPrice, limitPrice);
+            double limitPrice = 0,
+            double commission = 0)
+            => new BrokerOrder(name, accountName, instrument ?? Instrument(), orderType, side, state, quantity, filled, avgFill, stopPrice, limitPrice, commission);
 
         public static Bar Bar(DateTime? time = null, double open = 20000, double high = 20010, double low = 19990, double close = 20005, long volume = 1000)
             => new Bar(time ?? new DateTime(2025, 1, 1, 12, 0, 0, DateTimeKind.Utc), open, high, low, close, volume);

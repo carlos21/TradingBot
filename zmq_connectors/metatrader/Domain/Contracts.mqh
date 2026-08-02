@@ -23,6 +23,7 @@ public:
    virtual void Warning(string msg) = 0;
    virtual void Error(string msg) = 0;
    virtual void Success(string msg) = 0;
+   virtual void Debug(string msg) = 0;
 };
 
 //+------------------------------------------------------------------+
@@ -110,7 +111,7 @@ class IHistoryProvider
 {
 public:
    virtual ~IHistoryProvider() {}
-   virtual void SendHistory(int days = 0) = 0;
+   virtual void SendHistory(int days = 0, string symbol = "") = 0;
 };
 
 //+------------------------------------------------------------------+
@@ -124,6 +125,8 @@ public:
    // Lifecycle
    virtual bool Start() = 0;
    virtual void Dispose() = 0;
+   virtual bool Restart() = 0;                 // Dispose + Start (watchdog recovery)
+   virtual void RecreateRequestSocket() = 0;   // Reset REQ/REP state machine after timeout
 
    // Send methods (Platform → Python)
    virtual void SendTick(string pair, double price, long volume, datetime tickTime) = 0;
@@ -131,14 +134,16 @@ public:
    virtual void SendHistoryBatch(string pair, JSONValue *barsArray, int days) = 0;
    virtual void SendRawHistoryBatch(string pair, string barsJson, int days) = 0;
    virtual void SendHistoryEnd(string pair) = 0;
-   virtual void SendEntryFill(string tradeId, double entryPrice, double stopLoss, double takeProfit) = 0;
-   virtual void SendExitFill(string tradeId, double exitPrice, string resultType) = 0;
+   virtual void SendRefreshStart(string pair) = 0;
+   virtual void SendEntryFill(string tradeId, double entryPrice, double stopLoss, double takeProfit, string account = "", double quantity = 0, double accountBalance = 0) = 0;
+   virtual void SendExitFill(string tradeId, double exitPrice, string resultType, long exitTime = 0, string account = "", double realizedPnl = 0, double commission = 0, double accountBalance = 0) = 0;
+   virtual void SendOrderRejected(string tradeId, string reason) = 0;
    virtual void SendTradeLog(string tradeId, string eventType, string message) = 0;
    virtual void SendError(string source, string errorType, string message) = 0;
    virtual void SendHeartbeat(string source, string status) = 0;
-   virtual void SendConnect(string platform, string version, string account, string pair) = 0;
+   virtual void SendConnect(string platform, string version, string pair) = 0;
    virtual void SendCommandAck(string commandType, long seqNum, bool success, string tradeId, string message) = 0;
-   virtual void SendPositionSync(JSONValue *positionsArray, JSONValue *untrackedArray) = 0;
+   virtual void SendPositionSync(JSONValue *positionsArray, JSONValue *untrackedArray, int count = 0) = 0;
    virtual void SendTestStart(string scenario, double entryPrice, double riskPoints, double rrRatio) = 0;
    virtual void SendTestResult(string scenario, bool passed, string tradeId, string message) = 0;
 

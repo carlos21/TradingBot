@@ -8,7 +8,12 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
     /// </summary>
     public static class BrokerOrderMapper
     {
-        public static Domain.BrokerOrder ToBrokerOrder(Nt.Order order)
+        /// <param name="commission">
+        /// Commission for the order. NinjaTrader.Cbi.Order does not expose commission;
+        /// it is reported per NinjaTrader.Cbi.Execution, so callers handling an
+        /// execution event pass Execution.Commission here.
+        /// </param>
+        public static Domain.BrokerOrder ToBrokerOrder(Nt.Order order, double commission = 0.0)
         {
             if (order == null) return null;
 
@@ -29,7 +34,7 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 order.AverageFillPrice,
                 order.StopPrice,
                 order.LimitPrice,
-                order.Commission,
+                commission,
                 null,
                 order.Time);
         }

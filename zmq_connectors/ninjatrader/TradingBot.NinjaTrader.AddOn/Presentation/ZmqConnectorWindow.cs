@@ -13,26 +13,17 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
         private TextBlock _statusLabel;
         private TextBlock _statsLabel;
         private Button _connectBtn;
-        private Button _testConnBtn;
-        private Button _e2eTestBtn;
-        private CheckBox _simulateChk;
 
         private Action _onConnect;
-        private Action _onTestConnection;
-        private Action _onE2ETests;
-
-        internal bool IsSimulateTradesEnabled => _simulateChk?.IsChecked ?? false;
 
         internal ZmqConnectorWindow(Action<string> log)
         {
             _log = log ?? throw new ArgumentNullException(nameof(log));
         }
 
-        internal void SetButtonHandlers(Action onConnect, Action onTestConnection = null, Action onE2ETests = null)
+        internal void SetButtonHandlers(Action onConnect)
         {
             _onConnect = onConnect;
-            _onTestConnection = onTestConnection;
-            _onE2ETests = onE2ETests;
         }
 
         internal void Show(bool connected)
@@ -42,8 +33,8 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
             _window = new Window
             {
                 Title = "Liquid ZMQ Connector",
-                Width = 550,
-                Height = 450,
+                Width = 800,
+                Height = 650,
                 WindowStartupLocation = WindowStartupLocation.CenterScreen,
                 Background = new SolidColorBrush(Color.FromRgb(30, 30, 30)),
             };
@@ -77,22 +68,7 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
 
             var btnPanel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(12, 4, 12, 8) };
             _connectBtn = CreateButton(connected ? "Disconnect" : "Connect", () => _onConnect?.Invoke());
-            _testConnBtn = CreateButton("Test Connection", () => _onTestConnection?.Invoke(), !connected);
-            _e2eTestBtn = CreateButton("Run E2E Tests", () => _onE2ETests?.Invoke(), !connected);
             btnPanel.Children.Add(_connectBtn);
-            btnPanel.Children.Add(_testConnBtn);
-            btnPanel.Children.Add(_e2eTestBtn);
-
-            _simulateChk = new CheckBox
-            {
-                Content = "Simulate Trades (No Orders)",
-                Foreground = Brushes.LightBlue,
-                FontWeight = FontWeights.Bold,
-                Margin = new Thickness(12, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                IsChecked = false,
-            };
-            btnPanel.Children.Add(_simulateChk);
 
             Grid.SetRow(btnPanel, 2);
             grid.Children.Add(btnPanel);
@@ -140,9 +116,6 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
             _statusLabel = null;
             _statsLabel = null;
             _connectBtn = null;
-            _testConnBtn = null;
-            _e2eTestBtn = null;
-            _simulateChk = null;
         }
 
         internal void UpdateStatus(bool connected, string statsText)
@@ -159,19 +132,6 @@ namespace TradingBot.NinjaTrader.AddOn.Presentation
                     _statsLabel.Text = statsText;
                 if (_connectBtn != null)
                     _connectBtn.Content = connected ? "Disconnect" : "Connect";
-                if (_testConnBtn != null)
-                    _testConnBtn.IsEnabled = connected;
-                if (_e2eTestBtn != null)
-                    _e2eTestBtn.IsEnabled = connected;
-            }));
-        }
-
-        internal void SetE2EButtonEnabled(bool enabled)
-        {
-            if (_window == null) return;
-            _window.Dispatcher.Invoke(new Action(() =>
-            {
-                if (_e2eTestBtn != null) _e2eTestBtn.IsEnabled = enabled;
             }));
         }
 

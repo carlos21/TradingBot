@@ -71,12 +71,9 @@ class MessageType(str, Enum):
     AUDIT_REQUEST = "audit_request"   # Request recent bars for verification
     AUDIT_RESPONSE = "audit_response" # Response with recent bars
 
-    # Testing (Bidirectional)
+    # Connection watchdog keep-alive
     TEST_PING = "test_ping"           # Connection test request
     TEST_PONG = "test_pong"           # Connection test response
-    TEST_START = "test_start"         # Start E2E test scenario
-    TEST_STATUS = "test_status"       # Test progress/status update
-    TEST_RESULT = "test_result"       # Final test result
 
 
 @dataclass
@@ -597,51 +594,6 @@ class TestPongMessage:
         return MessageEnvelope.create(
             msg_type=MessageType.TEST_PONG,
             payload={"timestamp": self.timestamp},
-            seq_num=seq_num,
-        )
-
-
-@dataclass
-class TestStartMessage:
-    """Start E2E test scenario."""
-    scenario: str  # "tp_hit", "sl_hit", "session_end"
-    entry_price: float = 21000.0
-    risk_points: float = 80.0
-    rr_ratio: float = 1.0
-
-    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
-        return MessageEnvelope.create(
-            msg_type=MessageType.TEST_START,
-            payload={
-                "scenario": self.scenario,
-                "entry_price": self.entry_price,
-                "risk_points": self.risk_points,
-                "rr_ratio": self.rr_ratio,
-            },
-            seq_num=seq_num,
-        )
-
-
-@dataclass
-class TestResultMessage:
-    """E2E test result."""
-    __test__ = False  # Not a pytest test class
-    scenario: str
-    passed: bool
-    trade_id: str | None = None
-    message: str = ""
-
-    def to_envelope(self, seq_num: int = 0) -> MessageEnvelope:
-        payload = {
-            "scenario": self.scenario,
-            "passed": self.passed,
-            "message": self.message,
-        }
-        if self.trade_id:
-            payload["trade_id"] = self.trade_id
-        return MessageEnvelope.create(
-            msg_type=MessageType.TEST_RESULT,
-            payload=payload,
             seq_num=seq_num,
         )
 

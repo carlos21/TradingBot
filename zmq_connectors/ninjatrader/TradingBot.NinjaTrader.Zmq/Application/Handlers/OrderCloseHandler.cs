@@ -13,7 +13,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
         private readonly ILogger _logger;
         private readonly IOrderTracker _orderTracker;
         private readonly ITradeIdExtractor _tradeIdExtractor;
-        private readonly ITradingMode _tradingMode;
         private readonly IAccountProvider _accountProvider;
         private readonly IInstrumentProvider _instrumentProvider;
         private readonly IOrderExecutionService _orderExecutionService;
@@ -23,7 +22,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
             ILogger logger,
             IOrderTracker orderTracker,
             ITradeIdExtractor tradeIdExtractor,
-            ITradingMode tradingMode,
             IAccountProvider accountProvider,
             IInstrumentProvider instrumentProvider,
             IOrderExecutionService orderExecutionService)
@@ -32,7 +30,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _orderTracker = orderTracker ?? throw new ArgumentNullException(nameof(orderTracker));
             _tradeIdExtractor = tradeIdExtractor ?? throw new ArgumentNullException(nameof(tradeIdExtractor));
-            _tradingMode = tradingMode ?? throw new ArgumentNullException(nameof(tradingMode));
             _accountProvider = accountProvider ?? throw new ArgumentNullException(nameof(accountProvider));
             _instrumentProvider = instrumentProvider ?? throw new ArgumentNullException(nameof(instrumentProvider));
             _orderExecutionService = orderExecutionService ?? throw new ArgumentNullException(nameof(orderExecutionService));
@@ -50,14 +47,6 @@ namespace TradingBot.NinjaTrader.Zmq.Application.Handlers
                 var instrumentName = payload?["instrument"]?.Value<string>();
                 if (string.IsNullOrEmpty(instrumentName))
                     throw new InvalidOperationException("instrument is required in ORDER_CLOSE payload");
-
-                if (_tradingMode.IsSimulation)
-                {
-                    _logger.Info($"SIMULATE CLOSE: {tradeId} {instrumentName} account={accountName ?? "default"}");
-                    _network.SendExitFill(tradeId, 0, "CLOSE", account: accountName);
-                    _network.SendTradeLog(tradeId, "NT:SIMULATE", "Simulated exit fill (close)");
-                    return true;
-                }
 
                 var account = ResolveAccount(accountName);
                 if (account == null)

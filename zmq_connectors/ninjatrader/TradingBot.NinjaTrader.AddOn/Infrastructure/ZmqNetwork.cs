@@ -259,27 +259,6 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
             Send(MessageType.Connect, payload);
         }
 
-        public void SendTestStart(string scenario, double entryPrice = 21000.0, double riskPoints = 80.0, double rrRatio = 1.0, JArray accounts = null)
-        {
-            var payload = new JObject
-            {
-                ["scenario"] = scenario,
-                ["entry_price"] = entryPrice,
-                ["risk_points"] = riskPoints,
-                ["rr_ratio"] = rrRatio
-            };
-            if (accounts != null)
-                payload["accounts"] = accounts;
-            Send(MessageType.TestStart, payload);
-        }
-
-        public void SendTestResult(string scenario, bool passed, string tradeId = null, string message = "")
-        {
-            var payload = new JObject { ["scenario"] = scenario, ["passed"] = passed, ["message"] = message };
-            if (tradeId != null) payload["trade_id"] = tradeId;
-            Send(MessageType.TestResult, payload);
-        }
-
         public void SendMarketStatus(bool marketOpen, DateTime nextOpen, string pair)
         {
             var payload = new JObject

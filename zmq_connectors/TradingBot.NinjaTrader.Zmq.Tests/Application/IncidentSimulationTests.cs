@@ -48,10 +48,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
             clock.UtcNow.Returns(DateTime.UtcNow);
 
-            var tradingMode = Substitute.For<ITradingMode>();
-            tradingMode.IsSimulation.Returns(false);
-
-            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, accountProvider, instrumentProvider, orderExecutionService));
 
             // The live market order is created for 20 contracts.
             var entryOrder = TestDataFactory.Order(name: "Entry_incident", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 7, quantity: 20, instrument: instrument, avgFill: 30157.25);
@@ -115,10 +112,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
             clock.UtcNow.Returns(DateTime.UtcNow);
 
-            var tradingMode = Substitute.For<ITradingMode>();
-            tradingMode.IsSimulation.Returns(false);
-
-            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, accountProvider, instrumentProvider, orderExecutionService));
 
             var entryOrder = TestDataFactory.Order(name: "Entry_guard", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 7, quantity: 20, instrument: instrument, avgFill: 30157.25);
             var stopOrder = TestDataFactory.Order(name: "Stop_guard", side: OrderSide.Sell, state: OrderState.Working, stopPrice: 30137.25);
@@ -205,10 +199,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
             clock.UtcNow.Returns(DateTime.UtcNow);
 
-            var tradingMode = Substitute.For<ITradingMode>();
-            tradingMode.IsSimulation.Returns(false);
-
-            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, accountProvider, instrumentProvider, orderExecutionService));
 
             var entryPartial = TestDataFactory.Order(name: "Entry_replay", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 1, quantity: 3, instrument: instrument, avgFill: 21000);
             var entryFull = TestDataFactory.Order(name: "Entry_replay", side: OrderSide.Buy, state: OrderState.Filled, filled: 3, quantity: 3, instrument: instrument, avgFill: 21002);
@@ -311,10 +302,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
             clock.UtcNow.Returns(DateTime.UtcNow);
 
-            var tradingMode = Substitute.For<ITradingMode>();
-            tradingMode.IsSimulation.Returns(false);
-
-            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, accountProvider, instrumentProvider, orderExecutionService));
 
             var entryPartial = TestDataFactory.Order(name: "Entry_replay", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 1, quantity: 3, instrument: instrument, avgFill: 21000);
             var entryFull = TestDataFactory.Order(name: "Entry_replay", side: OrderSide.Buy, state: OrderState.Filled, filled: 3, quantity: 3, instrument: instrument, avgFill: 21002);
@@ -387,10 +375,7 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             instrumentProvider.GetInstrument("MNQ 09-25").Returns(instrument);
             clock.UtcNow.Returns(DateTime.UtcNow);
 
-            var tradingMode = Substitute.For<ITradingMode>();
-            tradingMode.IsSimulation.Returns(false);
-
-            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, tradingMode, accountProvider, instrumentProvider, orderExecutionService));
+            dispatcher.Register(new OrderOpenHandler(network, logger, orderTracker, accountProvider, instrumentProvider, orderExecutionService));
 
             var entryPartial = TestDataFactory.Order(name: "Entry_replay", side: OrderSide.Buy, state: OrderState.PartFilled, filled: 1, quantity: 3, instrument: instrument, avgFill: 21000);
             var entryFull = TestDataFactory.Order(name: "Entry_replay", side: OrderSide.Buy, state: OrderState.Filled, filled: 3, quantity: 3, instrument: instrument, avgFill: 21002);

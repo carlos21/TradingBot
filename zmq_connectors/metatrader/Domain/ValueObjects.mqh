@@ -45,7 +45,7 @@ public:
       autoConnectOnStartup = true;
       autoShowPanel = true;
       simulateTrades = false;
-      platformVersion = "2.0.0";
+      platformVersion = "3.0.0";
    }
 };
 
@@ -131,53 +131,5 @@ public:
    {
       if(root == NULL || !root.HasKey("payload")) return false;
       return root["payload"].HasKey(key);
-   }
-};
-
-//+------------------------------------------------------------------+
-//| PendingEntryInfo — tracks entry order before fill                |
-//+------------------------------------------------------------------+
-struct PendingEntryInfo
-{
-   string tradeId;
-   string direction;
-   double entryPrice;
-   double stopLoss;
-   double takeProfit;
-   double riskPoints;
-   double rrRatio;
-   double riskUsd;
-   string instrument;
-
-   PendingEntryInfo()
-   {
-      tradeId = "";
-      direction = "";
-      entryPrice = 0;
-      stopLoss = 0;
-      takeProfit = 0;
-      riskPoints = 0;
-      rrRatio = 1.0;
-      riskUsd = 0;
-      instrument = "";
-   }
-};
-
-//+------------------------------------------------------------------+
-//| PendingModifyInfo — tracks pending SL/TP modification            |
-//+------------------------------------------------------------------+
-struct PendingModifyInfo
-{
-   string tradeId;
-   double newStopLoss;
-   double newTakeProfit;
-   string instrument;
-
-   PendingModifyInfo()
-   {
-      tradeId = "";
-      newStopLoss = 0;
-      newTakeProfit = 0;
-      instrument = "";
    }
 };

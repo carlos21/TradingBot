@@ -42,7 +42,7 @@ ZeroMQ and HTTP communication with NinjaTrader and MetaTrader, plus parity/state
 
 | File | Responsibility |
 |------|----------------|
-| `src/infrastructure/gateway/gateway.py` | Core ZeroMQ gateway: SUB/PUSH/REQ/REP sockets, message dispatch, heartbeats, command ACKs, E2E test state. |
+| `src/infrastructure/gateway/gateway.py` | Core ZeroMQ gateway: SUB/PUSH/REQ/REP sockets, message dispatch, heartbeats, command ACKs. |
 | `src/infrastructure/gateway/executor.py` | `ZMQTradeExecutor` and `MultiAccountExecutor`; sends open/close/modify commands. |
 | `src/infrastructure/gateway/datasource.py` | `ZMQDataSource`: wires gateway events to app callbacks, history batching, refresh, gap detection. |
 | `src/infrastructure/gateway/protocol.py` | ZeroMQ message envelope and typed message classes. |
