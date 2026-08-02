@@ -82,10 +82,13 @@ public:
       else if(scenario == "multi_account")
       {
          if(m_logger != NULL)
-            m_logger.Warning("TEST: multi_account skipped on MetaTrader (single-account platform)");
-         m_network.SendTestResult(scenario, true, "", "Skipped on MetaTrader — single-account platform");
+            m_logger.Warning("TEST: multi_account skipped on MetaTrader (single-account terminal; account validated against login/accountName)");
+         m_network.SendTestResult(scenario, true, "", "Skipped on MetaTrader — single-account terminal; account validated against login/accountName");
          result = true;
       }
+      // NOTE: account-mismatch NACK and subscribe/unsubscribe ACK scenarios
+      // cannot be self-driven here — those commands originate from Python,
+      // so coverage lives on the Python-driven E2E side. Gap noted.
       else
       {
          m_network.SendTestResult(scenario, false, "", "Unknown scenario: " + scenario);

@@ -25,6 +25,10 @@
 //--- Errors
 #define ZMQ_EAGAIN     11
 
+//--- Socket options (subset used by this connector)
+#define ZMQ_LINGER     17
+#define ZMQ_RCVTIMEO   27
+
 //--- DLL imports — use uchar arrays for string params to avoid UTF-16 issues
 //   CRITICAL: len must be 'long' (64-bit) to match size_t on x64 Windows
 #import "libzmq.dll"
@@ -35,6 +39,7 @@
    int  zmq_connect(long socket, uchar &addr[]);
    int  zmq_send(long socket, uchar &buf[], long len, int flags);
    int  zmq_recv(long socket, uchar &buf[], long len, int flags);
+   int  zmq_setsockopt(long socket, int option, int &value, long len);
    int  zmq_errno();
 #import
 
@@ -158,6 +163,19 @@ public:
          Print("[Zmq] recv error: len=" + IntegerToString(len) + " errno=" + IntegerToString(err));
       }
       return false;
+   }
+
+   //--- Socket options (int-valued; blocks zmq_recv at most `ms` milliseconds)
+   bool setReceiveTimeout(int ms)
+   {
+      int value = ms;
+      return 0 == zmq_setsockopt(m_ref, ZMQ_RCVTIMEO, value, 4);
+   }
+
+   bool setLinger(int ms)
+   {
+      int value = ms;
+      return 0 == zmq_setsockopt(m_ref, ZMQ_LINGER, value, 4);
    }
 };
 //+------------------------------------------------------------------+

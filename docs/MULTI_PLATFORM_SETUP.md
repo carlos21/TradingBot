@@ -20,10 +20,10 @@ The cleanest, safest solution is to run **two fully-isolated app instances** —
 
 ```bash
 # Terminal 1 — NinjaTrader instance (default ports 5555-5558, Flask 5001)
-./bin/start_nt.sh
+./bin/start_ninjatrader.sh
 
 # Terminal 2 — MetaTrader instance (default ports 5565-5568, Flask 5002)
-./bin/start_mt.sh
+./bin/start_metatrader.sh
 ```
 
 Or start both in the background with one command:
@@ -83,7 +83,7 @@ export PAIR=ES
 export DB_PATH="sqlite:///./es_ninja.db"
 export LOG_DIR="logs/es_ninja"
 export FLASK_PORT=5003
-./bin/start_nt.sh
+./bin/start_ninjatrader.sh
 ```
 
 ```bash
@@ -96,7 +96,7 @@ export ZMQ_MARKET_PORT=5575
 export ZMQ_COMMAND_PORT=5576
 export ZMQ_QUERY_PORT=5567
 export ZMQ_HEARTBEAT_PORT=5578
-./bin/start_mt.sh
+./bin/start_metatrader.sh
 ```
 
 ### CLI Arguments
@@ -145,7 +145,15 @@ Edit `TradingBotZmqConfig.json` to set ports, pair, history days, etc. If the co
 
 ### 4. Compile the EA
 
-Open MetaEditor, load `TradingBotZmqEA.mq5`, and press **F7** to compile.
+From WSL, run the terminal compile script (wraps MetaEditor via WSL interop and
+parses the build log):
+
+```bash
+./bin/compile_metatrader.sh          # full compile, emits TradingBotZmqEA.ex5
+./bin/compile_metatrader.sh --check  # syntax check only
+```
+
+Alternatively, open MetaEditor, load `TradingBotZmqEA.mq5`, and press **F7** to compile.
 
 ### 5. Attach to Chart
 
@@ -159,6 +167,10 @@ Open MetaEditor, load `TradingBotZmqEA.mq5`, and press **F7** to compile.
 4. Click **OK**
 
 The EA auto-connects on startup. Check the `Experts` tab for connection logs.
+
+### 6. Account Configuration
+
+The EA does **not** store the account name in its JSON config. The account is configured in the bot's Settings page (stored in the app's SQLite database). For MetaTrader, set the account `name` to the broker login ID shown in MT5 (e.g. `12345678`). The EA validates every order command against this login ID and rejects commands for any other account.
 
 ### 5. Verify Connection
 

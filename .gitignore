@@ -199,6 +199,10 @@ obj/
 *.cache
 project.lock.json
 artifacts/
+
+# MQL5 / MetaTrader compiled outputs
+*.ex4
+*.ex5
 frontend/node_modules
 frontend/coverage
 coverage/

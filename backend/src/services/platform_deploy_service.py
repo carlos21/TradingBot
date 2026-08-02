@@ -68,10 +68,10 @@ class PlatformDeployService:
             # Defaults must match the application's live ZMQ ports so the
             # deployed MetaTrader connector can actually connect.
             ports = {
-                "market_port": 5555,
-                "command_port": 5556,
-                "query_port": 5557,
-                "heartbeat_port": 5558,
+                "market_port": 5565,
+                "command_port": 5566,
+                "query_port": 5567,
+                "heartbeat_port": 5568,
             }
 
         mql5_dir = Path(target_dir) if target_dir else self.find_metatrader_data_dir()

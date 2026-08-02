@@ -17,21 +17,21 @@ PIDFILE="${PROJECT_DIR}/.multi_instance_pids"
 start_instances() {
     mkdir -p "${PROJECT_DIR}/logs"
 
-    if [[ ! -f "${SCRIPT_DIR}/start_nt.sh" ]]; then
-        echo "[multi] ERROR: ${SCRIPT_DIR}/start_nt.sh not found. Skipping NinjaTrader."
+    if [[ ! -f "${SCRIPT_DIR}/start_ninjatrader.sh" ]]; then
+        echo "[multi] ERROR: ${SCRIPT_DIR}/start_ninjatrader.sh not found. Skipping NinjaTrader."
         NT_PID=""
     else
         echo "[multi] Starting NinjaTrader instance..."
-        nohup "${SCRIPT_DIR}/start_nt.sh" > "${PROJECT_DIR}/logs/ninja.out" 2>&1 &
+        nohup "${SCRIPT_DIR}/start_ninjatrader.sh" > "${PROJECT_DIR}/logs/ninja.out" 2>&1 &
         NT_PID=$!
     fi
 
-    if [[ ! -f "${SCRIPT_DIR}/start_mt.sh" ]]; then
-        echo "[multi] ERROR: ${SCRIPT_DIR}/start_mt.sh not found. Skipping MetaTrader."
+    if [[ ! -f "${SCRIPT_DIR}/start_metatrader.sh" ]]; then
+        echo "[multi] ERROR: ${SCRIPT_DIR}/start_metatrader.sh not found. Skipping MetaTrader."
         MT_PID=""
     else
         echo "[multi] Starting MetaTrader instance..."
-        nohup "${SCRIPT_DIR}/start_mt.sh" > "${PROJECT_DIR}/logs/meta.out" 2>&1 &
+        nohup "${SCRIPT_DIR}/start_metatrader.sh" > "${PROJECT_DIR}/logs/meta.out" 2>&1 &
         MT_PID=$!
     fi
 

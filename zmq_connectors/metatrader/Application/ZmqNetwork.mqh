@@ -27,6 +27,7 @@ private:
    Socket  *m_querySocket;      // REQ → Python REP
    Socket  *m_heartbeatSocket;  // PUB → Python SUB
 
+   string   m_queryAddr;        // kept for RecreateRequestSocket()
    bool     m_disposed;
    long     m_seqNum;
 
@@ -42,7 +43,7 @@ public:
       m_commandSocket = NULL;
       m_querySocket = NULL;
       m_heartbeatSocket = NULL;
-      
+
       // Context is default-constructed; MQL5 ZMQ uses its own default I/O thread count
    }
 
@@ -62,14 +63,14 @@ public:
 
       string marketAddr    = StringFormat("tcp://%s:%d", m_cfg.host, m_cfg.marketPort);
       string commandAddr   = StringFormat("tcp://%s:%d", m_cfg.host, m_cfg.commandPort);
-      string queryAddr     = StringFormat("tcp://%s:%d", m_cfg.host, m_cfg.queryPort);
+      m_queryAddr          = StringFormat("tcp://%s:%d", m_cfg.host, m_cfg.queryPort);
       string heartbeatAddr = StringFormat("tcp://%s:%d", m_cfg.host, m_cfg.heartbeatPort);
 
       bool ok1 = m_marketSocket.connect(marketAddr);
       int err1 = GetLastError();
       bool ok2 = m_commandSocket.connect(commandAddr);
       int err2 = GetLastError();
-      bool ok3 = m_querySocket.connect(queryAddr);
+      bool ok3 = m_querySocket.connect(m_queryAddr);
       int err3 = GetLastError();
       bool ok4 = m_heartbeatSocket.connect(heartbeatAddr);
       int err4 = GetLastError();
@@ -101,7 +102,7 @@ public:
          m_logger.Info("ZMQ connected:");
          m_logger.Info("  Market: " + marketAddr);
          m_logger.Info("  Commands: " + commandAddr);
-         m_logger.Info("  Queries: " + queryAddr);
+         m_logger.Info("  Queries: " + m_queryAddr);
          m_logger.Info("  Heartbeat: " + heartbeatAddr);
       }
       return true;
@@ -118,6 +119,29 @@ public:
       if(m_heartbeatSocket != NULL) { delete m_heartbeatSocket; m_heartbeatSocket = NULL; }
       // m_context is a value type; its destructor runs automatically
       // when ZmqNetwork is destroyed, after all sockets are closed
+   }
+
+   //--- Full disconnect/connect cycle used by the connection watchdog
+   bool Restart() override
+   {
+      Dispose();
+      m_disposed = false;
+      return Start();
+   }
+
+   //--- Reset the REQ/REP state machine after a request timeout
+   //--- (mirrors NinjaTrader ZmqNetwork.RecreateQueryReq)
+   void RecreateRequestSocket() override
+   {
+      if(m_querySocket != NULL)
+      {
+         delete m_querySocket;
+         m_querySocket = NULL;
+      }
+      m_querySocket = new Socket(m_context, ZMQ_REQ);
+      m_querySocket.setLinger(0);
+      if(!m_querySocket.connect(m_queryAddr) && m_logger != NULL)
+         m_logger.Warning("RecreateRequestSocket: reconnect to " + m_queryAddr + " failed");
    }
 
    //--- Send helpers
@@ -165,12 +189,10 @@ public:
                   + ",\"seq_num\":" + IntegerToString(++m_seqNum)
                   + ",\"payload\":{\"pair\":\"" + pair + "\",\"days\":"
                   + IntegerToString(days) + ",\"bars\":[" + barsJson + "]}}";
-      if(m_logger != NULL)
-         m_logger.Info("SendRawHistoryBatch: jsonLen=" + IntegerToString(StringLen(json)) + " barsLen=" + IntegerToString(StringLen(barsJson)));
       ZmqMsg msg(json);
       bool sent = m_marketSocket.send(msg);
-      if(m_logger != NULL)
-         m_logger.Info("SendRawHistoryBatch: sent=" + (sent ? "OK" : "FAIL"));
+      if(!sent && m_logger != NULL)
+         m_logger.Warning("SendRawHistoryBatch: send failed");
    }
 
    void SendHistoryEnd(string pair) override
@@ -180,24 +202,54 @@ public:
       SendEnvelope(MT_HISTORY_END, payload, m_marketSocket);
    }
 
-   void SendEntryFill(string tradeId, double entryPrice, double stopLoss, double takeProfit) override
+   void SendRefreshStart(string pair) override
+   {
+      // Protocol: sent before history batches so Python clears recent bars
+      JSONValue *payload = new JSONValue(JSON_OBJECT);
+      payload["pair"] = new JSONValue(pair);
+      SendEnvelope(MT_REFRESH_START, payload, m_marketSocket);
+   }
+
+   void SendEntryFill(string tradeId, double entryPrice, double stopLoss, double takeProfit, string account = "", double quantity = 0, double accountBalance = 0) override
    {
       JSONValue *payload = new JSONValue(JSON_OBJECT);
       payload["trade_id"]    = new JSONValue(tradeId);
       payload["entry_price"] = new JSONValue(entryPrice);
       payload["stop_loss"]   = new JSONValue(stopLoss);
       payload["take_profit"] = new JSONValue(takeProfit);
+      if(StringLen(account) > 0)
+         payload["account"]  = new JSONValue(account);
+      if(quantity > 0)
+         payload["quantity"] = new JSONValue(quantity);
+      if(accountBalance > 0)
+         payload["account_balance"] = new JSONValue(accountBalance);
       SendEnvelope(MT_ENTRY_FILL, payload, m_marketSocket);
    }
 
-   void SendExitFill(string tradeId, double exitPrice, string resultType) override
+   void SendExitFill(string tradeId, double exitPrice, string resultType, long exitTime = 0, string account = "", double realizedPnl = 0, double commission = 0, double accountBalance = 0) override
    {
       JSONValue *payload = new JSONValue(JSON_OBJECT);
       payload["trade_id"]    = new JSONValue(tradeId);
       payload["exit_price"]  = new JSONValue(exitPrice);
       payload["result_type"] = new JSONValue(resultType);
-      payload["exit_time"]   = new JSONValue((long)TimeCurrent());
+      payload["exit_time"]   = new JSONValue(exitTime > 0 ? exitTime : (long)TimeCurrent());
+      if(StringLen(account) > 0)
+         payload["account"]      = new JSONValue(account);
+      if(realizedPnl != 0)
+         payload["realized_pnl"] = new JSONValue(realizedPnl);
+      if(commission != 0)
+         payload["commission"]   = new JSONValue(commission);
+      if(accountBalance > 0)
+         payload["account_balance"] = new JSONValue(accountBalance);
       SendEnvelope(MT_EXIT_FILL, payload, m_marketSocket);
+   }
+
+   void SendOrderRejected(string tradeId, string reason) override
+   {
+      JSONValue *payload = new JSONValue(JSON_OBJECT);
+      payload["trade_id"] = new JSONValue(tradeId);
+      payload["reason"]   = new JSONValue(reason);
+      SendEnvelope(MT_ORDER_REJECTED, payload, m_marketSocket);
    }
 
    void SendTradeLog(string tradeId, string eventType, string message) override
@@ -227,12 +279,13 @@ public:
       SendEnvelope(MT_HEARTBEAT, payload, m_heartbeatSocket);
    }
 
-   void SendConnect(string platform, string version, string account, string pair) override
+   void SendConnect(string platform, string version, string pair) override
    {
+      // Minimal handshake — no account field (single-account terminal;
+      // account identity is validated per order command instead).
       JSONValue *payload = new JSONValue(JSON_OBJECT);
       payload["platform"] = new JSONValue(platform);
       payload["version"]  = new JSONValue(version);
-      payload["account"]  = new JSONValue(account);
       payload["pair"]     = new JSONValue(pair);
       SendEnvelope(MT_CONNECT, payload, m_marketSocket);
    }
@@ -251,11 +304,12 @@ public:
       SendEnvelope(MT_COMMAND_ACK, payload, m_marketSocket);
    }
 
-   void SendPositionSync(JSONValue *positionsArray, JSONValue *untrackedArray) override
+   void SendPositionSync(JSONValue *positionsArray, JSONValue *untrackedArray, int count = 0) override
    {
       JSONValue *payload = new JSONValue(JSON_OBJECT);
       payload["positions"] = positionsArray;
-      payload["untracked"] = untrackedArray;
+      payload["count"]     = new JSONValue((long)count);
+      payload["untracked_orders"] = untrackedArray;
       payload["source"]    = new JSONValue("metatrader5");
       payload["is_source_of_truth"] = new JSONValue(true);
       SendEnvelope(MT_POSITION_SYNC, payload, m_marketSocket);
@@ -326,7 +380,10 @@ public:
    //--- Query config (synchronous REQ/REP)
    string QueryConfig(string key, int timeoutMs) override
    {
-      // NOTE: timeoutMs is currently unused — Zmq.mqh recv() does not support timeouts
+      if(m_querySocket == NULL) return "";
+      if(timeoutMs > 0)
+         m_querySocket.setReceiveTimeout(timeoutMs);
+
       JSONValue *reqPayload = new JSONValue(JSON_OBJECT);
       reqPayload["key"] = new JSONValue(key);
 
@@ -351,7 +408,8 @@ public:
       if(!m_querySocket.recv(repMsg))
       {
          if(m_logger != NULL)
-            m_logger.Warning("QueryConfig receive failed (timeout?)");
+            m_logger.Warning("QueryConfig receive failed (timeout) — recreating REQ socket");
+         RecreateRequestSocket();
          return "";
       }
 
@@ -370,14 +428,21 @@ public:
       return value;
    }
 
-   //--- Test ping/pong (synchronous REQ/REP)
+   //--- Test ping/pong (synchronous REQ/REP with real receive timeout)
    bool SendTestPingWithResponse(int timeoutMs) override
    {
-      // NOTE: timeoutMs is currently unused — Zmq.mqh recv() does not support timeouts
+      if(m_querySocket == NULL) return false;
+      if(timeoutMs > 0)
+         m_querySocket.setReceiveTimeout(timeoutMs);
+
+      JSONValue *reqPayload = new JSONValue(JSON_OBJECT);
+      reqPayload["timestamp"] = new JSONValue((long)TimeCurrent());
+
       JSONValue *reqRoot = new JSONValue(JSON_OBJECT);
       reqRoot["msg_type"]  = new JSONValue(MT_TEST_PING);
       reqRoot["timestamp"] = new JSONValue((long)TimeCurrent());
       reqRoot["seq_num"]   = new JSONValue(++m_seqNum);
+      reqRoot["payload"]   = reqPayload;
 
       string reqJson = m_serializer.Serialize(reqRoot);
       delete reqRoot;
@@ -388,7 +453,14 @@ public:
 
       ZmqMsg repMsg;
       if(!m_querySocket.recv(repMsg))
+      {
+         // Timeout — REQ socket is now wedged (still waiting for a reply),
+         // recreate it to reset the REQ/REP state machine.
+         if(m_logger != NULL)
+            m_logger.Warning("Test ping timeout — recreating REQ socket");
+         RecreateRequestSocket();
          return false;
+      }
 
       string repJson = repMsg.getData();
       JSONValue *repRoot = m_serializer.Deserialize(repJson);

@@ -7,11 +7,14 @@
 #include "../Domain/Contracts.mqh"
 #include "../Domain/MessageTypes.mqh"
 #include "../Domain/ValueObjects.mqh"
+#include "../Domain/PlatformApi.mqh"
 
 //+------------------------------------------------------------------+
 //| HistoryProvider — sends historical bars in batches               |
 //|  Uses raw JSON string building to bypass MQL5 JSON library       |
 //|  stack-overflow issues with large object trees.                  |
+//|  Protocol: refresh_start first (Python clears recent bars on     |
+//|  it), then history_batch chunks, then history_end.               |
 //+------------------------------------------------------------------+
 class HistoryProvider : public IHistoryProvider
 {
@@ -19,53 +22,66 @@ private:
    IZmqNetwork        *m_network;
    ILogger            *m_logger;
    ZmqConfiguration   *m_config;
+   IMarketDataApi     *m_marketData;
+   ITimeApi           *m_timeApi;
    string              m_symbol;
 
 public:
-   HistoryProvider(IZmqNetwork *network, ILogger *logger, ZmqConfiguration *config, string symbol)
+   HistoryProvider(IZmqNetwork *network, ILogger *logger, ZmqConfiguration *config, string symbol, IMarketDataApi *marketData, ITimeApi *timeApi)
    {
       m_network = network;
       m_logger = logger;
       m_config = config;
+      m_marketData = marketData;
+      m_timeApi = timeApi;
       m_symbol = symbol;
    }
 
    ~HistoryProvider() {}
 
    //--- IHistoryProvider implementation
-   void SendHistory(int days = 0) override
+   void SendHistory(int days = 0, string symbol = "") override
    {
       if(m_network == NULL) return;
 
+      string sym = (StringLen(symbol) > 0) ? symbol : m_symbol;
       int historyDays = (days > 0) ? days : m_config.historyDays;
       if(historyDays <= 0) historyDays = 1;
 
-      datetime end = TimeCurrent();
+      // Protocol: refresh_start FIRST — Python clears recent bars on it
+      m_network.SendRefreshStart(sym);
+
+      datetime end = m_timeApi.Now();
       datetime start = end - historyDays * 86400;
 
-      int total = Bars(m_symbol, PERIOD_M1, start, end);
+      int total = m_marketData.BarsCount(sym, start, end);
       if(total <= 0)
       {
          if(m_logger != NULL)
             m_logger.Warning("HistoryProvider: Bars() returned " + IntegerToString(total));
-         m_network.SendHistoryEnd(m_symbol);
+         m_network.SendHistoryEnd(sym);
          return;
       }
 
       if(m_logger != NULL)
-         m_logger.Info("HistoryProvider: sending " + IntegerToString(total) + " bars (" + IntegerToString(historyDays) + " days)");
+         m_logger.Info("HistoryProvider: sending " + IntegerToString(total) + " bars (" + IntegerToString(historyDays) + " days) for " + sym);
 
-      // Use a small static array to avoid stack overflow.
-      MqlRates rates[10];
-      const int BATCH = 10;
+      // Batch size raised toward 500 — the manual string builder is
+      // heap-based so bigger batches are safe. 5ms sleep between batches.
+      int batchSize = m_config.batchSize;
+      if(batchSize < 10)  batchSize = 10;
+      if(batchSize > 500) batchSize = 500;
+
+      MqlRates rates[];
+      ArrayResize(rates, batchSize);
       int totalSent = 0;
 
       for(int pos = total - 1; pos >= 0; )
       {
-         int count = MathMin(BATCH, pos + 1);
+         int count = MathMin(batchSize, pos + 1);
          int startPos = pos - count + 1;
 
-         int copied = CopyRates(m_symbol, PERIOD_M1, startPos, count, rates);
+         int copied = m_marketData.CopyM1Rates(sym, startPos, count, rates);
          if(copied <= 0) break;
 
          // Build bars JSON manually — bypasses MQL5 JSON library completely
@@ -88,17 +104,17 @@ public:
                       + ",\"low\":" + sLow
                       + ",\"close\":" + sClose
                       + ",\"volume\":" + IntegerToString((long)rates[j].tick_volume)
-                      + ",\"pair\":\"" + m_symbol + "\"}";
+                      + ",\"pair\":\"" + sym + "\"}";
          }
 
-         m_network.SendRawHistoryBatch(m_symbol, barsJson, historyDays);
+         m_network.SendRawHistoryBatch(sym, barsJson, historyDays);
          totalSent += copied;
          pos -= count;
 
          Sleep(5);
       }
 
-      m_network.SendHistoryEnd(m_symbol);
+      m_network.SendHistoryEnd(sym);
 
       if(m_logger != NULL)
          m_logger.Info("HistoryProvider: history send complete, " + IntegerToString(totalSent) + " bars sent");

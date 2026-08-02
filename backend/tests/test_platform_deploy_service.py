@@ -55,10 +55,10 @@ class TestDeployMetaTrader:
         config_path = target / "Files" / "TradingBotZmqConfig.json"
         assert config_path.exists(), result
         config = json.loads(config_path.read_text())
-        assert config["marketPort"] == 5555
-        assert config["commandPort"] == 5556
-        assert config["queryPort"] == 5557
-        assert config["heartbeatPort"] == 5558
+        assert config["marketPort"] == 5565
+        assert config["commandPort"] == 5566
+        assert config["queryPort"] == 5567
+        assert config["heartbeatPort"] == 5568
         assert config["pair"] == "NAS100"
 
     def test_custom_ports_override_defaults(self, service, tmp_path):

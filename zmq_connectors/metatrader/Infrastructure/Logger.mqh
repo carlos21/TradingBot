@@ -60,6 +60,11 @@ public:
       if(m_uiCallback != NULL) m_uiCallback("[OK] " + msg);
    }
 
+   void Debug(string msg) override
+   {
+      Print(m_prefix, " [DEBUG] ", msg);
+   }
+
    //--- Update chart comment panel (simple status display)
    void UpdatePanel(string status)
    {

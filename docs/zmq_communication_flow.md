@@ -596,7 +596,7 @@ Account information is **no longer exchanged during the initial handshake**. Ins
 | Platform | Handshake Account Info | Account Routing |
 |----------|----------------------|-----------------|
 | **NinjaTrader** | None — minimal `CONNECT` | Per-trade `account` field in commands & fills |
-| **MetaTrader 5** | Sends broker login ID in `CONNECT` | Single account per EA instance |
+| **MetaTrader 5** | None — minimal `CONNECT` | Per-command `account` validated against the terminal login (`ACCOUNT_LOGIN`) |
 
 ### NinjaTrader Handshake Flow
 
@@ -712,19 +712,23 @@ If a specified account is not found:
 1. The command fails immediately with `"No account available (requested: 'XYZ')"`.
 2. No fallback to `Account.All[0]` occurs — commands must explicitly target a valid account when multiple accounts exist.
 
-### MetaTrader 5 Handshake (Legacy Behavior)
+### MetaTrader 5 Handshake
 
-MetaTrader 5 still queries config and sends the account in `CONNECT`:
+MetaTrader 5 uses the same minimal handshake as NinjaTrader — no account field, no config query:
 
 ```mql5
-// Query config from Python (account name, etc.)
-string configuredAccount = _network.QueryConfig("account", 2000);
-
-// Send connect handshake
-_network.SendConnect("metatrader5", _config.platformVersion, configuredAccount, _Symbol);
+// Send minimal connect handshake
+_network.SendConnect("metatrader5", _config.platformVersion, _Symbol);
 ```
 
-> **Note**: MT5 queries `"account"` (singular), but Python's `CONFIG_QUERY` handler only responds to `"accounts"` or `"all"`. This causes the query to return empty, and MT5 falls back to the broker login ID (`AccountInfoInteger(ACCOUNT_LOGIN)`).
+A MetaTrader terminal is logged into exactly **one** broker account, so instead of per-trade routing the EA **validates** the `account` field of every order command against the terminal's broker login ID:
+
+1. If the command's `account` equals `AccountInfoInteger(ACCOUNT_LOGIN)` as a string, the order executes on the logged-in account.
+2. Otherwise the command fails with a failure `command_ack` + `error` message — there is **no silent fallback**, and Python rolls the trade back (same contract as NinjaTrader).
+
+> **Note:** the bot's Settings account name for a MetaTrader instance must therefore be the broker login ID, because that is what the EA receives and validates.
+
+Fills (`entry_fill`/`exit_fill`) and `position_sync` echo the broker login so Python books them to the correct trade.
 
 ## Message Types Reference
 
@@ -749,7 +753,7 @@ _network.SendConnect("metatrader5", _config.platformVersion, configuredAccount, 
 | `exit_fill` | trade_id, exit_price, result_type, **account** | Exit execution (TP/SL/CLOSE/SP) |
 | `trade_log` | trade_id, event, message | Trading events log |
 | `heartbeat` | source, status | Health check (every 5s) |
-| `connect` | platform, version, account (optional), pair | Initial handshake. **NT**: no account sent. **MT5**: sends broker login ID |
+| `connect` | platform, version, pair | Initial handshake — minimal, no account field on either platform |
 | `error` | source, error_type, message, details | Error notification |
 | `command_ack` | command_type, seq_num, success, trade_id, message | Command acknowledgment |
 | `position_sync` | positions[], count, source, is_source_of_truth | Crash recovery sync |
@@ -762,7 +766,7 @@ _network.SendConnect("metatrader5", _config.platformVersion, configuredAccount, 
 | `test_pong` | PY → NT | timestamp | Connection test response |
 | `position_query` | NT → PY | - | Query open positions for recovery |
 | `position_response` | PY → NT | positions[], count | Open positions list |
-| `config_query` | NT → PY | key | Query config value. **Used by MT5** (queries `"account"`). **Not used by NT** |
+| `config_query` | NT → PY | key | Query config value. **Not used by NT or MT5** (kept for compatibility) |
 | `config_response` | PY → NT | {key: value} | Config value response. Python handles `"accounts"` / `"all"` keys |
 
 ## Socket Flow Details

@@ -7,6 +7,7 @@
 
 #include "../Domain/Contracts.mqh"
 #include "../Domain/MessageTypes.mqh"
+#include "../Domain/PlatformApi.mqh"
 
 //+------------------------------------------------------------------+
 //| E2ETestRunner — runs full E2E test suite                         |
@@ -16,12 +17,14 @@ class E2ETestRunner
 private:
    IZmqNetwork *m_network;
    ILogger     *m_logger;
+   IAccountApi *m_account;
 
 public:
-   E2ETestRunner(IZmqNetwork *network, ILogger *logger)
+   E2ETestRunner(IZmqNetwork *network, ILogger *logger, IAccountApi *account = NULL)
    {
       m_network = network;
       m_logger = logger;
+      m_account = account;
    }
 
    ~E2ETestRunner() {}
@@ -48,7 +51,11 @@ public:
       basicScenarios[1] = "sl_hit";
       basicScenarios[2] = "session_end";
 
-      // Feature scenarios (multi_account skipped — single-account platform)
+      // Feature scenarios (multi_account skipped — single-account terminal;
+      // account validated against login/accountName)
+      // NOTE: account-mismatch NACK and subscribe/unsubscribe ACK scenarios
+      // are Python-driven (Python sends the command and verifies the ack) —
+      // this runner only orchestrates, so they are not listed here. Gap noted.
       string featureScenarios[5];
       featureScenarios[0] = "command_ack";
       featureScenarios[1] = "duplicate_detection";
@@ -83,7 +90,7 @@ public:
          if(scenario == "multi_account")
          {
             if(m_logger != NULL)
-               m_logger.Warning("[TEST] multi_account: Skipped on MetaTrader (single-account platform)");
+               m_logger.Warning("[TEST] multi_account: Skipped on MetaTrader (single-account terminal; account validated against login/accountName)");
             continue;
          }
 
@@ -109,13 +116,17 @@ private:
    //--- Validates that the account is a simulation/demo account
    bool ValidateSimulationEnvironment()
    {
-      ENUM_ACCOUNT_TRADE_MODE tradeMode = (ENUM_ACCOUNT_TRADE_MODE)AccountInfoInteger(ACCOUNT_TRADE_MODE);
-      bool isDemo = (tradeMode == ACCOUNT_TRADE_MODE_DEMO);
-      bool isContest = (tradeMode == ACCOUNT_TRADE_MODE_CONTEST);
+      //--- IsDemo() covers demo AND contest accounts (non-real trading)
+      bool isSimulation = (m_account != NULL)
+         ? m_account.IsDemo()
+         : ((ENUM_ACCOUNT_TRADE_MODE)AccountInfoInteger(ACCOUNT_TRADE_MODE) == ACCOUNT_TRADE_MODE_DEMO
+            || (ENUM_ACCOUNT_TRADE_MODE)AccountInfoInteger(ACCOUNT_TRADE_MODE) == ACCOUNT_TRADE_MODE_CONTEST);
 
-      if(!isDemo && !isContest)
+      if(!isSimulation)
       {
-         string login = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+         string login = (m_account != NULL)
+            ? IntegerToString(m_account.Login())
+            : IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
          if(m_logger != NULL)
             m_logger.Error("E2E SAFETY BLOCK: Account " + login + " is not a demo/contest account.");
          return false;

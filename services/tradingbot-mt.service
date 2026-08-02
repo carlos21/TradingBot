@@ -6,9 +6,9 @@ After=network.target
 Type=simple
 User=%i
 WorkingDirectory=/home/%i/TradingBot
-ExecStart=/home/%i/TradingBot/bin/start_mt.sh
+ExecStart=/home/%i/TradingBot/bin/start_metatrader.sh
 
-# Defaults are in bin/start_mt.sh — override here only if needed
+# Defaults are in bin/start_metatrader.sh — override here only if needed
 # Environment="PAIR=EURUSD"
 # Environment="FLASK_PORT=5002"
 

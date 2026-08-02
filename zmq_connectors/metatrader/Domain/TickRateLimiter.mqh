@@ -6,6 +6,7 @@
 #property strict
 
 #include "Contracts.mqh"
+#include "PlatformApi.mqh"
 
 //+------------------------------------------------------------------+
 //| TickRateLimiter — allows N events per second                     |
@@ -13,16 +14,18 @@
 class TickRateLimiter : public IRateLimiter
 {
 private:
-   int    m_maxPerSecond;
-   int    m_count;
-   uint   m_lastResetMs;
+   ITimeApi *m_time;
+   int       m_maxPerSecond;
+   int       m_count;
+   uint      m_lastResetMs;
 
 public:
-   TickRateLimiter(int maxPerSecond)
+   TickRateLimiter(int maxPerSecond, ITimeApi *timeApi)
    {
+      m_time = timeApi;
       m_maxPerSecond = maxPerSecond > 0 ? maxPerSecond : 1;
       m_count = 0;
-      m_lastResetMs = GetTickCount();
+      m_lastResetMs = (uint)m_time.TickCount();
    }
 
    ~TickRateLimiter() {}
@@ -30,7 +33,7 @@ public:
    //--- IRateLimiter implementation
    bool TryAllow() override
    {
-      uint nowMs = GetTickCount();
+      uint nowMs = (uint)m_time.TickCount();
       if(nowMs - m_lastResetMs >= 1000)
       {
          m_lastResetMs = nowMs;
@@ -46,6 +49,6 @@ public:
    void Reset() override
    {
       m_count = 0;
-      m_lastResetMs = GetTickCount();
+      m_lastResetMs = (uint)m_time.TickCount();
    }
 };
