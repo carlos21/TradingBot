@@ -89,8 +89,9 @@ def _build_database(cfg: AppConfig):
     except OperationalError:
         if not cfg.database_url or cfg.database_url == cfg.db_path:
             raise
-        print(f"{log_timestamp()} [App] Database unreachable at {cfg.database_url}; "
-              f"falling back to SQLite: {cfg.db_path}")
+        db_url = cfg.database_url
+        db_name = db_url.split('://')[0] if '://' in db_url else db_url
+        print(f"{log_timestamp()} [App] {db_name} database unreachable; falling back to SQLite: {cfg.db_path}")
         db = get_database(db_url=cfg.db_path)
         database.setup_database(database_instance=db)
         return db

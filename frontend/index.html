@@ -204,7 +204,7 @@
   </aside>
 
   <!-- Main Content -->
-  <div class="ml-64 h-screen grid grid-rows-[auto_1fr] relative">
+  <div class="ml-64 h-screen flex flex-col relative">
     <!-- Warning banner for missing accounts -->
     <div id="ntAccountsWarning" data-platform="ninjatrader" class="hidden px-4 py-2 bg-rose-600 text-slate-100 text-center font-bold text-sm">
       <span id="ntAccountsWarningMessage">⚠️ No NT accounts configured — live trading is disabled.</span>
@@ -258,7 +258,7 @@
     </div>
 
     <!-- Header with timeframe buttons and replay controls -->
-    <header class="p-4 bg-surface-800 text-slate-100">
+    <header class="p-4 bg-surface-800 text-slate-100 flex-shrink-0">
       <div class="flex justify-between items-center">
         <!-- Left group: timeframes + instrument -->
         <div class="flex items-center space-x-4">
@@ -460,7 +460,7 @@
       </div>
     </div>
 
-    <div id="chartContainer" class="bg-surface-950"></div>
+    <div id="chartContainer" class="bg-surface-950 flex-1 min-h-0"></div>
 
     <!-- Parity Check Results Modal -->
     <div id="parityModal" class="fixed inset-0 bg-black/60 z-[60] hidden flex items-center justify-center p-4">

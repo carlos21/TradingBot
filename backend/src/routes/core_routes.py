@@ -22,6 +22,11 @@ def register_core_routes(
     platform_type: str,
     platform_label: str,
     settings_service: "SettingsService" | None = None,
+    mode: str = "live",
+    csv_file: str | None = None,
+    start_str: str | None = None,
+    end_str: str | None = None,
+    bars_per_second: float | None = None,
 ):
     """Register core routes on the Flask app.
 
@@ -34,6 +39,11 @@ def register_core_routes(
         platform_type: Platform identifier (e.g., "ninjatrader")
         platform_label: Human-readable platform label
         settings_service: Optional settings service for instrument registry data
+        mode: Application run mode ("live" or "backtest")
+        csv_file: CSV file path for backtest mode
+        start_str: Backtest start date string
+        end_str: Backtest end date string
+        bars_per_second: Backtest replay speed
     """
 
     @app.route('/')
@@ -51,11 +61,17 @@ def register_core_routes(
                 # settings store; fall back to the configured pair.
                 logger.error(f"[API /config] failed to load instruments: {exc}")
         return jsonify({
+            'pair': pair,
             'instruments': instruments,
             'platform_type': platform_type,
             'platform_label': platform_label,
             'is_ninjatrader': platform_type == 'ninjatrader',
             'is_metatrader': platform_type == 'metatrader',
+            'mode': mode,
+            'csv_file': csv_file,
+            'start_str': start_str,
+            'end_str': end_str,
+            'bars_per_second': bars_per_second,
         })
 
     @app.route('/api/pair')

@@ -75,7 +75,7 @@ class TestCoreRoutes:
             resp = client.get("/api/config")
             assert resp.status_code == 200
             data = resp.get_json()
-            assert "pair" not in data  # no default instrument anymore
+            assert data["pair"] == "MNQ"
             assert data["instruments"] == [
                 {"symbol": "MNQ", "full_name": "MNQ 09-26", "point_value": 2.0, "session_start": "08:00", "session_end": "16:58", "daily_trades_limit": 1}
             ]
@@ -83,6 +83,39 @@ class TestCoreRoutes:
             assert data["platform_label"] == "NinjaTrader"
             assert data["is_ninjatrader"] is True
             assert data["is_metatrader"] is False
+            assert data["mode"] == "live"
+            assert data["csv_file"] is None
+            assert data["start_str"] is None
+            assert data["end_str"] is None
+            assert data["bars_per_second"] is None
+
+    def test_get_config_backtest_mode(self):
+        app = Flask(__name__, static_folder=None)
+        app.config["TESTING"] = True
+        register_core_routes(
+            app,
+            pair="MNQ",
+            data_source=GoodDataSource(),
+            logger=FakeLogger(),
+            frontend_dir="",
+            platform_type="ninjatrader",
+            platform_label="NinjaTrader",
+            settings_service=FakeSettingsService(),
+            mode="backtest",
+            csv_file="csvs/NQ_2024.csv",
+            start_str="2024-06-16 00:00:00",
+            end_str="2024-06-21 23:59:59",
+            bars_per_second=20.0,
+        )
+        with app.test_client() as client:
+            resp = client.get("/api/config")
+            assert resp.status_code == 200
+            data = resp.get_json()
+            assert data["mode"] == "backtest"
+            assert data["csv_file"] == "csvs/NQ_2024.csv"
+            assert data["start_str"] == "2024-06-16 00:00:00"
+            assert data["end_str"] == "2024-06-21 23:59:59"
+            assert data["bars_per_second"] == 20.0
 
     def test_get_pair(self, app):
         with app.test_client() as client:
@@ -111,8 +144,13 @@ class TestCoreRoutes:
             resp = client.get("/api/config")
             assert resp.status_code == 200
             data = resp.get_json()
+            assert data["pair"] == "MNQ"
             assert data["instruments"] == []
-            assert "pair" not in data
+            assert data["mode"] == "live"
+            assert data["csv_file"] is None
+            assert data["start_str"] is None
+            assert data["end_str"] is None
+            assert data["bars_per_second"] is None
 
     def test_get_bars(self, app):
         with app.test_client() as client:

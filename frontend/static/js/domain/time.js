@@ -55,6 +55,32 @@ export function formatChartTime(timestampSec) {
 }
 
 /**
+ * Format a Unix timestamp (seconds) as a replay date label
+ * (YYYY-MM-DD HH:MM in America/New_York).
+ */
+export function formatReplayDate(timestampSec) {
+  if (timestampSec == null || !isFinite(timestampSec)) return '';
+  const date = new Date(timestampSec * 1000);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+  }).formatToParts(date);
+
+  const get = (type) => parts.find(p => p.type === type)?.value;
+  const year = get('year');
+  const month = get('month');
+  const day = get('day');
+  const hour = get('hour');
+  const minute = get('minute');
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+/**
  * Format a Unix timestamp (seconds) as a full NY date/time string.
  */
 export function formatNYTimeFull(timestampSec) {

@@ -569,6 +569,11 @@ def create_app(
         platform_type=_platform_type,
         platform_label=_platform_label,
         settings_service=settings_service,
+        mode=app_config.mode if app_config else "live",
+        csv_file=app_config.csv_file if app_config else None,
+        start_str=app_config.start_str if app_config else None,
+        end_str=app_config.end_str if app_config else None,
+        bars_per_second=app_config.bars_per_second if app_config else None,
     )
     register_lines_routes(app, None, logger, coordinator=coordinator, lines_repo=repos.lines)
     register_trades_routes(app, None, repos.trades, pair, trade_logger, logger, coordinator=coordinator)

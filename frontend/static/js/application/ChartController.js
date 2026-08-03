@@ -1,5 +1,5 @@
 import { calculateTSI, detectCrosses } from '../TSICalculator.js';
-import { isInNewYorkSession, formatChartTime } from '../domain/time.js';
+import { isInNewYorkSession, formatChartTime, formatReplayDate } from '../domain/time.js';
 import {
   buildTradeLineDescriptors,
   buildSingleTradeLineDescriptors,
@@ -174,6 +174,12 @@ export class ChartController {
     });
   }
 
+  _updateCurrentDayLabel() {
+    const el = this.dom.getElementById('currentDayLabel');
+    if (!el) return;
+    el.textContent = this.lastTime > 0 ? formatReplayDate(this.lastTime) : '';
+  }
+
   _bindInteractions() {
     this.dom.addEventListener(this.chartElement, 'contextmenu', e => e.preventDefault());
     this.dom.addEventListener(this.chartElement, 'mousedown', this._onMouseDown.bind(this));
@@ -244,7 +250,10 @@ export class ChartController {
   }
 
   async _fetchBars(tf, startTime) {
-    const url = `/api/bars?pair=${encodeURIComponent(this.pair)}&tf=${encodeURIComponent(tf)}&start_time=${encodeURIComponent(startTime)}`;
+    let url = `/api/bars?pair=${encodeURIComponent(this.pair)}&tf=${encodeURIComponent(tf)}`;
+    if (startTime != null) {
+      url += `&start_time=${encodeURIComponent(startTime)}`;
+    }
     return this.http.get(url);
   }
 
@@ -263,6 +272,7 @@ export class ChartController {
       const last = valid[valid.length - 1];
       this.lastTime = last.time;
       this.lastPrice = last.close;
+      this._updateCurrentDayLabel();
     }
 
     if (valid.length > 0) {
@@ -347,6 +357,7 @@ export class ChartController {
         this.validTimes.add(bar.time);
         this.lastTime = bar.time;
         this.lastPrice = bar.close;
+        this._updateCurrentDayLabel();
         this._shadeBar(bar);
       }
     }
@@ -547,6 +558,7 @@ export class ChartController {
       }
     }
     this.lastTime = fromTime - 1;
+    this._updateCurrentDayLabel();
     this.socket.emit('start_stream', { timeframe: tf, pair: this.pair, fromTime });
     this.isPlaying = true;
   }
@@ -660,6 +672,7 @@ export class ChartController {
     this._tsiMarkers = [];
 
     this.lastTime = -Infinity;
+    this._updateCurrentDayLabel();
     this.lastPrice = null;
     this._lastShadedTime = -Infinity;
     this.historyReady = false;
@@ -703,6 +716,7 @@ export class ChartController {
       this.validTimes.add(bar.time);
       this.lastTime = bar.time;
       this.lastPrice = bar.close;
+      this._updateCurrentDayLabel();
       this._shadeBar(bar);
       this._recalculateTSI();
     }

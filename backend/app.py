@@ -104,6 +104,7 @@ def main():
             port=config.flask_port,
             debug=True,
             use_reloader=True,
+            allow_unsafe_werkzeug=True,
         )
 
 

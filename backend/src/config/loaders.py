@@ -21,6 +21,8 @@ import os
 import sys
 from typing import Protocol
 
+from sqlalchemy.exc import OperationalError
+
 from src.config.models import AccountConfig, AppConfig
 
 
@@ -349,10 +351,18 @@ class DbConfigLoader:
 
             cfg.validate()
             session.close()
-        except Exception as e:
-            # If DB is unreachable or tables missing, log and fall back to env/CLI
+        except OperationalError:
+            # If DB is unreachable (e.g. PostgreSQL URL but server not running),
+            # fall back to env/CLI defaults without dumping the connection error.
             import logging
-            logging.getLogger(__name__).warning(f"DB config load failed: {e}. Falling back to env/CLI defaults.")
+            db_name = self._db_path.split('://')[0] if '://' in self._db_path else self._db_path
+            logging.getLogger(__name__).warning(
+                f"DB config load failed ({db_name} unreachable); falling back to env/CLI defaults."
+            )
+        except Exception as e:
+            # Other unexpected DB errors still surface for diagnostics.
+            import logging
+            logging.getLogger(__name__).warning(f"DB config load failed: {e}")
         return cfg
 
     @staticmethod

@@ -139,6 +139,22 @@ class TestCSVDataSourceSubscribe:
         assert len(bars) == 2
         assert bars[-1]["time"] == int(datetime(2024, 1, 1, 9, 31, tzinfo=timezone.utc).timestamp())
 
+    def test_subscribe_clamps_from_time_to_initial_start_time(self):
+        from datetime import timezone
+        fileobj = io.StringIO(CSV_CONTENT)
+        ds = CSVDataSource(
+            pair="MNQ",
+            fileobj=fileobj,
+            time_fmt="%d/%m/%Y %H:%M",
+            tz="UTC",
+            initial_start_time=datetime(2024, 1, 1, 9, 31, tzinfo=timezone.utc),
+        )
+        received = []
+        ds.subscribe(lambda msg: received.append(msg), from_time=0)
+        bars = [m for m in received if not m.get("_end")]
+        assert len(bars) == 2
+        assert bars[0]["time"] == int(datetime(2024, 1, 1, 9, 31, tzinfo=timezone.utc).timestamp())
+
 
 class TestCSVDataSourceEdgeCases:
 

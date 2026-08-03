@@ -36,6 +36,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Without one nothing is pinned: no room is joined, no bars load, and
     // the overlay selector demands an explicit choice.
     activePair = resolvePinnedPair(getUrlPair(), instruments);
+    // In backtest mode only the configured pair has CSV data, so default to it
+    // when the tab is opened without a ?pair= param.
+    if (!activePair && config?.mode === 'backtest' && config?.pair) {
+      activePair = config.pair;
+    }
     activeInstrument = findInstrument(instruments, activePair);
   } catch (err) {
     console.error('[main] Failed to load config:', err);
@@ -50,6 +55,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const showTSIParam = urlParams.get('show_tsi');
   const showTSI = showTSIParam === null ? undefined : showTSIParam === 'true';
 
+  const isBacktest = config?.mode === 'backtest';
+
   const { controller, socket, streamingLifecycle, streamingControls } = createChartApp({
     options: {
       startTime,
@@ -59,6 +66,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       showTSI,
       activePair,
       activeInstrument,
+      isBacktest,
     },
   });
   streamingLifecycle.setStartSymbol(activePair);
@@ -73,6 +81,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     overlayLabel.textContent = activeInstrument
       ? `${activeInstrument.symbol} — ${activeInstrument.full_name}`
       : (activePair || '');
+  }
+
+  // Update platform label for backtest mode so the overlay does not mention NT.
+  const platformLabelEl = document.getElementById('platform-label');
+  if (platformLabelEl && isBacktest) {
+    platformLabelEl.textContent = 'CSV Replay';
   }
 
   // Header "Instruments ▾" menu: each entry opens another instrument in a
@@ -154,11 +168,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     overlaySelector.setEnabled(state !== StreamingState.STARTING);
   };
 
+  // In backtest mode there is no live gateway, so move the lifecycle machine
+  // to INACTIVE immediately so the NT connection overlay stays hidden.
+  if (isBacktest) {
+    streamingLifecycle.dispatch({
+      type: StreamingEventType.STATUS_SYNC,
+      live_mode: false,
+      gateway_running: false,
+      platform_connected: false,
+    });
+  }
+
   // On page load, sync the streaming lifecycle machine with the backend so
   // the overlay and streaming controls match the real gateway state.
   fetch('/api/stream/status')
     .then(r => r.json())
     .then(data => {
+      // In backtest mode the backend already reports live_mode=false, but the
+      // early dispatch above hides the overlay before the fetch returns.
       streamingLifecycle.dispatch({ type: StreamingEventType.STATUS_SYNC, ...data });
       // The dispatch re-renders the start button; re-apply the unpinned gate
       // unless the user has already picked an instrument.

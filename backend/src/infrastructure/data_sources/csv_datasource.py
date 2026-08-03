@@ -204,22 +204,26 @@ class CSVDataSource(CombinedDataSource):
     def subscribe(self, callback, from_time=0):
         self._stop_event.clear()
 
-        # 1. Truncate _played_bars to remove any history AFTER from_time
+        # 1. Clamp from_time to the configured replay window so we never stream
+        #    bars before initial_start_time, even when the caller passes 0.
+        start_time = from_time
+        if self.initial_start_time is not None:
+            start_time = max(start_time, self.initial_start_time)
+
+        # 2. Truncate _played_bars to keep only history BEFORE start_time.
         #    This prevents duplicates when seeking back or resuming.
-        self._played_bars = [b for b in self._played_bars if b['time'] < from_time]
+        self._played_bars = [b for b in self._played_bars if b['time'] < start_time]
 
-        # 2. Find start index in the master list
-        start_idx = next((i for i,b in enumerate(self._bars) if b['time'] >= from_time), None)
+        # 3. Find start index in the master list
+        start_idx = next((i for i, b in enumerate(self._bars) if b['time'] >= start_time), None)
 
-        if start_idx is not None:
-            pass
-        else:
+        if start_idx is None:
             # If we are at the end, just return
             with contextlib.suppress(Exception):
                 callback({'_end': True})
             return
 
-        # 3. Stream bars
+        # 4. Stream bars within the configured window
         end_time = self.initial_end_time
         for idx in range(start_idx, len(self._bars)):
             if self._stop_event.is_set():

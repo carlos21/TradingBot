@@ -5,6 +5,7 @@ import {
   formatChartTime,
   formatNYTime,
   formatNYTimeFull,
+  formatReplayDate,
 } from '../../domain/time.js';
 
 describe('time domain', () => {
@@ -47,5 +48,16 @@ describe('time domain', () => {
     expect(formatNYTime(ts)).toMatch(/09:30:00/);
     expect(formatNYTimeFull(ts)).toMatch(/09:30:00/);
     expect(formatNYTimeFull(ts)).toContain('Jan');
+  });
+
+  it('formats replay date in NY timezone', () => {
+    const ts = Date.parse('2024-06-16T18:00:00Z') / 1000;
+    expect(formatReplayDate(ts)).toMatch(/2024-06-16 14:00/);
+  });
+
+  it('handles invalid replay date inputs', () => {
+    expect(formatReplayDate(null)).toBe('');
+    expect(formatReplayDate(undefined)).toBe('');
+    expect(formatReplayDate(NaN)).toBe('');
   });
 });
