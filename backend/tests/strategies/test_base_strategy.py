@@ -581,11 +581,11 @@ class TestPhantomExits:
 class TestSLSelection:
 
     def test_select_sl_level_picks_smallest_covering(self):
-        s = _make_base(sl_levels=[15, 20, 30, 40])
+        s = _make_base(sl_levels=[10, 15, 20, 30, 40])
         assert s._select_sl_level(17.0) == 20.0
 
     def test_select_sl_level_exceeds_all_picks_largest(self):
-        s = _make_base(sl_levels=[15, 20, 30, 40])
+        s = _make_base(sl_levels=[10, 15, 20, 30, 40])
         assert s._select_sl_level(100.0) == 40.0
 
 
@@ -609,7 +609,7 @@ class TestBuildTradeFromContext:
         assert trade["risk"] == 20.0
 
     def test_tiered_sl(self):
-        s = _make_base(sl_levels=[15, 20, 30, 40])
+        s = _make_base(sl_levels=[10, 15, 20, 30, 40])
         ctx = _make_ctx(s, direction=Direction.LONG, close=100, extreme=83)
         trade = s._build_trade_from_context(ctx)
         assert trade["risk"] == 20.0

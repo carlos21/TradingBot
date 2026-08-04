@@ -23,7 +23,7 @@ class TestCatalog:
         assert p.point_value == 2.0
         assert p.min_stop_loss == 10.0
         assert p.max_bounce == 90.0
-        assert p.sl_levels == [15.0, 20.0, 30.0, 40.0]
+        assert p.sl_levels == [10.0, 15.0, 20.0, 30.0, 40.0]
         assert p.sl_level_tolerance == 3.0
         assert p.min_cross_depth == 5.0
         assert p.max_entry_distance == 50.0
@@ -62,7 +62,7 @@ class TestPerSymbolProdConfig:
     def test_numbers_mnq_uses_mnq_values(self):
         numbers = get_prod_strategy_numbers(rr_ratio=5.0, symbol="MNQ")
         assert numbers.point_value == 2.0
-        assert numbers.sl_levels == [15.0, 20.0, 30.0, 40.0]
+        assert numbers.sl_levels == [10.0, 15.0, 20.0, 30.0, 40.0]
         assert numbers.be_threshold_points == 2.0
         assert numbers.sl_tp_tolerance == 0.5
 

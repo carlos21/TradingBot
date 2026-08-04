@@ -33,7 +33,7 @@ def get_prod_strategy_numbers(rr_ratio: float,
     instrument's tuned values to use.
 
     Example – how the tiered SL system works:
-        sl_levels = [15, 20, 30, 40]
+        sl_levels = [10, 15, 20, 30, 40]
         If price dipped 18 pts below the line, the system picks 20.0 (smallest
         level >= 18).  If the dip was 45 pts, it falls back to the largest
         level (40.0) because 45 exceeds every tier.

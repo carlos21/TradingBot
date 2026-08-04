@@ -131,7 +131,7 @@ def make_recovery_strategy(
         timeframes=["3m", "5m", "15m", "30m", "1h"],
         options=options,
         candle_config=get_prod_candle_config(),
-        sl_levels=[15.0, 20.0, 30.0, 40.0],
+        sl_levels=[10.0, 15.0, 20.0, 30.0, 40.0],
         sl_level_tolerance=3,
         min_cross_depth=5.0,
         rr_ratio=5.0,
@@ -192,8 +192,8 @@ def _utc_dt(epoch):
 
 # Scenario: MNQ 2025-05-01
 # Lines: 20046.00, 20198.25 (at 01:00Z)
-# Trade 1: short entry=20041.50, sl=20056.50, tp=19966.50 → SL hit
-# Trade 2 (reentry): short entry=20038.00, sl=20078.00, tp=19838.00 (40 pt SL from full adverse excursion)
+# Trade 1: short entry=20041.50, sl=20051.50, tp=19991.50 → SL hit
+# Trade 2 (reentry): short entry=20042.75, sl=20052.75, tp=19992.75 (10 pt SL from adverse excursion)
 MAY01_BARS = None
 
 def _may01_bars():
@@ -240,7 +240,7 @@ class TestCrashRecoveryReentry:
         crash_idx = _feed_until_sl(strat1, all_bars, trade_repo)
 
         assert trade_repo.inserted[0]["entry"] == 20041.50
-        assert trade_repo.inserted[0]["stop_loss"] == 20056.50
+        assert trade_repo.inserted[0]["stop_loss"] == 20051.50
         assert len(strat1._reentry_opportunities) == 1
 
         # PHASE 2: Crash & recover
@@ -267,9 +267,9 @@ class TestCrashRecoveryReentry:
 
         reentry = trade_repo.inserted[-1]
         assert reentry["params"]["is_reentry"] is True
-        assert reentry["entry"] == 20038.00
-        assert reentry["stop_loss"] == 20078.00
-        assert reentry["take_profit"] == 19838.00
+        assert reentry["entry"] == 20042.75
+        assert reentry["stop_loss"] == 20052.75
+        assert reentry["take_profit"] == 19992.75
 
     def test_crash_after_sl_long_reentry(self):
         """MNQ 2025-05-08: long trade SL'd, crash → long re-entry fires."""
@@ -345,9 +345,9 @@ class TestCrashRecoveryReentry:
 
         assert len(trade_repo.inserted) == 2
         assert reentry["params"]["is_reentry"] is True
-        # SL must be based on the full adverse excursion (40 pt tier), not just the trigger bar
-        assert reentry["stop_loss"] == 20078.00
-        assert reentry["take_profit"] == 19838.00
+        # SL is based on the full adverse excursion; with a 10 pt tier the selected SL is 10 pts.
+        assert reentry["stop_loss"] == 20052.75
+        assert reentry["take_profit"] == 19992.75
 
 
 class TestCrashRecoveryOpenTrade:

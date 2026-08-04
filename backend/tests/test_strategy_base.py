@@ -84,16 +84,16 @@ class TestLineManagement:
 class TestSLSelection:
 
     def test_tiered_picks_smallest_covering(self):
-        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, sl_levels=[10, 15, 20, 30, 40], sl_level_tolerance=3)
         # distance=17 -> 15+3=18 >= 17 -> pick 15
         assert strat._select_sl_level(17.0) == 15.0
 
     def test_tiered_exceeds_all_picks_largest(self):
-        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, sl_levels=[10, 15, 20, 30, 40], sl_level_tolerance=3)
         assert strat._select_sl_level(100.0) == 40.0
 
     def test_tiered_exact_match(self):
-        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, sl_levels=[15, 20, 30, 40], sl_level_tolerance=0)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, sl_levels=[10, 15, 20, 30, 40], sl_level_tolerance=0)
         assert strat._select_sl_level(20.0) == 20.0
 
 
@@ -126,7 +126,7 @@ class TestBuildTrade:
         assert trade["risk"] == 20.0
 
     def test_tiered_sl(self):
-        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, fixed_stop_loss=None, sl_levels=[15, 20, 30, 40], sl_level_tolerance=3)
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, fixed_stop_loss=None, sl_levels=[10, 15, 20, 30, 40], sl_level_tolerance=3)
         ctx = self._make_ctx(strat, direction=Direction.LONG, close=100, extreme=83)
         # distance = max(100-83, 10) = 17; pick 15 since 15+3=18>=17
         trade = strat._build_trade_from_context(ctx)
