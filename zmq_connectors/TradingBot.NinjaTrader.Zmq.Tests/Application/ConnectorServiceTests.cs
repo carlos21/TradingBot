@@ -1437,6 +1437,29 @@ namespace TradingBot.NinjaTrader.Zmq.Tests.Application
             _logger.Infos.Should().Contain(i => i.Contains("Suppressed expected bracket error"));
         }
 
+        [Theory]
+        [InlineData(OrderState.Rejected)]
+        [InlineData(OrderState.Cancelled)]
+        public void OnOrderUpdate_SuppressesBracketError_WhenSiblingBracketLegFilled(OrderState state)
+        {
+            // OCO race: the stop's Filled order-state update is tracked before its
+            // execution event sets close-pending — the target's rejection must still
+            // be treated as the expected OCO teardown.
+            var service = CreateService();
+            var entry = TestDataFactory.Order(name: "Entry_t1", side: OrderSide.Buy, state: OrderState.Filled, filled: 2);
+            var filledStop = TestDataFactory.Order(name: "Stop_t1", side: OrderSide.Sell, state: OrderState.Filled, filled: 2);
+            var targetOrder = TestDataFactory.Order(name: "Target_t1", side: OrderSide.Sell, state: state);
+            _orderTracker.TrackEntry("t1", entry);
+            _orderTracker.TrackStopLoss("t1", filledStop);
+            _tradeIdExtractor.ExtractTradeId("Target_t1").Returns("t1");
+            _tradeIdExtractor.IsTargetOrder("Target_t1").Returns(true);
+
+            service.OnOrderUpdate(targetOrder);
+
+            _network.DidNotReceiveWithAnyArgs().SendError(null, null, null);
+            _logger.Infos.Should().Contain(i => i.Contains("Suppressed expected bracket error"));
+        }
+
         [Fact]
         public void OnOrderUpdate_SendsError_WhenBracketOrderRejectedUnexpectedly()
         {

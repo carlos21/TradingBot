@@ -188,6 +188,10 @@ to be:
         self._pending_commands: dict[int, dict[str, Any]] = {}  # seq_num -> command info
         self._command_ack_timeout_sec: float = 10.0  # Timeout for command acknowledgment
 
+        # Per-entry latency instrumentation: trade_id -> timing record populated by
+        # send_open_order/_handle_command_ack and consumed by _handle_entry_fill
+        self._entry_order_timing: dict[str, dict[str, Any]] = {}
+
         # Callback for permanently dropped commands (after max retries)
         self._on_command_dropped: Callable[[str, dict[str, Any]], None] | None = None
 
@@ -402,7 +406,12 @@ to be:
                 try:
                     envelope = self._command_queue.popleft()
                 except IndexError:
-                    self._command_ready.clear()
+                    # Clear the event only if the queue is still empty while holding
+                    # the lock — _send_command appends + sets the event under the same
+                    # lock, so this cannot wipe a pending wakeup (missed-wakeup race).
+                    with self._lock:
+                        if not self._command_queue:
+                            self._command_ready.clear()
                     self._command_ready.wait(timeout=0.1)
                     continue
 
@@ -414,6 +423,9 @@ to be:
                         self.logger.debug(f"Sent command: {envelope.msg_type}")
                         with self._lock:
                             self._command_retries.pop(envelope.seq_num, None)
+                            info = self._pending_commands.get(envelope.seq_num)
+                            if info is not None:
+                                info['wire_time'] = time.time()
                     except Exception as send_ex:
                         with self._lock:
                             retries = self._command_retries.get(envelope.seq_num, 0) + 1
@@ -726,7 +738,37 @@ to be:
             f"Entry fill: {trade_id} @ {entry_price} qty={quantity} account={account} "
             f"SL={stop_loss} TP={take_profit}"
         )
+        self._log_entry_latency(trade_id, entry_price)
         self._maybe_advance_test_sequence(trade_id, 'entry_fill', payload)
+
+    def _log_entry_latency(self, trade_id: str | None, entry_price: float | None) -> None:
+        """Log the per-entry latency breakdown (queue -> wire -> ack -> fill) and slippage."""
+        if not trade_id:
+            return
+        with self._lock:
+            timing = self._entry_order_timing.pop(trade_id, None)
+        if not timing:
+            return
+        now = time.time()
+        queued = timing.get('queued')
+        if queued is None:
+            return
+        wire_time = timing.get('wire_time')
+        ack_time = timing.get('ack_time')
+        parts = []
+        if wire_time is not None:
+            parts.append(f"queue->wire={(wire_time - queued) * 1000:.0f}ms")
+        if ack_time is not None and wire_time is not None:
+            parts.append(f"wire->ack={(ack_time - wire_time) * 1000:.0f}ms")
+        if ack_time is not None:
+            parts.append(f"ack->fill={(now - ack_time) * 1000:.0f}ms")
+        parts.append(f"total={(now - queued) * 1000:.0f}ms")
+        signal = timing.get('signal_price')
+        slippage = ""
+        if signal is not None and entry_price is not None:
+            slippage = f" | signal={signal} fill={entry_price} slippage={entry_price - signal:+.2f}pts"
+        direction = timing.get('direction', '?')
+        self.logger.info(f"[LATENCY] entry {trade_id} ({direction}): {' '.join(parts)}{slippage}")
 
     def _handle_exit_fill(self, payload: dict[str, Any]) -> None:
         """Handle exit fill notification."""
@@ -779,12 +821,27 @@ to be:
                 if seq_num in self._pending_commands:
                     cmd_info = self._pending_commands.pop(seq_num)
                     self._command_retries.pop(seq_num, None)
-                    elapsed = time.time() - cmd_info.get('sent_time', 0)
+                    now = time.time()
+                    elapsed = now - cmd_info.get('sent_time', 0)
+                    wire_time = cmd_info.get('wire_time')
+                    if wire_time is not None:
+                        py_ms = (wire_time - cmd_info.get('sent_time', 0)) * 1000
+                        nt_ms = (now - wire_time) * 1000
+                        timing = f" ({elapsed:.2f}s | py={py_ms:.0f}ms nt={nt_ms:.0f}ms)"
+                    else:
+                        timing = f" ({elapsed:.2f}s)"
+
+                    # Feed the per-entry latency record, if this ack belongs to one
+                    if ack.trade_id and ack.trade_id in self._entry_order_timing:
+                        rec = self._entry_order_timing[ack.trade_id]
+                        rec['ack_time'] = now
+                        if wire_time is not None:
+                            rec['wire_time'] = wire_time
 
                     if ack.success:
-                        self.logger.info(f"✅ Command ACK: {ack.command_type} seq={seq_num} trade={ack.trade_id} ({elapsed:.2f}s)")
+                        self.logger.info(f"✅ Command ACK: {ack.command_type} seq={seq_num} trade={ack.trade_id}{timing}")
                     else:
-                        self.logger.error(f"❌ Command FAILED: {ack.command_type} seq={seq_num} error='{ack.message}' ({elapsed:.2f}s)")
+                        self.logger.error(f"❌ Command FAILED: {ack.command_type} seq={seq_num} error='{ack.message}'{timing}")
                         self._notify_command_failed(
                             ack.command_type,
                             ack.trade_id or cmd_info.get("payload", {}).get("trade_id"),
@@ -1189,7 +1246,9 @@ to be:
                 self.logger.critical(f"COMMAND QUEUE NEAR CAPACITY: {len(self._command_queue)}/{self._command_queue.maxlen} — old commands will be dropped!")
 
             self._command_queue.append(envelope)
-        self._command_ready.set()
+            # Set the event while still holding the lock so the sender loop's
+            # locked "queue empty?" check cannot clear a pending wakeup.
+            self._command_ready.set()
         self.logger.debug(f"Queued: {envelope.msg_type.value} seq={envelope.seq_num}")
 
     def _cleanup_pending_commands(self) -> None:
@@ -1209,6 +1268,14 @@ to be:
                 seq,
                 "timeout",
             )
+
+        # Drop entry-latency records whose fill never arrived (e.g. rejected entry)
+        stale_entries = [
+            tid for tid, rec in self._entry_order_timing.items()
+            if now - rec.get('queued', now) > timeout
+        ]
+        for tid in stale_entries:
+            self._entry_order_timing.pop(tid, None)
 
     def _resolve_instrument(self, instrument: str | None) -> str:
         """Return the effective instrument for an order command."""
@@ -1252,6 +1319,14 @@ to be:
         )
         envelope = cmd.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
+        with self._lock:
+            info = self._pending_commands.get(envelope.seq_num, {})
+            self._entry_order_timing[trade_id] = {
+                'seq_num': envelope.seq_num,
+                'queued': info.get('sent_time'),
+                'signal_price': entry_price,
+                'direction': direction,
+            }
         self.logger.info(f"Queued OPEN order: {trade_id} {direction} {resolved_instrument} @ {entry_price} account={account}")
 
     def send_close_order(

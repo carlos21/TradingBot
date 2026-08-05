@@ -1616,5 +1616,96 @@ class TestHeartbeatListenerResilience:
         assert gateway._platform_connected is False
 
 
+# ---------------------------------------------------------------------------
+# Entry latency instrumentation
+# ---------------------------------------------------------------------------
+
+
+class TestEntryLatencyInstrumentation:
+    def _ack_env(self, seq, trade_id="T1"):
+        ack = CommandAckMessage(command_type="order_open", seq_num=seq, success=True, trade_id=trade_id)
+        return ack.to_envelope(seq_num=999).to_json()
+
+    def test_ack_log_splits_python_and_nt_segments(self, gateway, logger):
+        now = time.time()
+        gateway._pending_commands[5] = {
+            "type": "order_open",
+            "sent_time": now - 0.06,
+            "wire_time": now - 0.05,
+            "payload": {},
+        }
+        gateway._handle_message(self._ack_env(5))
+        assert any("py=" in m and "nt=" in m for m in logger.messages)
+
+    def test_ack_log_without_wire_time_keeps_plain_format(self, gateway, logger):
+        gateway._pending_commands[5] = {"type": "order_open", "sent_time": time.time(), "payload": {}}
+        gateway._handle_message(self._ack_env(5))
+        assert any("Command ACK" in m and "py=" not in m for m in logger.messages)
+
+    def test_ack_updates_entry_timing_record(self, gateway):
+        now = time.time()
+        gateway._pending_commands[5] = {
+            "type": "order_open",
+            "sent_time": now,
+            "wire_time": now,
+            "payload": {"trade_id": "T1"},
+        }
+        gateway._entry_order_timing["T1"] = {
+            "seq_num": 5, "queued": now, "signal_price": 100.0, "direction": "long",
+        }
+        gateway._handle_message(self._ack_env(5))
+        assert gateway._entry_order_timing["T1"]["ack_time"] is not None
+        assert gateway._entry_order_timing["T1"]["wire_time"] is not None
+
+    def test_entry_fill_logs_latency_summary_with_slippage(self, gateway, logger):
+        now = time.time()
+        gateway._entry_order_timing["T1"] = {
+            "seq_num": 5,
+            "queued": now - 1.1,
+            "wire_time": now - 1.09,
+            "ack_time": now - 1.05,
+            "signal_price": 29377.25,
+            "direction": "short",
+        }
+        gateway._handle_entry_fill({"trade_id": "T1", "entry_price": 29362.0})
+        assert any(
+            "[LATENCY]" in m and "queue->wire=" in m and "ack->fill=" in m and "slippage=-15.25pts" in m
+            for m in logger.messages
+        )
+        # record is consumed
+        assert "T1" not in gateway._entry_order_timing
+
+    def test_entry_fill_without_timing_record_stays_quiet(self, gateway, logger):
+        gateway._handle_entry_fill({"trade_id": "UNKNOWN", "entry_price": 100.0})
+        assert not any("[LATENCY]" in m for m in logger.messages)
+
+    def test_cleanup_drops_stale_entry_timing(self, gateway):
+        gateway._entry_order_timing["OLD"] = {"queued": time.time() - 3600}
+        gateway._entry_order_timing["NEW"] = {"queued": time.time()}
+        gateway._cleanup_pending_commands()
+        assert "OLD" not in gateway._entry_order_timing
+        assert "NEW" in gateway._entry_order_timing
+
+    def test_send_open_order_registers_timing_record(self, gateway):
+        gateway._running = True
+        gateway.send_open_order(
+            trade_id="T1",
+            direction="short",
+            entry_price=29377.25,
+            stop_loss=29402.0,
+            take_profit=29162.0,
+            risk_points=40.0,
+            rr_ratio=5.0,
+            account="A1",
+        )
+        rec = gateway._entry_order_timing.get("T1")
+        assert rec is not None
+        assert rec["signal_price"] == 29377.25
+        assert rec["direction"] == "short"
+        assert rec["queued"] is not None
+        # event is set while holding the lock (missed-wakeup race fix)
+        assert gateway._command_ready.is_set()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
