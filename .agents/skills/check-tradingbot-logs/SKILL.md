@@ -84,6 +84,18 @@ grep -iE "WARMING_UP|READY|LIVE|History complete|History not ready|REFRESHING|Re
 grep -iE "ENTRY FILL|Exit fill|TradeClose|broker_pnl" "${LOG_FILE}"
 ```
 
+### Entry latency / slippage
+```bash
+grep -iE "\[LATENCY\] entry" "${LOG_FILE}"
+```
+Shows, per entry: queue→wire, wire→ACK, ACK→fill, total time, signal price vs fill price, and slippage in points. The big segment is `ack->fill` — that is the broker/NT round trip.
+
+### Command ACK timing
+```bash
+grep -iE "Command ACK" "${LOG_FILE}"
+```
+ACK lines now show two segments: `py=Xms` (Python queue → actual socket write) and `nt=Yms` (socket write → ACK received, includes NT handler + broker submit).
+
 ---
 
 ## 4. Pull the trade summary from the database
@@ -176,11 +188,15 @@ Calculate SL distance in points from the log/db: `|entry_price - stop_loss|`.
 ### Errors / Anomalies
 List any ERROR, CRITICAL, rejected/cancelled orders, or unusual disconnects with timestamps. If there are none, say so explicitly.
 
+- A `PLATFORM ERROR ... Order Target_... is Rejected` that arrives **just after** a stop-loss fill is usually the expected OCO teardown (the connector should suppress these now). If it is not immediately followed/suppressed, note it as a residual race worth monitoring.
+- Use the `[LATENCY] entry` lines to report per-trade slippage and the broker round-trip time (`ack->fill`).
+
 ### Session Narrative
 Briefly describe the day:
 - When the bot started / connected.
 - When it became READY / LIVE.
 - How many trades were taken.
+- For each trade, include the `[LATENCY] entry` breakdown and the realized slippage.
 - Whether it was a winning/losing day.
 - Any notable events (data gaps, rejected orders, late starts).
 
@@ -198,10 +214,12 @@ Briefly describe the day:
 | `WARMING_UP -> READY` | Warmup complete; bot is ready to trade once live bars start. |
 | `READY -> LIVE` | First live bar received; bot is actively evaluating signals. |
 | `platform_connected` / `platform_disconnected` | Socket.IO events reflecting the ZMQ connection to NinjaTrader. |
+| `✅ Command ACK: ... (0.06s | py=12ms nt=48ms)` | Command acknowledged. `py=` is Python queue→socket; `nt=` is socket→ACK (NT handler + broker submit). |
+| `[LATENCY] entry {trade_id} (short): queue->wire=5ms wire->ack=55ms ack->fill=1054ms total=1114ms | signal=29377.25 fill=29362.0 slippage=-15.25pts` | Per-entry latency breakdown + realized slippage. `ack->fill` is the broker/NT round trip; large values explain slippage. |
 | `[BrokerFillHandler] ENTRY FILL: ... SL=... TP=...` | Broker filled an entry order. |
 | `[TradeCloseUseCase] Closed ... (Result: XR, Type: TP/SL)` | A trade closed with result type and R multiple. |
 | `[BrokerFill] Exit fill ... broker_pnl=400.0` | Broker-reported dollar P&L for the closed trade. |
-| `PLATFORM ERROR from ninjatrader: [order_state] Order ... is Rejected` | NinjaTrader rejected an order; investigate further. |
+| `PLATFORM ERROR from ninjatrader: [order_state] Order ... is Rejected` | NinjaTrader rejected an order; investigate further. If `Target_`/`Stop_` and right after a fill, it's likely expected OCO teardown. |
 
 ---
 
