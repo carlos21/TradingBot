@@ -1153,9 +1153,12 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             }
             catch (Exception ex)
             {
+                // Retry is expected while the leg is in ChangePending/ChangeSubmitted.
+                // Keep the log concise; full diagnostics are emitted only if the amendment
+                // survives the entry-fill grace period (see CleanupRecentEntryFills).
                 _logger.Warning(
                     $"Failed to apply pending bracket amendment for {tradeId} (attempt {amend.Attempts}, " +
-                    $"stop={stop.OrderState}, target={target.OrderState}) — will retry on next order update: {ex.Message}\n{FormatExceptionDetails(ex)}");
+                    $"stop={stop.OrderState}, target={target.OrderState}) — will retry on next order update: {ex.Message}");
                 _network.SendTradeLog(tradeId, "NT:WARNING", $"Bracket amendment apply failed (attempt {amend.Attempts}), retry pending: {ex.Message}");
             }
         }
@@ -1282,6 +1285,23 @@ namespace TradingBot.NinjaTrader.Zmq.Application
 
             if (_orderTracker.IsClosePending(tid))
                 return true;
+
+            // OCO race: the sibling bracket leg may already have filled (its order-state
+            // update was tracked) while its execution event — which sets close-pending —
+            // is still in flight. A Rejected/Cancelled of this leg is then just the
+            // expected OCO teardown, not an error.
+            if (_tradeIdExtractor.IsStopOrder(order.Name))
+            {
+                if (_orderTracker.TryGetTakeProfit(tid, out var target) &&
+                    (target.OrderState == OrderState.Filled || target.OrderState == OrderState.PartFilled))
+                    return true;
+            }
+            else
+            {
+                if (_orderTracker.TryGetStopLoss(tid, out var stop) &&
+                    (stop.OrderState == OrderState.Filled || stop.OrderState == OrderState.PartFilled))
+                    return true;
+            }
 
             if (!_orderTracker.TryGetEntry(tid, out var entry))
                 return true;
@@ -1767,7 +1787,14 @@ namespace TradingBot.NinjaTrader.Zmq.Application
             {
                 _recentEntryFills.Remove(k);
                 if (_pendingBracketAmends.TryGetValue(k, out var pendingAmend))
-                    _logger.Warning($"Bracket amendment still pending for {k} after {EntryFillGracePeriod.TotalSeconds}s — bracket at reduced qty (desired SL={pendingAmend.Sl} TP={pendingAmend.Tp} qty={pendingAmend.Qty})");
+                {
+                    _logger.Error(
+                        $"CRITICAL: Bracket amendment still pending for {k} after {EntryFillGracePeriod.TotalSeconds}s " +
+                        $"— bracket at reduced qty (desired SL={pendingAmend.Sl} TP={pendingAmend.Tp} qty={pendingAmend.Qty}, " +
+                        $"attempts={pendingAmend.Attempts}). The position may be under-protected.");
+                    _network.SendError("ninjatrader", "bracket_amendment_stalled",
+                        $"Bracket amendment for {k} still pending after {EntryFillGracePeriod.TotalSeconds}s — position may be under-protected");
+                }
             }
         }
 
