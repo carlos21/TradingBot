@@ -276,14 +276,16 @@ class TestMessageHandling:
         logger = FakeLogger()
         gw = TradingGateway(logger)
         gw._running = True
-        gw._command_queue = MagicMock()
-        envelope = MessageEnvelope.create(
-            msg_type=MessageType.TEST_PING,
-            payload={"timestamp": 12345.0},
-            seq_num=1,
-        )
-        gw._handle_message(envelope.to_json())
-        assert any("TEST PING RECEIVED" in m for m in logger.messages)
+        with patch.object(gw, "_send_command") as mock_send:
+            envelope = MessageEnvelope.create(
+                msg_type=MessageType.TEST_PING,
+                payload={"timestamp": 12345.0},
+                seq_num=1,
+            )
+            gw._handle_message(envelope.to_json())
+        assert mock_send.called
+        sent_envelope = mock_send.call_args[0][0]
+        assert sent_envelope.msg_type == MessageType.TEST_PONG
 
     def test_handle_message_position_sync(self):
         logger = FakeLogger()

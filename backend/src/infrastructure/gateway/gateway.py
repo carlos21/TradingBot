@@ -483,11 +483,9 @@ to be:
                 # before receiving again, even if parsing/handling fails.
                 try:
                     envelope = MessageEnvelope.from_json(query_json)
-                    self.logger.debug(f"Query received: {envelope.msg_type}")
 
                     if envelope.msg_type == MessageType.TEST_PING:
                         # Respond with pong
-                        self.logger.info("🧪 TEST PING query received, sending PONG")
                         from .protocol import TestPongMessage
                         pong = TestPongMessage(timestamp=time.time())
                         resp_envelope = pong.to_envelope(seq_num=self._next_seq())
@@ -891,13 +889,6 @@ to be:
 
     def _handle_test_ping(self, payload: dict[str, Any]) -> None:
         """Handle test ping - respond with pong."""
-        timestamp = payload.get('timestamp', time.time())
-        self.logger.info("=" * 60)
-        self.logger.info("🧪 TEST PING RECEIVED FROM NINJATRADER")
-        self.logger.info(f"   Timestamp: {timestamp}")
-        self.logger.info("   Sending PONG response...")
-        self.logger.info("=" * 60)
-
         # Send pong response
         from .protocol import TestPongMessage
         pong = TestPongMessage(timestamp=time.time())
@@ -1356,7 +1347,6 @@ to be:
         pong = TestPongMessage(timestamp=timestamp)
         envelope = pong.to_envelope(seq_num=self._next_seq())
         self._send_command(envelope)
-        self.logger.debug("Sent TEST_PONG")
 
     # -------------------------------------------------------------------------
     # Public API - Queries
