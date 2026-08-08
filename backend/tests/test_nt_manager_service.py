@@ -200,3 +200,35 @@ class TestNtManagerServiceOpenNtAndLogin:
                         call_args = mock_popen.call_args[0][0]
                         assert "-NinjaTraderPath" in call_args
                         assert "C:\\NT\\bin64\\NinjaTrader.exe" in call_args
+
+    def test_trading_mode_appended_when_provided(self):
+        svc = NtManagerService()
+        with patch.object(svc, "_can_run_windows_exe", return_value=True):
+            with patch.object(svc, "find_nt_exe", return_value={"found": False}):
+                with patch.object(svc, "_wsl_to_windows_path", return_value="C:\\script.ps1"):
+                    with patch("subprocess.Popen") as mock_popen:
+                        svc.open_nt_and_login("user", "pass", trading_mode="simulation")
+                        call_args = mock_popen.call_args[0][0]
+                        mode_idx = call_args.index("-TradingMode")
+                        assert call_args[mode_idx + 1] == "Simulation"
+
+    def test_live_trading_mode_mapped_to_live(self):
+        svc = NtManagerService()
+        with patch.object(svc, "_can_run_windows_exe", return_value=True):
+            with patch.object(svc, "find_nt_exe", return_value={"found": False}):
+                with patch.object(svc, "_wsl_to_windows_path", return_value="C:\\script.ps1"):
+                    with patch("subprocess.Popen") as mock_popen:
+                        svc.open_nt_and_login("user", "pass", trading_mode="live")
+                        call_args = mock_popen.call_args[0][0]
+                        mode_idx = call_args.index("-TradingMode")
+                        assert call_args[mode_idx + 1] == "Live"
+
+    def test_no_trading_mode_omits_argument(self):
+        svc = NtManagerService()
+        with patch.object(svc, "_can_run_windows_exe", return_value=True):
+            with patch.object(svc, "find_nt_exe", return_value={"found": False}):
+                with patch.object(svc, "_wsl_to_windows_path", return_value="C:\\script.ps1"):
+                    with patch("subprocess.Popen") as mock_popen:
+                        svc.open_nt_and_login("user", "pass")
+                        call_args = mock_popen.call_args[0][0]
+                        assert "-TradingMode" not in call_args

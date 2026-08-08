@@ -231,6 +231,18 @@
               class="hidden w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             ></select>
           </div>
+
+          <div class="text-left mt-4">
+            <label for="tradingModeSelect" class="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">Trading Mode</label>
+            <select
+              id="tradingModeSelect"
+              aria-label="Trading Mode"
+              class="w-full bg-surface-700 border border-surface-600 rounded-lg px-3 py-2 text-sm text-slate-100 focus:ring-2 focus:ring-accent-500 focus:border-transparent outline-none cursor-pointer"
+            >
+              <option value="simulation">Simulation</option>
+              <option value="live">Live Trading</option>
+            </select>
+          </div>
         </div>
 
         <button
@@ -265,6 +277,10 @@
           <!-- Current instrument (this tab is pinned to it via ?pair=) -->
           <div class="flex items-center space-x-2">
             <span id="currentInstrumentLabel" class="text-sm font-medium text-slate-200"></span>
+            <span
+              id="tradingModeBadge"
+              class="px-2 py-0.5 text-xs font-semibold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40"
+            >Simulation</span>
             <div class="relative">
               <button
                 id="instrumentsMenuBtn"

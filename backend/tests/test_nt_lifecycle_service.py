@@ -126,7 +126,19 @@ class TestNinjaTraderLifecycleService:
         with patch("time.sleep"):
             lifecycle.maybe_launch_after_delay(FakeDataSource(connected=False))
 
-        nt_svc.open_nt_and_login.assert_called_once_with("user", "pass")
+        nt_svc.open_nt_and_login.assert_called_once_with("user", "pass", trading_mode=None)
+
+    def test_maybe_launch_forwards_trading_mode(self):
+        nt_svc = MagicMock(spec=NtManagerService)
+        nt_svc.is_nt_running.return_value = False
+        nt_svc.open_nt_and_login.return_value = {"success": True, "message": "ok"}
+        settings = FakeSettingsService(credentials={"username": "user", "password": "pass"})
+        lifecycle = NinjaTraderLifecycleService(nt_svc, settings, FakeLogger())
+
+        with patch("time.sleep"):
+            lifecycle.maybe_launch_after_delay(FakeDataSource(connected=False), trading_mode="simulation")
+
+        nt_svc.open_nt_and_login.assert_called_once_with("user", "pass", trading_mode="simulation")
 
     def test_maybe_launch_without_credentials(self):
         nt_svc = MagicMock(spec=NtManagerService)

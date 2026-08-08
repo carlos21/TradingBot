@@ -16,7 +16,7 @@ class FakeLifecycle(PlatformLifecycleService):
     def validate_before_start(self, data_source) -> tuple[bool, str | None]:
         return True, None
 
-    def maybe_launch_after_delay(self, data_source) -> None:
+    def maybe_launch_after_delay(self, data_source, trading_mode: str | None = None) -> None:
         return None
 
     def has_accounts_configured(self) -> bool:

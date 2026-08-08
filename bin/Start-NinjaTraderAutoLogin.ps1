@@ -23,6 +23,11 @@
 .PARAMETER MaxWaitSeconds
     Maximum seconds to wait for the login dialog to appear. Default: 60.
 
+.PARAMETER TradingMode
+    Optional. "Live" or "Simulation". When provided, the script waits for
+    NinjaTrader's "Start Trading" dialog after login and clicks the matching
+    option. When omitted, the script stops before that dialog.
+
 .EXAMPLE
     .\Start-NinjaTraderAutoLogin.ps1
 
@@ -36,7 +41,9 @@ param(
     [string]$Username = "",
     [string]$Password = "",
     [switch]$WaitForExit,
-    [int]$MaxWaitSeconds = 60
+    [int]$MaxWaitSeconds = 60,
+    [ValidateSet("", "Live", "Simulation")]
+    [string]$TradingMode = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,6 +74,8 @@ if (-not ("Win32HelperV2" -as [Type])) {
         [DllImport("user32.dll", CharSet = CharSet.Auto)] public static extern IntPtr SendMessage(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam);
         [DllImport("user32.dll")] public static extern short GetKeyState(int nVirtKey);
         [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+        [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+        [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, uint dx, uint dy, uint dwData, UIntPtr dwExtraInfo);
         public const int SW_RESTORE = 9;
         public const int SW_SHOW = 5;
         public const uint WM_SETTEXT = 0x000C;
@@ -74,6 +83,8 @@ if (-not ("Win32HelperV2" -as [Type])) {
         public const int VK_SHIFT = 0x10;
         public const uint KEYEVENTF_EXTENDEDKEY = 0x0001;
         public const uint KEYEVENTF_KEYUP = 0x0002;
+        public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+        public const uint MOUSEEVENTF_LEFTUP = 0x0004;
     }
 "@
 }
@@ -366,6 +377,42 @@ function Invoke-Button {
     return $false
 }
 
+function Invoke-ButtonRobust {
+    param(
+        [System.Windows.Automation.AutomationElement]$Element,
+        [IntPtr]$WindowHwnd = [IntPtr]::Zero
+    )
+
+    # 1. InvokePattern when available (cleanest, no mouse movement).
+    if (Invoke-Button -Element $Element) { return $true }
+
+    # 2. Some buttons (e.g. the NT Welcome window's custom buttons) do not
+    #    expose InvokePattern at all — fall back to a physical mouse click at
+    #    the button's on-screen center.
+    try {
+        if ($WindowHwnd -ne [IntPtr]::Zero) {
+            Set-ForegroundWindowRobust -hWnd $WindowHwnd
+            Start-Sleep -Milliseconds 300
+        }
+
+        try {
+            $pt = $Element.GetClickablePoint()
+        } catch {
+            # Element offscreen or no clickable point: use the bounding-box center.
+            $r = $Element.Current.BoundingRectangle
+            $pt = New-Object System.Windows.Point(($r.X + $r.Width / 2), ($r.Y + $r.Height / 2))
+        }
+
+        [void][Win32HelperV2]::SetCursorPos([int]$pt.X, [int]$pt.Y)
+        Start-Sleep -Milliseconds 150
+        [Win32HelperV2]::mouse_event([Win32HelperV2]::MOUSEEVENTF_LEFTDOWN, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 50
+        [Win32HelperV2]::mouse_event([Win32HelperV2]::MOUSEEVENTF_LEFTUP, 0, 0, 0, [UIntPtr]::Zero)
+        return $true
+    } catch {}
+    return $false
+}
+
 function Find-LoginButton {
     param([System.Windows.Automation.AutomationElement]$Parent)
 
@@ -379,6 +426,42 @@ function Find-LoginButton {
         $name = $btn.Current.Name
         if ($name -match "^\s*Login\s*$|^\s*Log in\s*$|^\s*OK\s*$|^\s*Sign in\s*$") {
             return $btn
+        }
+    }
+    return $null
+}
+
+function Find-TradingModeButton {
+    param([int[]]$ProcessIds, [string]$Mode)
+
+    # Match the exact button label for the requested mode in NinjaTrader's
+    # Welcome dialog (verified via UIA dump):
+    #   Live -> "Start Trading" (btnLiveTrading), Sim -> "Launch" (btnSimulation)
+    $pattern = if ($Mode -eq "Live") { "^\s*Start\s+Trading\s*$" } else { "^\s*Launch\s*$" }
+
+    $btnCond = [System.Windows.Automation.PropertyCondition]::new(
+        [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+        [System.Windows.Automation.ControlType]::Button
+    )
+
+    $desktop = [System.Windows.Automation.AutomationElement]::RootElement
+    $allWindows = $desktop.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)
+
+    for ($i = 0; $i -lt $allWindows.Count; $i++) {
+        $win = $allWindows[$i]
+        $winHandle = [IntPtr]$win.Current.NativeWindowHandle
+        if ($winHandle -eq [IntPtr]::Zero) { continue }
+
+        $winPid = 0
+        [void][Win32HelperV2]::GetWindowThreadProcessId($winHandle, [ref]$winPid)
+        if ($ProcessIds -notcontains $winPid) { continue }
+
+        $buttons = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond)
+        for ($j = 0; $j -lt $buttons.Count; $j++) {
+            $btn = $buttons[$j]
+            if ($btn.Current.Name -match $pattern) {
+                return @{ Element = $btn; WindowHwnd = $winHandle }
+            }
         }
     }
     return $null
@@ -566,8 +649,41 @@ try {
         Write-Host "Login submitted via SendKeys." -ForegroundColor Green
     }
 
-    # -- Stop here; do not wait for or click the "Start Trading" dialog --
-    Write-Host "Login complete. Stopping before 'Start Trading' dialog." -ForegroundColor Green
+    # -- Trading mode selection ("Start Trading" dialog) --
+    if ([string]::IsNullOrWhiteSpace($TradingMode)) {
+        # No mode requested: stop here; do not wait for or click the dialog.
+        Write-Host "Login complete. Stopping before 'Start Trading' dialog (no -TradingMode given)." -ForegroundColor Green
+        return
+    }
+
+    # The button to click depends on the mode:
+    #   Live       -> "Start Trading"
+    #   Simulation -> "Launch"
+    $modeButtonLabel = if ($TradingMode -eq "Live") { "Start Trading" } else { "Launch" }
+
+    Write-Host "Login complete. Mode '$TradingMode': waiting for the dialog, will click the '$modeButtonLabel' button..." -ForegroundColor Yellow
+
+    $modeSw = [System.Diagnostics.Stopwatch]::StartNew()
+    $modeClicked = $false
+    while ($modeSw.Elapsed.TotalSeconds -lt 60 -and -not $modeClicked) {
+        # The Welcome dialog may belong to a respawned NinjaTrader process, so
+        # search every running NT process, not just the one we launched.
+        $ntPids = @($ntProcess.Id)
+        $ntPids += @(Get-Process | Where-Object { $_.ProcessName -like "*NinjaTrader*" } | Select-Object -ExpandProperty Id)
+
+        $foundModeBtn = Find-TradingModeButton -ProcessIds $ntPids -Mode $TradingMode
+        if ($foundModeBtn) {
+            $modeClicked = [bool](Invoke-ButtonRobust -Element $foundModeBtn.Element -WindowHwnd $foundModeBtn.WindowHwnd)
+            if ($modeClicked) {
+                Write-Host "Clicked the '$modeButtonLabel' button ($TradingMode mode)." -ForegroundColor Green
+            }
+        }
+        if (-not $modeClicked) { Start-Sleep -Seconds 1 }
+    }
+
+    if (-not $modeClicked) {
+        Write-Host "WARNING: Could not find or click the '$modeButtonLabel' button ($TradingMode mode). Select the trading mode manually in NinjaTrader." -ForegroundColor Yellow
+    }
     return
 
 } catch {

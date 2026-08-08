@@ -83,8 +83,8 @@ class FakePlatformLifecycleService:
     def validate_before_start(self, data_source):
         return self._validation_result
 
-    def maybe_launch_after_delay(self, data_source):
-        self.launch_calls.append(data_source)
+    def maybe_launch_after_delay(self, data_source, trading_mode=None):
+        self.launch_calls.append((data_source, trading_mode))
 
     def has_accounts_configured(self):
         return self._has_accounts
@@ -234,6 +234,36 @@ class TestStreamStart:
             assert ("gateway_started", (), {}) in socketio.emitted
             # Background thread should have been spawned
             assert len(lifecycle.launch_calls) == 1
+
+    def test_start_forwards_trading_mode(self, app):
+        ds = FakeZMQDataSource(running=True, connected=False)
+        lifecycle = FakePlatformLifecycleService()
+        make_registered_app(app, data_source=ds, platform_lifecycle=lifecycle)
+        with app.test_client() as client:
+            resp = client.post("/api/stream/start", json={"trading_mode": "simulation"})
+            assert resp.status_code == 200
+            assert len(lifecycle.launch_calls) == 1
+            assert lifecycle.launch_calls[0][1] == "simulation"
+
+    def test_start_without_trading_mode_passes_none(self, app):
+        ds = FakeZMQDataSource(running=True, connected=False)
+        lifecycle = FakePlatformLifecycleService()
+        make_registered_app(app, data_source=ds, platform_lifecycle=lifecycle)
+        with app.test_client() as client:
+            resp = client.post("/api/stream/start")
+            assert resp.status_code == 200
+            assert len(lifecycle.launch_calls) == 1
+            assert lifecycle.launch_calls[0][1] is None
+
+    def test_start_invalid_trading_mode_passes_none(self, app):
+        ds = FakeZMQDataSource(running=True, connected=False)
+        lifecycle = FakePlatformLifecycleService()
+        make_registered_app(app, data_source=ds, platform_lifecycle=lifecycle)
+        with app.test_client() as client:
+            resp = client.post("/api/stream/start", json={"trading_mode": "bogus"})
+            assert resp.status_code == 200
+            assert len(lifecycle.launch_calls) == 1
+            assert lifecycle.launch_calls[0][1] is None
 
     def test_start_gateway_running_not_connected(self, app):
         ds = FakeZMQDataSource(running=True, connected=False)

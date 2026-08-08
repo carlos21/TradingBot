@@ -94,7 +94,11 @@ describe('Streaming lifecycle e2e', () => {
     expect(startBtn().disabled).toBe(true);
     expect(startBtn().innerHTML).toContain('Starting…');
     await flush();
-    expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', { method: 'POST' });
+    expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trading_mode: 'simulation' }),
+    });
     expect(lifecycle.getState()).toBe(StreamingState.STARTING);
 
     // 3. Backend confirms gateway (stays in-flight), then platform connects.
@@ -242,7 +246,11 @@ describe('Streaming lifecycle e2e', () => {
     expect(startBtn().disabled).toBe(true);
     expect(startBtn().innerHTML).toContain('Starting…');
     await flush();
-    expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', { method: 'POST' });
+    expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trading_mode: 'simulation' }),
+    });
 
     // No gateway_started follows (the gateway was already running); the
     // machine waits for the platform while Stop stays available to abort.

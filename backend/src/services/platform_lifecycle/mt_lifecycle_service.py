@@ -40,8 +40,12 @@ class MetaTraderLifecycleService:
         """MetaTrader manages its own accounts; no pre-flight check needed."""
         return True, None
 
-    def maybe_launch_after_delay(self, data_source: ZMQDataSource | None) -> None:
-        """Wait a few seconds, then launch MetaTrader terminal if not connected."""
+    def maybe_launch_after_delay(self, data_source: ZMQDataSource | None, trading_mode: str | None = None) -> None:
+        """Wait a few seconds, then launch MetaTrader terminal if not connected.
+
+        ``trading_mode`` is accepted to satisfy the PlatformLifecycleService
+        port; MetaTrader manages its own trading mode, so it is ignored.
+        """
         time.sleep(4)
 
         gateway = data_source.gateway if data_source else None
