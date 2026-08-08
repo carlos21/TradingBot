@@ -249,6 +249,7 @@ class TradeOpenUseCase:
             self._logger.info(f"[TradeOpenUseCase] Registered OPEN trade {result.trade_id} @ {entry_time}")
 
         if self._publisher:
+            params = params or {}
             self._publisher.emit('trade_open', {
                 'trade_id': result.trade_id,
                 'pair': pair,
@@ -264,6 +265,9 @@ class TradeOpenUseCase:
                 'rr_ratio': rr_ratio,
                 'account': account,
                 'signal_id': signal_id,
+                'line_level': params.get('line_level'),
+                'is_reentry': params.get('is_reentry', False),
+                'reentry_attempt': params.get('reentry_attempt', 0),
             })
 
         return result

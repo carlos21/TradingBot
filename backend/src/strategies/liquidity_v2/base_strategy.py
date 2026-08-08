@@ -91,6 +91,7 @@ class BaseLiquidityStrategy:
         sl_levels: list[float] | None = None,
         max_entry_distance: float | None = None,
         sl_level_tolerance: float = 5.0,
+        sl_buffer_pts: float = 0.0,
         min_cross_depth: float = 0.0,
         rr_ratio: float = 5.0,
         use_fractional_lots: bool = False,
@@ -135,6 +136,7 @@ class BaseLiquidityStrategy:
         self.trade_logger = trade_logger
         self.analytics = analytics or NoOpReporter()
         self.sl_level_tolerance = float(sl_level_tolerance)
+        self.sl_buffer_pts = float(sl_buffer_pts)
         self.trigger_state_repo: LineTriggerStateRepository = trigger_state_repo or InMemoryLineTriggerStateRepository()
         self.decision_log_repository = decision_log_repository
         self._account_configs: list = list(account_configs) if account_configs else []
@@ -918,19 +920,25 @@ class BaseLiquidityStrategy:
 
     def _build_trade_from_context(self, ctx: EntryContext) -> dict[str, Any]:
         entry = ctx.close
+        tp_risk = None  # when set, TP distance decouples from the SL distance
 
         if self.sl_levels:
-            # Tiered SL: compute distance to extreme, then pick smallest tier that covers it
+            # Tiered SL: compute distance to extreme (+ buffer), then pick
+            # smallest tier that covers it.  The TP tier is computed WITHOUT
+            # the buffer, so the buffer widens the stop for survival without
+            # pushing the profit target further away.
             if ctx.is_long:
-                distance = max(entry - ctx.extreme, self.min_stop_loss)
+                raw_distance = max(entry - ctx.extreme, self.min_stop_loss)
             else:
-                distance = max(ctx.extreme - entry, self.min_stop_loss)
+                raw_distance = max(ctx.extreme - entry, self.min_stop_loss)
+            distance = raw_distance + self.sl_buffer_pts
 
             eff_risk = self._select_sl_level(distance)
+            tp_risk = self._select_sl_level(raw_distance)
             self.logger.info(
                 f"[Strategy] SL Selection | Dir: {ctx.direction} | "
                 f"Entry: {entry:.2f} | Extreme: {ctx.extreme:.2f} | "
-                f"Distance: {distance:.2f} pts | Selected SL: {eff_risk:.2f} pts "
+                f"Distance: {distance:.2f} pts (incl. {self.sl_buffer_pts:.2f} buffer) | Selected SL: {eff_risk:.2f} pts "
                 f"(levels: {self.sl_levels})"
             )
 
@@ -953,11 +961,11 @@ class BaseLiquidityStrategy:
 
         if ctx.is_long:
             sl = entry - eff_risk
-            tp = entry + self.rr_ratio * eff_risk
+            tp = entry + self.rr_ratio * (tp_risk if tp_risk is not None else eff_risk)
             trade = self._make_trade_dict(ctx.bar, "long", entry, sl, tp, eff_risk)
         else:
             sl = entry + eff_risk
-            tp = entry - self.rr_ratio * eff_risk
+            tp = entry - self.rr_ratio * (tp_risk if tp_risk is not None else eff_risk)
             trade = self._make_trade_dict(ctx.bar, "short", entry, sl, tp, eff_risk)
         trade["line_level"] = ctx.level
         return trade

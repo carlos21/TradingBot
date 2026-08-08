@@ -132,6 +132,34 @@ class TestBuildTrade:
         trade = strat._build_trade_from_context(ctx)
         assert trade["risk"] == 15.0
 
+    def test_tiered_sl_buffer_widens_sl_but_not_tp(self):
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, fixed_stop_loss=None,
+                           sl_levels=[10, 15, 20, 30, 40], sl_level_tolerance=3, sl_buffer_pts=5)
+        ctx = self._make_ctx(strat, direction=Direction.LONG, close=100, extreme=83)
+        # raw distance = 17 -> SL distance 17+5=22 -> tier 20 (20+3>=22)
+        # TP tier stays on the un-buffered distance 17 -> 15
+        trade = strat._build_trade_from_context(ctx)
+        assert trade["risk"] == 20.0
+        assert trade["stop_loss"] == 80.0
+        assert trade["take_profit"] == pytest.approx(100 + 3.3 * 15, abs=0.1)
+
+    def test_tiered_sl_buffer_short(self):
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, fixed_stop_loss=None,
+                           sl_levels=[10, 15, 20, 30, 40], sl_level_tolerance=3, sl_buffer_pts=5)
+        ctx = self._make_ctx(strat, direction=Direction.SHORT, close=100, extreme=117)
+        trade = strat._build_trade_from_context(ctx)
+        assert trade["risk"] == 20.0
+        assert trade["stop_loss"] == 120.0
+        assert trade["take_profit"] == pytest.approx(100 - 3.3 * 15, abs=0.1)
+
+    def test_tiered_sl_zero_buffer_matches_legacy(self):
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, fixed_stop_loss=None,
+                           sl_levels=[10, 15, 20, 30, 40], sl_level_tolerance=3, sl_buffer_pts=0)
+        ctx = self._make_ctx(strat, direction=Direction.LONG, close=100, extreme=83)
+        trade = strat._build_trade_from_context(ctx)
+        assert trade["risk"] == 15.0
+        assert trade["take_profit"] == pytest.approx(100 + 3.3 * 15, abs=0.1)
+
     def test_max_stop_loss_cap(self):
         strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, fixed_stop_loss=None, sl_levels=None, max_stop_loss=25)
         # Dynamic risk: distance = max(100-70, 10) = 30; capped at 25

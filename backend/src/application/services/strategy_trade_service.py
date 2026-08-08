@@ -162,13 +162,26 @@ class StrategyTradeService:
                 risk_usd_override = acct.risk_usd
                 risk_pct_override = acct.risk_pct
 
-            # Recalculate take-profit for this account's RR ratio
+            # Take-profit for this account:
+            #  - explicit per-account RR override -> TP is exactly rr x SL
+            #    distance (true R semantics for that account)
+            #  - otherwise keep the strategy-computed TP distance, which may
+            #    be decoupled from the SL distance (e.g. via sl_buffer_pts);
+            #    falls back to rr x risk when the strategy has no fixed TP
+            #    (close_on_opposite_cross).
             entry = trade["entry"]
             risk_pts = trade["risk"]
-            if trade["type"] == "long":
-                account_take_profit = entry + (rr * risk_pts)
+            base_tp = trade.get("take_profit")
+            if acct is not None and acct.rr_ratio is not None:
+                tp_dist = rr * risk_pts
+            elif base_tp is not None:
+                tp_dist = abs(base_tp - entry)
             else:
-                account_take_profit = entry - (rr * risk_pts)
+                tp_dist = rr * risk_pts
+            if trade["type"] == "long":
+                account_take_profit = entry + tp_dist
+            else:
+                account_take_profit = entry - tp_dist
 
             params = {
                 "line_level": trade.get("line_level"),

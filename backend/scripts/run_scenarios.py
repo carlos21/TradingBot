@@ -118,16 +118,16 @@ def verify_csv_data(csv_path: Path, pair: str, start_ts: int, end_ts: int):
 # Server Process Logic
 # -------------------------------------------------------------------------
 
-def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT, session_end: str = "16:58", session_tz: str = "America/New_York", log_path: Optional[str] = None):
+def run_test_server(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT, session_end: str = "16:58", session_tz: str = "America/New_York", log_path: Optional[str] = None, sl_buffer_pts: float = 0.0, max_reentry_attempts: int = None):
     try:
-        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist, risk_per_trade, risk_pct_per_trade, account_balance, use_fractional_lots, fee_per_rt, session_end, session_tz, log_path)
+        _run_test_server_inner(csv_path, bars_per_second, port, ready_event, quiet, no_breakeven, no_reentry_breakeven, broker_mode, broker_spread, rr_ratio, persist, risk_per_trade, risk_pct_per_trade, account_balance, use_fractional_lots, fee_per_rt, session_end, session_tz, log_path, sl_buffer_pts, max_reentry_attempts)
     except Exception as e:
         import traceback
         sys.stderr.write(f"\n❌ Server process crashed: {e}\n")
         traceback.print_exc(file=sys.stderr)
         sys.stderr.flush()
 
-def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT, session_end: str = "16:58", session_tz: str = "America/New_York", log_path: Optional[str] = None):
+def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, ready_event: Event, quiet: bool = False, no_breakeven: bool = False, no_reentry_breakeven: bool = False, broker_mode: str = 'futures', broker_spread: float = 0.0, rr_ratio: float = 5.0, persist: bool = False, risk_per_trade: float = None, risk_pct_per_trade: float = None, account_balance: float = 100000.0, use_fractional_lots: bool = False, fee_per_rt: float = FinancialCalc.DEFAULT_FEE_PER_RT, session_end: str = "16:58", session_tz: str = "America/New_York", log_path: Optional[str] = None, sl_buffer_pts: float = 0.0, max_reentry_attempts: int = None):
     if log_path:
         # Redirect both stdout and stderr to the log file so crash traces are captured.
         log_file = open(log_path, "w", encoding="utf-8")
@@ -165,6 +165,8 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
     # Override account_balance with the value from command line
     from dataclasses import replace
     numbers = replace(numbers, account_balance=account_balance)
+    if sl_buffer_pts:
+        numbers = replace(numbers, sl_buffer_pts=sl_buffer_pts)
     candle_config = get_prod_candle_config()
     options = get_prod_strategy_options(
         numbers.max_bounce,
@@ -172,7 +174,7 @@ def _run_test_server_inner(csv_path: str, bars_per_second: float, port: int, rea
         skip_rollover_days=False,
         reentry_only=False,
         line_removal_mode=LineRemovalMode.ON_EVALUATE,
-        max_reentry_attempts=DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
+        max_reentry_attempts=max_reentry_attempts if max_reentry_attempts is not None else DEFAULT_STRATEGY_OPTIONS.max_reentry_attempts,
         symbol="MNQ",
     )
 
@@ -282,13 +284,22 @@ def reset_app_state(base_url: str, start=None, end=None, seed_lines=None, max_re
     if seed_lines: payload['seed_lines'] = seed_lines
     for attempt in range(max_retries):
         try:
-            r = requests.post(f"{base_url}/__reset_all", json=payload, timeout=10)
+            # Warmup inside __reset_all can take a while on cold start; 10s is not enough.
+            r = requests.post(f"{base_url}/__reset_all", json=payload, timeout=60)
             if r.ok:
                 return True
-        except Exception:
-            pass
+            print(f"⚠️ reset_all attempt {attempt + 1}/{max_retries}: HTTP {r.status_code}: {r.text[:300]}")
+        except Exception as e:
+            print(f"⚠️ reset_all attempt {attempt + 1}/{max_retries}: {e}")
         time.sleep(0.2 * (attempt + 1))
     return False
+
+
+def _port_in_use(host: str, port: int) -> bool:
+    import socket as _socket
+    with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+        s.settimeout(1)
+        return s.connect_ex((host, port)) == 0
 
 def _check_trade(label: str, expect: Dict, trade: Dict, tol: float) -> List[str]:
     """Check a single trade against expected values. Returns list of error strings."""
@@ -417,6 +428,267 @@ def _apply_entry_slippage(trade, close, bar_times, bars, slippage):
     adj_close.pop("pnl_usd", None)
     adj_close.pop("fees", None)
     return adj_trade, adj_close
+
+
+# -------------------------------------------------------------------------
+# Post-SL forward analysis ("stopped out, then it went my way")
+# -------------------------------------------------------------------------
+
+POST_SL_BUFFERS = [0, 2, 5, 10, 15, 20, 30]
+
+
+def _post_sl_forward_analysis(summary_results, bars, max_hours: float = 6.0):
+    """For every trade closed by SL, walk the 1m bars *after* the stop-out and
+    measure what price did next:
+
+      - MFE in R after the SL hit (how far it eventually ran in the trade's direction)
+      - whether it later touched the original TP (ignoring any stop)
+      - for each extra stop buffer B (pts beyond the actual SL): simulate whether
+        the trade would have survived and reached the original TP. SL wins ties
+        within a bar, same as the live engine.
+
+    Returns a dict of aggregates, or None when there is nothing to analyse.
+    Reporting only — does not affect strategy behaviour.
+    """
+    if not bars:
+        return None
+    bar_times = [b["time"] for b in bars]
+    horizon = max_hours * 3600
+
+    trades_sl = []
+    for rec in flatten_trade_records(summary_results):
+        trade, close = rec["trade"], rec["close"]
+        if not trade or not close:
+            continue
+        if close.get("result_type") != "SL":
+            continue
+        entry = trade.get("entry")
+        sl = trade.get("stop_loss")
+        tp = trade.get("take_profit")
+        risk = trade.get("risk")
+        exit_time = close.get("exit_time")
+        ttype = trade.get("type")
+        if None in (entry, sl, tp, risk, exit_time, ttype) or not risk:
+            continue
+        trades_sl.append({
+            "long": ttype == "long",
+            "entry": float(entry), "sl": float(sl), "tp": float(tp),
+            "risk": float(risk), "exit_time": exit_time,
+            "rr": (abs(float(tp) - float(entry)) / float(risk)),
+            "is_reentry": bool(trade.get("is_reentry", False) or trade.get("reentry_attempt", 0)),
+        })
+
+    if not trades_sl:
+        return None
+
+    for tr in trades_sl:
+        start_idx = bisect.bisect_right(bar_times, tr["exit_time"])
+        end_ts = tr["exit_time"] + horizon
+        window = []
+        for i in range(start_idx, len(bars)):
+            b = bars[i]
+            if b["time"] > end_ts:
+                break
+            window.append(b)
+        tr["window"] = window
+
+        # MFE in R over the whole window (no stop at all)
+        if tr["long"]:
+            mfe = max((b["high"] for b in window), default=tr["entry"])
+            tr["mfe_r"] = (mfe - tr["entry"]) / tr["risk"]
+        else:
+            mfe = min((b["low"] for b in window), default=tr["entry"])
+            tr["mfe_r"] = (tr["entry"] - mfe) / tr["risk"]
+        tr["tp_touched"] = tr["mfe_r"] >= tr["rr"] - 1e-9
+
+        # Simulate survival for each extra buffer
+        tr["sim"] = {}
+        for buf in POST_SL_BUFFERS:
+            sl_b = tr["sl"] - buf if tr["long"] else tr["sl"] + buf
+            outcome = "timeout"
+            for b in window:
+                if tr["long"]:
+                    if b["low"] <= sl_b:
+                        outcome = "stopped"
+                        break
+                    if b["high"] >= tr["tp"]:
+                        outcome = "tp"
+                        break
+                else:
+                    if b["high"] >= sl_b:
+                        outcome = "stopped"
+                        break
+                    if b["low"] <= tr["tp"]:
+                        outcome = "tp"
+                        break
+            tr["sim"][buf] = outcome
+
+    return {"trades": trades_sl, "horizon_hours": max_hours}
+
+
+# -------------------------------------------------------------------------
+# Pullback (limit-at-line) entry simulation
+# -------------------------------------------------------------------------
+
+def _pullback_entry_analysis(summary_results, bars):
+    """Simulate 'what if entries were limit orders at the line instead of
+    market at the TSI cross-bar close'.
+
+    For every trade: after the real entry bar, a limit order at the line level
+    fills on the first bar whose wick reaches the level (before the real exit).
+    The hypothetical trade keeps the real SL price; TP is recomputed at the
+    better entry with the same R-multiple target as the real trade
+    (TP' = entry' + rr * (entry' - SL)). SL wins in-bar ties, as live.
+
+    Returns aggregate dict or None. Reporting only.
+    """
+    if not bars:
+        return None
+    bar_times = [b["time"] for b in bars]
+    rows = []
+    for rec in flatten_trade_records(summary_results):
+        trade, close = rec["trade"], rec["close"]
+        if not trade or not close:
+            continue
+        level = trade.get("line_level")
+        entry = trade.get("entry")
+        sl = trade.get("stop_loss")
+        tp = trade.get("take_profit")
+        risk = trade.get("risk")
+        ttype = trade.get("type")
+        entry_time = trade.get("entry_time")
+        exit_time = close.get("exit_time")
+        if None in (level, entry, sl, tp, risk, ttype, entry_time, exit_time) or not risk:
+            continue
+        long_ = ttype == "long"
+        rr = abs(tp - entry) / risk
+
+        start_idx = bisect.bisect_right(bar_times, entry_time)
+        end_idx = bisect.bisect_right(bar_times, exit_time)
+        window = bars[start_idx:end_idx]
+
+        # 1) Does the limit order fill at all?
+        fill_i = None
+        for i, b in enumerate(window):
+            if long_ and b["low"] <= level:
+                fill_i = i
+                break
+            if not long_ and b["high"] >= level:
+                fill_i = i
+                break
+
+        real_r = close.get("result")
+        row = {"type": ttype, "result_type": close.get("result_type"), "real_r": real_r}
+        if fill_i is None:
+            row["sim"] = "no_fill"
+            row["sim_r"] = 0.0
+        else:
+            new_risk = (level - sl) if long_ else (sl - level)
+            if new_risk <= 0:
+                row["sim"] = "no_fill"
+                row["sim_r"] = 0.0
+            else:
+                new_tp = level + rr * new_risk if long_ else level - rr * new_risk
+                outcome = "timeout"
+                for b in window[fill_i:]:
+                    if long_:
+                        if b["low"] <= sl:
+                            outcome = "sl"
+                            break
+                        if b["high"] >= new_tp:
+                            outcome = "tp"
+                            break
+                    else:
+                        if b["high"] >= sl:
+                            outcome = "sl"
+                            break
+                        if b["low"] <= new_tp:
+                            outcome = "tp"
+                            break
+                row["sim"] = outcome
+                row["sim_r"] = rr if outcome == "tp" else (-1.0 if outcome == "sl" else 0.0)
+        rows.append(row)
+
+    return {"rows": rows} if rows else None
+
+
+def _print_pullback_entry_analysis(analysis):
+    if not analysis:
+        return
+    RST = '\033[0m'; BOLD = '\033[1m'
+    GREEN = '\033[92m'; RED = '\033[91m'; YELLOW = '\033[93m'; CYAN = '\033[96m'
+
+    rows = analysis["rows"]
+    n = len(rows)
+    real_total_r = sum(r["real_r"] or 0.0 for r in rows)
+    sim_total_r = sum(r["sim_r"] for r in rows)
+
+    real_wins = [r for r in rows if (r["real_r"] or 0) > 0.05]
+    missed_wins = [r for r in real_wins if r["sim"] == "no_fill"]
+    sim_wins = [r for r in rows if r["sim"] == "tp"]
+    sim_losses = [r for r in rows if r["sim"] == "sl"]
+
+    print(f"\n{BOLD}{CYAN}PULLBACK ENTRY SIMULATION — limit-at-line instead of market-at-cross{RST}")
+    print(f"  Trades analysed: {n}")
+    print(f"  Real total: {real_total_r:+.1f}R  |  Simulated limit-at-line total: "
+          f"{GREEN if sim_total_r >= real_total_r else RED}{sim_total_r:+.1f}R{RST}")
+    print(f"  Sim: {len(sim_wins)} TP / {len(sim_losses)} SL / "
+          f"{n - len(sim_wins) - len(sim_losses)} no-fill-or-timeout")
+    if real_wins:
+        print(f"  Real winners missed entirely (never pulled back to line): "
+              f"{YELLOW}{len(missed_wins)}/{len(real_wins)} "
+              f"({len(missed_wins) / len(real_wins) * 100:.0f}%){RST}")
+    print()
+
+
+def _print_post_sl_analysis(analysis):
+    if not analysis:
+        return
+    RST = '\033[0m'; BOLD = '\033[1m'
+    GREEN = '\033[92m'; RED = '\033[91m'; YELLOW = '\033[93m'; CYAN = '\033[96m'
+
+    def _col_static(count, total):
+        pct = count / total * 100 if total else 0.0
+        color = GREEN if pct >= 50 else (YELLOW if pct >= 25 else RED)
+        return f"{color}{pct:.0f}%{RST}"
+
+    trades_sl = analysis["trades"]
+    n = len(trades_sl)
+    print(f"\n{BOLD}{CYAN}POST-SL ANALYSIS — what price did after stopping a trade "
+          f"(forward window {analysis['horizon_hours']:g}h, 1m bars){RST}")
+    print(f"  SL-closed trades: {n}")
+
+    tp_touched = sum(1 for t in trades_sl if t["tp_touched"])
+    print(f"  Later touched original TP (no stop at all): "
+          f"{_col_static(tp_touched, n)}  ({tp_touched}/{n})")
+
+    for threshold in (1.0, 2.0, 3.0):
+        cnt = sum(1 for t in trades_sl if t["mfe_r"] >= threshold)
+        print(f"  Reached +{threshold:.0f}R after stop-out: {cnt}/{n} ({cnt / n * 100:.0f}%)")
+
+    mfe_sorted = sorted(t["mfe_r"] for t in trades_sl)
+    median_mfe = mfe_sorted[n // 2] if n % 2 else (mfe_sorted[n // 2 - 1] + mfe_sorted[n // 2]) / 2
+    print(f"  Median MFE after stop-out: {median_mfe:+.2f}R")
+
+    print(f"\n  {'Extra SL buffer':>16} | {'TP win':>7} | {'stopped':>7} | {'timeout':>7} | {'Net ΔR vs -1R':>14}")
+    print(f"  {'-' * 70}")
+    for buf in POST_SL_BUFFERS:
+        wins = sum(1 for t in trades_sl if t["sim"][buf] == "tp")
+        stopped = sum(1 for t in trades_sl if t["sim"][buf] == "stopped")
+        timeouts = n - wins - stopped
+        # Actual outcome for each of these trades was -1R. Simulated: +rr_i on TP,
+        # -1R if stopped again, 0R on timeout (session/horizon end, unmanaged).
+        delta_r = sum(
+            (t["rr"] if t["sim"][buf] == "tp" else (-1.0 if t["sim"][buf] == "stopped" else 0.0)) + 1.0
+            for t in trades_sl
+        )
+        print(f"  {buf:>14}pt | {wins:>4}/{n:<2} | {stopped:>7} | {timeouts:>7} | {delta_r:>+13.1f}R")
+
+    re_entries = [t for t in trades_sl if t["is_reentry"]]
+    if re_entries:
+        re_tp = sum(1 for t in re_entries if t["tp_touched"])
+        print(f"\n  (of which re-entry stops: {len(re_entries)}, later touched TP: {re_tp})")
+    print()
 
 
 # -------------------------------------------------------------------------
@@ -571,6 +843,8 @@ def _server_args(args, csv_path: Path, port: int, server_ready: Event, log_path:
         broker_mode, broker_spread, args.rr, args.persist, risk_per_trade,
         args.risk_pct, args.account, use_fractional_lots,
         fee_per_rt, session_end, session_tz, log_path,
+        args.sl_buffer,
+        args.max_reentry_attempts,
     )
 
 
@@ -640,6 +914,14 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
         print(f"🚀 Launching In-Memory Test Server with {csv_path}...")
 
     base_url = f"http://{APP_HOST}:{args.port}"
+
+    # A stale server on the port would pass the health checks below and silently
+    # receive every reset (ready_event is set before the socket binds), which
+    # previously caused mass "Reset failed" runs. Refuse to start in that case.
+    if _port_in_use(APP_HOST, args.port):
+        print(f"❌ Port {args.port} is already in use (stale server?). "
+              f"Stop the process listening on it and re-run.")
+        return
 
     server_proc, server_ready, log_path = _start_test_server(args, csv_path, args.port)
 
@@ -1439,6 +1721,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
             _per_trade_cfd,
         )
 
+    _print_post_sl_analysis(_post_sl_forward_analysis(summary_results, bars))
+    _print_pullback_entry_analysis(_pullback_entry_analysis(summary_results, bars))
+
     if args.results_json:
         out = {
             "config": {
@@ -1546,6 +1831,11 @@ def main():
                     help="Simulate entry slippage in points (default: 0). "
                          "Red next bar = entry - slippage, green next bar = entry + slippage. "
                          "Only affects simulation reporting, not live trading.")
+    ap.add_argument("--sl-buffer", type=float, default=0.0,
+                    help="Extra stop-loss room in points beyond the observed sweep "
+                         "extreme when picking the SL tier (default: 0 = legacy behaviour).")
+    ap.add_argument("--max-reentry-attempts", type=int, default=None,
+                    help="Override max re-entry attempts per setup (default: strategy default, 1).")
     args = ap.parse_args()
 
     # Snapshots are grouped per session: explicit --group, or derived from the
@@ -1585,17 +1875,15 @@ def main():
     if not args.quiet:
         print(f"✅ Found {len(scenarios)} scenarios. Starting runner...")
 
-    # Pre-load 1m bars only when slippage simulation is requested.
-    bars = None
-    if args.slippage > 0:
-        bar_source = CSVDataSource(
-            pair="MNQ",
-            filename=str(Path(args.source_csv).resolve()),
-            initial_start_time=0,
-            initial_end_time=9999999999,
-            bars_per_second=1.0,
-        )
-        bars = bar_source._bars
+    # Pre-load 1m bars for slippage simulation and the post-SL forward analysis.
+    bar_source = CSVDataSource(
+        pair="MNQ",
+        filename=str(Path(args.source_csv).resolve()),
+        initial_start_time=0,
+        initial_end_time=9999999999,
+        bars_per_second=1.0,
+    )
+    bars = bar_source._bars
 
     asyncio.run(run_suite(args, scenarios, Path(args.source_csv), slippage=args.slippage, bars=bars))
 

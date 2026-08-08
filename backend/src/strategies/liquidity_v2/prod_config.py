@@ -72,6 +72,12 @@ def get_prod_strategy_numbers(rr_ratio: float,
         #          (would need >= 33.1 to jump to 40.0).
         sl_level_tolerance=params.sl_level_tolerance,
 
+        # Extra room (pts) the SL must have beyond the observed sweep
+        # extreme.  With 0 the SL can sit right at the extreme, so a
+        # marginally deeper retest wicks the trade out.
+        # Example: dip = 13 pts, buffer = 5 -> tier must cover 18 -> 20.0.
+        sl_buffer_pts=params.sl_buffer_pts,
+
         # ------------------------------------------------------------------
         # ENTRY DISTANCE LIMIT
         # ------------------------------------------------------------------

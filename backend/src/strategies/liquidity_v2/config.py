@@ -22,6 +22,10 @@ class StrategyNumbers:
     # the smallest level >= distance-to-extreme, falling back to the largest.
     sl_levels: list[float] | None = None
     sl_level_tolerance: float = 5.0
+    # Extra breathing room (pts) required beyond the observed sweep extreme
+    # when picking an SL tier. 0 = tier may sit right at (or within
+    # sl_level_tolerance of) the extreme.
+    sl_buffer_pts: float = 0.0
     min_cross_depth: float = 0.0
     rr_ratio: float = 5.0  # Risk:Reward ratio for TP calculation
     point_value: float = 2.0         # dollar value per point (MNQ = $2)
