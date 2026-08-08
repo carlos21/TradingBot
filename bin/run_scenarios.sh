@@ -32,7 +32,5 @@ poetry run python backend/scripts/run_scenarios.py \
 # Tuning knobs: --sl-buffer 5 (extra SL room in pts beyond the sweep extreme; TP distance is
 #               NOT widened — measured: raises win rate but lowers long-run PnL)
 #               --max-reentry-attempts 2 (default 1; measured: lowers win rate and PnL)
-# Every run also prints a POST-SL ANALYSIS (what price did after each stop-out) and a
-# PULLBACK ENTRY SIMULATION (limit-at-line vs market-at-cross) after the PnL tables.
 # Example: ./bin/run_scenarios.sh --group london --mode real_cfd --rr 2.0 --cfd-spread 2.0
 # To generate an HTML report with monthly view, add: --html-report
