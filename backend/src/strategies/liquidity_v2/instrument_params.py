@@ -52,6 +52,11 @@ class InstrumentParams:
     # (applies to initial entries and re-entries alike, across all windows).
     max_open_trades: int
 
+    # Extra room (pts) required beyond the observed sweep extreme when the
+    # tiered SL is placed. 0 keeps the legacy behaviour (SL may sit right at
+    # the extreme), which is vulnerable to retest wicks.
+    sl_buffer_pts: float = 0.0
+
     # Session windows (local times, per-window initial-entry limits)
     trading_windows: list[TradingWindow] = field(default_factory=list)
 

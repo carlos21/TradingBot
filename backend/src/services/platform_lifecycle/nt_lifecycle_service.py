@@ -50,8 +50,12 @@ class NinjaTraderLifecycleService:
 
         return True, None
 
-    def maybe_launch_after_delay(self, data_source: ZMQDataSource | None) -> None:
+    def maybe_launch_after_delay(self, data_source: ZMQDataSource | None, trading_mode: str | None = None) -> None:
         """Auto-launch NinjaTrader only when it is neither connected nor running.
+
+        ``trading_mode`` (``"live"`` or ``"simulation"``) is forwarded to the
+        auto-login script, which clicks the matching option in NinjaTrader's
+        "Start Trading" dialog after login.
 
         Phase 1: poll the gateway once per second for up to 8 seconds — a
         healthy already-running NinjaTrader may connect on its own (the
@@ -99,7 +103,7 @@ class NinjaTraderLifecycleService:
                 self._logger.info(
                     f"[NT Lifecycle] NinjaTrader not detected after 8s, launching auto-login for {username}..."
                 )
-                result = self._nt_service.open_nt_and_login(username, password)
+                result = self._nt_service.open_nt_and_login(username, password, trading_mode=trading_mode)
                 if not result.get("success"):
                     self._logger.warning(f"[NT Lifecycle] NT launch warning: {result.get('message')}")
             else:

@@ -61,6 +61,12 @@ def register_stream_routes(
         if not ok:
             return jsonify({"status": "error", "message": err}), 400
 
+        body = request.get_json(silent=True) or {}
+        trading_mode = body.get("trading_mode")
+        if trading_mode not in ("live", "simulation"):
+            trading_mode = None
+        logger.info(f"[Stream] Start requested with trading_mode={trading_mode or 'not specified'}")
+
         gateway = data_source.gateway
         if gateway and gateway.is_connected:
             # Recover a datasource stuck in CONNECTED (platform connected but no
@@ -92,7 +98,7 @@ def register_stream_routes(
         # Spawn background thread to auto-launch platform if it doesn't connect on its own
         thread = threading.Thread(
             target=platform_lifecycle.maybe_launch_after_delay,
-            args=(data_source,),
+            args=(data_source, trading_mode),
             daemon=True,
         )
         thread.start()

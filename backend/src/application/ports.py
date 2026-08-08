@@ -18,11 +18,15 @@ class PlatformLifecycleService(Protocol):
         """Return (ok, error_message_or_none)."""
         ...
 
-    def maybe_launch_after_delay(self, data_source) -> None:
+    def maybe_launch_after_delay(self, data_source, trading_mode: str | None = None) -> None:
         """Called in a background thread after the gateway starts.
 
         Should wait a few seconds for the platform to connect on its own,
         then attempt to launch it if it hasn't.
+
+        ``trading_mode`` is ``"live"`` or ``"simulation"`` when the user
+        picked a mode in the UI; platforms that don't support mode
+        selection ignore it.
         """
         ...
 

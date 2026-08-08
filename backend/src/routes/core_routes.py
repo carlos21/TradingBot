@@ -48,7 +48,11 @@ def register_core_routes(
 
     @app.route('/')
     def index():
-        return send_from_directory(frontend_dir, 'index.html')
+        # no-cache: the browser must revalidate the page on every load so UI
+        # changes (e.g. the streaming overlay controls) are never served stale.
+        resp = send_from_directory(frontend_dir, 'index.html')
+        resp.headers['Cache-Control'] = 'no-cache'
+        return resp
 
     @app.route('/api/config')
     def get_config():

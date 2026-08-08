@@ -96,8 +96,13 @@ class NtManagerService:
         # In practice the DLLs are either already present or copied with the AddOns.
         return {"success": True, "message": "NetMQ installation skipped — DLLs are bundled with the ZMQ connector"}
 
-    def open_nt_and_login(self, username: str, password: str) -> dict:
-        """Launch NinjaTrader and auto-login with the given credentials."""
+    def open_nt_and_login(self, username: str, password: str, trading_mode: str | None = None) -> dict:
+        """Launch NinjaTrader and auto-login with the given credentials.
+
+        When ``trading_mode`` is ``"live"`` or ``"simulation"``, the auto-login
+        script also clicks the matching option in NinjaTrader's "Start Trading"
+        dialog after login.
+        """
         if not username or not password:
             return {"success": False, "message": "Username and password are required"}
 
@@ -124,6 +129,10 @@ class NtManagerService:
             "-Username", username,
             "-Password", password,
         ]
+
+        mode_map = {"live": "Live", "simulation": "Simulation"}
+        if trading_mode in mode_map:
+            cmd.extend(["-TradingMode", mode_map[trading_mode]])
 
         # Try to locate NinjaTrader; if not found in registry, let PowerShell auto-detect
         nt = self.find_nt_exe()

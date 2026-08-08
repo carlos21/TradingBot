@@ -103,7 +103,7 @@ class TestNinjaTraderLifecycleService:
         data_source = MagicMock()
         data_source.gateway.is_connected = False
         svc.maybe_launch_after_delay(data_source)
-        nt_service.open_nt_and_login.assert_called_once_with("u", "p")
+        nt_service.open_nt_and_login.assert_called_once_with("u", "p", trading_mode=None)
 
     def test_maybe_launch_after_delay_no_credentials(self, monkeypatch):
         nt_service = MagicMock()

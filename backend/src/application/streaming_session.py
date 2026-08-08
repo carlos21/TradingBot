@@ -204,6 +204,7 @@ class StreamingSession:
             sl_levels=self._numbers.sl_levels,
             max_entry_distance=self._numbers.max_entry_distance,
             sl_level_tolerance=self._numbers.sl_level_tolerance,
+            sl_buffer_pts=self._numbers.sl_buffer_pts,
             min_cross_depth=self._numbers.min_cross_depth,
             rr_ratio=self._numbers.rr_ratio,
             point_value=self._numbers.point_value,

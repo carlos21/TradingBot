@@ -112,3 +112,35 @@ class TestStrategyTradeServiceBalanceSizing:
 
         assert second["contracts"] == first["contracts"] * 2
         assert second["risk_dollars"] == first["risk_dollars"] * 2
+
+
+class TestStrategyTradeServiceTakeProfit:
+    def test_open_trade_preserves_strategy_take_profit(self):
+        """A strategy-computed TP decoupled from the SL distance (e.g. via
+        sl_buffer_pts) must survive open_trade — it must NOT be recomputed
+        as rr * risk."""
+        service = _make_service(account_balance=100000.0)
+        trade = _sample_trade()
+        # risk=20 but TP distance is only 60 (3R), not 5*20=100
+        trade["take_profit"] = 30060.0
+        opened = service.open_trade(
+            trade=trade,
+            is_warmup=False,
+            account_configs=[],
+            account_balance=100000.0,
+        )
+        assert opened[0]["take_profit"] == 30060.0
+
+    def test_account_rr_override_recomputes_take_profit_from_risk(self):
+        """A per-account RR override yields TP = entry ± rr_override x SL distance."""
+        from src.config.models import AccountConfig
+        service = _make_service(account_balance=100000.0)
+        acct = AccountConfig(name="A1", rr_ratio=2.5)
+        opened = service.open_trade(
+            trade=_sample_trade(),  # risk 20 pts
+            is_warmup=False,
+            account_configs=[acct],
+            account_balance=100000.0,
+        )
+        # 2.5 * 20 = 50 -> 30000 + 50
+        assert opened[0]["take_profit"] == 30050.0

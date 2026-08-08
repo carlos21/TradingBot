@@ -11,17 +11,39 @@ function setupDocument() {
     <button id="startStreamingBtn">Start Streaming</button>
     <button id="reconnectBtn" class="hidden">Reconnect</button>
     <button id="stopStreamingBtn" class="hidden">Stop Streaming</button>
+    <select id="tradingModeSelect">
+      <option value="simulation">Simulation</option>
+      <option value="live">Live Trading</option>
+    </select>
+    <span id="tradingModeBadge"></span>
     <div id="connectionStatus"></div>
   `;
 }
 
-function buildControls(pair) {
+function buildControls(pair, storedMode = null) {
   const dom = new FakeDomService(document, window);
   const notification = new FakeNotification();
   const lifecycle = new StreamingLifecycleController(dom);
   lifecycle.init();
-  const controls = new StreamingControlsController(dom, notification, lifecycle, pair);
-  return { dom, notification, lifecycle, controls };
+  const storage = new FakeStorage(storedMode);
+  const controls = new StreamingControlsController(dom, notification, lifecycle, pair, storage);
+  return { dom, notification, lifecycle, controls, storage };
+}
+
+class FakeStorage {
+  constructor(initialMode = null) {
+    this.map = new Map();
+    if (initialMode !== null) this.map.set('tradingBot.tradingMode', initialMode);
+  }
+  getItem(key) {
+    return this.map.has(key) ? this.map.get(key) : null;
+  }
+  setItem(key, value) {
+    this.map.set(key, value);
+  }
+  removeItem(key) {
+    this.map.delete(key);
+  }
 }
 
 describe('StreamingControlsController', () => {
@@ -45,7 +67,11 @@ describe('StreamingControlsController', () => {
       expect(btn.disabled).toBe(true);
       await new Promise(r => setTimeout(r, 10));
 
-      expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', { method: 'POST' });
+      expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trading_mode: 'simulation' }),
+      });
       expect(document.getElementById('connectionStatus').textContent).toBe('Stream started');
     });
 
@@ -127,7 +153,11 @@ describe('StreamingControlsController', () => {
       document.getElementById('startStreamingBtn').click();
       await new Promise(r => setTimeout(r, 10));
 
-      expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', { method: 'POST' });
+      expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trading_mode: 'simulation' }),
+      });
     });
   });
 
@@ -153,7 +183,11 @@ describe('StreamingControlsController', () => {
       expect(reconnectBtn.classList.contains('hidden')).toBe(true);
       await new Promise(r => setTimeout(r, 10));
 
-      expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', { method: 'POST' });
+      expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trading_mode: 'simulation' }),
+      });
       expect(document.getElementById('connectionStatus').textContent).toBe('Reconnected');
       expect(reconnectBtn.classList.contains('hidden')).toBe(true);
     });
@@ -278,6 +312,67 @@ describe('StreamingControlsController', () => {
       await new Promise(r => setTimeout(r, 10));
 
       expect(global.fetch).toHaveBeenCalledWith('/api/stream/stop', { method: 'POST' });
+    });
+  });
+
+  describe('trading mode', () => {
+    it('defaults to simulation and renders the badge on init', () => {
+      const { controls } = buildControls();
+      controls.init();
+
+      expect(document.getElementById('tradingModeSelect').value).toBe('simulation');
+      const badge = document.getElementById('tradingModeBadge');
+      expect(badge.textContent).toBe('Simulation');
+      expect(badge.className).toContain('amber');
+    });
+
+    it('restores the persisted mode on init (page refresh)', () => {
+      const { controls } = buildControls(undefined, 'live');
+      controls.init();
+
+      expect(document.getElementById('tradingModeSelect').value).toBe('live');
+      const badge = document.getElementById('tradingModeBadge');
+      expect(badge.textContent).toBe('Live Trading');
+      expect(badge.className).toContain('rose');
+    });
+
+    it('persists the mode and updates the badge when the select changes', () => {
+      const { controls, storage } = buildControls();
+      controls.init();
+
+      const select = document.getElementById('tradingModeSelect');
+      select.value = 'live';
+      select.dispatchEvent(new Event('change'));
+
+      expect(storage.getItem('tradingBot.tradingMode')).toBe('live');
+      expect(document.getElementById('tradingModeBadge').textContent).toBe('Live Trading');
+    });
+
+    it('sends the selected mode in the start request body', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ message: 'Stream started' }),
+      });
+
+      const { controls } = buildControls(undefined, 'live');
+      controls.init();
+
+      document.getElementById('startStreamingBtn').click();
+      await new Promise(r => setTimeout(r, 10));
+
+      expect(global.fetch).toHaveBeenCalledWith('/api/stream/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trading_mode: 'live' }),
+      });
+    });
+
+    it('falls back to simulation for an invalid stored value', () => {
+      const { controls } = buildControls(undefined, 'bogus');
+      controls.init();
+
+      expect(document.getElementById('tradingModeSelect').value).toBe('simulation');
+      expect(document.getElementById('tradingModeBadge').textContent).toBe('Simulation');
     });
   });
 
