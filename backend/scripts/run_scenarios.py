@@ -1057,7 +1057,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
         per_trade_fn(trade, close) → (usd, pct, actual_r, commission)
         Used so that W/L bucketing counts each individual trade, not the net scenario outcome.
         """
-        # ── Aggregate by day / week / month (per individual trade) ─────────────
+        # ── Aggregate by day / week / month / year (per individual trade) ─────
         def _new_bucket():
             return {"usd": 0.0, "pct": 0.0, "commission": 0.0, "wins": 0, "losses": 0, "be": 0, "sp": 0, "open": 0,
                     "reentry_win": 0, "reentry_loss": 0, "reentry_be": 0, "all_passed": True,
@@ -1071,6 +1071,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
         daily   = defaultdict(_new_bucket)
         weekly  = defaultdict(_new_bucket)
         monthly = defaultdict(_new_bucket)
+        yearly  = defaultdict(_new_bucket)
 
         # Order-independent per-day pass: scenario status and velocity.
         for r in summary_results:
@@ -1095,14 +1096,16 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
                 iso = exit_dt.isocalendar()
                 w_key = f"{iso.year}-W{iso.week:02d}"
                 m_key = exit_dt.strftime("%Y-%m")
+                y_key = str(exit_dt.year)
             else:
                 # Fallback to scenario date for open trades
                 d_key = str(scenario_date)
                 iso = scenario_date.isocalendar()
                 w_key = f"{iso.year}-W{iso.week:02d}"
                 m_key = scenario_date.strftime("%Y-%m")
+                y_key = str(scenario_date.year)
 
-            for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+            for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key), (yearly, y_key)]:
                 if bucket[key]["start_balance"] is None:
                     bucket[key]["start_balance"] = running_balance
 
@@ -1112,7 +1115,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
                 risk_dollars = trade.get("risk_dollars")
                 is_reentry_trade = trade.get("is_reentry", False)
                 if sl_pts is not None and risk_dollars is not None:
-                    for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                    for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key), (yearly, y_key)]:
                         if is_reentry_trade:
                             bucket[key]["reentry_sl_sum"] += sl_pts
                             bucket[key]["reentry_sl_count"] += 1
@@ -1125,7 +1128,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
                             bucket[key]["entry_risk_count"] += 1
 
             if close is None:
-                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key), (yearly, y_key)]:
                     bucket[key]["open"] += 1
                 continue
             result_type = close.get("result_type", None)
@@ -1137,11 +1140,11 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
             # Track contracts used for this trade
             trade_contracts = trade.get("contracts") if trade else None
             if trade_contracts is not None:
-                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key), (yearly, y_key)]:
                     bucket[key]["contracts"].append(trade_contracts)
 
             if result_type == "SP":
-                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key), (yearly, y_key)]:
                     if t_usd is not None:
                         bucket[key]["usd"] += t_usd
                         bucket[key]["commission"] += t_comm
@@ -1149,7 +1152,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
                 continue
 
             if result_type == "BE":
-                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+                for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key), (yearly, y_key)]:
                     if t_usd is not None:
                         bucket[key]["usd"] += t_usd
                         bucket[key]["commission"] += t_comm
@@ -1161,7 +1164,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
             # Use unified BE threshold from FinancialCalc
             is_be = FinancialCalc.is_breakeven_by_r(actual_r, BE_THRESHOLD)
             is_win = actual_r >= BE_THRESHOLD
-            for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key)]:
+            for bucket, key in [(daily, d_key), (weekly, w_key), (monthly, m_key), (yearly, y_key)]:
                 if t_usd is not None:
                     bucket[key]["usd"] += t_usd
                     bucket[key]["commission"] += t_comm
@@ -1320,6 +1323,7 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
         _print_agg(f"DAILY PnL   — {mode_label}", daily, show_passed=True, show_velocity=True, show_sl_risk=True, show_contracts=True)
         _print_agg(f"WEEKLY PnL  — {mode_label}", weekly)
         _print_agg(f"MONTHLY PnL — {mode_label}", monthly)
+        _print_agg(f"YEARLY PnL  — {mode_label}", yearly)
 
         # ── Overall summary (count each individual trade) ─────────────────────
         outcomes = []
