@@ -33,10 +33,10 @@ def get_prod_strategy_numbers(rr_ratio: float,
     instrument's tuned values to use.
 
     Example – how the tiered SL system works:
-        sl_levels = [10, 15, 20, 30, 40]
+        sl_levels = [10, 15, 20, 30]
         If price dipped 18 pts below the line, the system picks 20.0 (smallest
-        level >= 18).  If the dip was 45 pts, it falls back to the largest
-        level (40.0) because 45 exceeds every tier.
+        level >= 18).  If the dip was 35 pts, it falls back to the largest
+        level (30.0) because 35 exceeds every tier.
     """
     params = get_instrument_params(symbol)
     return StrategyNumbers(
@@ -63,13 +63,13 @@ def get_prod_strategy_numbers(rr_ratio: float,
         # the smallest level >= distance-to-extreme.  If the extreme is larger
         # than all tiers, it falls back to the largest tier.
         # Example: dip = 25 pts  ->  picks 30.0 (smallest tier >= 25).
-        #          dip = 50 pts  ->  falls back to 40.0 (largest tier).
+        #          dip = 50 pts  ->  falls back to 30.0 (largest tier).
         sl_levels=list(params.sl_levels),
 
         # How many points ABOVE the chosen SL tier the price can go before
         # the next larger tier is selected.  Prevents flickering between tiers.
         # Example: dip = 30.1 pts, tolerance=3  ->  still uses 30.0 tier
-        #          (would need >= 33.1 to jump to 40.0).
+        #          (largest tier, nothing larger to jump to).
         sl_level_tolerance=params.sl_level_tolerance,
 
         # Extra room (pts) the SL must have beyond the observed sweep
@@ -86,7 +86,7 @@ def get_prod_strategy_numbers(rr_ratio: float,
         # max(sl_levels).  Setting it larger lets you enter on late TSI
         # crosses after a big initial move.
         # Example: line=100, max_entry_distance=80.0 -> entry allowed up to 180.
-        #          With the old default (max(sl_levels)=40) entry would die at 140.
+        #          With the old default (max(sl_levels)=30) entry would die at 130.
         max_entry_distance=params.max_entry_distance,
 
         # ------------------------------------------------------------------

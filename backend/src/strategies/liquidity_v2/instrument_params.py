@@ -63,7 +63,7 @@ class InstrumentParams:
 
 _DEFAULT_WINDOWS = [
     TradingWindow("08:00", "15:30", max_trades=1),
-    TradingWindow("01:00", "07:59", max_trades=1)
+    # TradingWindow("01:00", "07:59", max_trades=1)
 ]
 
 INSTRUMENT_PARAMS: dict[str, InstrumentParams] = {
@@ -72,11 +72,11 @@ INSTRUMENT_PARAMS: dict[str, InstrumentParams] = {
         default_full_name="MNQ 09-26",
         point_value=2.0,
         min_stop_loss=10.0,
-        max_bounce=90.0,
+        max_bounce=120.0,
         extra_sl_space=0.0,
         fixed_stop_loss=None,
         max_stop_loss=None,
-        sl_levels=[10.0, 15.0, 20.0, 30.0, 40.0],
+        sl_levels=[10.0, 15.0, 20.0, 30.0],
         sl_level_tolerance=3.0,
         min_cross_depth=5.0,
         max_entry_distance=50.0,

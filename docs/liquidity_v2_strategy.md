@@ -378,7 +378,7 @@ Once a trigger fires and all filters pass, `_build_trade_from_context()` creates
 
 ### 8.1 Stop-Loss Selection
 
-The strategy uses **tiered stop-loss levels**: `[10.0, 15.0, 20.0, 30.0, 40.0]`.
+The strategy uses **tiered stop-loss levels**: `[10.0, 15.0, 20.0, 30.0]`.
 
 ```python
 distance_to_extreme = entry - extreme   # long
@@ -390,7 +390,7 @@ eff_risk = smallest sl_level where level + sl_level_tolerance >= distance_to_ext
 
 - `sl_level_tolerance = 3.0` prevents flickering between tiers.
 - The selected SL can never be smaller than `min_stop_loss = 10.0` pts.
-- If the distance exceeds all tiers, the largest tier (40.0) is used.
+- If the distance exceeds all tiers, the largest tier (30.0) is used.
 
 ### 8.2 Take-Profit
 
@@ -595,7 +595,7 @@ flowchart TD
 | `min_stop_loss` | `10.0` | `src/strategies/liquidity_v2/prod_config.py` |
 | `max_bounce` | `90.0` | `src/strategies/liquidity_v2/prod_config.py` |
 | `extra_sl_space` | `0.0` | `src/strategies/liquidity_v2/prod_config.py` |
-| `sl_levels` | `[10.0, 15.0, 20.0, 30.0, 40.0]` | `src/strategies/liquidity_v2/prod_config.py` |
+| `sl_levels` | `[10.0, 15.0, 20.0, 30.0]` | `src/strategies/liquidity_v2/prod_config.py` |
 | `sl_level_tolerance` | `3.0` | `src/strategies/liquidity_v2/prod_config.py` |
 | `max_entry_distance` | `50.0` | `src/strategies/liquidity_v2/prod_config.py` |
 | `min_cross_depth` | `5.0` | `src/strategies/liquidity_v2/prod_config.py` |

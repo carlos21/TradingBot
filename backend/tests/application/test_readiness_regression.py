@@ -59,8 +59,8 @@ _TEST_SCENARIO: dict[str, Any] = {
     ],
     "expect": {
         "entry": 28696.75,
-        "sl": 28656.75,
-        "tp": 28896.75,
+        "sl": 28666.75,
+        "tp": 28846.75,
         "reentry": {
             "entry": 28703.00,
             "sl": 28663.00,

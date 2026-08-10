@@ -131,7 +131,7 @@ def make_recovery_strategy(
         timeframes=["3m", "5m", "15m", "30m", "1h"],
         options=options,
         candle_config=get_prod_candle_config(),
-        sl_levels=[10.0, 15.0, 20.0, 30.0, 40.0],
+        sl_levels=[10.0, 15.0, 20.0, 30.0],
         sl_level_tolerance=3,
         min_cross_depth=5.0,
         rr_ratio=5.0,

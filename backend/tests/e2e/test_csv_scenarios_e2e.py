@@ -34,8 +34,8 @@ _TEST_SCENARIO: dict[str, Any] = {
     ],
     "expect": {
         "entry": 28696.75,
-        "sl": 28656.75,
-        "tp": 28896.75,
+        "sl": 28666.75,
+        "tp": 28846.75,
         "reentry": {
             "entry": 28703.00,
             "sl": 28663.00,
@@ -93,7 +93,7 @@ class TestCSVScenarioReplay:
     def test_csv_scenario_trade_opens_and_closes(self, e2e_harness_auto: E2EHarness, test_scenario: dict[str, Any]) -> None:
         """Stream Jun 11 2026 bars; strategy generates expected long signal.
 
-        The scenario expects entry=28696.75, SL=28656.75, TP=28896.75.
+        The scenario expects entry=28696.75, SL=28666.75, TP=28846.75.
         With the real CSV data the trade hits SL (price never reaches TP),
         so we assert the trade opens with correct parameters and then closes.
         """
