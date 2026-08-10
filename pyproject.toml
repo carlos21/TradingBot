@@ -50,10 +50,10 @@ python_functions = ["test_*"]
 addopts = "-v --tb=short"
 
 [tool.coverage.run]
-source = ["src"]
+source = ["backend/src"]
 omit = [
-    "src/__init__.py",
-    "src/**/__init__.py",
+    "backend/src/__init__.py",
+    "backend/src/**/__init__.py",
 ]
 branch = true
 

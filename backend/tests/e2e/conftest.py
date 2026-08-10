@@ -375,16 +375,36 @@ def _force_ready(app: AppWiring) -> None:
     sm.live_bar_received()
 
 
+def _wait_for_connect(nt: FakeNinjaTrader, app: AppWiring, timeout: float = 5.0) -> None:
+    """Send CONNECT and wait until the app actually processes it.
+
+    ZMQ PUB/SUB has a slow-joiner race: under CPU load the app's SUB
+    subscription may not have propagated to FakeNT's PUB before the first
+    publish, silently dropping it. CONNECT rides the same market-data PUB
+    socket as history and bars, so once the app processes CONNECT the pipe is
+    proven live and every later publish is delivered. Resend until received;
+    repeated CONNECTs are idempotent (the data source ignores them once it
+    leaves DISCONNECTED).
+    """
+    time.sleep(0.3)  # common case: connections establish without any resend
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        nt.send_connect(pair="MNQ")
+        resent_deadline = time.time() + 0.5
+        while time.time() < resent_deadline:
+            if app.data_source.is_connected:
+                return
+            time.sleep(0.02)
+    raise TimeoutError("app never received FakeNT CONNECT handshake")
+
+
 @pytest.fixture
 def e2e_harness(
     fake_nt: FakeNinjaTrader,
     live_app: AppWiring,
 ) -> Generator[E2EHarness, None, None]:
     """Both sides started and CONNECT handshake performed."""
-    # Allow ZMQ connections to establish (slow-joiner protection)
-    time.sleep(0.3)
-    fake_nt.send_connect(pair="MNQ")
-    time.sleep(0.1)
+    _wait_for_connect(fake_nt, live_app)
     _force_ready(live_app)
     yield E2EHarness(nt=fake_nt, app=live_app)
 
@@ -401,9 +421,7 @@ def e2e_harness_multi(
     # Re-init tracker with multi accounts
     from tests.fake_ninjatrader.order_tracker import FakeOrderTracker
     fake_nt._tracker = FakeOrderTracker(["Sim101", "Sim102"])
-    time.sleep(0.3)
-    fake_nt.send_connect(pair="MNQ")
-    time.sleep(0.1)
+    _wait_for_connect(fake_nt, live_app_multi)
     _force_ready(live_app_multi)
     yield E2EHarness(nt=fake_nt, app=live_app_multi)
 
@@ -414,9 +432,7 @@ def e2e_harness_auto(
     live_app_scenario: AppWiring,
 ) -> Generator[E2EHarness, None, None]:
     """Harness with auto-fill FakeNT for CSV-driven scenario tests."""
-    time.sleep(0.3)
-    fake_nt_auto.send_connect(pair="MNQ")
-    time.sleep(0.1)
+    _wait_for_connect(fake_nt_auto, live_app_scenario)
     _force_ready(live_app_scenario)
     yield E2EHarness(nt=fake_nt_auto, app=live_app_scenario)
 
@@ -505,8 +521,6 @@ def e2e_harness_resilience(
     live_app_resilience: AppWiring,
 ) -> Generator[E2EHarness, None, None]:
     """Resilience harness: connected but not forced-ready."""
-    time.sleep(0.3)
-    fake_nt_fast.send_connect(pair="MNQ")
-    time.sleep(0.1)
+    _wait_for_connect(fake_nt_fast, live_app_resilience)
     # Tests drive the full readiness state machine.
     yield E2EHarness(nt=fake_nt_fast, app=live_app_resilience)

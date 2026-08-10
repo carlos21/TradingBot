@@ -609,6 +609,81 @@ class TestCrashRecoveryEdgeCases:
             ]
             assert len(source) >= 1, f"Opportunity at {opp['level']} has no non-reentry source"
 
+    def test_consumed_reentry_slot_not_restored_after_restart(self):
+        """Initial SL + its re-entry SL (same line, max_reentry_attempts=1):
+        a restart must NOT restore a watch — the chain is exhausted.
+
+        Regression for 2026-08-10: after a restart the initial trade
+        regenerated an 'attempt 1' watch even though its re-entry slot had
+        already been consumed (and lost), opening a 3rd trade beyond the
+        day's limit."""
+        trade_repo = FakeTradeRepository()
+        tsr = InMemoryLineTriggerStateRepository()
+
+        ref = datetime(2026, 8, 10, 19, 7, tzinfo=timezone.utc)  # restart time
+        level = 29772.046814827594
+
+        trade_repo.insert_trade(
+            "MNQ", "long", 29773.5, 29743.5, 29923.5, 30.0,
+            entry_time=datetime(2026, 8, 10, 13, 45, tzinfo=timezone.utc),
+            params={"line_level": level, "is_reentry": False, "reentry_attempt": 0},
+            source="strategy", trade_id="T1",
+        )
+        trade_repo.close_trade(
+            "T1", 29743.5, datetime(2026, 8, 10, 15, 35, tzinfo=timezone.utc),
+            result=-1.0, result_type="SL",
+        )
+        trade_repo.insert_trade(
+            "MNQ", "long", 29780.0, 29750.0, 29930.0, 30.0,
+            entry_time=datetime(2026, 8, 10, 15, 41, tzinfo=timezone.utc),
+            params={"line_level": level, "is_reentry": True, "reentry_attempt": 1},
+            source="strategy", trade_id="T2",
+        )
+        trade_repo.close_trade(
+            "T2", 29750.0, datetime(2026, 8, 10, 16, 32, tzinfo=timezone.utc),
+            result=-1.0, result_type="SL",
+        )
+
+        strat = make_recovery_strategy(trade_repo, tsr)
+        strat.restore_reentry_opportunities("MNQ", reference_time=ref)
+
+        assert len(strat._reentry_opportunities) == 0
+
+    def test_won_reentry_slot_not_restored_after_restart(self):
+        """Initial SL + re-entry that WON: the chain ended successfully, so a
+        restart must not resurrect a watch from the initial trade."""
+        trade_repo = FakeTradeRepository()
+        tsr = InMemoryLineTriggerStateRepository()
+
+        ref = datetime(2026, 8, 10, 19, 7, tzinfo=timezone.utc)
+        level = 29772.046814827594
+
+        trade_repo.insert_trade(
+            "MNQ", "long", 29773.5, 29743.5, 29923.5, 30.0,
+            entry_time=datetime(2026, 8, 10, 13, 45, tzinfo=timezone.utc),
+            params={"line_level": level, "is_reentry": False, "reentry_attempt": 0},
+            source="strategy", trade_id="T1",
+        )
+        trade_repo.close_trade(
+            "T1", 29743.5, datetime(2026, 8, 10, 15, 35, tzinfo=timezone.utc),
+            result=-1.0, result_type="SL",
+        )
+        trade_repo.insert_trade(
+            "MNQ", "long", 29780.0, 29750.0, 29930.0, 30.0,
+            entry_time=datetime(2026, 8, 10, 15, 41, tzinfo=timezone.utc),
+            params={"line_level": level, "is_reentry": True, "reentry_attempt": 1},
+            source="strategy", trade_id="T2",
+        )
+        trade_repo.close_trade(
+            "T2", 29930.0, datetime(2026, 8, 10, 17, 0, tzinfo=timezone.utc),
+            result=5.0, result_type="TP",
+        )
+
+        strat = make_recovery_strategy(trade_repo, tsr)
+        strat.restore_reentry_opportunities("MNQ", reference_time=ref)
+
+        assert len(strat._reentry_opportunities) == 0
+
     def test_old_sl_beyond_cutoff_not_restored(self):
         """SL trades older than 4 hours are not restored."""
         trade_repo = FakeTradeRepository()

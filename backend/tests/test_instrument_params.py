@@ -22,7 +22,7 @@ class TestCatalog:
         p = INSTRUMENT_PARAMS["MNQ"]
         assert p.point_value == 2.0
         assert p.min_stop_loss == 10.0
-        assert p.max_bounce == 90.0
+        assert p.max_bounce == 120.0
         assert p.sl_levels == [10.0, 15.0, 20.0, 30.0]
         assert p.sl_level_tolerance == 3.0
         assert p.min_cross_depth == 5.0

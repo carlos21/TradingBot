@@ -9,16 +9,23 @@ import socket
 
 
 def get_free_ports(count: int = 4) -> list[int]:
-    """Return `count` free TCP port numbers.
+    """Return `count` distinct free TCP port numbers.
 
-    Each port is found by binding to port 0 and immediately releasing it.
-    There is a narrow race window where another process could grab the port
-    between release and re-use, but in practice this is negligible for
-    localhost test fixtures.
+    Every socket is kept open until all ports have been allocated, so the
+    OS cannot hand the same ephemeral port out twice within one call (the
+    previous bind-release-rebind loop could return duplicates, causing
+    ``ZMQError: Address already in use`` when two channels got the same
+    port).  There is still a narrow race window where another process
+    could grab a port between release and re-use, but in practice this is
+    negligible for localhost test fixtures.
     """
-    ports: list[int] = []
-    for _ in range(count):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+    sockets: list[socket.socket] = []
+    try:
+        for _ in range(count):
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.bind(("127.0.0.1", 0))
-            ports.append(s.getsockname()[1])
-    return ports
+            sockets.append(s)
+        return [s.getsockname()[1] for s in sockets]
+    finally:
+        for s in sockets:
+            s.close()

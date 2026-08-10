@@ -37,6 +37,7 @@ class FakeTradeManager:
         self.open_trades = []
         self.trade_executor = FakeExecutor()
         self.pair = "MNQ"
+        self.instrument = "MNQ 09-26"
         self.account_balance = 100000.0
         self._monitored_trades = set()
 

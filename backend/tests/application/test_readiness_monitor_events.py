@@ -503,6 +503,93 @@ class TestWarmupCancellation:
         _join_warmup(monitor)
         assert orchestrator.run_count == 2
 
+    def test_concurrent_history_loads_never_overlap_warmup_replays(self) -> None:
+        """Concurrent on_history_complete() calls must serialize: a later load
+        cancels and replaces the earlier replay instead of both running at once."""
+        import threading
+        import time
+
+        class _BlockingOrchestrator:
+            def __init__(self, strategy: _FakeStrategy) -> None:
+                self._strategy = strategy
+                self._stop_event = threading.Event()
+                self.active = 0
+                self.max_active = 0
+                self._active_lock = threading.Lock()
+
+            @property
+            def strategy(self) -> _FakeStrategy:
+                return self._strategy
+
+            def cancel(self) -> None:
+                self._stop_event.set()
+
+            def reset_cancel(self) -> None:
+                self._stop_event.clear()
+
+            def set_progress_listener(self, listener) -> None:
+                pass
+
+            def run(self, bars, pair) -> None:
+                with self._active_lock:
+                    self.active += 1
+                    self.max_active = max(self.max_active, self.active)
+                try:
+                    # Hold the replay briefly so an overlapping spawn would register.
+                    deadline = time.monotonic() + 0.2
+                    while time.monotonic() < deadline and not self._stop_event.is_set():
+                        time.sleep(0.005)
+                finally:
+                    with self._active_lock:
+                        self.active -= 1
+
+        strategy = _FakeStrategy()
+        event_bus = EventBus()
+        sm = ReadinessStateMachine(event_publisher=DomainEventBusPublisher(event_bus))
+        orchestrator = _BlockingOrchestrator(strategy)
+        monitor = ReadinessMonitor(
+            state_machine=sm,
+            warmup_orchestrator=orchestrator,
+            warmup_policy=_FakeWarmupPolicy(warm=True),
+            bar_buffer=LiveBarBuffer(processor=lambda _: None),
+            live_bar_processor=lambda _: None,
+            data_source=_FreshDataSource(),
+            logger=FakeLogger(),
+            event_bus=event_bus,
+        )
+        monitor.set_pair("MNQ")
+        sm.connect()
+
+        threads = [
+            threading.Thread(target=monitor.on_history_complete, args=(_make_bars(),))
+            for _ in range(4)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10.0)
+        _join_warmup(monitor)
+
+        assert not any(t.is_alive() for t in threads)
+        assert orchestrator.max_active == 1
+
+
+class TestNeedsHistorySeed:
+    def test_needs_history_seed_reflects_warm_state(self) -> None:
+        socketio = DummySocketIO()
+        monitor, _strategy, _event_bus = _make_monitor(
+            socketio, _FreshDataSource(), _FakeWarmupPolicy(warm=True)
+        )
+        # DISCONNECTED and CONNECTED still need the seed.
+        assert monitor.needs_history_seed() is True
+        monitor._state_machine.connect()
+        assert monitor.needs_history_seed() is True
+
+        monitor.on_history_complete(_make_bars())
+        _join_warmup(monitor)
+        assert monitor._state_machine.state.name == "READY"
+        assert monitor.needs_history_seed() is False
+
 
 class TestDegradeAndRecover:
     def test_gap_detected_degrades_ready_state(self) -> None:

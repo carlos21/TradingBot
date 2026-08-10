@@ -91,6 +91,10 @@ class ReadinessMonitor:
         self._retry_lock = threading.Lock()
         self._warmup_in_progress: bool = False
         self._warmup_thread: threading.Thread | None = None
+        # Serializes the cancel/reset/spawn section of on_history_complete so
+        # concurrent history loads (e.g. a duplicate browser join racing the
+        # platform HISTORY_END) cannot run two warmup replays at once.
+        self._warmup_lock = threading.Lock()
 
         # Gap-fill: when readiness is blocked by a fillable hole in the recent
         # history (e.g. infrastructure downtime), re-request history so the
@@ -103,6 +107,30 @@ class ReadinessMonitor:
     def set_pair(self, pair: str) -> None:
         self._pair = pair
         self._state_machine.set_pair(pair)
+
+    @property
+    def state(self) -> ReadinessState:
+        """Current readiness state."""
+        return self._state_machine.state
+
+    @property
+    def warmup_in_progress(self) -> bool:
+        return self._warmup_in_progress
+
+    def needs_history_seed(self) -> bool:
+        """True while cached history still has to be replayed into the strategy.
+
+        False once history has been loaded and indicators are warming or warm —
+        seeding again would needlessly cancel and restart the warmup replay
+        (e.g. on every browser join / page refresh).
+        """
+        if self._warmup_in_progress:
+            return False
+        return self._state_machine.state not in (
+            ReadinessState.WARMING_UP,
+            ReadinessState.READY,
+            ReadinessState.LIVE,
+        )
 
     def on_connection_change(self, connected: bool) -> None:
         """Called when the gateway connection state changes."""
@@ -149,70 +177,76 @@ class ReadinessMonitor:
     def on_history_complete(self, bars: list[dict[str, Any]]) -> None:
         """Called when the full historical bar set has been received."""
         self._cancel_retry_timer()
-        self._cancel_warmup()
 
-        if not bars:
-            self._state_machine.history_empty()
-            self._schedule_history_retry()
-            return
+        # The whole cancel/reset/spawn section runs under _warmup_lock so
+        # concurrent history loads (e.g. a duplicate browser join racing the
+        # platform HISTORY_END) are serialized: the later one cancels and
+        # replaces the earlier replay instead of both replaying at once.
+        with self._warmup_lock:
+            self._cancel_warmup()
 
-        self._state_machine.history_loaded()
+            if not bars:
+                self._state_machine.history_empty()
+                self._schedule_history_retry()
+                return
 
-        if self._progress_emitter is not None:
-            self._progress_emitter.emit_phase_started(
-                "warmup", "Indicator warmup replay started"
-            )
+            self._state_machine.history_loaded()
 
-        # Notify the frontend that historical bars are available for display,
-        # even if the data is not yet fresh enough for live trading.
-        if self._socketio_publisher is not None:
-            payload = {
-                "readiness_state": self._state_machine.state.name,
-                "readiness_reason": self._state_machine.reason,
-                "bar_count": len(bars),
-                "last_bar_time": bars[-1].get("time") if bars else None,
-                "pair": self._pair,
-            }
-            with contextlib.suppress(Exception):
-                if self._history_loaded_emitter is not None:
-                    self._history_loaded_emitter(self._socketio_publisher, payload)
-                else:
-                    self._socketio_publisher.emit("history_loaded", payload)
-
-        # Run warmup in a background thread so the gateway receive loop is not
-        # blocked. Blocking the receive loop prevents heartbeat processing and
-        # causes a heartbeat timeout -> disconnect -> reconnect -> refresh loop.
-        self._warmup_orchestrator.reset_cancel()
-        self._warmup_in_progress = True
-        bars_snapshot = list(bars)
-        pair_snapshot = self._pair
-
-        def _run_warmup() -> None:
-            if self._logger:
-                self._logger.info("[Readiness] Starting warmup replay thread")
-            try:
-                success = self._warmup_orchestrator.run(bars_snapshot, pair_snapshot)
-            finally:
-                self._warmup_in_progress = False
-
-            # Only attempt the READY transition if warmup completed successfully.
-            # A failed or cancelled warmup must not promote a broken strategy.
-            # Backwards compatibility: orchestrators that return None (older fakes)
-            # are treated as successful; only an explicit False means failure.
-            if self._logger:
-                self._logger.info(
-                    f"[Readiness] Warmup replay thread finished (success={success})"
-                )
-            if success is not False:
-                self._try_warmup_complete()
-            elif self._logger:
-                self._logger.warning(
-                    "[Readiness] Warmup did not complete successfully; "
-                    "staying in WARMING_UP until the next history cycle"
+            if self._progress_emitter is not None:
+                self._progress_emitter.emit_phase_started(
+                    "warmup", "Indicator warmup replay started"
                 )
 
-        self._warmup_thread = threading.Thread(target=_run_warmup, daemon=True, name="WarmupReplay")
-        self._warmup_thread.start()
+            # Notify the frontend that historical bars are available for display,
+            # even if the data is not yet fresh enough for live trading.
+            if self._socketio_publisher is not None:
+                payload = {
+                    "readiness_state": self._state_machine.state.name,
+                    "readiness_reason": self._state_machine.reason,
+                    "bar_count": len(bars),
+                    "last_bar_time": bars[-1].get("time") if bars else None,
+                    "pair": self._pair,
+                }
+                with contextlib.suppress(Exception):
+                    if self._history_loaded_emitter is not None:
+                        self._history_loaded_emitter(self._socketio_publisher, payload)
+                    else:
+                        self._socketio_publisher.emit("history_loaded", payload)
+
+            # Run warmup in a background thread so the gateway receive loop is not
+            # blocked. Blocking the receive loop prevents heartbeat processing and
+            # causes a heartbeat timeout -> disconnect -> reconnect -> refresh loop.
+            self._warmup_orchestrator.reset_cancel()
+            self._warmup_in_progress = True
+            bars_snapshot = list(bars)
+            pair_snapshot = self._pair
+
+            def _run_warmup() -> None:
+                if self._logger:
+                    self._logger.info("[Readiness] Starting warmup replay thread")
+                try:
+                    success = self._warmup_orchestrator.run(bars_snapshot, pair_snapshot)
+                finally:
+                    self._warmup_in_progress = False
+
+                # Only attempt the READY transition if warmup completed successfully.
+                # A failed or cancelled warmup must not promote a broken strategy.
+                # Backwards compatibility: orchestrators that return None (older fakes)
+                # are treated as successful; only an explicit False means failure.
+                if self._logger:
+                    self._logger.info(
+                        f"[Readiness] Warmup replay thread finished (success={success})"
+                    )
+                if success is not False:
+                    self._try_warmup_complete()
+                elif self._logger:
+                    self._logger.warning(
+                        "[Readiness] Warmup did not complete successfully; "
+                        "staying in WARMING_UP until the next history cycle"
+                    )
+
+            self._warmup_thread = threading.Thread(target=_run_warmup, daemon=True, name="WarmupReplay")
+            self._warmup_thread.start()
 
     def on_live_bar(self, bar: dict[str, Any]) -> None:
         """Called for each live bar (completed or partial)."""

@@ -611,6 +611,7 @@ class BaseStrategy:
                     'contracts':   opened_trade.get("contracts"),
                     'entry_time':  opened_trade["entry_time"],
                     'account':     opened_trade.get("account"),
+                    'instrument':  self.trade_manager.instrument,
                     'status':      'open',
                     'line_level':  opened_trade.get("line_level"),
                     'is_reentry':  opened_trade.get("is_reentry", False),

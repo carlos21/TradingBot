@@ -378,6 +378,25 @@ class BaseLiquidityStrategy:
             key=lambda t: t.exit_time or datetime.min.replace(tzinfo=timezone.utc),
             reverse=True,
         )
+
+        # Only the LATEST trade of each re-entry chain (same line + direction)
+        # may regenerate a watch.  Earlier links were already consumed by the
+        # re-entry trades that followed them; restoring them again would
+        # double-dip the chain after a restart (e.g. initial SL + re-entry SL
+        # with max_reentry_attempts=1 must restore nothing).
+        def _aware(dt):
+            return dt.replace(tzinfo=timezone.utc) if dt and dt.tzinfo is None else dt
+
+        latest_by_chain: dict[tuple[float, str], Any] = {}
+        for t2 in trades:
+            lvl = t2.params.get("line_level") if t2.params else None
+            if lvl is None or t2.entry_time is None:
+                continue
+            key = (lvl, t2.trade_type)
+            current = latest_by_chain.get(key)
+            if current is None or _aware(t2.entry_time) > _aware(current.entry_time):
+                latest_by_chain[key] = t2
+
         restored = 0
         for t in trades:
             if t.result is None or t.result >= 0:
@@ -386,6 +405,8 @@ class BaseLiquidityStrategy:
                 continue
             line_level = t.params.get("line_level") if t.params else None
             if line_level is None:
+                continue
+            if latest_by_chain.get((line_level, t.trade_type)) is not t:
                 continue
             attempt = t.params.get("reentry_attempt", 0) if t.params else 0
             if attempt == 0 and t.params and t.params.get("is_reentry"):
@@ -1057,6 +1078,7 @@ class BaseLiquidityStrategy:
                     'contracts':   opened_trade.get("contracts"),
                     'entry_time':  opened_trade["entry_time"],
                     'account':     opened_trade.get("account"),
+                    'instrument':  self.trade_manager.instrument,
                     'status':      'open',
                     'line_level':  opened_trade.get("line_level"),
                     'is_reentry':  opened_trade.get("is_reentry", False),

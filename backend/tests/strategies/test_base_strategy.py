@@ -691,6 +691,30 @@ class TestStoreAndEmit:
         assert len(tm.trade_repository.inserted) == 1
         assert any(e[0] == "trade_open" for e in sio.events)
 
+    def test_tm_registration_includes_instrument(self):
+        """Regression: modify/close commands resolve the instrument from
+        tm.open_trades — the registered copy must carry it."""
+        sio = DummySocketIO()
+        tm = TradeManager(
+            trade_repository=FakeTradeRepository(),
+            socketio=sio,
+            trade_executor=FakeTradeExecutor(),
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+            instrument="MNQ 09-26",
+        )
+        s = _make_base(event_publisher=sio, trade_manager=tm, trade_repo=tm.trade_repository)
+        trade = {
+            "pair": "MNQ", "type": "long", "entry": 100,
+            "stop_loss": 90, "take_profit": 130, "risk": 10,
+            "entry_time": 1000, "status": "open",
+        }
+        s._store_and_emit_open(trade)
+        assert len(tm.open_trades) == 1
+        assert tm.open_trades[0]["instrument"] == "MNQ 09-26"
+
     def test_store_and_emit_open_multi_account(self):
         sio = DummySocketIO()
         tm = _make_trade_manager(event_publisher=sio)
