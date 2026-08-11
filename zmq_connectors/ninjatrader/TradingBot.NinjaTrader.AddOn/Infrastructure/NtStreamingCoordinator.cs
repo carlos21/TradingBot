@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Windows.Threading;
 using NinjaTrader.Cbi;
@@ -346,6 +347,7 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                             }
 
                             int lastCompletedIdx = Math.Max(0, bars.Bars.Count - 2);
+                            _logger.Info($"[LiveBars] {pair} BarsRequest callback cached={bars.Bars.Count} lastCompletedIdx={lastCompletedIdx} firstTime={bars.Bars.GetTime(0):yyyy-MM-dd HH:mm:ss} lastTime={bars.Bars.GetTime(bars.Bars.Count - 1):yyyy-MM-dd HH:mm:ss}");
                             ctx.BarTracker.Reset(lastCompletedIdx);
                         }
                         ctx.SessionIterator = new SessionIterator(ctx.Instrument.MasterInstrument.TradingHours);
@@ -392,7 +394,8 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                 lock (_barSendLock)
                 {
                     int sent = 0;
-                    foreach (var bar in ctx.BarTracker.GetUnsentBars(series))
+                    var unsent = ctx.BarTracker.GetUnsentBars(series).ToList();
+                    foreach (var bar in unsent)
                     {
                         _network?.SendBar(pair, bar.Time, bar.Open, bar.High, bar.Low, bar.Close, bar.Volume,
                             isPartial: false, seqNum: bar.SequenceNumber);
@@ -400,8 +403,10 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                         ctx.BarTracker.MarkSent(bar.Index, formingBarTime);
                         sent++;
                     }
-                    if (sent > 1)
-                        _logger.Info($"[CatchUp] {pair} sent={sent} forming={formingBarTime:HH:mm:ss} lastIdx={ctx.BarTracker.LastSentIndex} seriesCount={series.Count}");
+                    if (sent > 0)
+                        _logger.Info($"[LiveBars] {pair} OnLiveBarsUpdate sent={sent} unsentQueue={unsent.Count} forming={formingBarTime:yyyy-MM-dd HH:mm:ss} lastIdx={ctx.BarTracker.LastSentIndex} seriesCount={series.Count} totalBarsSent={_barsSent}");
+                    else
+                        _logger.Debug($"[LiveBars] {pair} OnLiveBarsUpdate sent=0 forming={formingBarTime:yyyy-MM-dd HH:mm:ss} lastIdx={ctx.BarTracker.LastSentIndex} seriesCount={series.Count}");
                 }
 
                 if (_partialBarRateLimiter?.TryAllow() == true)
@@ -472,9 +477,16 @@ namespace TradingBot.NinjaTrader.AddOn.Infrastructure
                         CheckMarketStatus(ctx);
 
                         var lastForming = ctx.BarTracker.LastFormingBarTime;
-                        if (lastForming != DateTime.MinValue)
+                        if (lastForming == DateTime.MinValue)
+                        {
+                            _logger.Warning($"[BarsRequestWatchdog] {ctx.FullName}: LastFormingBarTime is MinValue (BarsRequest callback never primed BarTracker or no update received). Recreating BarsRequest...");
+                            UnsubscribeFromLiveBars(ctx);
+                            SubscribeToLiveBars(ctx);
+                        }
+                        else
                         {
                             var elapsed = DateTime.Now - lastForming;
+                            _logger.Debug($"[BarsRequestWatchdog] {ctx.FullName}: lastForming={lastForming:yyyy-MM-dd HH:mm:ss} elapsed={elapsed.TotalSeconds:F0}s");
                             if (elapsed.TotalSeconds > 75)
                             {
                                 _logger.Warning($"[BarsRequestWatchdog] {ctx.FullName}: No forming bar update in {elapsed.TotalSeconds:F0}s. Recreating BarsRequest...");

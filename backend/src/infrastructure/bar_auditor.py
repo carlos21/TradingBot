@@ -305,6 +305,12 @@ class NinjaTraderBarAuditor:
             result = self._comparer.compare(recent_local, self._remote_bars)
 
             if result.has_drift:
+                local_range = f"{recent_local[0]['time']}..{recent_local[-1]['time']}" if recent_local else "empty"
+                remote_range = f"{self._remote_bars[0]['time']}..{self._remote_bars[-1]['time']}" if self._remote_bars else "empty"
+                self._logger.debug(
+                    f"[BarAuditor] comparing windows: local={local_range} remote={remote_range}"
+                )
+
                 # Edge-only drift (typically the forming/partial bar at the newest end
                 # plus the oldest bar falling out of the 60-bar window) is a transient
                 # window mismatch, not a true data corruption. Downgrade to warning.

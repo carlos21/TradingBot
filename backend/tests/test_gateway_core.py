@@ -606,11 +606,17 @@ class TestMessageRouting:
         assert any("Callback error" in m for m in logger.messages)
 
     def test_high_frequency_types_not_logged(self, gateway, logger):
-        for mt in (MessageType.TICK, MessageType.BAR, MessageType.PARTIAL_BAR):
+        for mt in (MessageType.TICK, MessageType.PARTIAL_BAR):
             env = MessageEnvelope.create(msg_type=mt, payload={}, seq_num=1)
             gateway._handle_message(env.to_json())
-        # No "RECV" logs for these types
+        # Ticks and partial bars are too frequent - no RECV logs
         assert not any("RECV" in m for m in logger.messages)
+
+    def test_bar_message_is_logged_for_stream_health(self, gateway, logger):
+        env = MessageEnvelope.create(msg_type=MessageType.BAR, payload={"time": 1234, "pair": "MNQ"}, seq_num=1)
+        gateway._handle_message(env.to_json())
+        # Completed bars are logged at debug level to trace live-stream health
+        assert any("RECV: bar" in m for m in logger.messages)
 
     def test_important_types_logged(self, gateway, logger):
         env = ConnectMessage(platform="nt", version="1").to_envelope(seq_num=1)

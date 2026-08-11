@@ -626,8 +626,17 @@ to be:
                 self._seq_num = max(self._seq_num, envelope.seq_num)
 
             # Log message receipt (debug for high-frequency, info for important ones)
-            if msg_type in (MessageType.TICK, MessageType.BAR, MessageType.PARTIAL_BAR):
-                # Ticks and bars are too frequent - don't log individual messages
+            if msg_type == MessageType.TICK:
+                # Ticks are too frequent - don't log individual messages
+                pass
+            elif msg_type == MessageType.BAR:
+                # Completed bars: log at debug so we can trace live-stream health
+                self.logger.debug(
+                    f"RECV: {msg_type.value} seq={envelope.seq_num} "
+                    f"time={envelope.payload.get('time')} pair={envelope.payload.get('pair')}"
+                )
+            elif msg_type == MessageType.PARTIAL_BAR:
+                # Partial bars are too frequent - don't log individual messages
                 pass
             elif msg_type in (MessageType.HISTORY_BATCH,
                               MessageType.ENTRY_FILL, MessageType.EXIT_FILL,

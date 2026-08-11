@@ -71,3 +71,17 @@ class TestMarketClosureFilter:
         dt_start = datetime(2024, 6, 10, 21, 0, 0, tzinfo=timezone.utc)  # 16:00 CDT
         dt_end = datetime(2024, 6, 10, 22, 1, 0, tzinfo=timezone.utc)    # 17:01 CDT
         assert f.is_market_closed_gap(int(dt_start.timestamp()), int(dt_end.timestamp())) is True
+
+    def test_62_minute_maintenance_gap_with_early_start(self):
+        """A 62-minute gap starting before 16:00 CDT should still be flagged."""
+        f = MarketClosureFilter()
+        dt_start = datetime(2024, 6, 10, 20, 59, 0, tzinfo=timezone.utc)  # 15:59 CDT
+        dt_end = datetime(2024, 6, 10, 22, 1, 0, tzinfo=timezone.utc)    # 17:01 CDT
+        assert f.is_market_closed_gap(int(dt_start.timestamp()), int(dt_end.timestamp())) is True
+
+    def test_62_minute_maintenance_gap_with_late_end(self):
+        """A 62-minute gap ending after 17:00 CDT should still be flagged."""
+        f = MarketClosureFilter()
+        dt_start = datetime(2024, 6, 10, 21, 0, 0, tzinfo=timezone.utc)  # 16:00 CDT
+        dt_end = datetime(2024, 6, 10, 22, 2, 0, tzinfo=timezone.utc)    # 17:02 CDT
+        assert f.is_market_closed_gap(int(dt_start.timestamp()), int(dt_end.timestamp())) is True

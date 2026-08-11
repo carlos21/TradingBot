@@ -58,19 +58,41 @@ class MarketClosureFilter:
         return bool(day_start == 4 and dt_start.hour >= 16)
 
     def _is_maintenance_gap(self, dt_start: datetime, dt_end: datetime) -> bool:
-        """Return True if gap is the daily 16:00–17:01 CDT maintenance window."""
+        """Return True if gap is the daily 16:00–17:00 CDT maintenance window.
+
+        Real bar streams often place the last pre-close bar a minute or two
+        before 16:00 and the first post-reopen bar a minute or two after 17:00,
+        so we detect the gap by its overlap with the maintenance window rather
+        than requiring exact boundaries.
+        """
         # Only check same-day gaps
         if dt_start.date() != dt_end.date():
             return False
 
-        # Maintenance window: 16:00:00 – 17:01:00 CDT
         start_sec = dt_start.hour * 3600 + dt_start.minute * 60 + dt_start.second
         end_sec = dt_end.hour * 3600 + dt_end.minute * 60 + dt_end.second
+        gap_seconds = int((dt_end - dt_start).total_seconds())
 
-        # If gap starts at or after 16:00 and ends at or before 17:01
-        if start_sec >= 16 * 3600 and end_sec <= 17 * 3600 + 60:
+        maint_start = 16 * 3600
+        maint_end = 17 * 3600
+        # Include the 17:00 bar itself (covers 17:00:00-17:00:59)
+        maint_end_extended = maint_end + 60
+
+        # Case 1: the entire gap falls inside the maintenance window
+        # (e.g. a single 1m bar during the 16:00-17:00 CDT halt)
+        if start_sec >= maint_start and end_sec <= maint_end_extended:
             return True
 
-        # Also catch the classic 3660s gap (61 minutes)
-        gap_seconds = int((dt_end - dt_start).total_seconds())
-        return bool(gap_seconds == 3660 and start_sec >= 16 * 3600)
+        # Case 2: gap covers a large portion of the maintenance window
+        overlap_start = max(start_sec, maint_start)
+        overlap_end = min(end_sec, maint_end)
+        overlap = max(0, overlap_end - overlap_start)
+        if overlap >= 50 * 60:  # at least 50 min overlap
+            return True
+
+        # Case 3: classic maintenance-shaped gap starting near 16:00 and ending
+        # near 17:00, allowing a few minutes of slack on each side.
+        if gap_seconds >= 55 * 60 and start_sec >= maint_start - 5 * 60 and end_sec <= maint_end + 5 * 60:
+            return True
+
+        return False
