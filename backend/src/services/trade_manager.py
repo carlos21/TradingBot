@@ -209,6 +209,7 @@ class TradeManager:
                         'account':     t.account,
                         'signal_id':   t.signal_id,
                         'source':      t.source,
+                        'instrument':  self.instrument,
                     }
                     self.open_trades.append(trade_dict)
                     open_count += 1

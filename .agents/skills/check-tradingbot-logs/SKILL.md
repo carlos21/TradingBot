@@ -7,11 +7,24 @@ description: "Check TradingBot logs and trade history for a specific date. Use w
 
 When the user asks to check logs for a date, gather the date and produce a structured summary covering:
 
-1. Python application logs for that date.
-2. NinjaTrader launch logs for that date (if any).
+1. TradingBot Python application logs for that date.
+2. NinjaTrader platform logs for that date (trace + log files).
 3. Errors, warnings, or anything unusual.
 4. Trade summary from the database (P&L, contracts, SL/TP, result type).
 5. Brief narrative of what happened.
+
+---
+
+## 0. Resolve fixed paths
+
+The skill must work no matter which directory the agent starts in. Resolve these once:
+
+```bash
+PROJECT_DIR="/mnt/c/Users/dark_/Developer/TradingBot"
+NT_DIR="/mnt/c/Users/dark_/Documents/NinjaTrader 8"
+```
+
+If either directory does not exist, warn the user and stop.
 
 ---
 
@@ -21,43 +34,99 @@ The user may say "today", "yesterday", or give a specific date. Convert it to `Y
 
 For today:
 ```bash
-date +%Y-%m-%d
+DATE="$(date +%Y-%m-%d)"
 ```
 
 For yesterday:
 ```bash
-date -d "yesterday" +%Y-%m-%d
+DATE="$(date -d "yesterday" +%Y-%m-%d)"
 ```
-
-Store this as `DATE`.
 
 ---
 
-## 2. Locate the log files
+## 2. Diagnostic preamble
 
-### Python application logs
-
-Daily files are named `app_YYYY-MM-DD.log` and live under `logs/`, `logs/ninja/`, or `logs/meta/` depending on the instance.
+Show the search scope so the user can verify it:
 
 ```bash
-find logs -name "app_${DATE}.log" -type f
+echo "Project dir: ${PROJECT_DIR}"
+echo "NinjaTrader dir: ${NT_DIR}"
+echo "Date: ${DATE}"
+echo ""
+echo "Available TradingBot log dirs:"
+find "${PROJECT_DIR}/logs" -maxdepth 1 -type d 2>/dev/null | sort
+echo ""
+echo "Most recent TradingBot app logs:"
+find "${PROJECT_DIR}/logs" -maxdepth 2 -name 'app_*.log' -type f 2>/dev/null | sort | tail -n 10
+echo ""
+echo "Most recent NinjaTrader trace files:"
+find "${NT_DIR}/trace" -name 'trace.*.txt' -type f 2>/dev/null | sort | tail -n 10
+echo ""
+echo "Most recent NinjaTrader log files:"
+find "${NT_DIR}/log" -name 'log.*.txt' -type f 2>/dev/null | sort | tail -n 10
 ```
-
-Read the active one(s). The deepest path (e.g., `logs/ninja/app_YYYY-MM-DD.log`) is usually the live instance.
-
-### NinjaTrader launch logs
-
-```bash
-ls logs/nt_launch/ | grep "${DATE//-/}"
-```
-
-(Replace `-` with empty string because NT launch logs use `YYYYMMDD_HHMMSS`.)
 
 ---
 
-## 3. Search for problems
+## 3. Locate the log files
 
-Run these greps against the Python log file. Replace `LOG_FILE` with the actual path.
+### TradingBot Python application logs
+
+Daily files are named `app_YYYY-MM-DD.log` and live under `${PROJECT_DIR}/logs/<instance>/` (e.g., `logs/ninja/` for the live NinjaTrader instance, `logs/meta/` for MetaTrader).
+
+```bash
+find "${PROJECT_DIR}/logs" -maxdepth 2 -name "app_${DATE}.log" -type f
+```
+
+Read the active one(s). The `logs/ninja/` path is usually the live NinjaTrader instance.
+
+If no exact-date file is found, fall back to the most recent files:
+
+```bash
+find "${PROJECT_DIR}/logs" -maxdepth 2 -name 'app_*.log' -type f 2>/dev/null | sort | tail -n 5
+```
+
+### NinjaTrader platform trace files
+
+NinjaTrader's own internal traces live in `${NT_DIR}/trace/` and are named `trace.YYYYMMDD.XXXXX.txt`.
+
+```bash
+find "${NT_DIR}/trace" -name "trace.${DATE//-/}.*.txt" -type f 2>/dev/null | sort
+```
+
+If none are found, fall back to the most recent trace files:
+
+```bash
+find "${NT_DIR}/trace" -name 'trace.*.txt' -type f 2>/dev/null | sort | tail -n 5
+```
+
+### NinjaTrader platform log files
+
+NinjaTrader's own logs live in `${NT_DIR}/log/` and are named `log.YYYYMMDD.XXXXX.txt` (and `log.YYYYMMDD.XXXXX.en.txt`).
+
+```bash
+find "${NT_DIR}/log" -name "log.${DATE//-/}.*.txt" -type f 2>/dev/null | sort
+```
+
+If none are found, fall back to the most recent log files:
+
+```bash
+find "${NT_DIR}/log" -name 'log.*.txt' -type f 2>/dev/null | sort | tail -n 5
+```
+
+### Legacy launch logs (informational only)
+
+Older code wrote launch logs to `${PROJECT_DIR}/logs/nt_launch/`, but current launchers do not. Check as a best-effort note, not an error:
+
+```bash
+ls "${PROJECT_DIR}/logs/nt_launch/" 2>/dev/null | grep "${DATE//-/}" || echo "No nt_launch log for ${DATE} (current launchers do not write here)."
+```
+
+---
+
+## 4. Search for problems
+
+Run these greps against the TradingBot Python log file. Replace `LOG_FILE` with the actual path.
 
 ### Errors and critical messages
 ```bash
@@ -88,57 +157,67 @@ grep -iE "ENTRY FILL|Exit fill|TradeClose|broker_pnl" "${LOG_FILE}"
 ```bash
 grep -iE "\[LATENCY\] entry" "${LOG_FILE}"
 ```
+
 Shows, per entry: queue→wire, wire→ACK, ACK→fill, total time, signal price vs fill price, and slippage in points. The big segment is `ack->fill` — that is the broker/NT round trip.
 
 ### Command ACK timing
 ```bash
 grep -iE "Command ACK" "${LOG_FILE}"
 ```
-ACK lines now show two segments: `py=Xms` (Python queue → actual socket write) and `nt=Yms` (socket write → ACK received, includes NT handler + broker submit).
+
+ACK lines show two segments: `py=Xms` (Python queue → actual socket write) and `nt=Yms` (socket write → ACK received, includes NT handler + broker submit).
 
 ---
 
-## 4. Pull the trade summary from the database
+## 5. Pull the trade summary from the database
 
-The `ninja.db` SQLite database contains the authoritative trade records.
+The live instance stores trades in **PostgreSQL** on localhost. Use the project's SQLAlchemy setup via `poetry run python`. The connection URL is read from `DATABASE_URL`; it defaults to the known local database.
+
+```bash
+cd "${PROJECT_DIR}"
+```
 
 ### Total P&L and trade count
 ```bash
-python3 -c "
-import sqlite3, datetime
-conn = sqlite3.connect('ninja.db')
-c = conn.cursor()
+poetry run python -c "
+import os
+from sqlalchemy import create_engine, text
+url = os.environ.get('DATABASE_URL', 'postgresql+psycopg://tradingbot:pnBwUQYZEqUhaf6TpBOHUP6l@localhost/tradingbot')
+engine = create_engine(url)
 date = '${DATE}'
-c.execute('''
-    SELECT COUNT(*),
-           SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END),
-           SUM(CASE WHEN pnl_usd < 0 THEN 1 ELSE 0 END),
-           SUM(CASE WHEN pnl_usd = 0 THEN 1 ELSE 0 END),
-           SUM(pnl_usd)
-    FROM trades
-    WHERE date(entry_time) = ?
-''', (date,))
-print(c.fetchone())
+with engine.connect() as conn:
+    result = conn.execute(text('''
+        SELECT COUNT(*),
+               SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END),
+               SUM(CASE WHEN pnl_usd < 0 THEN 1 ELSE 0 END),
+               SUM(CASE WHEN pnl_usd = 0 THEN 1 ELSE 0 END),
+               SUM(pnl_usd)
+        FROM trades
+        WHERE DATE(entry_time) = :date
+    '''), {'date': date})
+    print(result.fetchone())
 "
 ```
 
 ### Per-trade details
 ```bash
-python3 -c "
-import sqlite3, json
-conn = sqlite3.connect('ninja.db')
-c = conn.cursor()
+poetry run python -c "
+import os
+from sqlalchemy import create_engine, text
+url = os.environ.get('DATABASE_URL', 'postgresql+psycopg://tradingbot:pnBwUQYZEqUhaf6TpBOHUP6l@localhost/tradingbot')
+engine = create_engine(url)
 date = '${DATE}'
-c.execute('''
-    SELECT trade_id, pair, trade_type, entry_price, stop_loss, take_profit,
-           risk, risk_dollars, contracts, pnl_usd, result, result_type,
-           entry_time, exit_time
-    FROM trades
-    WHERE date(entry_time) = ?
-    ORDER BY entry_time
-''', (date,))
-for row in c.fetchall():
-    print(row)
+with engine.connect() as conn:
+    result = conn.execute(text('''
+        SELECT trade_id, pair, trade_type, entry_price, stop_loss, take_profit,
+               risk, risk_dollars, contracts, pnl_usd, result, result_type,
+               entry_time, exit_time
+        FROM trades
+        WHERE DATE(entry_time) = :date
+        ORDER BY entry_time
+    '''), {'date': date})
+    for row in result:
+        print(row)
 "
 ```
 
@@ -151,18 +230,18 @@ for row in c.fetchall():
 - `contracts`: number of contracts traded.
 - `pnl_usd`: dollar profit/loss (excluding fees unless fees are already deducted).
 - `result`: R multiple, e.g. `5.00` or `-1.00`.
-- `result_type`: `TP`, `SL`, `BE` (breakeven), or `MANUAL`.
+- `result_type`: `TP`, `SL`, `BE` (breakeven), `MANUAL`, or `CLOSE`.
 - `entry_time`, `exit_time`: trade open/close timestamps.
 
 ---
 
-## 5. Build the summary
+## 6. Build the summary
 
 Present the findings in this order:
 
 ### Header
 - Date reviewed.
-- Log file path(s) checked.
+- Log file path(s) checked (TradingBot app log, NT trace, NT log).
 - Overall status (e.g., "Trading active", "No trades", "Connection errors detected").
 
 ### Trade Summary
@@ -202,7 +281,7 @@ Briefly describe the day:
 
 ---
 
-## 6. Useful log line reference
+## 7. Useful log line reference
 
 | Log line | Meaning |
 |---|---|
@@ -214,8 +293,8 @@ Briefly describe the day:
 | `WARMING_UP -> READY` | Warmup complete; bot is ready to trade once live bars start. |
 | `READY -> LIVE` | First live bar received; bot is actively evaluating signals. |
 | `platform_connected` / `platform_disconnected` | Socket.IO events reflecting the ZMQ connection to NinjaTrader. |
-| `✅ Command ACK: ... (0.06s | py=12ms nt=48ms)` | Command acknowledged. `py=` is Python queue→socket; `nt=` is socket→ACK (NT handler + broker submit). |
-| `[LATENCY] entry {trade_id} (short): queue->wire=5ms wire->ack=55ms ack->fill=1054ms total=1114ms | signal=29377.25 fill=29362.0 slippage=-15.25pts` | Per-entry latency breakdown + realized slippage. `ack->fill` is the broker/NT round trip; large values explain slippage. |
+| `✅ Command ACK: ... (0.06s \| py=12ms nt=48ms)` | Command acknowledged. `py=` is Python queue→socket; `nt=` is socket→ACK (NT handler + broker submit). |
+| `[LATENCY] entry {trade_id} (short): queue->wire=5ms wire->ack=55ms ack->fill=1054ms total=1114ms \| signal=29377.25 fill=29362.0 slippage=-15.25pts` | Per-entry latency breakdown + realized slippage. `ack->fill` is the broker/NT round trip; large values explain slippage. |
 | `[BrokerFillHandler] ENTRY FILL: ... SL=... TP=...` | Broker filled an entry order. |
 | `[TradeCloseUseCase] Closed ... (Result: XR, Type: TP/SL)` | A trade closed with result type and R multiple. |
 | `[BrokerFill] Exit fill ... broker_pnl=400.0` | Broker-reported dollar P&L for the closed trade. |
@@ -223,11 +302,11 @@ Briefly describe the day:
 
 ---
 
-## 7. Example user prompts
+## 8. Example user prompts
 
-- "Check the logs for 2026-06-29"
+- "Check the logs for 2026-08-11"
 - "What happened yesterday?"
 - "Did we win or lose today?"
-- "Any errors on 2026-06-28?"
+- "Any errors on 2026-08-10?"
 
-For any of these, follow steps 1–5 above.
+For any of these, follow steps 1–6 above.

@@ -193,6 +193,20 @@ def _wait_until(predicate, desc: str, timeout: float = 10.0) -> None:
     raise TimeoutError(desc)
 
 
+def _cached_bar_count(app) -> int:
+    return len(app.data_source._bars_by_pair.get("MNQ", []))
+
+
+def _history_delivered(app, expected: int, timeout: float) -> bool:
+    """True once the data-source cache holds at least `expected` bars."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _cached_bar_count(app) >= expected:
+            return True
+        time.sleep(0.02)
+    return False
+
+
 def _seed_line(strategy, line_id: str, level: float, creation_ts: float) -> None:
     strategy.add_strategy_line(id=line_id, level=level, creation_timestamp=creation_ts)
 
@@ -271,7 +285,16 @@ def _start_session(harness: E2EHarness):
     warmup_bars, live_bars = _build_bars()
     _install_test_windows(app.strategy, live_bars)
 
+    # PUB/SUB slow-joiner guard: under CPU load the app's SUB subscription may
+    # not have propagated to FakeNT's PUB when the batch is published. The whole
+    # warmup is one message, so losing it silently shifts the TSI state and the
+    # expected crosses never fire. Wait for actual delivery and resend once;
+    # _on_history_batch dedups by timestamp, so a resend is side-effect free.
     nt.send_history_batch(warmup_bars)
+    if not _history_delivered(app, len(warmup_bars), timeout=5.0):
+        nt.send_history_batch(warmup_bars)
+        _wait_until(lambda: _cached_bar_count(app) >= len(warmup_bars),
+                    "warmup history never fully delivered", timeout=15.0)
     nt.send_history_end(pair="MNQ")
     _wait_until(lambda: app.data_source.is_streaming,
                 "Data source never switched to LIVE after history_end", timeout=5.0)

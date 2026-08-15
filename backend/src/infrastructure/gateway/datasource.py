@@ -560,7 +560,13 @@ class ZMQDataSource(CombinedDataSource):
         self._stats["bars_received"] += 1
 
         bar_pair = self._payload_pair(payload, "BAR")
+        self.logger.debug(
+            f"[BAR handler] received #{self._stats['bars_received']} "
+            f"time={payload.get('time')} pair={payload.get('pair')} "
+            f"state={self._state.name} refreshing={bar_pair in self._refreshing_pairs if bar_pair else 'n/a'}"
+        )
         if bar_pair is None:
+            self.logger.warning("[BAR handler] dropped completed bar with missing pair")
             return
 
         # DEBUG: Log every bar for the first 100 streaming bars, then every 50th

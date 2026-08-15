@@ -503,3 +503,27 @@ class TestStoreAndEmitOpen:
         assert len(tr.inserted) == 1
         open_events = [e for e in sio.events if e[0] == "trade_open"]
         assert len(open_events) == 1
+
+    def test_tm_registration_includes_instrument(self):
+        """Regression: modify/close commands resolve the instrument from
+        tm.open_trades — the registered copy must carry it."""
+        sio = DummySocketIO()
+        tr = FakeTradeRepository()
+        tm = TradeManager(
+            tr, sio,
+            trade_executor=FakeTradeExecutor(),
+            analytics=FakeAnalyticsReporter(),
+            point_value=2.0,
+            account_balance=100000.0,
+            logger=FakeLogger(),
+            instrument="MNQ 09-26",
+        )
+        strat = _make_base(options=DEFAULT_STRATEGY_OPTIONS, event_publisher=sio, trade_repo=tr, trade_manager=tm)
+        trade = {
+            "pair": "MNQ", "type": "long", "entry": 100,
+            "stop_loss": 90, "take_profit": 130, "risk": 10,
+            "entry_time": 1000, "status": "open",
+        }
+        strat._store_and_emit_open(trade)
+        assert len(tm.open_trades) == 1
+        assert tm.open_trades[0]["instrument"] == "MNQ 09-26"

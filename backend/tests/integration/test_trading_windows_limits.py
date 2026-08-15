@@ -2,8 +2,9 @@
 
 Exercises the real ``StrategyOptions.entry_filters`` chain assembled by
 ``get_prod_strategy_options`` for each instrument, with fabricated entry
-contexts (fake strategy state, bar times placed inside/outside the London
-01:00-07:59 and NY 08:00-15:30 windows).
+contexts (fake strategy state, bar times placed inside/outside the NY
+08:00-15:30 window; the London 01:00-07:59 window is currently disabled in
+the catalog, so ``LONDON_BAR`` lands outside all windows).
 
 Semantics under test:
 - ``open_trades_limit`` = one global concurrent-open cap (catalog
@@ -117,9 +118,13 @@ def _run_reentry_filters(options, ctx):
 
 
 class TestEntryChainOpenTradesCap:
-    def test_i1_london_setup_with_no_open_trades_allowed(self):
+    def test_i1_london_setup_blocked_window_disabled(self):
+        """The London window (01:00-07:59) is disabled in the catalog, so a
+        06:00 NY setup is outside all windows and must be blocked."""
         ok, name, reason = _run_entry_filters(_options("MNQ"), _ctx(_strategy(0), LONDON_BAR))
-        assert ok is True, f"blocked by {name}: {reason}"
+        assert ok is False
+        assert name == "trading_windows", f"blocked by {name}: {reason}"
+        assert "outside all trading windows" in reason
 
     def test_i2_ny_setup_allowed_with_london_trade_still_open(self):
         """Headline case: London carryover + NY setup -> 2 concurrent trades."""

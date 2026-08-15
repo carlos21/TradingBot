@@ -122,7 +122,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (activePair) socket.emit('join_instrument', { pair: activePair });
   }
   socket.on('connect', joinActiveInstrument);
-  joinActiveInstrument();
+  // The 'connect' listener covers the initial connect and reconnects; only
+  // emit directly if the socket was already connected before the listener
+  // was attached. An unconditional call here is buffered and flushed on
+  // connect, so the server would receive join_instrument twice per page load.
+  if (socket.connected) joinActiveInstrument();
 
   window.addEventListener('beforeunload', () => {
     if (activePair) socket.emit('leave_instrument', { pair: activePair });

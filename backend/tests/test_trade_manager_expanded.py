@@ -320,6 +320,20 @@ class TestLoadOpenTradesErrorHandling:
         tm = _make_manager(trade_repository=repo)
         assert len(tm.open_trades) == 2
 
+    def test_loaded_open_trades_include_instrument(self):
+        """Regression: after a crash-recovery reload, modify/close commands
+        resolve the instrument from tm.open_trades — it must be present."""
+        repo = FakeTradeRepository()
+        repo.insert_trade(
+            pair="MNQ", trade_type="long", entry_price=100,
+            stop_loss=90, take_profit=130, risk=10,
+            entry_time=datetime(2025, 1, 1, 12, 0, tzinfo=timezone.utc),
+            source="strategy",
+        )
+        tm = _make_manager(trade_repository=repo, instrument="MNQ 09-26")
+        assert len(tm.open_trades) == 1
+        assert tm.open_trades[0]["instrument"] == "MNQ 09-26"
+
 
 # ============================================================================
 # handle_broker_entry_fill Edge Cases

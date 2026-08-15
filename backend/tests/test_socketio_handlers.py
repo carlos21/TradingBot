@@ -86,6 +86,11 @@ class FakeReadinessMonitor:
     def on_history_complete(self, bars: list[dict]) -> None:
         self.history_complete_calls.append(list(bars))
 
+    def needs_history_seed(self) -> bool:
+        # Mirrors ReadinessMonitor.needs_history_seed: no seed once the
+        # monitor is warming or warm.
+        return self._health["readiness_state"] not in ("WARMING_UP", "READY", "LIVE")
+
     def get_health(self):
         return dict(self._health)
 
@@ -711,16 +716,37 @@ class TestHealthEmission:
         handler()
 
         health_events = [e for e in socketio.emitted if e[0] == "health_update"]
-        assert len(health_events) == 2
+        # Only the room-scoped snapshot is emitted: the legacy global payload
+        # has no readiness_state and would briefly render the panel NOT READY.
+        assert len(health_events) == 1
 
-        # Global broadcast (backward compatibility)
-        global_event = next(e for e in health_events if "room" not in e[2])
-        assert global_event[1][0]["state"] == "STREAMING"
-
-        # Per-room emission uses the session readiness monitor
-        room_event = next(e for e in health_events if e[2].get("room") == "MES")
+        room_event = health_events[0]
+        assert room_event[2].get("room") == "MES"
         assert room_event[1][0]["readiness_state"] == "LIVE"
         assert room_event[1][0]["pair"] == "MES"
+
+    def test_emit_health_falls_back_to_global_when_no_active_sessions(self, socketio, loader, logger):
+        gateway = FakeGateway(running=True, connected=True)
+        data_source = FakeZMQDataSource(gateway=gateway, state=DataSourceState.STREAMING)
+        coordinator = FakeCoordinator()
+
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=True,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+
+        handler = socketio.handlers["request_health"]
+        handler()
+
+        health_events = [e for e in socketio.emitted if e[0] == "health_update"]
+        assert len(health_events) == 1
+        global_event = health_events[0]
+        assert "room" not in global_event[2]
+        assert global_event[1][0]["state"] == "STREAMING"
 
 
 class TestConnectionChangeCallback:
@@ -1037,6 +1063,40 @@ class TestJoinLeaveInstrument:
         assert session is not None
         assert len(session.readiness_monitor.history_complete_calls) == 1
         assert session.readiness_monitor.history_complete_calls[0] == cached
+
+    @patch("src.routes.socketio_handlers.join_room")
+    def test_join_instrument_does_not_reseed_warm_monitor_in_live_mode(
+        self, mock_join_room, socketio, loader, logger
+    ):
+        from unittest.mock import patch
+        coordinator = FakeCoordinator()
+        cached = [
+            {"time": 1, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"},
+            {"time": 2, "open": 1, "high": 2, "low": 0, "close": 1, "volume": 1, "pair": "MNQ"},
+        ]
+        data_source = FakeZMQDataSource(gateway=FakeGateway(), cached_bars=cached)
+        # Simulate a session whose monitor already finished warmup: a browser
+        # page refresh / reconnect must not restart the warmup replay.
+        coordinator.require_session("MNQ")
+        coordinator._sessions["MNQ"].readiness_monitor = FakeReadinessMonitor(
+            state="LIVE", reason="Live bar stream active", percent=100
+        )
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=True,
+            _logger=logger,
+            coordinator=coordinator,
+        )
+        handler = socketio.handlers["join_instrument"]
+        with patch("src.routes.socketio_handlers.request", new=MagicMock()) as mock_request:
+            mock_request.sid = "sid-1"
+            handler({"pair": "MNQ"})
+
+        session = coordinator.get_session("MNQ")
+        assert session is not None
+        assert session.readiness_monitor.history_complete_calls == []
 
 
 class TestPerInstrumentCommands:
