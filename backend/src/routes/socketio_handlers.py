@@ -364,6 +364,9 @@ def register_socketio_handlers(
         stop_at = payload.get("stopAt")
         if stop_at is not None:
             stop_at = _as_int(stop_at, "stopAt")
+        pace_bps = payload.get("paceBps")
+        if pace_bps is not None:
+            pace_bps = float(pace_bps)
 
         symbol = _resolve_pair(payload)
         if coordinator is not None and symbol is None:
@@ -374,7 +377,7 @@ def register_socketio_handlers(
         # Set base time first so set_timeframe uses the right window
         session_loader.seek(from_time)
         session_loader.set_timeframe(tf)
-        session_loader.start(from_time, stop_at)
+        session_loader.start(from_time, stop_at, pace_bps=pace_bps)
         _emit_to_pair("stream_status", {"playing": True}, symbol)
 
     @socketio.on("pause_stream")

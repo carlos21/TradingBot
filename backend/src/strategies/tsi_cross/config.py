@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from src.strategies.base_strategy import BreakevenConfig
 from src.strategies.entry_context import EntryFilter
@@ -55,6 +55,18 @@ class TsiCrossNumbers:
     # Example: long entered on bullish cross → closed on next bearish cross.
     # When enabled, take_profit is set to None and rr_ratio is ignored for exit.
     close_on_opposite_cross: bool = False
+
+    # --- Fields required by StreamingSession / StrategyFactory ---
+    # They are not used by TsiCrossStrategy itself but must exist on the
+    # numbers object so the generic wiring can read them.
+    max_bounce: float = 0.0
+    max_entry_distance: float | None = None
+    sl_level_tolerance: float = 5.0
+    sl_buffer_pts: float = 0.0
+    min_cross_depth: float = 0.0
+    account_configs: list = field(default_factory=list)
+    be_threshold_points: float = 2.0
+    sl_tp_tolerance: float = 0.5
 
 
 @dataclass

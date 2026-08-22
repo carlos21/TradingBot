@@ -58,8 +58,8 @@ class FakeBarsLoader:
         num = int(tf[:-1])
         self.group_size = num if unit == "m" else num * 60
 
-    def start(self, from_time=None, stop_at=None):
-        self._start_calls.append((from_time, stop_at))
+    def start(self, from_time=None, stop_at=None, pace_bps=None):
+        self._start_calls.append((from_time, stop_at, pace_bps))
         self.streaming = True
 
     def pause(self):
@@ -385,7 +385,7 @@ class TestStartStreamHandler:
 
         assert loader._seek_calls == [1000]
         assert loader._set_tf_calls == ["5m"]
-        assert loader._start_calls == [(1000, 2000)]
+        assert loader._start_calls == [(1000, 2000, None)]
         mock_emit.assert_called_once_with("stream_status", {"playing": True})
 
     @patch("src.routes.socketio_handlers.emit")
@@ -403,8 +403,23 @@ class TestStartStreamHandler:
 
         assert loader._seek_calls == [0]
         assert loader._set_tf_calls == ["1m"]
-        assert loader._start_calls == [(0, None)]
+        assert loader._start_calls == [(0, None, None)]
         mock_emit.assert_called_once_with("stream_status", {"playing": True})
+
+    @patch("src.routes.socketio_handlers.emit")
+    def test_start_stream_pace_bps_passed_through(self, mock_emit, socketio, loader, logger):
+        data_source = FakeDataSource()
+        register_socketio_handlers(
+            socketio=socketio,
+            loader=loader,
+            data_source=data_source,
+            live_mode=False,
+            _logger=logger,
+        )
+        handler = socketio.handlers["start_stream"]
+        handler({"timeframe": "5m", "fromTime": 1000, "stopAt": 2000, "paceBps": 800})
+
+        assert loader._start_calls == [(1000, 2000, 800.0)]
 
 
 class TestPauseStreamHandler:
@@ -1117,7 +1132,7 @@ class TestPerInstrumentCommands:
         session = coordinator.require_session("ES")
         assert session.bars_loader._seek_calls == [1000]
         assert session.bars_loader._set_tf_calls == ["5m"]
-        assert session.bars_loader._start_calls == [(1000, 2000)]
+        assert session.bars_loader._start_calls == [(1000, 2000, None)]
 
     @patch("src.routes.socketio_handlers.emit")
     def test_pause_stream_targets_session(self, mock_emit, socketio, loader, logger):
@@ -1224,4 +1239,4 @@ class TestBackwardCompatWithoutCoordinator:
 
         assert loader._seek_calls == [1000]
         assert loader._set_tf_calls == ["5m"]
-        assert loader._start_calls == [(1000, None)]
+        assert loader._start_calls == [(1000, None, None)]

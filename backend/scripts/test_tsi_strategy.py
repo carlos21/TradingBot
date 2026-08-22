@@ -94,7 +94,7 @@ def _run_server_inner(
     os.close(_db_fd)
     atexit.register(lambda: os.path.exists(_db_path) and os.remove(_db_path))
     from src.infrastructure.database import database
-    database.setup_database(f"sqlite:///{_db_path}")
+    database.setup_database(db_url=f"sqlite:///{_db_path}")
 
     repos = Repositories(lines=FakeLineRepository(), trades=FakeTradeRepository())
 
@@ -145,6 +145,14 @@ def _run_server_inner(
     import logging
 
     logging.getLogger("werkzeug").setLevel(logging.ERROR)
+
+    # The replay outpaces the headless browser; while the page's main thread
+    # is busy it cannot answer engine.io pings, and the default 25s/20s
+    # ping_interval/ping_timeout makes the server kill the socket mid-run —
+    # the queued tail of the event stream (trades + stream_end) is then lost
+    # and results silently truncate. Give the test client ample ping room.
+    wiring.socketio.server.eio.ping_interval = 60
+    wiring.socketio.server.eio.ping_timeout = 3600
 
     wiring.socketio.run(
         wiring.app,
@@ -586,10 +594,38 @@ def print_summary(trade_pairs: list, args, pair_tz: ZoneInfo):
 
 
 # -------------------------------------------------------------------------
+# Progress display (same style as run_scenarios.py)
+# -------------------------------------------------------------------------
+
+def _progress_line(done: float, total: float, label: str = "",
+                   lo: float = 0.0, hi: float = 100.0) -> None:
+    """Redraw the single whole-process bar; [lo, hi] is this phase's slice of it."""
+    frac = min(done / total, 1.0) if total else 1.0
+    pct = lo + frac * (hi - lo)
+    bar_len = 30
+    filled = int(bar_len * pct / 100)
+    bar = "█" * filled + "░" * (bar_len - filled)
+    print(f"\r  {bar} {int(pct):3d}% {label:<50}", end="", flush=True)
+
+
+def _progress_done(label: str) -> None:
+    print(f"\r  {'█' * 30} 100% {label:<45}")
+
+
+# Wait until the chart has actually painted: lightweight-charts schedules its
+# redraw via requestAnimationFrame, so two rAF ticks guarantee the frame with
+# our mutations is on screen. Replaces the old fixed 300/200/500ms sleeps.
+_PAINT_WAIT = ("() => new Promise(r => requestAnimationFrame("
+               "() => requestAnimationFrame(() => r())))")
+_PAINT_SETTLE_MS = 50  # small safety margin after the double rAF
+
+
+# -------------------------------------------------------------------------
 # Main Async Runner
 # -------------------------------------------------------------------------
 
 async def run_test(args: argparse.Namespace):
+    t0 = time.monotonic()
     quiet = args.quiet
     csv_path = Path(args.csv_file)
     if not csv_path.exists():
@@ -620,6 +656,9 @@ async def run_test(args: argparse.Namespace):
             args.daily_trades_limit,
             args.cross_confirmation_bars,
         ),
+        # Daemon so a crashed/aborted run can never hang on exit joining the
+        # Flask child — multiprocessing terminates daemonic children at exit.
+        daemon=True,
     )
     server_proc.start()
 
@@ -677,11 +716,15 @@ async def run_test(args: argparse.Namespace):
         page = await ctx.new_page()
 
         if not quiet:
-            page.on("console", lambda msg: print(f"   [BROWSER] {msg.text}"))
+            def _on_console(msg):
+                if msg.type in ("warning", "error"):
+                    print(f"   [BROWSER {msg.type.upper()}] {msg.text}")
+
+            page.on("console", _on_console)
         page.on("pageerror", lambda exc: print(f"   [BROWSER ERROR] {exc}"))
 
         await page.goto(
-            f"{base_url}/?start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf=5m&show_tsi=true",
+            f"{base_url}/?pair={pair_name}&start_time={start_ts}&keep_lines=true&keep_closed_trades=true&tf=5m&show_tsi=true",
             wait_until="domcontentloaded",
         )
 
@@ -703,10 +746,10 @@ async def run_test(args: argparse.Namespace):
             sock.on('trade_open', (t) => {
                 window.__trades.push(t);
                 const n = window.__trades.length;
-                if (window.chartViewer && window.chartViewer.series) {
+                if (window.chartViewer && window.chartViewer.priceSeries) {
                     const sl = t.stop_loss ?? t.sl ?? t.stopLoss;
                     if (typeof sl === 'number') {
-                        const line = window.chartViewer.series.createPriceLine({
+                        const line = window.chartViewer.priceSeries.createPriceLine({
                             price: sl,
                             color: '#ff5252',
                             lineWidth: 1,
@@ -731,14 +774,43 @@ async def run_test(args: argparse.Namespace):
         stream_stop_at = max(end_ts, session_end_ts)
 
         await page.evaluate(
-            """(p) => window.chartViewer.socket.emit('start_stream', { timeframe: p.tf, fromTime: p.start, stopAt: p.end })""",
-            {"tf": "5m", "start": start_ts, "end": stream_stop_at},
+            """(p) => {
+                window.chartViewer.socket.emit('join_instrument', { pair: p.pair });
+                window.chartViewer.socket.emit('start_stream', { pair: p.pair, timeframe: p.tf, fromTime: p.start, stopAt: p.end, paceBps: p.pace });
+            }""",
+            {"pair": pair_name, "tf": "5m", "start": start_ts, "end": stream_stop_at,
+             "pace": args.bars_per_second},
         )
 
-        try:
-            await page.wait_for_function("() => window.__done === true", timeout=600000)
-        except Exception as e:
-            print(f"❌ Timeout waiting for stream end: {e}")
+        # Poll for stream end, showing ingest progress (the page's lastTime
+        # tracks how far the replay has been consumed). One bar covers the
+        # whole process: streaming owns [0, stream_share], snapshots the rest.
+        stream_span = max(1, stream_stop_at - start_ts)
+        stream_share = 50.0 if args.snapshot else 100.0
+        stream_deadline = time.monotonic() + 600
+        stream_ok = False
+        while time.monotonic() < stream_deadline:
+            try:
+                if await page.evaluate("() => window.__done === true"):
+                    stream_ok = True
+                    break
+                cur = await page.evaluate(
+                    "() => (window.chartViewer && isFinite(window.chartViewer.lastTime))"
+                    " ? window.chartViewer.lastTime : null"
+                )
+            except Exception as e:
+                print(f"\n❌ Stream wait failed: {e}")
+                break
+            if cur:
+                label = datetime.fromtimestamp(cur, tz=pair_tz).strftime("%Y-%m-%d %H:%M")
+                _progress_line(min(cur, stream_stop_at) - start_ts, stream_span,
+                               f"streaming {label}", 0.0, stream_share)
+            await asyncio.sleep(1.0)
+        if stream_ok:
+            if not args.snapshot:
+                _progress_done("stream complete")
+        elif time.monotonic() >= stream_deadline:
+            print("\n❌ Timeout waiting for stream end (600s)")
 
         captured_trades = await page.evaluate("window.__trades")
         captured_closes = await page.evaluate("window.__closes")
@@ -759,7 +831,7 @@ async def run_test(args: argparse.Namespace):
         if args.snapshot:
             try:
                 await page.wait_for_function(
-                    "() => window.chartViewer.series.data().length > 0",
+                    "() => window.chartViewer.priceSeries.data().length > 0",
                     timeout=5000,
                 )
                 await page.evaluate(
@@ -775,7 +847,8 @@ async def run_test(args: argparse.Namespace):
                     }""",
                     {"start": start_ts, "end": end_ts},
                 )
-                await page.wait_for_timeout(500)
+                await page.evaluate(_PAINT_WAIT)
+                await page.wait_for_timeout(_PAINT_SETTLE_MS)
                 chart_locator = page.locator("#chartContainer")
                 if await chart_locator.count() == 0:
                     chart_locator = page.locator("body")
@@ -783,6 +856,9 @@ async def run_test(args: argparse.Namespace):
                 await chart_locator.screenshot(path=str(outdir / f"{overview_label}_5m_overview.png"))
 
                 # Per-trade snapshots — grouped by trade date
+                total_snaps = len(captured_trades or []) + 1  # +1 overview
+                _progress_line(1, total_snaps, "snapshot overview",
+                               stream_share, 100.0)
                 for idx, t in enumerate(captured_trades or [], start=1):
                     entry_ts = t.get("entry_time")
                     trade_id = t.get("trade_id")
@@ -792,31 +868,32 @@ async def run_test(args: argparse.Namespace):
                         trade_sdir = outdir / trade_date_label
                         trade_sdir.mkdir(parents=True, exist_ok=True)
 
-                        await page.evaluate(
-                            """(tid) => { if (window.chartViewer && window.chartViewer.showOnlyTrade) window.chartViewer.showOnlyTrade(tid); }""",
-                            trade_id,
-                        )
-                        await page.wait_for_timeout(300)
-                        await page.evaluate("""() => {
-                            if (window.__extraLines) {
-                                Object.entries(window.__extraLines).forEach(([tid, line]) => {
-                                    if (window.chartViewer && window.chartViewer.series) {
-                                        window.chartViewer.series.removePriceLine(line);
-                                    }
-                                });
-                                window.__extraLines = {};
-                            }
-                        }""")
-                        await page.wait_for_timeout(200)
                         zoom = args.snapshot_zoom
                         await page.evaluate(
-                            """(range) => { window.chartViewer.chart.timeScale().setVisibleRange({ from: range.start, to: range.end }); }""",
-                            {"start": entry_ts - zoom, "end": entry_ts + zoom},
+                            """(p) => {
+                                const viewer = window.chartViewer;
+                                if (viewer && viewer.showOnlyTrade) viewer.showOnlyTrade(p.tid);
+                                if (window.__extraLines) {
+                                    Object.entries(window.__extraLines).forEach(([tid, line]) => {
+                                        if (viewer && viewer.priceSeries) {
+                                            viewer.priceSeries.removePriceLine(line);
+                                        }
+                                    });
+                                    window.__extraLines = {};
+                                }
+                                viewer.chart.timeScale().setVisibleRange({ from: p.start, to: p.end });
+                            }""",
+                            {"tid": trade_id, "start": entry_ts - zoom, "end": entry_ts + zoom},
                         )
-                        await page.wait_for_timeout(500)
+                        await page.evaluate(_PAINT_WAIT)
+                        await page.wait_for_timeout(_PAINT_SETTLE_MS)
                         await chart_locator.screenshot(
                             path=str(trade_sdir / f"{trade_date_label}_5m_trade_{idx}.png")
                         )
+                        _progress_line(idx + 1, total_snaps,
+                                       f"snapshot {trade_date_label} #{idx} of {total_snaps - 1}",
+                                       stream_share, 100.0)
+                _progress_done(f"done — {total_snaps} snapshots")
             except Exception as e:
                 if not quiet:
                     print(f"   ⚠️ Snapshot failed: {e}")
@@ -864,6 +941,9 @@ async def run_test(args: argparse.Namespace):
     server_proc.terminate()
     server_proc.join()
 
+    elapsed = time.monotonic() - t0
+    print(f"⏱️  Total time: {int(elapsed // 60)}m {int(elapsed % 60):02d}s")
+
 
 # -------------------------------------------------------------------------
 # CLI
@@ -876,7 +956,8 @@ def main():
     ap.add_argument("--csv-file", default="csvs/NQ_live.csv", help="CSV data source")
     ap.add_argument("--outdir", default="./tsi_test_out", help="Output directory for snapshots")
     ap.add_argument("--port", type=int, default=5002, help="Flask server port")
-    ap.add_argument("--bars-per-second", type=float, default=800, help="Replay speed")
+    ap.add_argument("--bars-per-second", type=float, default=800,
+                    help="Replay pace; also caps the backtest burst rate so the headless browser is not flooded")
     ap.add_argument(
         "--snapshot", action="store_true", default=True, help="Take chart snapshots"
     )

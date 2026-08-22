@@ -110,7 +110,8 @@ class BarsLoader:
             self._stop_event.clear()
         self._reached_stop_at = False
 
-    def start(self, from_time: int = None, stop_at: int = None, fast: bool = False):
+    def start(self, from_time: int = None, stop_at: int = None, fast: bool = False,
+              pace_bps: float = None):
         self._stop_background_task()
 
         if from_time is not None:
@@ -124,7 +125,10 @@ class BarsLoader:
 
         if stop_at is not None or fast:
             self._fast_jump_mode = True
-            self._emit_delay = 0.0
+            # pace_bps bounds the emit rate even in fast-jump mode; unlimited
+            # bursts can flood the browser faster than it drains, killing the
+            # automation driver via pipe backpressure (write EINVAL).
+            self._emit_delay = 1.0 / pace_bps if pace_bps and pace_bps > 0 else 0.0
         else:
             self._fast_jump_mode = False
             self._emit_delay = self._default_emit_delay
