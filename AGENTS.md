@@ -15,3 +15,7 @@ After making any code change, run the test suite that corresponds to the affecte
 - **MQL5 unit tests** (`zmq_connectors/metatrader/Tests/`): `bin/run_mql_tests.sh` (compiles `Tests/TestRunnerEA.mq5`, runs it in the MT5 Strategy Tester via a `[Tester]` ini, and fails on any red assert; the terminal must not be running — MetaTrader ignores `/config` while an instance is up)
 
 Do not consider a change complete until the relevant tests have been run and pass.
+
+## Deployment
+
+For live trading, the Python backend runs natively on Windows (not in WSL). The primary launcher is `bin/Start-TradingBot-Native.ps1`, which auto-restarts the backend on crash. Use `bin/Register-TradingBotStartup.ps1` to start the backend at user logon without admin rights, or `bin/Register-TradingBotTask.ps1` for a Task Scheduler task (requires admin).

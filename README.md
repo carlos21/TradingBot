@@ -112,8 +112,51 @@ Override settings via CLI:
 poetry run python app.py --pair MNQ --risk 160 --mode live
 ```
 
+## Running Natively on Windows (No WSL)
+
+The bot can run natively on Windows without WSL. This is the recommended path for live trading because WSL restarts can kill the Python backend.
+
+### One-time setup
+
+1. Install PostgreSQL 17 for Windows (EnterpriseDB installer).
+2. Create the `tradingbot` user and database on Windows PostgreSQL.
+3. Migrate any existing data from WSL PostgreSQL (see `docs/` for migration steps).
+4. Update `.env` so `DATABASE_URL` points to the Windows PostgreSQL instance (default port `5433` if the installer picked that).
+5. Ensure `ZMQ_HOST=127.0.0.1` is set in `.env`.
+6. Verify `Documents/NinjaTrader 8/bin/Custom/TradingBotZmqConfig.json` has `host=127.0.0.1`.
+
+### Daily launch
+
+```powershell
+.\bin\Start-TradingBot-Native.ps1
+```
+
+The launcher:
+- Loads `.env` and sets `ZMQ_HOST=127.0.0.1`.
+- Starts the backend via Poetry.
+- Writes logs to `logs/ninja/native_launcher.log`, `native_stdout.log`, and `native_stderr.log`.
+- Auto-restarts the backend up to 5 times if it crashes.
+
+### Auto-start at logon (no admin required)
+
+```powershell
+.\bin\Register-TradingBotStartup.ps1
+```
+
+This creates a shortcut in the user's Startup folder. The backend starts automatically when the user logs on.
+
+If you have admin rights, you can also register a Task Scheduler task:
+
+```powershell
+.\bin\Register-TradingBotTask.ps1
+```
+
+### Stopping the bot
+
+Kill the Python processes or remove the startup shortcut and reboot/log off.
+
 ## Notes
 
 - This repo is **private** and `.env` is committed for convenience across trusted machines.
 - Playwright and scenario tests are not installed on live trading PCs. They remain available in the repo for development machines.
-- The bot runs natively on Windows without WSL.
+- The bot runs natively on Windows without WSL. WSL is deprecated for live trading.

@@ -13,14 +13,26 @@ class NtManagerService:
         self._project_dir = Path(project_dir) if project_dir else Path(__file__).resolve().parents[3]
         self._logger = logger
 
+    def _powershell_path(self) -> str:
+        """Return the full path to powershell.exe."""
+        # Prefer the standard system location to avoid PATH issues in venvs
+        system_ps = Path(r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")
+        if system_ps.exists():
+            return str(system_ps)
+        # Fallback to PATH lookup
+        return "powershell.exe"
+
     def _can_run_windows_exe(self) -> bool:
-        """Check if WSL can execute Windows binaries (e.g. powershell.exe)."""
-        if not shutil.which("powershell.exe"):
+        """Check if Windows binaries (e.g. powershell.exe) can be executed."""
+        ps = self._powershell_path()
+        if ps != "powershell.exe" and not Path(ps).exists():
+            return False
+        if not shutil.which("powershell.exe") and ps == "powershell.exe":
             return False
         try:
             # Quick test: run a no-op PowerShell command
             subprocess.run(
-                ["powershell.exe", "-NoProfile", "-Command", "exit 0"],
+                [ps, "-NoProfile", "-Command", "exit 0"],
                 capture_output=True,
                 timeout=5,
             )
@@ -30,22 +42,31 @@ class NtManagerService:
 
     def _run_ps(self, command: str) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["powershell.exe", "-NoProfile", "-Command", command],
+            [self._powershell_path(), "-NoProfile", "-Command", command],
             capture_output=True,
             text=True,
         )
 
     def _wsl_to_windows_path(self, wsl_path: Path) -> str:
-        """Convert a WSL path to a Windows path using wslpath."""
+        """Convert a WSL path to a Windows path using wslpath.
+
+        When running natively on Windows the path is already a Windows path,
+        so return it unchanged.  Only WSL paths (starting with /mnt/) need
+        conversion.
+        """
+        p = str(wsl_path)
+        # Already a Windows path (e.g. C:\...) — return as-is
+        if len(p) >= 2 and p[1] == ":":
+            return p
+        # WSL path — convert via wslpath or manual fallback
         result = subprocess.run(
-            ["wslpath", "-w", str(wsl_path)],
+            ["wslpath", "-w", p],
             capture_output=True,
             text=True,
         )
         if result.returncode == 0:
             return result.stdout.strip()
         # Fallback: manual conversion for /mnt/c/... paths
-        p = str(wsl_path)
         if p.startswith("/mnt/"):
             drive = p[5].upper()
             return f"{drive}:{p[6:]}"
@@ -122,7 +143,7 @@ class NtManagerService:
         # separate command-line token. No shell quoting is required; wrapping
         # values in quotes would make the quotes part of the literal value.
         cmd = [
-            "powershell.exe",
+            self._powershell_path(),
             "-NoProfile",
             "-ExecutionPolicy", "Bypass",
             "-File", win_script,

@@ -95,7 +95,7 @@ class FileAndConsoleLogger(ILogger):
         date_str = datetime.now().strftime("%Y-%m-%d")
         self._current_date = date_str
         log_file = self.log_dir / f"app_{date_str}.log"
-        self._file_handle = open(log_file, "a", buffering=1)  # line-buffered  # noqa: SIM115
+        self._file_handle = open(log_file, "a", buffering=1, encoding="utf-8")  # line-buffered  # noqa: SIM115
 
     def _ensure_date_rotation(self) -> None:
         """Rotate to a new daily file if midnight has passed."""
@@ -110,7 +110,12 @@ class FileAndConsoleLogger(ILogger):
         """Write to both console and file."""
         prefix = f"[{self.instance_name}] " if self.instance_name else ""
         formatted = f"{log_timestamp()} {prefix}[{level}] {message}"
-        print(formatted, flush=True)
+        try:
+            print(formatted, flush=True)
+        except UnicodeEncodeError:
+            # Console uses a non-UTF-8 codepage (e.g. cp1252 on native
+            # Windows); never let an emoji kill the caller's callback.
+            print(formatted.encode("ascii", "replace").decode("ascii"), flush=True)
 
         with self._lock:
             self._ensure_date_rotation()
