@@ -11,7 +11,7 @@
     Which log to watch: 'app' (default), 'stdout', 'stderr', or 'launcher'.
 
 .PARAMETER Lines
-    Number of existing lines to show before tailing. Default: 50.
+    Number of existing lines to show before tailing. Default: 0 (all lines for the current day).
 
 .EXAMPLE
     .\Watch-TradingBotLogs.ps1
@@ -26,7 +26,7 @@
 param(
     [ValidateSet("app", "stdout", "stderr", "launcher")]
     [string]$LogType = "app",
-    [int]$Lines = 50
+    [int]$Lines = 0
 )
 
 $ErrorActionPreference = "Stop"
@@ -70,8 +70,12 @@ Write-Host "Watching $description`: $logFile" -ForegroundColor Cyan
 Write-Host "Press Ctrl+C to stop." -ForegroundColor Gray
 Write-Host ""
 
-# Show existing lines
-Get-Content $logFile -Tail $Lines
+# Show existing lines (all of them by default)
+if ($Lines -gt 0) {
+    Get-Content $logFile -Tail $Lines
+} else {
+    Get-Content $logFile
+}
 
 # Tail new content
 $lastLength = (Get-Item $logFile).Length

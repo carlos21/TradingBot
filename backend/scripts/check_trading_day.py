@@ -14,10 +14,12 @@ import os
 import sqlite3
 import sys
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import Iterable, Protocol
+from typing import Iterable, Mapping, Protocol
 from zoneinfo import ZoneInfo
+
+from dotenv import load_dotenv
 
 # Allow running from repo root or backend/scripts/.
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -141,48 +143,93 @@ class SQLTradeQueryService:
         finally:
             conn.close()
 
-        def _parse_dt(value):
-            if value is None:
-                return None
-            if isinstance(value, str):
-                dt = datetime.fromisoformat(value)
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                return dt
-            return value
+        return [_row_to_trade_data(row) for row in rows]
 
-        return [
-            TradeData(
-                trade_id=row["trade_id"],
-                pair=row["pair"],
-                trade_type=row["trade_type"],
-                entry_price=row["entry_price"],
-                stop_loss=row["stop_loss"],
-                take_profit=row["take_profit"],
-                risk=row["risk"],
-                risk_dollars=row["risk_dollars"],
-                risk_pct=row["risk_pct"],
-                account_balance=row["account_balance"],
-                contracts=row["contracts"],
-                entry_time=_parse_dt(row["entry_time"]),
-                exit_price=row["exit_price"],
-                exit_time=_parse_dt(row["exit_time"]),
-                result=row["result"],
-                result_type=row["result_type"],
-                fees=row["fees"],
-                pnl_usd=row["pnl_usd"],
-                original_entry_price=row["original_entry_price"],
-                gross_pnl=row["gross_pnl"],
-                realized_pnl=row["realized_pnl"],
-                params=_parse_json(row["params"]),
-                logs=_parse_json(row["logs"]) or [],
-                source=row["source"],
-                account=row["account"],
-                signal_id=row["signal_id"],
-                created_at=_parse_dt(row["created_at"]),
-            )
-            for row in rows
-        ]
+
+class PostgresTradeQueryService:
+    """PostgreSQL-backed trade query service for the live instance.
+
+    The live database only listens on the Windows host (see DATABASE_URL in
+    .env), so this service is expected to run via Windows interop from WSL.
+    Day boundaries are computed in the market timezone (Etc/GMT+5) so the
+    filter is independent of the Postgres server timezone.
+    """
+
+    MARKET_TZ = ZoneInfo("Etc/GMT+5")
+
+    def __init__(self, database_url: str):
+        from sqlalchemy import create_engine
+
+        self._engine = create_engine(database_url)
+
+    def get_trades_for_date(self, target_date: date) -> list[TradeData]:
+        from sqlalchemy import text
+
+        start = datetime(target_date.year, target_date.month, target_date.day,
+                         tzinfo=self.MARKET_TZ)
+        end = start + timedelta(days=1)
+        with self._engine.connect() as conn:
+            rows = conn.execute(
+                text(
+                    """
+                    SELECT
+                        trade_id, pair, trade_type, entry_price, stop_loss, take_profit,
+                        risk, risk_dollars, risk_pct, account_balance, contracts,
+                        entry_time, exit_price, exit_time, result, result_type,
+                        fees, pnl_usd, original_entry_price, gross_pnl, realized_pnl,
+                        params, logs, source, account, signal_id, created_at
+                    FROM trades
+                    WHERE entry_time >= :start AND entry_time < :end
+                    ORDER BY entry_time
+                    """
+                ),
+                {"start": start, "end": end},
+            ).mappings().all()
+
+        return [_row_to_trade_data(row) for row in rows]
+
+
+def _row_to_trade_data(row: Mapping) -> TradeData:
+    return TradeData(
+        trade_id=row["trade_id"],
+        pair=row["pair"],
+        trade_type=row["trade_type"],
+        entry_price=row["entry_price"],
+        stop_loss=row["stop_loss"],
+        take_profit=row["take_profit"],
+        risk=row["risk"],
+        risk_dollars=row["risk_dollars"],
+        risk_pct=row["risk_pct"],
+        account_balance=row["account_balance"],
+        contracts=row["contracts"],
+        entry_time=_parse_dt(row["entry_time"]),
+        exit_price=row["exit_price"],
+        exit_time=_parse_dt(row["exit_time"]),
+        result=row["result"],
+        result_type=row["result_type"],
+        fees=row["fees"],
+        pnl_usd=row["pnl_usd"],
+        original_entry_price=row["original_entry_price"],
+        gross_pnl=row["gross_pnl"],
+        realized_pnl=row["realized_pnl"],
+        params=_parse_json(row["params"]),
+        logs=_parse_json(row["logs"]) or [],
+        source=row["source"],
+        account=row["account"],
+        signal_id=row["signal_id"],
+        created_at=_parse_dt(row["created_at"]),
+    )
+
+
+def _parse_dt(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    return value
 
 
 def _parse_json(value):
@@ -504,6 +551,17 @@ def _today_local() -> date:
 
 
 def _build_default_services() -> tuple[TradeQueryService, FileLogReader]:
+    log_dir = PROJECT_ROOT / "logs"
+    log_reader = FileLogReader(log_dir)
+
+    # The live instance persists to PostgreSQL (DATABASE_URL in .env, e.g.
+    # localhost:5433 on Windows). Only fall back to SQLite when no Postgres
+    # URL is configured.
+    load_dotenv(PROJECT_ROOT / ".env", override=False)
+    database_url = os.environ.get("DATABASE_URL", "")
+    if database_url.startswith("postgresql"):
+        return PostgresTradeQueryService(database_url), log_reader
+
     # The live NinjaTrader instance uses ninja.db; fall back to database.db.
     for candidate in (PROJECT_ROOT / "ninja.db", PROJECT_ROOT / "database.db"):
         if candidate.exists():
@@ -511,8 +569,7 @@ def _build_default_services() -> tuple[TradeQueryService, FileLogReader]:
             break
     else:
         db_path = PROJECT_ROOT / "database.db"
-    log_dir = PROJECT_ROOT / "logs"
-    return SQLTradeQueryService(db_path), FileLogReader(log_dir)
+    return SQLTradeQueryService(db_path), log_reader
 
 
 def main() -> int:
@@ -537,7 +594,17 @@ def main() -> int:
     if args.db is not None:
         trade_service = SQLTradeQueryService(args.db)
 
-    trades = trade_service.get_trades_for_date(args.date)
+    try:
+        trades = trade_service.get_trades_for_date(args.date)
+    except Exception as exc:
+        print(
+            f"ERROR: could not query trades: {exc}\n"
+            "Hint: the live Postgres DATABASE_URL only resolves on the Windows "
+            "host; run this script via Windows interop (see the "
+            "check-tradingbot-logs skill), or pass --db for a local SQLite file.",
+            file=sys.stderr,
+        )
+        return 1
     log_paths = log_reader.log_paths(args.date)
     log_summary = LogSummary(
         errors=log_reader.read_errors(args.date),

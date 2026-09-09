@@ -171,55 +171,22 @@ ACK lines show two segments: `py=Xms` (Python queue → actual socket write) and
 
 ## 5. Pull the trade summary from the database
 
-The live instance stores trades in **PostgreSQL** on localhost. Use the project's SQLAlchemy setup via `poetry run python`. The connection URL is read from `DATABASE_URL`; it defaults to the known local database.
+The live instance stores trades in **PostgreSQL on the Windows host** — `DATABASE_URL` in `${PROJECT_DIR}/.env` points to `localhost:5433` (a Postgres that only exists on Windows). **It is NOT reachable from WSL** (localhost:5433 is refused there, and the Windows host IP times out). Do NOT query the Postgres on WSL port 5432 — that is a stale dev database whose trades end weeks earlier; querying it produces misleading "no trades" results.
+
+### Run the report script on the Windows host via PowerShell interop
+
+The project ships `backend/scripts/check_trading_day.py`, which reads `DATABASE_URL` from `.env` (falling back to a local SQLite file). Run it through Windows interop so `localhost` resolves on Windows:
 
 ```bash
-cd "${PROJECT_DIR}"
+/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Set-Location 'C:\Users\dark_\Developer\TradingBot'; poetry run python backend/scripts/check_trading_day.py --date ${DATE}"
 ```
 
-### Total P&L and trade count
-```bash
-poetry run python -c "
-import os
-from sqlalchemy import create_engine, text
-url = os.environ.get('DATABASE_URL', 'postgresql+psycopg://tradingbot:pnBwUQYZEqUhaf6TpBOHUP6l@localhost/tradingbot')
-engine = create_engine(url)
-date = '${DATE}'
-with engine.connect() as conn:
-    result = conn.execute(text('''
-        SELECT COUNT(*),
-               SUM(CASE WHEN pnl_usd > 0 THEN 1 ELSE 0 END),
-               SUM(CASE WHEN pnl_usd < 0 THEN 1 ELSE 0 END),
-               SUM(CASE WHEN pnl_usd = 0 THEN 1 ELSE 0 END),
-               SUM(pnl_usd)
-        FROM trades
-        WHERE DATE(entry_time) = :date
-    '''), {'date': date})
-    print(result.fetchone())
-"
-```
+This prints a full Markdown day report: totals (winners/losers/breakeven, gross/commission/realized P&L) and a per-trade table (entry/slippage/exit/result/P&L), plus the errors/connection sections gathered from the app log.
 
-### Per-trade details
-```bash
-poetry run python -c "
-import os
-from sqlalchemy import create_engine, text
-url = os.environ.get('DATABASE_URL', 'postgresql+psycopg://tradingbot:pnBwUQYZEqUhaf6TpBOHUP6l@localhost/tradingbot')
-engine = create_engine(url)
-date = '${DATE}'
-with engine.connect() as conn:
-    result = conn.execute(text('''
-        SELECT trade_id, pair, trade_type, entry_price, stop_loss, take_profit,
-               risk, risk_dollars, contracts, pnl_usd, result, result_type,
-               entry_time, exit_time
-        FROM trades
-        WHERE DATE(entry_time) = :date
-        ORDER BY entry_time
-    '''), {'date': date})
-    for row in result:
-        print(row)
-"
-```
+Notes:
+- If interop fails (poetry missing on Windows, connection error), the script exits non-zero with a hint. Fall back to reconstructing the trade summary from the log fills (`TradeManager ENTRY FILL`, `[TradeCloseUseCase] Closed`, `[BrokerFill] Exit fill broker_pnl=...`) and say so in the report.
+- The script filters trades by the market timezone (`Etc/GMT+5`, same offset as `America/Lima`), so the date matches the log timestamps.
+- WSL fallback for a local SQLite file: `poetry run python backend/scripts/check_trading_day.py --date ${DATE} --db <path-to.db>`
 
 ### Key fields
 - `pair`: instrument, e.g. `MNQ`.
@@ -228,10 +195,11 @@ with engine.connect() as conn:
 - `risk`: stop distance in points.
 - `risk_dollars`: dollar amount risked on the trade.
 - `contracts`: number of contracts traded.
-- `pnl_usd`: dollar profit/loss (excluding fees unless fees are already deducted).
+- `pnl_usd` / `realized_pnl`: dollar profit/loss.
 - `result`: R multiple, e.g. `5.00` or `-1.00`.
 - `result_type`: `TP`, `SL`, `BE` (breakeven), `MANUAL`, or `CLOSE`.
-- `entry_time`, `exit_time`: trade open/close timestamps.
+- `entry_time`, `exit_time`: trade open/close timestamps (market timezone).
+- `original_entry_price` vs `entry_price`: strategy-calculated entry vs real fill (their difference is the entry slippage).
 
 ---
 
