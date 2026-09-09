@@ -25,6 +25,15 @@ class TestTsiCrossNumbers:
         assert numbers.broker_spread == 0.0
         assert numbers.use_fractional_lots is False
         assert numbers.close_on_opposite_cross is False
+        # StreamingSession wiring fields
+        assert numbers.max_bounce == 0.0
+        assert numbers.max_entry_distance is None
+        assert numbers.sl_level_tolerance == 5.0
+        assert numbers.sl_buffer_pts == 0.0
+        assert numbers.min_cross_depth == 0.0
+        assert numbers.account_configs == []
+        assert numbers.be_threshold_points == 2.0
+        assert numbers.sl_tp_tolerance == 0.5
 
     def test_close_on_opposite_cross_override(self):
         numbers = TsiCrossNumbers(close_on_opposite_cross=True)
@@ -52,7 +61,7 @@ class TestTsiCrossNumbers:
         assert numbers.use_fractional_lots is True
 
     def test_field_count(self):
-        assert len(fields(TsiCrossNumbers)) == 14
+        assert len(fields(TsiCrossNumbers)) == 22
 
 
 class TestTsiCrossConfig:

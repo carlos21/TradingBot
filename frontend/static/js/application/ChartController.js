@@ -1,4 +1,4 @@
-import { calculateTSI, detectCrosses } from '../TSICalculator.js';
+import { calculateTSI, detectCrosses, IncrementalTSI } from '../TSICalculator.js';
 import { isInNewYorkSession, formatChartTime, formatReplayDate } from '../domain/time.js';
 import {
   buildTradeLineDescriptors,
@@ -65,6 +65,9 @@ export class ChartController {
     this._lastShadedTime = -Infinity;
     this._historyReadyTimer = null;
     this._tsiMarkers = [];
+    this._tsiInc = new IncrementalTSI();
+    this._lastTsiCross = null;
+    this._markersDirty = false;
     this._resizeObserver = null;
     this._isRPressed = false;
 
@@ -300,6 +303,8 @@ export class ChartController {
     if (!bars || bars.length < 14) {
       this.chartApi.setData(this.tsiSeries, []);
       this.chartApi.setData(this.sigSeries, []);
+      this._tsiInc.reset();
+      this._lastTsiCross = null;
       return;
     }
 
@@ -308,7 +313,38 @@ export class ChartController {
     this._tsiMarkers = detectCrosses(tsiRaw, signalRaw, times);
     this.chartApi.setData(this.tsiSeries, tsiData);
     this.chartApi.setData(this.sigSeries, signalData);
+    // Seed the incremental calculator so subsequent bars advance in O(1).
+    this._tsiInc.seed(bars);
+    const lastCross = this._tsiMarkers[this._tsiMarkers.length - 1];
+    this._lastTsiCross =
+      lastCross && lastCross.time === bars[bars.length - 1].time ? lastCross : null;
     this._updateMarkers();
+  }
+
+  _updateTSIForBar(bar) {
+    if (!this.options.showTSI) return;
+    const res = this._tsiInc.update(bar);
+    if (!res) {
+      // Not seeded or out of sync — full recalculation (also reseeds).
+      this._recalculateTSI();
+      return;
+    }
+    if (res.amended && this._lastTsiCross) {
+      // The last bar was amended; a cross it previously produced may no
+      // longer exist (a full rescan would drop it too).
+      const i = this._tsiMarkers.indexOf(this._lastTsiCross);
+      if (i !== -1) this._tsiMarkers.splice(i, 1);
+      this._lastTsiCross = null;
+    }
+    this.chartApi.update(this.tsiSeries, res.tsiPoint);
+    this.chartApi.update(this.sigSeries, res.sigPoint);
+    if (res.cross) {
+      this._tsiMarkers.push(res.cross);
+      this._lastTsiCross = res.cross;
+      this._updateMarkers();
+    } else if (res.amended) {
+      this._updateMarkers();
+    }
   }
 
   _updateMarkers() {
@@ -592,6 +628,8 @@ export class ChartController {
     try {
       clearTimeout(this._historyReadyTimer);
       this._tsiMarkers = [];
+      this._tsiInc.reset();
+      this._lastTsiCross = null;
       this.currentTF = tf;
       this.pauseReplay();
 
@@ -670,6 +708,9 @@ export class ChartController {
     this.validTimes = new Set();
     this.pendingBars = [];
     this._tsiMarkers = [];
+    this._tsiInc.reset();
+    this._lastTsiCross = null;
+    this._markersDirty = false;
 
     this.lastTime = -Infinity;
     this._updateCurrentDayLabel();
@@ -718,7 +759,13 @@ export class ChartController {
       this.lastPrice = bar.close;
       this._updateCurrentDayLabel();
       this._shadeBar(bar);
-      this._recalculateTSI();
+      this._updateTSIForBar(bar);
+      if (this._markersDirty) {
+        // Trade events arrive before the bar they belong to; their markers
+        // become visible once this bar advances lastTime.
+        this._markersDirty = false;
+        this._updateMarkers();
+      }
     }
   }
 
@@ -749,6 +796,7 @@ export class ChartController {
     this.activeTrade = trade;
     this.allTrades = upsertTrade(this.allTrades, trade);
     this.drawTradeLines(trade);
+    this._markersDirty = true;
     if (!this._seriesBusy) this._updateMarkers();
   }
 
@@ -763,6 +811,7 @@ export class ChartController {
         h => h !== this.tradeEntryLine && h !== this.tradeSLLine && h !== this.tradeTPLine
       );
     }
+    this._markersDirty = true;
     if (!this._seriesBusy) this._updateMarkers();
   }
 
@@ -770,6 +819,7 @@ export class ChartController {
     if (this.activeTrade && this.activeTrade.trade_id === update.trade_id) {
       this.activeTrade.stop_loss = update.stop_loss;
       this.drawTradeLines(this.activeTrade);
+      this._markersDirty = true;
       if (!this._seriesBusy) this._updateMarkers();
     }
   }
@@ -792,6 +842,7 @@ export class ChartController {
       this.activeTrade.risk = update.risk;
       this.drawTradeLines(this.activeTrade);
     }
+    this._markersDirty = true;
     if (!this._seriesBusy) this._updateMarkers();
   }
 

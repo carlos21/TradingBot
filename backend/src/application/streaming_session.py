@@ -419,9 +419,15 @@ class StreamingSession:
                         trade_manager.trade_executor.on_trade_close(tid, bar["close"])
                         _close_commands_sent.add(tid)
 
+            def _should_check_breakeven() -> bool:
+                opts = getattr(strategy, "options", None)
+                if opts is None:
+                    return False
+                return bool(getattr(opts, "breakeven", None) or getattr(opts, "reentry_breakeven", None))
+
             def combined_bar_callback(bar):
                 strategy.on_raw_bar(bar)
-                if strategy.options.breakeven or strategy.options.reentry_breakeven:
+                if _should_check_breakeven():
                     strategy.check_breakeven(bar)
                 _check_live_session_end(bar)
 
@@ -436,10 +442,16 @@ class StreamingSession:
                         trade_manager.trade_executor.on_trade_close(tid, close_price)
                         _close_commands_sent.add(tid)
         else:
+            def _should_check_breakeven() -> bool:
+                opts = getattr(strategy, "options", None)
+                if opts is None:
+                    return False
+                return bool(getattr(opts, "breakeven", None) or getattr(opts, "reentry_breakeven", None))
+
             def combined_bar_callback(bar):
                 strategy.on_raw_bar(bar)
                 trade_manager.handle_new_1m_bar(bar)
-                if strategy.options.breakeven or strategy.options.reentry_breakeven:
+                if _should_check_breakeven():
                     strategy.check_breakeven(bar)
 
             def stream_end_callback(close_price: float, final_time: float):

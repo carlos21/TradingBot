@@ -27,6 +27,8 @@ def get_tsi_cross_numbers(
     close_on_opposite_cross: bool = False,
     point_value: float = 2.0,
     fee_per_rt: float = 4.24,
+    be_threshold_points: float = 2.0,
+    sl_tp_tolerance: float = 0.5,
 ) -> TsiCrossNumbers:
     """Build ``TsiCrossNumbers`` with sensible defaults.
 
@@ -41,6 +43,8 @@ def get_tsi_cross_numbers(
             cross instead of a fixed take-profit.
         point_value: $ per point (MNQ = $2).
         fee_per_rt: Broker fee per round-trip per contract.
+        be_threshold_points: Exit within this many points of entry is BE.
+        sl_tp_tolerance: Points tolerance for SL/TP hit detection.
     """
     return TsiCrossNumbers(
         min_stop_loss=10.0,
@@ -57,6 +61,8 @@ def get_tsi_cross_numbers(
         broker_spread=0.0,
         use_fractional_lots=False,
         close_on_opposite_cross=close_on_opposite_cross,
+        be_threshold_points=be_threshold_points,
+        sl_tp_tolerance=sl_tp_tolerance,
     )
 
 

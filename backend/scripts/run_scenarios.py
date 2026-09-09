@@ -265,6 +265,13 @@ def wait_http_ok(url, timeout=30):
         time.sleep(0.2)
     raise TimeoutError(f"Server at {url} did not start.")
 
+# Wait until the chart has actually painted: lightweight-charts schedules its
+# redraw via requestAnimationFrame, so two rAF ticks guarantee the frame with
+# our mutations is on screen. Replaces the old fixed 300/200/500ms sleeps.
+_PAINT_WAIT = ("() => new Promise(r => requestAnimationFrame("
+               "() => requestAnimationFrame(() => r())))")
+_PAINT_SETTLE_MS = 50  # small safety margin after the double rAF
+
 def add_line_http(base_url: str, pair: str, price: float, creation_time: float = None):
     payload = {"pair": pair, "price": float(price)}
     if creation_time is not None:
@@ -921,8 +928,9 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
                             {"start": start_ts, "end": end_ts}
                         )
                         
-                        # 3. Buffer for repaint
-                        await page.wait_for_timeout(500) 
+                        # 3. Wait until the chart has painted the new range
+                        await page.evaluate(_PAINT_WAIT)
+                        await page.wait_for_timeout(_PAINT_SETTLE_MS)
                         
                         # 4. Capture the chart container specifically
                         chart_locator = page.locator("#chartContainer")
@@ -946,31 +954,28 @@ async def run_suite(args, scenarios: List[Dict], csv_path: Path, slippage: float
                             entry_ts = zt_trade.get("entry_time")
                             trade_id = zt_trade.get("trade_id")
                             if entry_ts:
-                                # Show only this trade's lines (entry/SL/TP)
-                                if trade_id:
-                                    await page.evaluate(
-                                        """(tid) => { if (window.chartViewer && window.chartViewer.showOnlyTrade) window.chartViewer.showOnlyTrade(tid); }""",
-                                        trade_id
-                                    )
-                                    await page.wait_for_timeout(300)
-                                # Remove all injected Orig SL lines from zoomed snapshots
-                                # (showOnlyTrade now draws the original SL itself)
-                                await page.evaluate("""() => {
-                                    if (window.__extraLines) {
-                                        Object.entries(window.__extraLines).forEach(([tid, line]) => {
-                                            if (window.chartViewer && window.chartViewer.priceSeries) {
-                                                window.chartViewer.priceSeries.removePriceLine(line);
-                                            }
-                                        });
-                                        window.__extraLines = {};
-                                    }
-                                }""")
-                                await page.wait_for_timeout(200)
+                                # One round-trip: show only this trade's lines
+                                # (entry/SL/TP), remove injected Orig SL lines
+                                # (showOnlyTrade draws the original SL itself),
+                                # then zoom to the entry window.
                                 await page.evaluate(
-                                    """(range) => { window.chartViewer.chart.timeScale().setVisibleRange({ from: range.start, to: range.end }); }""",
-                                    {"start": entry_ts - 3600, "end": entry_ts + 3600}
+                                    """(p) => {
+                                        const viewer = window.chartViewer;
+                                        if (p.tid && viewer && viewer.showOnlyTrade) viewer.showOnlyTrade(p.tid);
+                                        if (window.__extraLines) {
+                                            Object.entries(window.__extraLines).forEach(([tid, line]) => {
+                                                if (viewer && viewer.priceSeries) {
+                                                    viewer.priceSeries.removePriceLine(line);
+                                                }
+                                            });
+                                            window.__extraLines = {};
+                                        }
+                                        viewer.chart.timeScale().setVisibleRange({ from: p.start, to: p.end });
+                                    }""",
+                                    {"tid": trade_id, "start": entry_ts - 3600, "end": entry_ts + 3600}
                                 )
-                                await page.wait_for_timeout(500)
+                                await page.evaluate(_PAINT_WAIT)
+                                await page.wait_for_timeout(_PAINT_SETTLE_MS)
                                 await chart_locator.screenshot(path=str(sdir / f"{date_label}_{tf}_{zt_label}.png"))
                         
 
@@ -1629,7 +1634,10 @@ def main():
         )
         bars = bar_source._bars
 
+    t0 = time.monotonic()
     asyncio.run(run_suite(args, scenarios, Path(args.source_csv), slippage=args.slippage, bars=bars))
+    elapsed = time.monotonic() - t0
+    print(f"⏱️  Total time: {int(elapsed // 60)}m {int(elapsed % 60):02d}s")
 
 if __name__ == "__main__":
     main()
