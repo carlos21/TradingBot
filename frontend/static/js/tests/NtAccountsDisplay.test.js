@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { NtAccountsDisplay } from '../NtAccountsDisplay.js';
+import { FakeSocket } from './fakes/FakeSocket.js';
 
 function mockFetch(response) {
   return vi.spyOn(global, 'fetch').mockResolvedValue({
@@ -170,6 +171,45 @@ describe('NtAccountsDisplay', () => {
     await display.init();
 
     expect(loadSpy).toHaveBeenCalled();
+  });
+
+  it('reloads accounts when the socket connects', async () => {
+    mockFetch([{ name: 'A' }]);
+    const socket = new FakeSocket();
+    const display = new NtAccountsDisplay(socket);
+    const loadSpy = vi.spyOn(display, 'loadAccounts').mockResolvedValue();
+
+    display.init();
+    expect(loadSpy).toHaveBeenCalledTimes(1);
+
+    socket.trigger('connect');
+    expect(loadSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('recovers from an initial fetch failure once the socket connects', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchSpy = vi.spyOn(global, 'fetch')
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: async () => [{ name: 'RecoveredAccount' }],
+      });
+
+    const socket = new FakeSocket();
+    const display = new NtAccountsDisplay(socket);
+    display.init();
+    await vi.waitFor(() => {
+      expect(document.getElementById('ntAccountsDisplay').textContent).toContain('No accounts');
+    });
+
+    socket.trigger('connect');
+    await vi.waitFor(() => {
+      expect(document.getElementById('ntAccountsDisplay').textContent).toContain('RecoveredAccount');
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(document.getElementById('ntAccountsWarning').classList.contains('hidden')).toBe(true);
+    errorSpy.mockRestore();
   });
 
   it('renders no accounts when render is called with null', async () => {
