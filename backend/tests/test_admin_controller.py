@@ -288,23 +288,34 @@ class TestAdminControllerRecentLogs:
         assert "Exit fill" in entry["message"]
 
     def test_get_recent_logs_uses_custom_log_dir(self, app_context):
-        from pathlib import Path
-        log_file = Path("logs/ninja") / f"app_{datetime.now().strftime('%Y-%m-%d')}.log"
-        if not log_file.exists():
-            pytest.skip("logs/ninja/app_YYYY-MM-DD.log not present")
-
         trade_repo = FakeTradeRepository()
         line_repo = FakeLineRepository()
         logger = FakeLogger()
         analytics = AnalyticsService(trade_repo)
-        ctrl = AdminController(analytics, line_repo, logger, log_dir="logs/ninja")
 
-        resp, status = ctrl.get_recent_logs("MNQ", limit=1, offset=0)
-        assert status == 200
-        data = resp.get_json()
-        assert len(data["logs"]) == 1
-        assert "level" in data["logs"][0]
-        assert "source" in data["logs"][0]
+        original_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            os.chdir(tmpdir)
+            try:
+                os.makedirs("logs/ninja", exist_ok=True)
+                log_file = os.path.join(
+                    "logs/ninja", f"app_{datetime.now().strftime('%Y-%m-%d')}.log"
+                )
+                with open(log_file, "w", encoding="utf-8") as f:
+                    f.write(
+                        "2024-06-21 10:30:15.123 [ninja] [INFO] [LiveMode] Custom dir message\n"
+                    )
+
+                ctrl = AdminController(analytics, line_repo, logger, log_dir="logs/ninja")
+                resp, status = ctrl.get_recent_logs("MNQ", limit=1, offset=0)
+                assert status == 200
+                data = resp.get_json()
+                assert len(data["logs"]) == 1
+                assert data["logs"][0]["level"] == "INFO"
+                assert data["logs"][0]["source"] == "LiveMode"
+                assert "Custom dir message" in data["logs"][0]["message"]
+            finally:
+                os.chdir(original_cwd)
 
 
 class FakeDecisionLogRepository:

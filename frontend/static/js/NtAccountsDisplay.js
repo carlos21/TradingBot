@@ -32,6 +32,10 @@ export class NtAccountsDisplay {
 
   init() {
     this.loadAccounts();
+    // Reload once the socket connects: on first page load the backend may not
+    // be listening yet (the initial fetch above fails), and socket.io's
+    // reconnection is the signal that the backend is reachable again.
+    this.socket?.on?.('connect', () => this.loadAccounts());
   }
 
   /**
